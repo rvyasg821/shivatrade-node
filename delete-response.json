@@ -1,0 +1,1 @@
+{"statusCode":400,"message":"Tenant validation failed: Tenant 'test-tenant' not found or not accessible","error":"Bad Request","tenantId":"test-tenant","timestamp":"2025-12-19T11:09:37.130Z","path":"/api/v1/admin/tenants/test-tenant?archive=false"}

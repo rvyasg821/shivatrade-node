@@ -1,0 +1,9 @@
+{
+    "list": " Tools list retrieved successfully.",
+    "get": " Tool details retrieved successfully.",
+    "create": " Tool created successfully.",
+    "update": " Tool updated successfully.",
+    "updateStatus": " Tool status updated successfully.",
+    "delete": " Tool deleted successfully.",
+    "analytics": " Tool analytics retrieved successfully."
+}

@@ -1,0 +1,5 @@
+export enum ENUM_COUNTRY_STATUS {
+    ACTIVE = 'ACTIVE',
+    INACTIVE = 'INACTIVE',
+    BLOCKED = 'BLOCKED',
+}

@@ -1,0 +1,9 @@
+{
+    "list": "Liste des outils récupérée avec succès.",
+    "get": "Détails de l'outil récupérés avec succès.",
+    "create": "Outil créé avec succès.",
+    "update": "Outil mis à jour avec succès.",
+    "updateStatus": "Statut de l'outil mis à jour avec succès.",
+    "delete": "Outil supprimé avec succès.",
+    "analytics": "Analyses de l'outil récupérées avec succès."
+}

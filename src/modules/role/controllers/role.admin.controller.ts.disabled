@@ -1,0 +1,813 @@
+import {
+    BadRequestException,
+    Body,
+    ConflictException,
+    Controller,
+    Delete,
+    Get,
+    NotFoundException,
+    Param,
+    Patch,
+    Post,
+    Put,
+} from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import {
+    PaginationQuery,
+    PaginationQueryFilterInBoolean,
+    PaginationQueryFilterInEnum,
+} from '@common/pagination/decorators/pagination.decorator';
+import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import { PaginationService } from '@common/pagination/services/pagination.service';
+import { RequestRequiredPipe } from '@common/request/pipes/request.required.pipe';
+import {
+    Response,
+    ResponsePaging,
+} from '@common/response/decorators/response.decorator';
+import {
+    IResponse,
+    IResponsePaging,
+} from '@common/response/interfaces/response.interface';
+
+import {
+    AuthJwtAccessProtected,
+    AuthJwtPayload,
+} from '@modules/auth/decorators/auth.jwt.decorator';
+import {
+    ROLE_DEFAULT_AVAILABLE_SEARCH,
+    ROLE_DEFAULT_IS_ACTIVE,
+} from '@modules/role/constants/role.list.constant';
+import {
+    RoleAdminActiveDoc,
+    RoleAdminCreateDoc,
+    RoleAdminDeleteDoc,
+    RoleAdminGetDoc,
+    RoleAdminInactiveDoc,
+    RoleAdminListDoc,
+    RoleAdminUpdateDoc,
+} from '@modules/role/docs/role.admin.doc';
+import { RoleCreateRequestDto } from '@modules/role/dtos/request/role.create.request.dto';
+import { RoleUpdateRequestDto } from '@modules/role/dtos/request/role.update.request.dto';
+import { RoleGetResponseDto } from '@modules/role/dtos/response/role.get.response.dto';
+import { RoleListResponseDto } from '@modules/role/dtos/response/role.list.response.dto';
+import { RoleIsActivePipe } from '@modules/role/pipes/role.is-active.pipe';
+import { RoleParsePipe } from '@modules/role/pipes/role.parse.pipe';
+import { RoleDoc } from '@modules/role/repository/entities/role.entity';
+import { RoleService } from '@modules/role/services/role.service';
+import { DatabaseIdResponseDto } from '@common/database/dtos/response/database.id.response.dto';
+import { UserProtected } from '@modules/user/decorators/user.decorator';
+import { RoleIsUsedPipe } from '@modules/role/pipes/role.is-used.pipe';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
+import { UseGuards, Req } from '@nestjs/common';
+import {
+    ENUM_ROLE_TYPE,
+    ENUM_SYSTEM_ROLE,
+} from '@modules/role/enums/role.enum';
+import { Request } from 'express';
+import { RoleRepository } from '../repository/repositories/role.repository';
+import { CompanyService } from '@modules/company/services/company.service';
+import { IAuthJwtAccessTokenPayload } from '@modules/auth/interfaces/auth.interface';
+import { ENUM_SHARED_USER_TYPE } from '@modules/shared-users/repository/entities/shared-user.entity';
+import {
+    RoleHierarchyInsufficientLevelException,
+    RoleDeletionHasUsersException,
+    TenantRoleHierarchyInsufficientLevelException
+} from '@common/exceptions/hierarchy.exception';
+@ApiTags('modules.admin.role')
+@Controller({
+    version: '1',
+    path: '/role',
+})
+export class RoleAdminController {
+    constructor(
+        private readonly paginationService: PaginationService,
+        private readonly roleService: RoleService,
+        private readonly roleRepository: RoleRepository,
+        private readonly companyService: CompanyService,) { }
+
+    @RoleAdminListDoc()
+    @ResponsePaging('role.list')
+    @Permission('role', 'can_read')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/list')
+    async list(
+        @PaginationQuery({ availableSearch: ROLE_DEFAULT_AVAILABLE_SEARCH })
+        { _search, _limit, _offset, _order }: PaginationListDto,
+        @PaginationQueryFilterInBoolean('isActive', ROLE_DEFAULT_IS_ACTIVE)
+        isActive: Record<string, any>,
+        @PaginationQueryFilterInEnum('type', ENUM_ROLE_TYPE.SYSTEM, [
+            ENUM_ROLE_TYPE.SYSTEM,
+            ENUM_ROLE_TYPE.CUSTOM,
+        ])
+        type: Record<string, any>,
+        @Req() request: Request,
+        @AuthJwtPayload('roleLevel') roleLevel: number,
+    ): Promise<IResponsePaging<RoleListResponseDto>> {
+        const user = (request as any).user;
+
+        // Get user's role information for hierarchical access control
+        const userRole = await this.roleService.findOneById(user.role);
+
+        // Get user's role level from JWT payload for hierarchy filtering
+        // const currentUserLevel = user.roleLevel || 1;
+        const currentUserLevel = roleLevel;
+
+        const find: Record<string, any> = {
+            ..._search,
+            ...isActive,
+            ...type,
+        };
+
+        // Apply hierarchical filtering based on user's role level
+        // const roles: RoleDoc[] = await this.roleService.getRolesByUserLevel(
+        //     currentUserLevel,
+        const roles: RoleDoc[] = await this.roleService.findAllByUserRole(
+            userRole.type,
+            userRole.name,
+            user.companyId,
+            currentUserLevel,
+            {
+                paging: {
+                    limit: _limit,
+                    offset: _offset,
+                },
+                order: _order,
+            }
+        );
+
+        // Use filtered roles for total count calculation
+        const filteredFind: Record<string, any> = { ...find };
+
+        // Apply same filtering logic as in service for total count
+        if (userRole.name !== ENUM_SYSTEM_ROLE.SUPER_ADMIN) {
+            if (
+                userRole.name === ENUM_SYSTEM_ROLE.COMPANY_ADMIN &&
+                user.companyId
+            ) {
+                filteredFind.$or = [
+                    { type: ENUM_ROLE_TYPE.SYSTEM },
+                    { type: ENUM_ROLE_TYPE.CUSTOM, companyId: user.companyId },
+                ];
+            } else if (
+                userRole.type === ENUM_ROLE_TYPE.CUSTOM &&
+                user.companyId
+            ) {
+                filteredFind.type = ENUM_ROLE_TYPE.CUSTOM;
+                filteredFind.companyId = user.companyId;
+            }
+        }
+
+
+        // Use hierarchy-based filtering for total count calculation
+        filteredFind['level'] = { $gt: currentUserLevel };
+        filteredFind['isActive'] = true;
+        // filteredFind= {
+        //     ...find,
+        //     isActive: true,
+        //     level: { $gte: currentUserLevel }
+        // };
+
+        const total: number = await this.roleService.getTotal(filteredFind);
+        const totalPage: number = this.paginationService.totalPage(
+            total,
+            _limit
+        );
+
+        // Use enhanced mapping with company user data for admin users
+        const mapRoles: RoleListResponseDto[] = this.roleService.mapList(roles);
+
+        return {
+            _pagination: { total, totalPage },
+            data: mapRoles,
+        };
+    }
+
+    @RoleAdminGetDoc()
+    @Response('role.get')
+    @Permission('role', 'can_read')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/get/:role')
+    async get(
+        @Param('role', RequestRequiredPipe, RoleParsePipe) role: RoleDoc,
+        @Req() request: Request,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>('role') currentUserRoleId: string
+    ): Promise<IResponse<RoleGetResponseDto>> {
+        const user = (request as any).user;
+
+        console.log("User Payload in Role Get Role By ID: ===>", currentUserRoleId);
+        // Check if user can access this role based on hierarchy
+        const currentUserLevel = user.roleLevel || 1;
+        const canManage = this.roleService.validateRoleHierarchy(currentUserLevel, role.level);
+
+        if (!canManage) {
+            throw new RoleHierarchyInsufficientLevelException(
+                currentUserLevel,
+                role.level,
+                'view'
+            );
+        }
+
+        // Get role with synced permissions
+        // const syncedRole = await this.roleService.findOneWithSyncedPermissions(
+        //     String(role._id)
+        // );
+        // const mapRole: RoleGetResponseDto = this.roleService.mapGet(syncedRole);
+
+        const mapRole: RoleGetResponseDto = this.roleService.mapGet(role);
+        // Get current user's role for permission filtering
+        // const userRole = await this.roleService.findOneById(user.role);
+
+        // Filter permissions for non-admin users based on their own permissions
+        // Only send permissions where the current user has true access
+        // if (userRole.name !== ENUM_SYSTEM_ROLE.SUPER_ADMIN) {
+        //     const filteredPermissions: Record<
+        //     string,
+        //     Record<string, boolean>
+        //     > = {};
+        //     const currentUserPermissions = userRole.permissions;
+        //     console.log("Map Role in Role Get Role By ID: ===>", user?.role);
+
+        //     for (const [module, permissions] of Object.entries(
+        //         mapRole.permissions
+        //     )) {
+        //         // Check if current user has access to this module
+        //         if (currentUserPermissions[module]) {
+        //             const filteredModulePermissions: Record<string, boolean> =
+        //                 {};
+
+        //             for (const [permission, value] of Object.entries(
+        //                 permissions
+        //             )) {
+        //                 // Only include permission if current user has it set to true
+        //                 if (
+        //                     currentUserPermissions[module][permission] === true
+        //                 ) {
+        //                     filteredModulePermissions[permission] = value;
+        //                 }
+        //             }
+
+        //             // Only include the module if it has at least one permission the user can see
+        //             if (Object.keys(filteredModulePermissions).length > 0) {
+        //                 filteredPermissions[module] = filteredModulePermissions;
+        //             }
+        //         }
+        //     }
+
+        //     mapRole.permissions = filteredPermissions;
+        // }
+
+        // // Filter permissions for non-admin users based on their own permissions
+        // const getPermissionMixedWithCurrentuser = await this.roleService.getPermissionMixedWithCurrentuser(currentUserRoleId, role.permissions);
+
+        // mapRole.permissions = getPermissionMixedWithCurrentuser;
+
+        return { data: mapRole };
+    }
+
+    @RoleAdminCreateDoc()
+    @Response('role.create')
+    @Permission('role', 'can_add')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/create')
+    async create(
+        @Body()
+        { name, description, type, permissions }: RoleCreateRequestDto,
+        @Req() request: Request,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>('userType') userType: string
+    ): Promise<IResponse<DatabaseIdResponseDto>> {
+        const user = (request as any).user;
+        const currentUserLevel = user.roleLevel || 1;
+
+        // Check if role name already exists
+        const existingRole = await this.roleService.existByName(name);
+        if (existingRole) {
+            throw new ConflictException('Role name already exists');
+        }
+
+        // Get the level that would be assigned to the new role
+        const newRoleLevel = await this.roleService.getNextRoleLevel(name);
+
+        // Validate hierarchy - user can only create roles at or above their level
+        if (!this.roleService.validateRoleHierarchy(currentUserLevel, newRoleLevel)) {
+            throw new RoleHierarchyInsufficientLevelException(
+                currentUserLevel,
+                newRoleLevel,
+                'create'
+            );
+        }
+        const companyId = await this.companyService.findOneByUserId(user._id);
+
+        // Determine the actual companyId to use
+        let actualCompanyId = companyId?._id;
+
+        // For users with level > 1, use their companyId from middleware
+        if (currentUserLevel > 1) {
+            actualCompanyId = user.companyId;
+
+            // if (!actualCompanyId) {
+            //     throw new ConflictException(
+            //         'User must belong to a company to create roles'
+            //     );
+            // }
+
+            // Force custom type for non-admin users (level > 2)
+            if (type === ENUM_ROLE_TYPE.SYSTEM && currentUserLevel > 2) {
+                throw new ConflictException(
+                    'Insufficient permissions to create system roles'
+                );
+            }
+        }
+
+        // // Validate companyId for custom roles
+        // if (type === ENUM_ROLE_TYPE.CUSTOM && !actualCompanyId) {
+        //     throw new ConflictException('Company ID is required for custom roles');
+        // }
+
+        // System roles cannot have companyId
+        if (type === ENUM_ROLE_TYPE.SYSTEM && actualCompanyId) {
+            throw new ConflictException('System roles cannot have company ID');
+        }
+
+        const create = await this.roleService.create({
+            name,
+            description,
+            type,
+            companyId: actualCompanyId?.toString(),
+            permissions,
+        });
+
+        return {
+            data: { _id: String(create._id) },
+        };
+    }
+
+    @RoleAdminUpdateDoc()
+    @Response('role.update')
+    @Permission('role', 'can_update')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Put('/update/:role')
+    async update(
+        @Param('role', RequestRequiredPipe) role: string,
+        @Body()
+        {
+            description,
+            name,
+            permissions,
+            type,
+            companyId,
+        }: RoleUpdateRequestDto,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>('role')
+        currentUserRole: string,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>() userPayloadToken: any,
+        @Req() request: Request
+    ): Promise<IResponse<DatabaseIdResponseDto>> {
+        const user = (request as any).user;
+
+        // Check if user is Tenant User or Company Admin and handle tenant-specific role update
+        const userType: ENUM_SHARED_USER_TYPE = userPayloadToken?.userType;
+        const tenantId: string = userPayloadToken?.tenantId;
+
+        if (
+            userType &&
+            (userType === ENUM_SHARED_USER_TYPE.TENANT_USER ||
+                userType === ENUM_SHARED_USER_TYPE.COMPANY_ADMIN) &&
+            tenantId
+        ) {
+            // Handle tenant-specific role update
+            const tenantConnection = null;
+            // Perform update within tenant context
+            // Tenant service removed: return await this.tenantContextService.run({ tenantId, connection: tenantConnection }, async () => {
+                console.log('Updating role in tenant database:', role);
+                // Find the role in tenant database
+                const tenantRole = await this.tenantRoleService.findOneById(role);
+                if (!tenantRole) {
+                    throw new NotFoundException(
+                        'Role not found in tenant database'
+                    );
+                }
+
+                // Check hierarchy for tenant role update
+                const currentUserLevel = user.roleLevel || 1;
+                const canManageTenantRole = this.tenantRoleService.validateTenantRoleHierarchy(currentUserLevel, tenantRole.level);
+
+                if (!canManageTenantRole) {
+                    throw new TenantRoleHierarchyInsufficientLevelException(
+                        currentUserLevel,
+                        tenantRole.level,
+                        tenantId,
+                        'update'
+                    );
+                }
+
+                // Get current user role from tenant database for permission validation
+                let currentUserTenantRole = null;
+
+                if (userType === ENUM_SHARED_USER_TYPE.COMPANY_ADMIN) {
+                    currentUserTenantRole =
+                        await this.roleService.findOneById(currentUserRole);
+                } else {
+                    currentUserTenantRole =
+                        await this.tenantRoleService.findOneById(currentUserRole);
+                }
+                // currentUserTenantRole = await this.tenantRoleService.findOneById(currentUserRole);
+                if (!currentUserTenantRole) {
+                    throw new ConflictException(
+                        'Current user role not found in tenant database'
+                    );
+                }
+
+                // Check if new name conflicts with existing role (if name is being changed)
+                if (name !== tenantRole.name) {
+                    const existingRole =
+                        await this.tenantRoleService.findOneByName(name);
+                    if (
+                        existingRole &&
+                        String(existingRole._id) !== String(tenantRole._id)
+                    ) {
+                        throw new ConflictException('Role name already exists');
+                    }
+                }
+
+                const currentUserPermissionsData =
+                    currentUserTenantRole.permissions;
+                const permissionsKeys = Object.keys(permissions);
+
+                // Validate that the current user has all the permissions they are trying to assign
+                for (const moduleKey of permissionsKeys) {
+                    const modulePermissions = permissions[moduleKey];
+                    const creatorModulePermissions =
+                        currentUserPermissionsData[moduleKey];
+
+                    // If creator has no permissions for this module, skip
+                    if (!creatorModulePermissions) {
+                        throw new BadRequestException(
+                            `You do not have permission to assign this module '${moduleKey}'`
+                        );
+                    }
+
+                    for (const permissionKey of Object.keys(modulePermissions)) {
+                        const permissionValue = modulePermissions[permissionKey];
+
+                        // Only validate if creator is trying to assign a TRUE permission
+                        if (
+                            permissionValue === true &&
+                            creatorModulePermissions[permissionKey] !== true
+                        ) {
+                            throw new BadRequestException(
+                                `You do not have permission to assign '${permissionKey}' on module '${moduleKey}'`
+                            );
+                        }
+                    }
+                }
+
+                // Update the role in tenant database
+                await this.tenantRoleService.update(tenantRole, {
+                    description,
+                    name,
+                    permissions,
+                });
+
+                return {
+                    data: { _id: String(tenantRole._id) },
+                };
+            });
+        }
+
+        const roleDoc: RoleDoc = await this.roleService.findOneById(role);
+        // Original logic for non-tenant users
+        // Check if user can manage this role based on hierarchy
+        const currentUserLevel = user.roleLevel || 1;
+        const canManage = this.roleService.validateRoleHierarchy(currentUserLevel, roleDoc.level);
+
+        if (!canManage) {
+            throw new RoleHierarchyInsufficientLevelException(
+                currentUserLevel,
+                roleDoc.level,
+                'update'
+            );
+        }
+
+        // Check if new name conflicts with existing role (if name is being changed)
+        if (name !== roleDoc.name) {
+            const existingRole = await this.roleService.findOneByName(name);
+            if (
+                existingRole &&
+                String(existingRole._id) !== String(roleDoc._id)
+            ) {
+                throw new ConflictException('Role name already exists');
+            }
+        }
+
+        if (userPayloadToken?.roleName === ENUM_SHARED_USER_TYPE.ADMIN) {
+            await this.roleService.update(roleDoc, {
+                description,
+                name,
+                permissions,
+                type,
+                companyId,
+            });
+
+            return {
+                data: { _id: String(roleDoc._id) },
+            };
+        }
+
+        const CurrentUserPermissions =
+            await this.roleService.findOneById(currentUserRole);
+
+        const currentUserPermissionsData = CurrentUserPermissions.permissions;
+        const permissionsKeys = Object.keys(permissions);
+
+        for (const moduleKey of permissionsKeys) {
+            const modulePermissions = permissions[moduleKey];
+            const creatorModulePermissions =
+                currentUserPermissionsData[moduleKey];
+
+            if (!creatorModulePermissions) {
+                throw new BadRequestException(
+                    `You do not have permission to assign this module '${moduleKey}'`
+                );
+            }
+
+            for (const permissionKey of Object.keys(modulePermissions)) {
+                const permissionValue = modulePermissions[permissionKey];
+                if (
+                    permissionValue === true &&
+                    creatorModulePermissions[permissionKey] !== true
+                ) {
+                    throw new BadRequestException(
+                        `You do not have permission to assign '${permissionKey}' on module '${moduleKey}'`
+                    );
+                }
+            }
+        }
+
+        await this.roleService.update(roleDoc, {
+            description,
+            name,
+            permissions,
+            type,
+            companyId,
+        });
+
+        return {
+            data: { _id: String(roleDoc._id) },
+        };
+    }
+
+    @RoleAdminInactiveDoc()
+    @Response('role.inactive')
+    @Permission('role', 'can_update')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Patch('/update/:role/inactive')
+    async inactive(
+        @Param('role', RequestRequiredPipe) role: string,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>() userPayloadToken: any,
+        @Req() request: Request
+    ): Promise<void> {
+        const user = (request as any).user;
+
+        // Check if user is Tenant User or Company Admin and handle tenant-specific role deactivation
+        const userType: ENUM_SHARED_USER_TYPE = userPayloadToken?.userType;
+        const tenantId: string = userPayloadToken?.tenantId;
+
+        if (
+            userType &&
+            (userType === ENUM_SHARED_USER_TYPE.TENANT_USER ||
+                userType === ENUM_SHARED_USER_TYPE.COMPANY_ADMIN) &&
+            tenantId
+        ) {
+            // Handle tenant-specific role deactivation
+            const tenantConnection = null;
+            // Perform deactivation within tenant context
+            // Tenant service removed: return await this.tenantContextService.run({ tenantId, connection: tenantConnection }, async () => {
+                // Find the role in tenant database
+                const tenantRole = await this.tenantRoleService.findOneById(role);
+                if (!tenantRole) {
+                    throw new NotFoundException(
+                        'Role not found in tenant database'
+                    );
+                }
+
+                // Check if role is currently active
+                if (!tenantRole.isActive) {
+                    throw new BadRequestException('Role is already inactive');
+                }
+
+                // Update the role to inactive in tenant database
+                await this.tenantRoleService.update(tenantRole, {
+                    isActive: false,
+                });
+            });
+        }
+
+        // Original logic for non-tenant users
+        const roleDoc: RoleDoc = await this.roleService.findOneById(role);
+        if (!roleDoc) {
+            throw new NotFoundException('Role not found');
+        }
+
+        // Check if role is currently active
+        if (!roleDoc.isActive) {
+            throw new BadRequestException('Role is already inactive');
+        }
+
+        // Check if user can manage this role
+        const userRole = await this.roleService.findOneById(user.role);
+        const canManage = await this.roleService.canManageRole(
+            userRole.type,
+            userRole.name,
+            user.companyId,
+            roleDoc
+        );
+
+        if (!canManage) {
+            throw new ConflictException(
+                'Insufficient permissions to deactivate this role'
+            );
+        }
+
+        await this.roleService.inactive(roleDoc);
+
+        return;
+    }
+
+    @RoleAdminActiveDoc()
+    @Response('role.active')
+    @Permission('role', 'can_update')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Patch('/update/:role/active')
+    async active(
+        @Param('role', RequestRequiredPipe) role: string,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>() userPayloadToken: any,
+        @Req() request: Request
+    ): Promise<void> {
+        const user = (request as any).user;
+
+        // Check if user is Tenant User or Company Admin and handle tenant-specific role activation
+        const userType: ENUM_SHARED_USER_TYPE = userPayloadToken?.userType;
+        const tenantId: string = userPayloadToken?.tenantId;
+
+        if (
+            userType &&
+            (userType === ENUM_SHARED_USER_TYPE.TENANT_USER ||
+                userType === ENUM_SHARED_USER_TYPE.COMPANY_ADMIN) &&
+            tenantId
+        ) {
+            // Handle tenant-specific role activation
+            const tenantConnection = null;
+            // Perform activation within tenant context
+            // Tenant service removed: return await this.tenantContextService.run({ tenantId, connection: tenantConnection }, async () => {
+                // Find the role in tenant database
+                const tenantRole = await this.tenantRoleService.findOneById(role);
+                if (!tenantRole) {
+                    throw new NotFoundException(
+                        'Role not found in tenant database'
+                    );
+                }
+
+                // Check if role is currently inactive
+                if (tenantRole.isActive) {
+                    throw new BadRequestException('Role is already active');
+                }
+
+                // Update the role to active in tenant database
+                await this.tenantRoleService.update(tenantRole, {
+                    isActive: true,
+                });
+            });
+        }
+
+        // Original logic for non-tenant users
+        const roleDoc: RoleDoc = await this.roleService.findOneById(role);
+        if (!roleDoc) {
+            throw new NotFoundException('Role not found');
+        }
+
+        // Check if role is currently inactive
+        if (roleDoc.isActive) {
+            throw new BadRequestException('Role is already active');
+        }
+
+        // Check if user can manage this role
+        const userRole = await this.roleService.findOneById(user.role);
+        const canManage = await this.roleService.canManageRole(
+            userRole.type,
+            userRole.name,
+            user.companyId,
+            roleDoc
+        );
+
+        if (!canManage) {
+            throw new ConflictException(
+                'Insufficient permissions to activate this role'
+            );
+        }
+
+        await this.roleService.active(roleDoc);
+
+        return;
+    }
+
+    @RoleAdminDeleteDoc()
+    @Response('role.delete')
+    @Permission('role', 'can_delete')
+    @UseGuards(PermissionGuard)
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Delete('/delete/:role')
+    async delete(
+        @Param('role', RequestRequiredPipe) role: string,
+        @AuthJwtPayload<IAuthJwtAccessTokenPayload>() userPayloadToken: any,
+        @Req() request: Request
+    ): Promise<void> {
+        const user = (request as any).user;
+
+        // Check if user is Tenant User or Company Admin and handle tenant-specific role deletion
+        const userType: ENUM_SHARED_USER_TYPE = userPayloadToken?.userType;
+        const tenantId: string = userPayloadToken?.tenantId;
+
+        if (
+            userType &&
+            (userType === ENUM_SHARED_USER_TYPE.TENANT_USER ||
+                userType === ENUM_SHARED_USER_TYPE.COMPANY_ADMIN) &&
+            tenantId
+        ) {
+            // Handle tenant-specific role deletion
+            const tenantConnection = null;
+            // Perform deletion within tenant context
+            // Tenant service removed: return await this.tenantContextService.run({ tenantId, connection: tenantConnection }, async () => {
+                // Find the role in tenant database
+                const tenantRole = await this.tenantRoleService.findOneById(role);
+                if (!tenantRole) {
+                    throw new NotFoundException(
+                        'Role not found in tenant database'
+                    );
+                }
+
+                // Check hierarchy for tenant role deletion
+                const currentUserLevel = user.roleLevel || 1;
+                const canManageTenantRole = this.tenantRoleService.validateTenantRoleHierarchy(currentUserLevel, tenantRole.level);
+
+                if (!canManageTenantRole) {
+                    throw new TenantRoleHierarchyInsufficientLevelException(
+                        currentUserLevel,
+                        tenantRole.level,
+                        tenantId,
+                        'delete'
+                    );
+                }
+
+                // Check if tenant role is assigned to any users
+                const isRoleInUse = await this.tenantRoleService.checkTenantRoleUsage(role);
+                if (isRoleInUse) {
+                    throw new RoleDeletionHasUsersException(tenantRole.name);
+                }
+
+                // Delete the role from tenant database
+                await this.tenantRoleService.hardDelete(tenantRole);
+            });
+        }
+
+        // Original logic for non-tenant users
+        const roleDoc: RoleDoc = await this.roleService.findOneById(role);
+        if (!roleDoc) {
+            throw new NotFoundException('Role not found');
+        }
+
+        // Check hierarchy for role deletion
+        const currentUserLevel = user.roleLevel || 1;
+        const canManage = this.roleService.validateRoleHierarchy(currentUserLevel, roleDoc.level);
+
+        if (!canManage) {
+            throw new RoleHierarchyInsufficientLevelException(
+                currentUserLevel,
+                roleDoc.level,
+                'delete'
+            );
+        }
+
+        // Check if role is assigned to any users
+        const isRoleInUse = await this.roleService.checkRoleUsage(role);
+        if (isRoleInUse) {
+            throw new RoleDeletionHasUsersException(roleDoc.name);
+        }
+
+        await this.roleService.delete(roleDoc);
+
+        return;
+    }
+}

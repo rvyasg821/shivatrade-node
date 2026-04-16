@@ -1,0 +1,244 @@
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+    body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        line-height: 1.6;
+        color: #1a1a1a;
+    }
+    .content h2 {
+        font-size: 32px;
+        font-weight: 700;
+        padding-bottom: 24px;
+        color: #1a1a1a;
+        margin: 0;
+    }
+    .content p {
+        margin: 0 0 16px;
+    }
+    .footer p {
+        margin-bottom: 0;
+    }
+    .invoice-details {
+        display: inline-block;
+        margin: 24px auto;
+        padding: 24px 32px;
+        background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        border: 2px solid #e9ecef;
+        border-left: 5px solid #7367f0;
+        border-radius: 12px;
+        font-family: 'Inter', sans-serif;
+        text-align: left;
+        max-width: 500px;
+        width: 100%;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+    .invoice-row {
+        margin-bottom: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid #f1f3f5;
+    }
+    .invoice-row:last-child {
+        border-bottom: none;
+        padding-top: 12px;
+        border-top: 2px solid #e9ecef;
+        margin-top: 8px;
+    }
+    .invoice-label {
+        font-weight: 600;
+        color: #4a5568;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        font-size: 12px;
+    }
+    .invoice-value {
+        font-weight: 600;
+        color: #1a1a1a;
+        font-size: 14px;
+    }
+    .invoice-row:last-child .invoice-value {
+        color: #7367f0;
+        font-size: 16px;
+        font-weight: 700;
+    }
+    .cta-button {
+        display: inline-block;
+        padding: 14px 32px;
+        background: linear-gradient(135deg, #7367f0 0%, #9b8bf4 100%);
+        color: #ffffff;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: 600;
+        font-family: 'Inter', sans-serif;
+        margin-top: 28px;
+        font-size: 15px;
+        letter-spacing: 0.3px;
+        box-shadow: 0 4px 12px rgba(115, 103, 240, 0.3);
+        transition: all 0.3s ease;
+    }
+    .success-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 16px 0;
+    }
+</style>
+
+<div class='header-top' style='background-color: #edf0f3; padding-top:20px;'>
+    <div
+        class='container--'
+        style='max-width: 650px; margin:0 auto; background-color:#fff;'
+    >
+
+        <!-- Logo -->
+        <div style='padding: 32px 0px; text-align: center;'>
+            <img
+                alt='PeopleGem Logo'
+                src="{{{logo}}}"
+                style='height: auto; width: auto; max-width: 200px;'
+            />
+        </div>
+
+        <!-- Title -->
+        <div
+            style='text-align: center; max-width: 550px; margin: 0 auto; padding: 0 20px;'
+        >
+            <h3
+                style='font-family: Inter, sans-serif; font-weight: 700; margin: 0; font-size: 32px; color: #1a1a1a; letter-spacing: -0.5px;'
+            >
+                Payment Successful
+            </h3>
+            <div style='margin-top: 16px;'>
+                <span class='success-badge'>✓ PAYMENT CONFIRMED</span>
+            </div>
+        </div>
+
+        <!-- Greeting -->
+        <div
+            style='text-align: center; max-width: 550px; margin: 0 auto; padding: 20px 20px 0;'
+        >
+            <p
+                style='font-size: 16px; font-family: Inter, sans-serif; margin: 0; font-weight: 400; color: #4a5568; line-height: 1.6;'
+            >
+                Hello
+                <span style='font-weight: 700; color: #1a1a1a;'>{{name}}</span>,
+            </p>
+        </div>
+
+        <!-- Body Content -->
+        <div
+            class='content'
+            style='text-align: center; max-width: 600px; margin: 0 auto; padding: 28px 20px;'
+        >
+
+            <p
+                style='font-size: 16px; font-family: Inter, sans-serif; margin: 0 0 20px; font-weight: 500; color: #1a1a1a; line-height: 1.7;'
+            >
+                Thank you for your subscription! Your payment has been processed successfully and your subscription is now active.
+            </p>
+
+            <p style='font-size: 15px; font-family: Inter, sans-serif; margin: 0 0 24px; color: #6b7280; line-height: 1.6;'>
+                Your invoice is attached to this email for your records. You can also download it anytime from your dashboard.
+            </p>
+
+            <!-- Invoice Details Box -->
+            <div class='invoice-details'>
+                <div class='invoice-row'>
+                    <span class='invoice-label'>Invoice Number</span>
+                    <span class='invoice-value'>{{invoiceNumber}}</span>
+                </div>
+                <div class='invoice-row'>
+                    <span class='invoice-label'>Subscription Plan</span>
+                    <span class='invoice-value'>{{planName}}</span>
+                </div>
+                {{#if locations}}
+                <div class='invoice-row'>
+                    <span class='invoice-label'>Locations</span>
+                    <span class='invoice-value'>{{locations}}</span>
+                </div>
+                {{/if}}
+                <div class='invoice-row'>
+                    <span class='invoice-label'>Payment Date</span>
+                    <span class='invoice-value'>{{date}}</span>
+                </div>
+                {{#if discountApplied}}
+                <div class='invoice-row'>
+                    <span class='invoice-label'>Discount{{#if discountCode}} ({{discountCode}}){{/if}}</span>
+                    <span class='invoice-value' style='color: #10b981;'>-{{discountAmount}}</span>
+                </div>
+                {{#if discountDurationInfo}}
+                <div style='padding: 4px 0 8px; font-size: 12px; color: {{discountDurationColor}}; font-style: italic; text-align: left;'>
+                    ℹ {{discountDurationInfo}}
+                </div>
+                {{/if}}
+                {{/if}}
+                <div class='invoice-row'>
+                    <span class='invoice-label'>Total Amount</span>
+                    <span class='invoice-value'>{{amount}}</span>
+                </div>
+            </div>
+
+            <p style='font-size: 14px; font-family: Inter, sans-serif; margin: 24px 0 8px; color: #6b7280; line-height: 1.6;'>
+                The invoice PDF is attached to this email. For any questions, please contact our support team.
+            </p>
+
+            <div style="text-align: center; margin-top: 32px;">
+                <a href="{{dashboardUrl}}" class="cta-button" style="color: #ffffff; text-decoration: none;">View Dashboard →</a>
+            </div>
+
+        </div>
+
+        <!-- Support Footer -->
+        <div
+            class='footer'
+            style='text-align: center; padding: 32px 20px; margin: 0 auto; max-width: 600px; border-top: 1px solid #e2e8f0;'
+        >
+            <p
+                style='font-size: 14px; font-family: Inter, sans-serif; margin: 0 0 16px; font-weight: 500; color: #1a1a1a;'
+            >
+                Need help? We're here for you!
+            </p>
+            <p
+                style='font-size: 14px; font-family: Inter, sans-serif; margin: 0 0 8px; color: #6b7280;'
+            >
+                Contact us at <a
+                    href='mailto:{{{supportEmail}}}'
+                    style='color: #7367f0; text-decoration: none; font-weight: 600;'
+                >{{{supportEmail}}}</a>
+            </p>
+            <p
+                style='font-size: 13px; font-family: Inter, sans-serif; margin: 16px 0 0; color: #9ca3af;'
+            >
+                This email contains important information about your subscription
+            </p>
+        </div>
+
+        <!-- Bottom Branding -->
+        <div
+            style='width: 100%; background-color:#edf0f3; text-align:center; padding:26px 0px;'
+        >
+            <div style='text-align: center;'>
+                <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
+                    <img
+                        alt='PeopleGem Logo'
+                        src="{{{logo}}}"
+                        style='height: auto; width: auto; max-width: 200px;'
+                    />
+                </a>
+            </div>
+        </div>
+    </div>
+</div>

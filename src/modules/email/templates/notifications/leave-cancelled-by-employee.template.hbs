@@ -1,0 +1,17 @@
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #f59e0b;">Leave Request Cancelled</h2>
+    <p>Hi {{admin_name}},</p>
+    <p><strong>{{employee_name}}</strong> has cancelled their leave request.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 40%;">Leave Type</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{leave_type}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">From</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{start_date}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">To</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{end_date}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Total Days</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{total_days}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Previous Status</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{previous_status}}</td></tr>
+    </table>
+    <p>No action is required from you.</p>
+  </div>
+</body>
+</html>

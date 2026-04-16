@@ -1,0 +1,15 @@
+{
+    "list": "Tenant Tool Setting Cron jobs list retrieved successfully.",
+    "active": " Tenant Tool Setting Cron job activated successfully.",
+    "due": " Tenant Tool Setting Cron jobs due retrieved successfully.",
+    "bySetting": " Tenant Tool Setting Cron jobs by setting retrieved successfully.",
+    "get": " Tenant Tool Setting Cron job details retrieved successfully.",
+    "create": " Tenant Tool Setting Cron job created successfully.",
+    "update": " Tenant Tool Setting Cron job updated successfully.",
+    "activate": " Tenant Tool Setting Cron job activated successfully.",
+    "deactivate": " Tenant Tool Setting Cron job deactivated successfully.",
+    "pause": " Tenant Tool Setting Cron job paused successfully.",
+    "updateExecution": " Tenant Tool Setting Cron job execution updated successfully.",
+    "delete": " Tenant Tool Setting Cron job deleted successfully.",
+    "deleteBySetting": " Tenant Tool Setting Cron jobs by setting deleted successfully."
+}

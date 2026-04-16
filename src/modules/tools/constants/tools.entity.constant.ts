@@ -1,0 +1,1 @@
+export const TOOLS_COLLECTION_NAME = 'tools';

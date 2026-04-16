@@ -1,0 +1,1 @@
+export const SUBSCRIPTION_COLLECTION_NAME = 'subscriptions';

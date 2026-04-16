@@ -1,0 +1,8 @@
+{
+    "list": "Sessions récupérées avec succès.",
+    "revoke": "Session révoquée avec succès.",
+    "error": {
+        "notFound": "Désolé, nous n'avons pas pu trouver la session.",
+        "forbiddenRevoke": "Vous ne pouvez pas révoquer votre session actuelle."
+    }
+}

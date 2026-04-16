@@ -1,0 +1,11 @@
+export enum ENUM_TOOLS_STATUS {
+    ACTIVE = 1,
+    INACTIVE = 2,
+}
+
+export enum ENUM_TOOLS_STATUS_CODE_ERROR {
+    NOT_FOUND = 5001,
+    ALREADY_EXISTS = 5002,
+    INACTIVE = 5003,
+    USED = 5004,
+}

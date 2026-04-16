@@ -1,0 +1,32 @@
+{
+    "list": "Users list retrieved successfully.",
+    "get": "User details fetched successfully.",
+    "getAgents": "Agents list retrieved successfully.",
+    "create": "New user created successfully.",
+    "update": "User updated successfully.",
+    "updateStatus": "User status updated to {status}.",
+    "profile": "User profile retrieved successfully.",
+    "updateProfile": "User profile updated successfully.",
+    "uploadPhotoProfile": "Profile photo upload request successful.",
+    "updatePhotoProfile": "Profile picture uploaded successfully.",
+    "delete": "User deleted successfully.",
+    "updateMobileNumber": "Mobile number updated successfully.",
+    "updateClaimUsername": "Username claimed successfully.",
+    "isUserExists": "Checking User Existence",
+    "error": {
+        "mobileNumberExist": "This mobile number already exists.",
+        "emailExist": "This email already exists.",
+        "blocked": "This user is blocked.",
+        "deleted": "This user has been deleted.",
+        "inactive": "This user is inactive.",
+        "mobileNumberNotAllowed": "This mobile number is not allowed.",
+        "blockedInvalid": "Invalid blocked status.",
+        "notFound": "Sorry, we couldn't find the user you requested.",
+        "statusInvalid": "Invalid user status.",
+        "usernameExist": "This username has already been taken.",
+        "emailNotVerified": "Email not verified.",
+        "userAlreadyExists": "User Already Exists.",
+        "subscriptionExpired": "Your account is inactive because the company subscription has expired. Please contact your administrator.",
+        "companySuspended": "Your account is inactive because the company has been suspended. Please contact support."
+    }
+}

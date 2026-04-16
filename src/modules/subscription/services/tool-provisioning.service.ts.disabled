@@ -1,0 +1,515 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { SubscriptionToolLoggerService } from '@common/logger/services/subscription-tool-logger.service';
+import { IToolProvisioningService } from '../interfaces/tool-provisioning.service.interface';
+import {
+    IToolProvisioningResult,
+    ICreateTenantTool,
+    ICreateToolSchedule,
+} from '../interfaces/tool-provisioning.interface';
+import { SubscriptionDoc } from '../repository/entities/subscription.entity';
+import { ToolsService } from '@modules/tools/services/tools.service';
+import { CompanyService } from '@modules/company/services/company.service';
+import { SchedulerRegistry } from '@nestjs/schedule';
+import { ToolProvisioningException } from '../exceptions/tool-provisioning.exception';
+import { SubscriptionToolRestorationService } from './subscription-tool-restoration.service';
+import { Connection, Types } from 'mongoose';
+
+@Injectable()
+export class ToolProvisioningService implements IToolProvisioningService {
+    private readonly logger = new Logger(ToolProvisioningService.name);
+
+    constructor(
+        private readonly toolsService: ToolsService,
+        private readonly companyService: CompanyService,private readonly schedulerRegistry: SchedulerRegistry,
+        private readonly subscriptionToolRestorationService: SubscriptionToolRestorationService,
+        private readonly subscriptionToolLogger: SubscriptionToolLoggerService,) { }
+
+    /**
+     * Provisions tools for a subscription by copying tool details from the subscription plan
+     * and creating tenant-specific instances in the tenant database
+     */
+    async provisionToolsForSubscription(
+        subscription: SubscriptionDoc
+    ): Promise<IToolProvisioningResult> {
+        const subscriptionId = subscription._id.toString();
+        this.logger.log(
+            `Starting tool provisioning for subscription: ${subscriptionId}`
+        );
+
+        const result: IToolProvisioningResult = {
+            subscriptionId,
+            tenantId: 'unknown',
+            provisionedTools: [],
+            createdSchedules: [],
+            status: 'failed',
+            errors: [],
+        };
+
+        try {
+            // Step 1: Validate subscription data
+            if (!subscription) {
+                throw new ToolProvisioningException(
+                    `Subscription not found: ${subscriptionId}`
+                );
+            }
+
+            // Step 2: Fetch company document to get tenantId
+            const company = await this.companyService.findOneByUserId(
+                subscription.user_id
+            );
+            if (!company) {
+                throw new ToolProvisioningException(
+                    `Company not found for user: ${subscription.user_id.toString()}`
+                );
+            }
+
+            if (!company.tenantId) {
+                throw new ToolProvisioningException(
+                    `TenantId not found in company document for user: ${subscription.user_id.toString()}`
+                );
+            }
+
+            const tenantId = company.tenantId;
+            result.tenantId = tenantId;
+            this.logger.log(
+                `Using tenantId from company: ${tenantId} for subscription: ${subscriptionId}`
+            );
+
+            // Step 3: Validate tools in subscription
+            const toolsToProvision = subscription.tools || [];
+            if (toolsToProvision.length === 0) {
+                this.logger.log(
+                    `No tools to provision for subscription: ${subscriptionId}`
+                );
+                result.status = 'success';
+                return result;
+            }
+
+            // Step 4: Fetch and validate tool details
+            const validatedTools =
+                await this.fetchAndValidateTools(toolsToProvision);
+
+            if (validatedTools.length === 0) {
+                throw new ToolProvisioningException(
+                    'No valid tools found for provisioning'
+                );
+            }
+
+            // Step 5: Get tenant database connection using company's tenantId
+            const tenantConnection = null;
+            if (!tenantConnection) {
+                throw new ToolProvisioningException(
+                    `Failed to get tenant connection for tenantId: ${tenantId}`
+                );
+            }
+
+            // Step 6: Provision tool settings (tools are now in master collection)
+            const toolIds = validatedTools.map(tool => tool._id);
+
+            // Create settings for each tool and their cron schedules
+            for (const tool of validatedTools) {
+                // Create the tool setting
+                const allToolSettings = tool.settings || [];
+
+                const existingToolSettings = null;
+                const toolSettingsToCreate = [
+                    ...allToolSettings.filter(
+                        toolSetting =>
+                            !existingToolSettings.find(
+                                setting =>
+                                    setting.type === toolSetting.type
+                            )
+                    ),
+                ]
+                const existingToolSettingsToUpdate = [
+                    ...allToolSettings.filter(
+                        toolSetting =>
+                            existingToolSettings.find(
+                                setting =>
+                                    setting.type === toolSetting.type
+                            )
+                    ),
+                ];
+                for (const toolSetting of existingToolSettingsToUpdate) {
+
+                    const toolSettingId = existingToolSettings.find(
+                        setting => setting.type === toolSetting.type
+                    )?._id?.toString();
+
+                    if (toolSettingId) {
+                        // Tenant service removed: await this.tenantToolSettingsService.updateFromSoftDeleteToActive(toolSettingId, tenantId);
+
+                        const settingCrons = await this.tenantToolSettingCronService.getCronSchedulesBySettingWithDeleted(toolSettingId, tenantId);
+
+                        if (settingCrons && settingCrons.length > 0) {
+                            for (const cron of settingCrons) {
+                                await this.tenantToolSettingCronService.updateCronSchedulesBySettingWithDeleted(cron._id?.toString(), tenantId);
+                            }
+                        }
+                    }
+                }
+                for (const toolSetting of toolSettingsToCreate) {
+                    // Tenant service removed: const createdSetting = await this.tenantToolSettingsService.create({
+                        toolId: new Types.ObjectId(tool._id),
+                        subscriptionId: new Types.ObjectId(subscriptionId),
+                        status: 1,
+                        soft_delete: false,
+
+                        tenantId,
+                        name: toolSetting.name,
+                        description: toolSetting.description,
+                        type: toolSetting.type,
+                        value: toolSetting.value,
+                        toolType: toolSetting.toolType,
+                        slug: toolSetting.slug,
+                        ipAddressOrUrl: toolSetting.ipAddressOrUrl || '',
+                        port: toolSetting.port || '',
+                        username: toolSetting.username || '',
+                        password: toolSetting.password || '',
+                    }, tenantId);
+
+                    // Get tool configuration to retrieve settings and cron schedules
+                    const toolConfig =
+                        await this.toolsDataService.getToolConfigByToolId(
+                            tool._id
+                        );
+                    if (toolConfig && toolConfig.settings) {
+                        // Extract all cron schedules from all settings
+                        const allCronConfigs = toolConfig.settings
+                            .filter(
+                                setting => setting.name === toolSetting.name
+                            )
+                            .flatMap(setting => setting.cron_schedules || []);
+
+                        // Create cron schedules for this tool setting
+                        if (allCronConfigs.length > 0) {
+                            this.logger.log(
+                                `Creating ${allCronConfigs.length} cron schedules for tool ${tool.name} (setting: ${createdSetting._id})`
+                            );
+                            await this.tenantToolSettingCronService.createCronSchedulesForSetting(
+                                createdSetting._id.toString(),
+                                allCronConfigs,
+                                tenantId
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Update result with provisioned tools
+            // Tenant service removed: const provisionedSettings = await this.tenantToolSettingsService.getSettingsBySubscription(subscriptionId, tenantId);
+            result.provisionedTools = provisionedSettings.map(setting =>
+                setting.toolId.toString()
+            );
+
+            // Count created cron schedules
+            let totalCronSchedules = 0;
+            for (const setting of provisionedSettings) {
+                const cronSchedules =
+                    await this.tenantToolSettingCronService.getCronSchedulesBySetting(
+                        setting._id.toString(),
+                        tenantId
+                    );
+                totalCronSchedules += cronSchedules.length;
+            }
+            result.createdSchedules = Array(totalCronSchedules).fill('cron');
+
+            result.status = result.errors.length === 0 ? 'success' : 'partial';
+            this.logger.log(
+                `Tool provisioning completed for subscription: ${subscriptionId}, status: ${result.status}`
+            );
+
+            // Trigger tool restoration if provisioning was successful
+            if (result.status === 'success') {
+                try {
+                    this.logger.log(
+                        `Triggering tool restoration for successfully provisioned subscription: ${subscriptionId}`
+                    );
+                    const restorationResult =
+                        await this.subscriptionToolRestorationService.restoreSubscriptionToolsWithMetrics(
+                            subscriptionId,
+                            'tool_provisioning'
+                        );
+                    this.logger.log(
+                        `Tool restoration completed for subscription ${subscriptionId}: ${restorationResult.message}`
+                    );
+                } catch (restorationError) {
+                    this.logger.error(
+                        `Tool restoration failed for subscription ${subscriptionId}: ${restorationError.message}`
+                    );
+                    // Don't fail the provisioning if restoration fails, just log the error
+                }
+            }
+            return result;
+        } catch (error) {
+            this.logger.error(
+                `Tool provisioning failed for subscription: ${subscriptionId}`,
+                error.stack
+            );
+            result.errors.push(error.message);
+            result.status = 'failed';
+
+            // Attempt rollback on failure
+            try {
+                await this.rollbackToolProvisioning(subscription);
+            } catch (rollbackError) {
+                this.logger.error(
+                    `Rollback failed for subscription: ${subscriptionId}`,
+                    rollbackError.stack
+                );
+                result.errors.push(`Rollback failed: ${rollbackError.message}`);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Fetches tool details from Tools repository and validates them
+     */
+    public async fetchAndValidateTools(
+        toolsToProvision: any[]
+    ): Promise<any[]> {
+        const validatedTools = [];
+
+        for (const toolRef of toolsToProvision) {
+            console.log('Tool reference to validate', toolRef);
+            try {
+                // Handle Mongoose subdocument - extract the actual data
+                let toolData;
+                if (toolRef?._doc) {
+                    // This is a Mongoose subdocument
+                    toolData = toolRef._doc;
+                } else if (
+                    toolRef.toObject &&
+                    typeof toolRef.toObject === 'function'
+                ) {
+                    // This is a Mongoose document
+                    toolData = toolRef.toObject();
+                } else {
+                    // This is a plain object
+                    toolData = toolRef;
+                }
+
+                const toolId = toolData._id || toolData.id;
+                const toolDoc = await this.toolsService.findOneById(
+                    toolId?.toString()
+                );
+                if (!toolDoc) {
+                    this.logger.warn(
+                        'Tool reference missing ID, skipping',
+                        toolData
+                    );
+                    continue;
+                }
+                const toolName = toolDoc.name;
+                const toolSlug = toolDoc.slug;
+
+                if (!toolName) {
+                    this.logger.warn(
+                        'Tool reference missing name, skipping',
+                        toolData
+                    );
+                    continue;
+                }
+
+                if (!toolSlug) {
+                    this.logger.warn(
+                        'Tool reference missing slug, skipping',
+                        toolData
+                    );
+                    continue;
+                }
+
+                validatedTools.push({
+                    _id: toolId.toString(),
+                    name: toolName,
+                    slug: toolSlug,
+                    description: toolDoc.description || '',
+                    originalPrice: toolData.price || 0,
+                    settings: toolDoc.settings || [],
+                });
+            } catch (error) {
+                this.logger.error(
+                    `Error validating tool: ${JSON.stringify(toolRef)}`,
+                    error.stack
+                );
+                continue;
+            }
+        }
+
+        return validatedTools;
+    }
+
+
+
+    /**
+     * Rolls back tool provisioning for a subscription by removing tenant-specific tools
+     * and schedules that were created during provisioning
+     */
+    async rollbackToolProvisioning(
+        subscription: SubscriptionDoc
+    ): Promise<void> {
+        const subscriptionId = subscription._id.toString();
+        this.logger.log(
+            `Starting rollback for subscription: ${subscriptionId}`
+        );
+
+        try {
+            if (!subscription) {
+                this.logger.warn(
+                    `Subscription not found for rollback: ${subscriptionId}`
+                );
+                return;
+            }
+
+            // Fetch company document to get tenantId
+            const company = await this.companyService.findOneByUserId(
+                subscription.user_id
+            );
+            if (!company || !company.tenantId) {
+                this.logger.warn(
+                    `Company or tenantId not found for rollback: ${subscriptionId}`
+                );
+                return;
+            }
+
+            const tenantId = company.tenantId;
+
+            // Get tenant database connection
+            const tenantConnection = null;
+            if (!tenantConnection) {
+                this.logger.warn(
+                    `Failed to get tenant connection for rollback: ${tenantId}`
+                );
+                return;
+            }
+
+            // Perform rollback within tenant context
+            // Delete tenant tool settings and cron schedules (tools are in master collection)
+            // Tenant service removed: const settings = await this.tenantToolSettingsService.getSettingsBySubscription(subscriptionId, tenantId);
+
+            for (const setting of settings) {
+                // Tenant service removed: await this.tenantToolSettingsService.deleteSetting(
+                    setting._id.toString(),
+                    tenantId
+                );
+            }
+
+            this.logger.log(
+                `Rollback completed for subscription: ${subscriptionId}`
+            );
+        } catch (error) {
+            this.logger.error(
+                `Rollback failed for subscription: ${subscriptionId}`,
+                error.stack
+            );
+            throw new ToolProvisioningException(
+                `Rollback failed: ${error.message}`
+            );
+        }
+    }
+
+    /**
+     * Validates that tool provisioning was completed successfully for a subscription
+     */
+    async validateToolProvisioning(
+        subscription: SubscriptionDoc
+    ): Promise<boolean> {
+        const subscriptionId = subscription._id.toString();
+        try {
+            if (!subscription) {
+                return false;
+            }
+
+            // Fetch company document to get tenantId
+            const company = await this.companyService.findOneByUserId(
+                subscription.user_id
+            );
+            if (!company || !company.tenantId) {
+                this.logger.warn(
+                    `Company or tenantId not found for validation: ${subscriptionId}`
+                );
+                return false;
+            }
+
+            const tenantId = company.tenantId;
+
+            // Get tenant database connection
+            const tenantConnection = null;
+            if (!tenantConnection) {
+                this.logger.warn(
+                    `Failed to get tenant connection for validation: ${tenantId}`
+                );
+                return false;
+            }
+
+            // Perform validation within tenant context
+            // Check if settings exist for this subscription (tools are in master collection)
+            // Tenant service removed: const tenantSettings = await this.tenantToolSettingsService.getSettingsBySubscription(subscriptionId, tenantId);
+
+            return tenantSettings.length > 0;
+        } catch (error) {
+            this.logger.error(
+                `Tool provisioning validation failed for subscription: ${subscriptionId}`,
+                error.stack
+            );
+            return false;
+        }
+    }
+
+    /**
+     * Cleans up tenant tools for a subscription
+     */
+    async cleanupSubscriptionTools(
+        subscriptionId: string,
+        companyId: string
+    ): Promise<void> {
+        try {
+            this.logger.log(
+                `Cleaning up tools for subscription: ${subscriptionId}, company: ${companyId}`
+            );
+
+            // Fetch company document to get tenantId
+            const company = await this.companyService.findOneById(companyId);
+            if (!company || !company.tenantId) {
+                this.logger.warn(
+                    `Company or tenantId not found for cleanup: ${companyId}`
+                );
+                return;
+            }
+
+            const tenantId = company.tenantId;
+
+            // Get tenant database connection
+            const tenantConnection = null;
+            if (!tenantConnection) {
+                this.logger.warn(
+                    `Failed to get tenant connection for cleanup: ${tenantId}`
+                );
+                return;
+            }
+
+            // Perform cleanup within tenant context
+            // Delete tenant tool settings and cron schedules (tools are in master collection)
+            // Tenant service removed: const settings = await this.tenantToolSettingsService.getSettingsBySubscription(subscriptionId, tenantId);
+
+            for (const setting of settings) {
+                // Tenant service removed: await this.tenantToolSettingsService.deleteSetting(
+                    setting._id.toString(),
+                    tenantId
+                );
+            }
+
+            this.logger.log(
+                `Successfully cleaned up tools for subscription: ${subscriptionId}`
+            );
+        } catch (error) {
+            this.logger.error(
+                `Tool cleanup failed for subscription ${subscriptionId}: ${error.message}`,
+                error.stack
+            );
+            throw error;
+        }
+    }
+}

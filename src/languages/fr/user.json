@@ -1,0 +1,30 @@
+{
+    "list": "Liste des utilisateurs récupérée avec succès.",
+    "get": "Détails de l'utilisateur récupérés avec succès.",
+    "getAgents": "Liste des agents récupérée avec succès.",
+    "create": "Nouvel utilisateur créé avec succès.",
+    "update": "Utilisateur mis à jour avec succès.",
+    "updateStatus": "Statut de l'utilisateur mis à jour vers {status}.",
+    "profile": "Profil utilisateur récupéré avec succès.",
+    "updateProfile": "Profil utilisateur mis à jour avec succès.",
+    "uploadPhotoProfile": "Demande de téléchargement de photo de profil réussie.",
+    "updatePhotoProfile": "Photo de profil téléchargée avec succès.",
+    "delete": "Utilisateur supprimé avec succès.",
+    "updateMobileNumber": "Numéro de mobile mis à jour avec succès.",
+    "updateClaimUsername": "Nom d'utilisateur réclamé avec succès.",
+    "isUserExists": "Vérification de l'existence de l'utilisateur.",
+    "error": {
+        "mobileNumberExist": "Ce numéro de mobile existe déjà.",
+        "emailExist": "Cet email existe déjà.",
+        "blocked": "Cet utilisateur est bloqué.",
+        "deleted": "Cet utilisateur a été supprimé.",
+        "inactive": "Cet utilisateur est inactif.",
+        "mobileNumberNotAllowed": "Ce numéro de mobile n'est pas autorisé.",
+        "blockedInvalid": "Statut bloqué invalide.",
+        "notFound": "Désolé, nous n'avons pas pu trouver l'utilisateur demandé.",
+        "statusInvalid": "Statut utilisateur invalide.",
+        "usernameExist": "Ce nom d'utilisateur a déjà été pris.",
+        "emailNotVerified": "Email non vérifié.",
+        "userAlreadyExists": "L'utilisateur existe déjà."
+    }
+}

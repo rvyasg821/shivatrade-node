@@ -1,0 +1,23 @@
+{
+    "list": "Liste des plans récupérée avec succès.",
+    "get": "Plan récupéré avec succès.",
+    "create": "Plan créé avec succès.",
+    "update": "Plan mis à jour avec succès.",
+    "updateStatus": "Statut du plan mis à jour avec succès.",
+    "setDefault": "Plan défini par défaut avec succès.",
+    "updateDisplayOrder": "Ordre d'affichage du plan mis à jour avec succès.",
+    "delete": "Plan supprimé avec succès.",
+    "analytics": "Analyses du plan récupérées avec succès.",
+    "public": {
+        "list": "Liste publique des plans récupérée avec succès.",
+        "get": "Plan public récupéré avec succès.",
+        "active": "Plan public actif récupéré avec succès.",
+        "default": "Plan public par défaut récupéré avec succès.",
+        "compare": "Comparaison des plans publics récupérée avec succès.",
+        "pricing": "Tarification des plans publics récupérée avec succès."
+    },
+    "active": "Plan actif récupéré avec succès.",
+    "short": "Plan abrégé récupéré avec succès.",
+    "default": "Plan par défaut récupéré avec succès.",
+    "compare": "Comparaison des plans récupérée avec succès."
+}

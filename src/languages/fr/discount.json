@@ -1,0 +1,11 @@
+{
+    "list": "Liste des remises récupérée avec succès.",
+    "get": "Remise récupérée avec succès.",
+    "create": "Remise créée avec succès.",
+    "update": "Remise mise à jour avec succès.",
+    "delete": "Remise supprimée avec succès.",
+    "analytics": "Analyse des remises obtenue avec succès.",
+    "markExpired": "Remises marquées comme expirées avec succès.",
+    "apply": "Code de réduction appliqué avec succès.",
+    "validate": "Code de réduction validé avec succès."
+}

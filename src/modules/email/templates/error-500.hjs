@@ -1,0 +1,113 @@
+<html lang='en'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+        <title>Server Error Notification</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 0;
+                background-color: #f4f4f4;
+                color: #333;
+            }
+            .container {
+                width: 100%;
+                max-width: 600px;
+                margin: 30px auto;
+                padding: 20px;
+                background-color: #fff;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+            .header {
+                background-color: #ff4c4c;
+                color: white;
+                padding: 10px;
+                text-align: center;
+                border-radius: 8px 8px 0 0;
+            }
+            .header h1 {
+                margin: 0;
+                font-size: 24px;
+            }
+            .content {
+                padding: 20px;
+                font-size: 16px;
+            }
+            .content p {
+                margin: 10px 0;
+            }
+            .error-details {
+                background-color: #f9f9f9;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+            }
+            .footer {
+                text-align: center;
+                font-size: 14px;
+                color: #888;
+                margin-top: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <div class='header'>
+                <h1>Server Error Notification</h1>
+            </div>
+            <div class='content'>
+                <p><strong>Dear Admin,</strong></p>
+                <p>
+                    We encountered an unexpected issue on the server. A
+                    <strong>500 Internal Server Error</strong>
+                    has occurred. Below are the details:
+                </p>
+
+                <div class='error-details'>
+                    <p><strong>Error Timestamp:</strong> {{errorTimestamp}}</p>
+                    <p><strong>Error Message:</strong> {{errorMessage}}</p>
+                    <p><strong>Request URL:</strong> {{requestUrl}}</p>
+                    <p><strong>From IP:</strong> {{ip}}</p>
+                    <p><strong>HTTP Status Code:</strong> 500</p>
+                </div>
+
+                <p>
+                    Please take the necessary actions to investigate and resolve
+                    the issue as soon as possible.
+                </p>
+
+                <p>
+                    If you need further details or assistance, don't hesitate to
+                    contact the
+                    <strong>PeopleGem</strong>
+                    development team.
+                </p>
+            </div>
+
+            <!-- Footer -->
+            <div
+                class='footer'
+                style='text-align:center; padding: 32px; margin:0 auto; max-width:600px; border-top:1px solid #00000029;'
+            >
+                <p
+                    style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0; font-weight: 500;'
+                >
+                    This is an automated alert from the
+                    <strong>PeopleGem Server</strong>. Please do not reply to
+                    this email.
+                </p>
+                <p
+                    style='font-size: 14px; font-family: Poppins, sans-serif; margin: 20px 0; font-weight: 500;'
+                >
+                    Thank you,<br />
+                    <strong>PeopleGem DevOps Team</strong>
+                </p>
+                <p style='font-size: 12px; margin: 0; color: #aaa;'>
+                    &copy; 2025 PeopleGem — https://app.peoplegem.io/
+                </p>
+            </div>
+        </div>
+    </body>
+</html>

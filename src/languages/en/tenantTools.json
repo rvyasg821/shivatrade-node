@@ -1,0 +1,9 @@
+{
+    "list": " Tenant Tool Settings list retrieved successfully.",
+    "activeList": " Tenant Tool Settings active list retrieved successfully.",
+    "get": " Tenant Tool Settings retrieved successfully.",
+    "create": " Tenant Tool Settings created successfully.",
+    "update": " Tenant Tool Settings updated successfully.",
+    "delete": " Tenant Tool Settings deleted successfully.",
+    "testSettings": " Tenant Tool Settings tested successfully."
+}

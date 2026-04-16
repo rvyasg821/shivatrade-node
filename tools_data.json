@@ -1,0 +1,163 @@
+[
+    {
+        "tool_id": "68e8ed79dc120e3188a91699",
+        "name": "wazuh",
+        "description": "Wazuh is an open-source security platform for threat prevention, detection, and response.",
+        "status": 1,
+        "slug": "wazuh",
+        "soft_delete": false,
+        "deleted": false,
+        "settings": [
+            {
+                "setting_id": "671043f1b25f1e001a4b0001",
+                "name": "Wazuh Tool",
+                "description": "Wazuh Tool Data fetching",
+                "type": "wazuh-tool",
+                "value": "",
+                "toolType": "Security Scanner",
+                "slug": "wazuh-tool",
+                "ipAddressOrUrl": "192.168.1.100",
+                "port": "",
+                "username": "",
+                "password": "",
+                "soft_delete": false,
+                "deleted": false,
+                "cron_schedules": [
+                    {
+                        "cron_id": "671043f1b25f1e001a4b0006",
+                        "name": "Wazuh tool agents",
+                        "expression": "30 * * * *",
+                        "timezone": "UTC",
+                        "type": "wazuh-tool-agents",
+                        "active": true,
+                        "soft_delete": false,
+                        "deleted": false
+                    },
+                    {
+                        "cron_id": "671043f1b25f1e001a4b0003",
+                        "name": "Wazuh Tool Configuration Assessment",
+                        "expression": "0 0,12 * * *",
+                        "timezone": "UTC",
+                        "type": "wazuh-tool-configuration-assessment",
+                        "active": true,
+                        "soft_delete": false,
+                        "deleted": false
+                    }
+                ]
+            },
+            {
+                "setting_id": "671043f1b25f1e001a4b0004",
+                "name": "Wazuh Indexer",
+                "description": "Fetch wazuh indexer severity data",
+                "type": "wazuh-indexer",
+                "value": "",
+                "toolType": "Log Management",
+                "slug": "wazuh-indexer",
+                "ipAddressOrUrl": "192.168.1.100",
+                "port": "",
+                "username": "",
+                "password": "",
+                "soft_delete": false,
+                "deleted": false,
+                "cron_schedules": [
+                    {
+                        "cron_id": "671043f1b25f1e001a4b0008",
+                        "name": "Wazuh Indexer Severity",
+                        "expression": "0 * * * *",
+                        "timezone": "UTC",
+                        "type": "wazuh-indexer-severity",
+                        "active": true,
+                        "soft_delete": false,
+                        "deleted": false
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "tool_id": "68e8ee9a2e5f8a175f35c4bb",
+        "name": "openvas",
+        "description": "OpenVAS is an open-source vulnerability scanner that provides a comprehensive scanning solution.",
+        "status": 1,
+        "slug": "openvas",
+        "soft_delete": false,
+        "deleted": false,
+        "settings": []
+    },
+    {
+        "tool_id": "68e8eed12e5f8a175f35c4bf",
+        "name": "Helpdesk Support Ticket",
+        "description": "Helpdesk Support Ticket is a tool for managing and tracking support requests.",
+        "status": 1,
+        "slug": "helpdesk-support-ticket",
+        "soft_delete": false,
+        "deleted": false,
+        "settings": [
+            {
+                "setting_id": "671043f1b25f1e001a4b0012",
+                "name": "Helpdesk Support Ticket",
+                "description": "Helpdesk Support Tickets",
+                "type": "helpdesk-support-ticket",
+                "value": "custom",
+                "toolType": "Helpdesk System",
+                "slug": "helpdesk-support-ticket",
+                "ipAddressOrUrl": "helpdesk.company.com",
+                "port": "",
+                "username": "",
+                "password": "",
+                "soft_delete": false,
+                "deleted": false,
+                "cron_schedules": [
+                    {
+                        "cron_id": "671043f1b25f1e001a4b0013",
+                        "name": "Helpdesk Support Ticket",
+                        "expression": "0 * * * *",
+                        "timezone": "UTC",
+                        "type": "helpdesk-support-ticket",
+                        "active": true,
+                        "soft_delete": false,
+                        "deleted": false
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "tool_id": "68e8ef342e5f8a175f35c4c3",
+        "name": "Netswitch Threat Intel",
+        "description": "Netswitch Threat Intel provides real-time threat intelligence and network visibility.",
+        "status": 1,
+        "slug": "netswitch-threat-intel",
+        "soft_delete": false,
+        "deleted": false,
+        "settings": [
+            {
+                "setting_id": "671043f1b25f1e001a4b0016",
+                "name": "Netswitch Threat Intel Text File",
+                "description": "Netswitch Threat Intel Text File data fetching cron.",
+                "type": "netswitch-threat-intel-txt-file",
+                "value": "custom",
+                "toolType": "Threat Intelligence",
+                "slug": "netswitch-threat-intel-txt-file",
+                "ipAddressOrUrl": "threat-intel.netswitch.com",
+                "port": "",
+                "username": "",
+                "password": "",
+                "soft_delete": false,
+                "deleted": false,
+                "cron_schedules": [
+                    {
+                        "cron_id": "671043f1b25f1e001a4b0017",
+                        "name": "Netswitch Threat Intel Text File",
+                        "expression": "0 1 * * *",
+                        "timezone": "UTC",
+                        "type": "netswitch-threat-intel-txt-file",
+                        "active": true,
+                        "soft_delete": false,
+                        "deleted": false
+                    }
+                ]
+            }
+        ]
+    }
+]

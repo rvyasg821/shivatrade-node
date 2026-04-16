@@ -1,0 +1,42 @@
+diff --git a/node_modules/nestjs-command/dist/command.service.js b/node_modules/nestjs-command/dist/command.service.js
+index e101e1e..38402fd 100644
+--- a/node_modules/nestjs-command/dist/command.service.js
++++ b/node_modules/nestjs-command/dist/command.service.js
+@@ -10,12 +10,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.CommandService = void 0;
+-const yargs_1 = __importDefault(require("yargs"));
++const yargs_1 = __importDefault(require("yargs")).default();
+ const helpers_1 = require("yargs/helpers");
+ const common_1 = require("@nestjs/common");
+ let CommandService = class CommandService {
+     initialize(metadatas) {
+-        yargs_1.default
++        yargs_1
+             .scriptName('cli')
+             .demandCommand(1)
+             .help('h')
+@@ -23,17 +23,17 @@ let CommandService = class CommandService {
+             .alias('v', 'version')
+             .strict();
+         metadatas.forEach(command => {
+-            yargs_1.default.command(command);
++            yargs_1.command(command);
+         });
+     }
+     exec(args = (0, helpers_1.hideBin)(process.argv)) {
+-        if ('parseAsync' in yargs_1.default
+-            && typeof yargs_1.default.parseAsync === 'function') {
+-            return yargs_1.default.parseAsync(args);
++        if ('parseAsync' in yargs_1
++            && typeof yargs_1.parseAsync === 'function') {
++            return yargs_1.parseAsync(args);
+         }
+         return new Promise((resolve, reject) => {
+             try {
+-                yargs_1.default
++                yargs_1
+                     .onFinishCommand(resolve)
+                     .parse(args);
+             }

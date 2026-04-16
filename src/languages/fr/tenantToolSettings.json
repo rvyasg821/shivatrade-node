@@ -1,0 +1,15 @@
+{
+    "list": "Liste des paramètres d'outils de locataire récupérée avec succès.",
+    "byTool": "Paramètres d'outils de locataire par outil récupérés avec succès.",
+    "get": "Détails du paramètre d'outil de locataire récupérés avec succès.",
+    "create": "Paramètre d'outil de locataire créé avec succès.",
+    "update": "Paramètre d'outil de locataire mis à jour avec succès.",
+    "activate": "Paramètre d'outil de locataire activé avec succès.",
+    "deactivate": "Paramètre d'outil de locataire désactivé avec succès.",
+    "updateValue": "Valeur du paramètre d'outil de locataire mise à jour avec succès.",
+    "updateToolConfig": "Configuration de l'outil du paramètre d'outil de locataire mise à jour avec succès.",
+    "byToolType": "Paramètres d'outils de locataire par type d'outil récupérés avec succès.",
+    "byIpAddress": "Paramètres d'outils de locataire par adresse IP récupérés avec succès.",
+    "delete": "Paramètre d'outil de locataire supprimé avec succès.",
+    "deleteByTool": "Paramètres d'outils de locataire par outil supprimés avec succès."
+}

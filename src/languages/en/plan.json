@@ -1,0 +1,23 @@
+{
+    "list": " Plan list retrieved successfully.",
+    "get": " Plan retrieved successfully.",
+    "create": " Plan created successfully.",
+    "update": " Plan updated successfully.",
+    "updateStatus": " Plan status updated successfully.",
+    "setDefault": " Plan set as default successfully.",
+    "updateDisplayOrder": " Plan display order updated successfully.",
+    "delete": " Plan deleted successfully.",
+    "analytics": " Plan analytics retrieved successfully.",
+    "public": {
+        "list": " Plan public list retrieved successfully.",
+        "get": " Plan public retrieved successfully.",
+        "active": " Plan public active retrieved successfully.",
+        "default": " Plan public default retrieved successfully.",
+        "compare": " Plan public compare retrieved successfully.",
+        "pricing": " Plan public pricing retrieved successfully."
+    },
+    "active": " Plan active retrieved successfully.",
+    "short": " Plan short retrieved successfully.",
+    "default": " Plan default retrieved successfully.",
+    "compare": " Plan compare retrieved successfully."
+}

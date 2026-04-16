@@ -1,0 +1,12 @@
+{
+    "list": " Payment list retrieved successfully.",
+    "get": " Payment retrieved successfully.",
+    "create": " Payment created successfully.",
+    "updateStatus": " Payment status updated successfully.",
+    "analytics": " Payment analytics retrieved successfully.",
+    "delete": " Payment deleted successfully.",
+    "myPaymentsList": " My payments list retrieved successfully.",
+    "myPayments": " My payments retrieved successfully.",
+    "paypalCardPayment": "payment processed successfully.",
+    "confirmRedirectPaypalPayment": "Payment confirmation successful."
+}

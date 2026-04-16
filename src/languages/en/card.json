@@ -1,0 +1,11 @@
+{
+    "list": " Cards list retrieved successfully.",
+    "get": " Card details retrieved successfully.",
+    "create": " Card created successfully.",
+    "update": " Card updated successfully.",
+    "delete": " Card deleted successfully.",
+    "myCards": " My Card deleted successfully.",
+    "myActiveCards": " My Card deleted successfully.",
+    "myDefaultCard": " My Card deleted successfully.",
+    "setDefault": " My Card deleted successfully."
+}

@@ -1,0 +1,50 @@
+import { ENUM_WIDGET_STATUS, ENUM_WIDGET_TOOL_SLUG, ENUM_WIDGET_SLUG } from '../enums/widget.enum';
+
+export const WIDGET_DEFAULT_STATUS = ENUM_WIDGET_STATUS.ACTIVE;
+export const WIDGET_DEFAULT_VISIBILITY = true;
+export const WIDGET_DEFAULT_SOFT_DELETE = false;
+
+// export const WIDGET_VALIDATION_RULES = {
+//     ORDER: {
+//         MIN: 1,
+//         MAX: 100,
+//     },
+//     SLUG: {
+//         MIN_LENGTH: 3,
+//         MAX_LENGTH: 50,
+//     },
+//     USER_ID: {
+//         REQUIRED: true,
+//     },
+//     TOOL_SLUG: {
+//         REQUIRED: true,
+//         ALLOWED_VALUES: Object.values(ENUM_WIDGET_TOOL_SLUG),
+//     },
+// };
+
+// export const WIDGET_ALLOWED_SLUGS = Object.values(ENUM_WIDGET_SLUG);
+
+// export const WIDGET_TOOL_MAPPING = {
+//     [ENUM_WIDGET_TOOL_SLUG.WAZUH]: [
+//         ENUM_WIDGET_SLUG.SIEM_INCIDENT_TRENDING,
+//         ENUM_WIDGET_SLUG.CONFIGURATION_ASSESSMENT,
+//         ENUM_WIDGET_SLUG.CRITICAL_INCIDENT_BY_TYPE,
+//         ENUM_WIDGET_SLUG.AGENT_SUMMARY,
+//     ],
+//     [ENUM_WIDGET_TOOL_SLUG.HELPDESK]: [
+//         ENUM_WIDGET_SLUG.REQUEST_CLOSED_21_DAYS,
+//         ENUM_WIDGET_SLUG.REQUEST_RECEIVED_21_DAYS,
+//         ENUM_WIDGET_SLUG.UNASSIGNED_OPEN_REQUEST,
+//         ENUM_WIDGET_SLUG.SLA_VIOLATED_REQUEST,
+//         ENUM_WIDGET_SLUG.REQUEST_SUMMARY,
+//     ],
+//     [ENUM_WIDGET_TOOL_SLUG.THREAT_INTEL]: [
+//         ENUM_WIDGET_SLUG.THREAT_INTEL,
+//     ],
+//     [ENUM_WIDGET_TOOL_SLUG.OPENVAS]: [
+//         ENUM_WIDGET_SLUG.VULNERABILITIES_TRENDING,
+//     ],
+// };
+
+export const WIDGET_DEFAULT_ORDER_START = 1;
+export const WIDGET_ORDER_INCREMENT = 1;

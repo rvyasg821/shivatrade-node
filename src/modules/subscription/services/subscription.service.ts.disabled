@@ -1,0 +1,1431 @@
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { plainToInstance } from 'class-transformer';
+import { Document, Types } from 'mongoose';
+import {
+    IDatabaseCreateOptions,
+    IDatabaseDeleteManyOptions,
+    IDatabaseExistsOptions,
+    IDatabaseFindAllOptions,
+    IDatabaseFindOneOptions,
+    IDatabaseGetTotalOptions,
+    IDatabaseSaveOptions,
+} from '@common/database/interfaces/database.interface';
+import { ISubscriptionEntity } from '../interfaces/subscription.interface';
+import { SubscriptionRepository } from '../repository/repositories/subscription.repository';
+import { SubscriptionDoc, SubscriptionEntity } from '../repository/entities/subscription.entity';
+import { UserRepository } from '@modules/user/repository/repositories/user.repository';
+import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { PlanService } from '@modules/plan/services/plan.service';
+import { SubscriptionCreateRequestDto } from '../dtos/request/subscription.create.request.dto';
+import { SubscriptionUpdateRequestDto } from '../dtos/request/subscription.update.request.dto';
+import { SubscriptionListResponseDto } from '../dtos/response/subscription.list.response.dto';
+import { SubscriptionGetResponseDto } from '../dtos/response/subscription.get.response.dto';
+import {
+    SubscriptionNotFoundException,
+    SubscriptionAlreadyExistsException,
+    InvalidToolsPlanCombinationException,
+} from '../exceptions/subscription.exception';
+import { ISubscriptionService } from '../interfaces/subscription.service.interface';
+import { ToolProvisioningService } from './tool-provisioning.service';
+import { SubscriptionCleanupService } from './subscription-cleanup.service';
+import { SubscriptionToolRestorationService } from './subscription-tool-restoration.service';
+import { ConfigService } from '@nestjs/config';
+import { ToolsService } from '@modules/tools/services/tools.service';
+import { PaymentService } from '@modules/payment/services/payment.service';
+import { DiscountService } from '@modules/discount/services/discount.service';
+@Injectable()
+export class SubscriptionService implements ISubscriptionService {
+    private readonly logger = new Logger(SubscriptionService.name);
+    private readonly CACHE_TTL = 300; // 5 minutes
+    private readonly CACHE_KEYS = {
+        ACTIVE_SUBSCRIPTIONS: 'subscriptions:active',
+        SUBSCRIPTION_BY_ID: (id: string) => `subscriptions:id:${id}`,
+        SUBSCRIPTION_BY_USER: (userId: string) => `subscriptions:user:${userId}`,
+        SUBSCRIPTIONS_BY_PLAN: (planId: string) => `subscriptions:plan:${planId}`,
+    };
+
+    constructor(
+        private readonly subscriptionRepository: SubscriptionRepository,
+        private readonly userRepository: UserRepository,
+        private readonly companyRepository: CompanyRepository,
+        private readonly planService: PlanService,
+        private readonly toolProvisioningService: ToolProvisioningService,
+        private readonly subscriptionCleanupService: SubscriptionCleanupService,
+        private readonly subscriptionToolRestorationService: SubscriptionToolRestorationService,private readonly configService: ConfigService,
+        @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+        private readonly toolsService: ToolsService,
+        private readonly discountService: DiscountService,// private readonly paymentService: PaymentService,
+    ) { }
+
+    convertToObjectId(id: string): Types.ObjectId {
+        return new Types.ObjectId(id);
+    }
+
+    private async getCompanyByUserId(userId: string) {
+        return await this.companyRepository.findOne({ user_id: new Types.ObjectId(userId) });
+    }
+
+    async findAll(
+        find?: Record<string, any>,
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        const filters = {
+            ...find,
+            soft_delete: false,
+        };
+        return this.subscriptionRepository.findAll<SubscriptionDoc>(filters, options);
+    }
+
+    async findAllWithJoins(
+        find?: Record<string, any>,
+        options?: IDatabaseFindAllOptions
+    ): Promise<any[]> {
+        return this.subscriptionRepository.findAllWithJoins(find, options);
+    }
+
+    async findOneWithJoins(_id: string): Promise<any> {
+        return (this.subscriptionRepository as any).findOneWithJoins(_id);
+    }
+
+    async findAllActive(
+        find?: Record<string, any>,
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findAllByStatus(true, options);
+    }
+
+    async findAllActiveTodaysNextBillingDate(): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findAllActiveTodaysNextBillingDate();
+    }
+    async getTotal(
+        find?: Record<string, any>,
+        options?: IDatabaseGetTotalOptions
+    ): Promise<number> {
+        const filters = {
+            ...find,
+            soft_delete: false,
+        };
+        return this.subscriptionRepository.getTotal(filters, options);
+    }
+
+    async findOneById(
+        _id: string,
+        options?: IDatabaseFindOneOptions
+    ): Promise<SubscriptionDoc> {
+        const cacheKey = this.CACHE_KEYS.SUBSCRIPTION_BY_ID(_id);
+
+        if (!options) {
+            const cached = await this.cacheManager.get<SubscriptionDoc>(cacheKey);
+            if (cached) {
+                return cached;
+            }
+        }
+
+        const subscription = await this.subscriptionRepository.findOneById<SubscriptionDoc>(_id, options);
+
+        if (!options && subscription) {
+            await this.cacheManager.set(cacheKey, subscription, this.CACHE_TTL);
+        }
+
+        return subscription;
+    }
+
+    async deactivateSubscriptionsByCompanyId(
+        companyId: string
+    ): Promise<any> {
+        try {
+            if (!Types.ObjectId.isValid(companyId)) {
+                throw new Error('Invalid company ID');
+            }
+
+            const result = await this.subscriptionRepository.updateMany(
+                { company_id: new Types.ObjectId(companyId) },
+                { status: false, cancelledAt: new Date() },
+                { upsert: true }
+            );
+            return result;
+        } catch (error) {
+            throw new Error('Failed to deactivate subscriptions');
+        }
+    }
+
+    async findOne(
+        find: Record<string, any>,
+        options?: IDatabaseFindOneOptions
+    ): Promise<SubscriptionDoc> {
+        return this.subscriptionRepository.findOne<SubscriptionDoc>(find, options);
+    }
+
+    async findByUserId(
+        userId: string,
+        options?: IDatabaseFindOneOptions
+    ): Promise<SubscriptionDoc> {
+        const cacheKey = this.CACHE_KEYS.SUBSCRIPTION_BY_USER(userId);
+
+        if (!options) {
+            const cached = await this.cacheManager.get<SubscriptionDoc>(cacheKey);
+            if (cached) {
+                return cached;
+            }
+        }
+
+        const subscription = await this.subscriptionRepository.findByUserId(userId, options);
+
+        if (!options && subscription) {
+            await this.cacheManager.set(cacheKey, subscription, this.CACHE_TTL);
+        }
+
+        return subscription;
+    }
+
+    async findActiveByUserId(
+        userId: string,
+        options?: IDatabaseFindOneOptions
+    ): Promise<SubscriptionDoc> {
+        return this.subscriptionRepository.findActiveByUserId(userId, { ...options, join: true });
+    }
+    async findAllActiveByUserId(
+        userId: string,
+        options?: IDatabaseFindOneOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findAllActiveByUserId(userId, { ...options, join: true });
+    }
+
+    async existByUserId(
+        userId: string,
+        options?: IDatabaseExistsOptions
+    ): Promise<boolean> {
+        return this.subscriptionRepository.exists(
+            { user_id: new Types.ObjectId(userId), soft_delete: false },
+            options
+        );
+    }
+
+    async create(
+        data: SubscriptionCreateRequestDto,
+        options?: IDatabaseCreateOptions
+    ): Promise<SubscriptionDoc> {
+        // Validate tools and plan relationship
+        this.validateToolsAndPlan(data.tools || [], data.plan_id);
+
+        // Fetch and validate tools through ToolProvisioningService
+        const validatedTools = await this.toolProvisioningService.fetchAndValidateTools(data.tools || []);
+
+        // Get company information - either from provided company_id or derive from user
+        let companyId: string;
+        let referalCode: string;
+        let agentId: string;
+        let agentCommission: number = 0;
+        if (data.company_id) {
+            companyId = data.company_id;
+        } else {
+            const company = await this.getCompanyByUserId(data.user_id);
+            if (!company) {
+                throw new Error(`No company found for user ${data.user_id}`);
+            }
+            companyId = company._id.toString();
+            referalCode = company.referal_code;
+            agentId = company?.agent_id?.toString();
+            agentCommission = company?.agent_commission ?? 0;
+            if (!agentCommission) {
+                const agent = await this.userRepository.findOneUserById(agentId);
+                if (agent) {
+                    agentCommission = agent.commission;
+                } else {
+                    agentCommission = 0;
+                }
+            }
+        }
+
+        // Handle discount code if provided
+        let discountId: string | null = null;
+        let discountCode: string | null = data.discount_code || null;
+        let discountPrice: number = data.discount_price || 0;
+        let finalPrice = data.final_price || 0;
+        let taxValue = data.tax_value || 0;
+
+        if (data.discount_code && data.discount_code.trim() !== '') {
+            try {
+                this.logger.log(`Processing discount code for subscription: ${data.discount_code}`);
+
+                const discountResult = await this.applyDiscountToSubscription(
+                    data.discount_code,
+                    data.total_price,
+                    data.user_id,
+                    companyId
+                );
+
+                discountId = discountResult.discount_id;
+                discountCode = discountResult.discount_code;
+                discountPrice = discountResult.discount_price;
+                finalPrice = discountResult.final_price;
+
+                this.logger.log(
+                    `Discount applied to subscription: discount_price=${discountPrice}, ` +
+                    `final_price=${finalPrice}`
+                );
+            } catch (error) {
+                this.logger.error(`Failed to apply discount code: ${error.message}`);
+            }
+        }
+
+        const create: SubscriptionEntity = new SubscriptionEntity();
+        create.user_id = new Types.ObjectId(data.user_id);
+        create.company_id = new Types.ObjectId(companyId);
+        create.plan_id = new Types.ObjectId(data.plan_id);
+        create.plan_type = data.plan_type || '';
+        create.plan_type_value = data.plan_type_value || 0;
+        create.platform_price = data.platform_price;
+        create.tools_price = data.tools_price;
+        create.total_price = data.total_price;
+        create.final_price = finalPrice || data.final_price;
+        create.tax_value = taxValue || data.tax_value;
+        create.recurring = data.recurring || false;
+        create.start_date = data.start_date || new Date();
+        create.next_date = data.next_date;
+        create.end_date = data.end_date;
+        create.hold = data.hold || false;
+        create.trial = data.trial || false;
+        create.is_default = data.is_default || false;
+        create.status = data.status !== undefined ? data.status : true;
+        create.is_lifetime = data.is_lifetime || false;
+        create.tools = validatedTools.map(tool => ({
+            _id: new Types.ObjectId(tool._id),
+            name: tool.name,
+            slug: tool.slug,
+            price: tool.originalPrice,
+            is_mandatory: tool.is_mandatory || false
+        }));
+        create.soft_delete = false;
+        create.provisioningStatus = 'pending';
+
+        if (referalCode) create.referal_code = referalCode;
+        if (agentId) create.agent_id = new Types.ObjectId(agentId);
+        if (agentCommission) create.commission = agentCommission;
+
+        // Add discount information if discount was applied
+        if (discountId) create.discount_id = new Types.ObjectId(discountId);
+        if (discountCode) create.discount_code = discountCode;
+        if (discountPrice > 0) create.discount_price = discountPrice;
+
+        const result = await this.subscriptionRepository.create<SubscriptionEntity>(create, options);
+
+        // Update User and Company Subscription Status if active (Fixes Trial Plan Stuck Issue)
+        if (result && result.status) {
+            try {
+                // Update User
+                await this.userRepository.updateRaw(
+                    { _id: new Types.ObjectId(data.user_id) },
+                    { is_subscribe: true, subscription_id: result._id }
+                );
+
+                // Update Company
+                if (companyId) {
+                    await this.companyRepository.updateRaw(
+                        { _id: new Types.ObjectId(companyId) },
+                        { is_subscribe: true }
+                    );
+                }
+            } catch (error) {
+                this.logger.error(`Failed to update user/company subscription status: ${error.message}`);
+            }
+        }
+
+        try {
+            await this.subscriptionRepository.DeactivateExceptIdByUserId(data.user_id, result?._id.toString());
+        } catch (error) { }
+
+        await this.invalidateCache(data.user_id, result._id.toString());
+        return result;
+    }
+
+    async update(
+        repository: SubscriptionDoc,
+        updateDto: SubscriptionUpdateRequestDto,
+        options?: IDatabaseSaveOptions
+    ): Promise<SubscriptionDoc> {
+        // If tools are being updated, validate the business rule
+        if (updateDto.tools !== undefined) {
+            this.validateToolsAndPlan(updateDto.tools, updateDto.plan_id || repository.plan_id.toString());
+        }
+
+        if (updateDto.plan_id !== undefined) repository.plan_id = new Types.ObjectId(updateDto.plan_id);
+        if (updateDto.company_id !== undefined) repository.company_id = new Types.ObjectId(updateDto.company_id);
+        if (updateDto.plan_type !== undefined) repository.plan_type = updateDto.plan_type;
+        if (updateDto.plan_type_value !== undefined) repository.plan_type_value = updateDto.plan_type_value;
+        if (updateDto.platform_price !== undefined) repository.platform_price = updateDto.platform_price;
+        if (updateDto.tools_price !== undefined) repository.tools_price = updateDto.tools_price;
+        if (updateDto.total_price !== undefined) repository.total_price = updateDto.total_price;
+        if (updateDto.final_price !== undefined) repository.final_price = updateDto.final_price;
+        if (updateDto.tax_value !== undefined) repository.tax_value = updateDto.tax_value;
+        if (updateDto.recurring !== undefined) repository.recurring = updateDto.recurring;
+        if (updateDto.start_date !== undefined) repository.start_date = updateDto.start_date;
+        if (updateDto.next_date !== undefined) repository.next_date = updateDto.next_date;
+        if (updateDto.end_date !== undefined) repository.end_date = updateDto.end_date;
+        if (updateDto.hold !== undefined) repository.hold = updateDto.hold;
+        if (updateDto.trial !== undefined) repository.trial = updateDto.trial;
+        if (updateDto.is_default !== undefined) repository.is_default = updateDto.is_default;
+        if (updateDto.status !== undefined) repository.status = updateDto.status;
+        if (updateDto.is_lifetime !== undefined) repository.is_lifetime = updateDto.is_lifetime;
+
+        if (updateDto.tools !== undefined) {
+            // Handle tool changes - provision new tools and remove old ones
+            await this.handleToolChanges(repository, updateDto.tools);
+
+            // Validate and fetch all tools (existing + new) to update the repository.tools array
+            const validatedTools = await this.toolProvisioningService.fetchAndValidateTools(updateDto.tools);
+            repository.tools = validatedTools.map(tool => ({
+                _id: new Types.ObjectId(tool._id),
+                name: tool.name,
+                slug: tool.slug,
+                price: tool.originalPrice,
+                is_mandatory: tool.is_mandatory || false
+            }));
+        }
+
+        // If status is being set to true (activating subscription), update company record
+        if (updateDto.status === true) {
+            await this.companyRepository.updateRaw(
+                { _id: repository.company_id },
+                {
+                    is_subscribe: true,
+                }
+            );
+
+            // Trigger tool restoration when subscription becomes active
+            try {
+                this.logger.log(`Triggering tool restoration for activated subscription: ${repository._id}`);
+                const restorationResult = await this.subscriptionToolRestorationService.restoreSubscriptionToolsWithMetrics(
+                    repository._id.toString(),
+                    'subscription_activation'
+                );
+                this.logger.log(`Tool restoration completed for subscription ${repository._id}: ${restorationResult.message}`);
+            } catch (error) {
+                this.logger.error(`Failed to execute tool restoration for subscription ${repository._id}: ${error.message}`);
+            }
+        } else if (updateDto.status === false) {
+            await this.companyRepository.updateRaw(
+                { _id: repository.company_id },
+                {
+                    is_subscribe: false,
+                }
+            );
+
+            // Set subscribed status to false for user
+            await this.userRepository.updateRaw(
+                { _id: repository.user_id },
+                {
+                    is_subscribed: false,
+                }
+            );
+
+            // Check and execute cleanup
+            try {
+                const cleanupResult = await this.subscriptionCleanupService.checkAndExecuteCleanupWithMetrics(
+                    repository._id.toString(),
+                    repository.company_id.toString(),
+                    'subscription_update'
+                );
+                this.logger.log(`Cleanup check completed for subscription update ${repository._id}: ${cleanupResult.message}`);
+            } catch (error) {
+                this.logger.error(`Failed to execute cleanup check for subscription update ${repository._id}: ${error.message}`);
+            }
+        }
+
+        const updated = await this.subscriptionRepository.save(repository, options);
+        await this.invalidateCache(updated.user_id.toString(), updated._id.toString());
+        return updated;
+    }
+
+    async updateStatus(
+        repository: SubscriptionDoc,
+        status: boolean,
+        options?: IDatabaseSaveOptions
+    ): Promise<SubscriptionDoc> {
+        repository.status = status;
+        if (!status) {
+            repository.cancelledAt = new Date();
+
+            // Update company record to clear subscription status when subscription is cancelled
+            await this.companyRepository.updateRaw(
+                { _id: repository.company_id },
+                {
+                    is_subscribe: false,
+                }
+            );
+
+            // Check and execute cleanup if both conditions are met
+            try {
+                const cleanupResult = await this.subscriptionCleanupService.checkAndExecuteCleanupWithMetrics(
+                    repository._id.toString(),
+                    repository.company_id.toString(),
+                    'subscription_status_change'
+                );
+                this.logger.log(`Cleanup check completed for subscription ${repository._id}: ${cleanupResult.message}`);
+            } catch (error) {
+                this.logger.error(`Failed to execute cleanup check for subscription ${repository._id}: ${error.message}`);
+                // Continue with subscription cancellation even if cleanup fails
+            }
+        } else {
+            // Status is being set to true (activating subscription)
+            // Update company record to set subscription status when subscription is activated
+            await this.companyRepository.updateRaw(
+                { _id: repository.company_id },
+                {
+                    is_subscribe: true,
+                }
+            );
+
+            // Trigger tool restoration when subscription becomes active
+            try {
+                this.logger.log(`Triggering tool restoration for activated subscription: ${repository._id}`);
+                const restorationResult = await this.subscriptionToolRestorationService.restoreSubscriptionToolsWithMetrics(
+                    repository._id.toString(),
+                    'subscription_activation'
+                );
+                this.logger.log(`Tool restoration completed for subscription ${repository._id}: ${restorationResult.message}`);
+            } catch (error) {
+                this.logger.error(`Failed to execute tool restoration for subscription ${repository._id}: ${error.message}`);
+                // Continue with subscription activation even if restoration fails
+            }
+        }
+        const result = await this.subscriptionRepository.save(repository, options);
+        await this.invalidateCache(repository.user_id.toString(), repository._id.toString());
+        return result;
+    }
+
+    async softDelete(
+        repository: SubscriptionDoc,
+        options?: IDatabaseSaveOptions
+
+    ): Promise<SubscriptionDoc> {
+        repository.soft_delete = true;
+        repository.status = false;
+        repository.cancelledAt = new Date();
+
+        // Update company record to clear subscription status when subscription is deleted
+        await this.companyRepository.updateRaw(
+            { _id: repository.company_id },
+            {
+                is_subscribe: false,
+            }
+        );
+
+        // Check and execute cleanup if both conditions are met
+        try {
+            const cleanupResult = await this.subscriptionCleanupService.checkAndExecuteCleanupWithMetrics(
+                repository._id.toString(),
+                repository.company_id.toString(),
+                'subscription_status_change'
+            );
+            this.logger.log(`Cleanup check completed for deleted subscription ${repository._id}: ${cleanupResult.message}`);
+        } catch (error) {
+            this.logger.error(`Failed to execute cleanup check for deleted subscription ${repository._id}: ${error.message}`);
+            // Continue with subscription deletion even if cleanup fails
+        }
+
+        const result = await this.subscriptionRepository.save(repository, options);
+        await this.invalidateCache(repository.user_id.toString(), repository._id.toString());
+        return result;
+    }
+
+    async deleteMany(
+        find: Record<string, any>,
+        options?: IDatabaseDeleteManyOptions
+    ): Promise<boolean> {
+        await this.subscriptionRepository.deleteMany(find, options);
+        return true;
+    }
+
+    async cancelSubscription(
+        userId: string,
+        options?: IDatabaseSaveOptions
+    ): Promise<SubscriptionDoc> {
+        const subscription = await this.findActiveByUserId(userId);
+        if (!subscription) {
+            throw new SubscriptionNotFoundException(userId);
+        }
+
+        return this.updateStatus(subscription, false, options);
+    }
+
+    async cancelAllCompanySubscriptions(companyId: string): Promise<{ cancelled: number }> {
+        // First, get all active subscriptions for the company to cleanup their tools
+        const activeSubscriptions = await this.subscriptionRepository.findAll({
+            company_id: new Types.ObjectId(companyId),
+            status: true,
+            soft_delete: false,
+        });
+
+        // Cleanup tenant tools for each subscription
+        for (const subscription of activeSubscriptions) {
+            try {
+                await this.toolProvisioningService.cleanupSubscriptionTools(
+                    subscription._id.toString(),
+                    companyId
+                );
+                this.logger.log(`Cleaned up tenant tools for subscription: ${subscription._id}`);
+            } catch (error) {
+                this.logger.error(`Failed to cleanup tenant tools for subscription ${subscription._id}: ${error.message}`);
+                // Continue with other subscriptions even if cleanup fails
+            }
+        }
+
+        // Update all active subscriptions to status false
+        const result = await this.subscriptionRepository.bulkUpdateSubscriptions(
+            {
+                company_id: new Types.ObjectId(companyId),
+                status: true,
+                soft_delete: false,
+            },
+            {
+                status: false,
+                cancelledAt: new Date(),
+            }
+        );
+
+        // Update company record to set is_subscribe to false
+        await this.companyRepository.updateRaw(
+            { _id: new Types.ObjectId(companyId) },
+            {
+                is_subscribe: false,
+            }
+        );
+
+        this.logger.log(`Cancelled ${result.modifiedCount} subscriptions for company ${companyId}`);
+
+        return {
+            cancelled: result.modifiedCount || 0,
+        };
+    }
+
+    async findByPlanId(
+        planId: string,
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findByPlanId(planId, options);
+    }
+
+    async findExpiringSoon(
+        days: number = 7,
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findExpiringSoon(days, options);
+    }
+
+    async countActiveSubscriptions(): Promise<number> {
+        return this.subscriptionRepository.countActiveSubscriptions();
+    }
+
+    async countByStatus(status: boolean): Promise<number> {
+        return this.subscriptionRepository.countByStatus(status);
+    }
+
+    async findTrialSubscriptions(
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findTrialSubscriptions(options);
+    }
+
+    async findLifetimeSubscriptions(
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findLifetimeSubscriptions(options);
+    }
+
+    async createTrialSubscriptionWithProvisioning(
+        userId: string,
+        planId: string,
+        trialDays: number = 7,
+        tools: Array<{ _id: string; name: string; price: number }> = [],
+        options?: IDatabaseCreateOptions
+    ): Promise<SubscriptionDoc> {
+        // Fetch plan details to get plan_type and duration
+        const plan = await this.planService.findOneById(planId);
+
+        if (!plan) {
+            throw new Error('Plan not found');
+        }
+
+        const startDate = new Date();
+        const endDate = new Date();
+        endDate.setDate(startDate.getDate() + trialDays);
+
+        // Calculate tools price for trial
+        const toolsPrice = tools.reduce((total, tool) => total + tool.price, 0);
+
+        let filteredTools: Array<{ _id: string; name: string; price: number, slug: string }> = []
+        try {
+            for (const tool of tools) {
+                const toolDoc = await this.toolsService.findOneById(tool._id?.toString());
+                if (toolDoc) {
+                    filteredTools.push({ ...tool, slug: toolDoc?.slug })
+                }
+            }
+        } catch (error) {
+            filteredTools = tools?.map((tool: { _id: string; name: string; price: number, slug: string }) => ({ ...tool, slug: tool.slug ?? tool.name })) ?? []
+        }
+
+        const end_date = plan?.is_lifetime ? null : endDate;
+        const next_date = plan?.is_lifetime === true ? null : undefined;
+        const is_lifetime = plan?.is_lifetime === true ? true : false;
+        const is_trial = plan?.is_lifetime === true ? false : true;
+
+        const trialData: SubscriptionCreateRequestDto = {
+            user_id: userId,
+            plan_id: planId,
+            plan_type: plan.duration_type,
+            plan_type_value: Number(plan.duration),
+            platform_price: 0,
+            tools_price: toolsPrice,
+            total_price: toolsPrice,
+            final_price: toolsPrice, // For trial, final price equals total price (no tax)
+            tax_value: 0,
+            trial: is_trial,
+            start_date: startDate,
+            end_date: end_date,
+            next_date: next_date,
+            is_lifetime: is_lifetime,
+            status: true,
+            recurring: false,
+            tools: filteredTools,
+        };
+
+        let createdSubscription: SubscriptionDoc;
+
+        try {
+            // Create the trial subscription
+            createdSubscription = await this.create(trialData, options);
+
+            this.logger.log(`Starting tool provisioning for trial subscription: ${createdSubscription._id.toString()}`);
+
+            // Update subscription status to provisioning
+            await this.updateSubscriptionProvisioningStatus(
+                createdSubscription._id.toString(),
+                'provisioning'
+            );
+
+            // Provision tools for the trial subscription
+            const provisioningResult = await this.toolProvisioningService.provisionToolsForSubscription(
+                createdSubscription
+            );
+
+            if (provisioningResult.status === 'success') {
+                // Update subscription status to provisioned
+                await this.updateSubscriptionProvisioningStatus(
+                    createdSubscription._id.toString(),
+                    'provisioned'
+                );
+                this.logger.log(`Tool provisioning completed successfully for trial subscription: ${createdSubscription._id.toString()}`);
+
+                return createdSubscription;
+            } else {
+                // Provisioning failed - update status and throw error
+                await this.updateSubscriptionProvisioningStatus(
+                    createdSubscription._id.toString(),
+                    'failed',
+                    provisioningResult.errors?.join(', ') || 'Unknown provisioning error'
+                );
+
+                const errorMessage = `Tool provisioning failed for trial subscription: ${provisioningResult.errors?.join(', ') || 'Unknown error'}`;
+                this.logger.error(errorMessage);
+                throw new Error(errorMessage);
+            }
+        } catch (error) {
+            this.logger.error(`Error during trial subscription creation with provisioning: ${error.message}`);
+
+            // If subscription was created but provisioning failed, update status
+            if (createdSubscription) {
+                await this.updateSubscriptionProvisioningStatus(
+                    createdSubscription._id.toString(),
+                    'failed',
+                    error.message || 'Tool provisioning failed'
+                );
+            }
+
+            // Re-throw the error to be handled by the caller
+            throw error;
+        }
+    }
+
+    async createTrialSubscription(
+        userId: string,
+        planId: string,
+        trialDays: number = 7,
+        tools: Array<{ _id: string; name: string; price: number }> = [],
+        options?: IDatabaseCreateOptions
+    ): Promise<SubscriptionDoc> {
+        return this.createTrialSubscriptionWithProvisioning(userId, planId, trialDays, tools, options);
+    }
+
+    async convertTrialToSubscription(
+        trialSubscriptionId: string,
+        paymentData: {
+            platform_price: number;
+            tools_price: number;
+            total_price: number;
+            final_price: number;
+            tax_value?: number;
+            recurring?: boolean;
+            tools?: any[];
+        },
+        options?: IDatabaseSaveOptions
+    ): Promise<SubscriptionDoc> {
+        const trialSubscription = await this.findOneById(trialSubscriptionId);
+        if (!trialSubscription) {
+            throw new SubscriptionNotFoundException(trialSubscriptionId);
+        }
+
+        if (!trialSubscription.trial) {
+            throw new Error('Subscription is not a trial subscription');
+        }
+
+        // Convert trial to paid subscription
+        trialSubscription.trial = false;
+        trialSubscription.platform_price = paymentData.platform_price;
+        trialSubscription.tools_price = paymentData.tools_price;
+        trialSubscription.total_price = paymentData.total_price;
+        trialSubscription.final_price = paymentData.final_price;
+        trialSubscription.tax_value = paymentData.tax_value || 0;
+        trialSubscription.recurring = paymentData.recurring || false;
+
+        // Preserve tools from trial if no new tools provided, otherwise use new tools
+        if (paymentData.tools && paymentData.tools.length > 0) {
+            trialSubscription.tools = paymentData.tools;
+        }
+        // If no tools provided in payment data, keep existing trial tools
+
+        // Set new end date based on plan duration (default to 1 month if not specified)
+        const newEndDate = new Date();
+        if (trialSubscription.plan_type_value && trialSubscription.plan_type_value > 0) {
+            // Use plan's duration type and value
+            if (trialSubscription.plan_type === 'MONTHLY') {
+                newEndDate.setMonth(newEndDate.getMonth() + trialSubscription.plan_type_value);
+            } else if (trialSubscription.plan_type === 'YEARLY') {
+                newEndDate.setFullYear(newEndDate.getFullYear() + trialSubscription.plan_type_value);
+            } else {
+                // Default to days if duration type is not recognized
+                newEndDate.setDate(newEndDate.getDate() + trialSubscription.plan_type_value);
+            }
+        } else {
+            // Default to 1 month
+            newEndDate.setMonth(newEndDate.getMonth() + 1);
+        }
+        trialSubscription.end_date = newEndDate;
+
+        return this.subscriptionRepository.save(trialSubscription, options);
+    }
+
+    async checkTrialExpiry(): Promise<SubscriptionDoc[]> {
+        const expiredTrials = await this.subscriptionRepository.findExpiredTrials();
+
+        for (const trial of expiredTrials) {
+            trial.status = false;
+            trial.cancelledAt = new Date();
+            await this.subscriptionRepository.save(trial);
+        }
+
+        return expiredTrials;
+    }
+
+    async isTrialEligible(userId: string): Promise<boolean> {
+        // Check if user has ever had a subscription (trial or paid)
+        const hasSubscription = await this.subscriptionRepository.exists({
+            user_id: new Types.ObjectId(userId),
+            soft_delete: false,
+        });
+
+        return !hasSubscription;
+    }
+
+    mapList(subscriptions: SubscriptionDoc[] | ISubscriptionEntity[]): SubscriptionListResponseDto[] {
+        return plainToInstance(
+            SubscriptionListResponseDto,
+            subscriptions.map((subscription: SubscriptionDoc | ISubscriptionEntity) =>
+                subscription instanceof Document ? subscription.toObject() : subscription
+            )
+        );
+    }
+
+    mapListWithJoins(subscriptions: any[]): SubscriptionListResponseDto[] {
+        return plainToInstance(
+            SubscriptionListResponseDto,
+            subscriptions.map((subscription: any) => ({
+                ...subscription,
+                user_id: subscription.user_id?.toString(),
+                company_id: subscription.company_id?.toString(),
+                plan_id: subscription.plan_id?.toString(),
+                user: subscription.user ? {
+                    _id: subscription.user._id?.toString(),
+                    name: subscription.user.name,
+                    email: subscription.user.email,
+                    status: subscription.user.status,
+                } : null,
+                plan: subscription.plan ? {
+                    _id: subscription.plan._id?.toString(),
+                    name: subscription.plan.name,
+                    description: subscription.plan.description,
+                    price: subscription.plan.price,
+                    status: subscription.plan.status,
+                } : null,
+                company: subscription.company ? {
+                    _id: subscription.company._id?.toString(),
+                    company_name: subscription.company.company_name,
+                    contact_name: subscription.company.contact_name,
+                    email: subscription.company.email,
+                } : null,
+            }))
+        );
+    }
+
+    mapGet(subscription: SubscriptionDoc | ISubscriptionEntity): SubscriptionGetResponseDto {
+        return plainToInstance(
+            SubscriptionGetResponseDto,
+            subscription instanceof Document ? subscription.toObject() : subscription
+        );
+    }
+
+    async mapGetWithJoins(subscription: any): Promise<SubscriptionGetResponseDto> {
+        // Get tax information from environment variables
+        const taxLabel = this.configService.get<string>('TAX_LABEL') || 'Tax';
+        const taxValue = this.configService.get<number>('TAX_VALUE') || 0;
+
+        // Update tool names with latest from tools entity
+        if (subscription.tools && Array.isArray(subscription.tools)) {
+            for (const tool of subscription.tools) {
+                if (tool._id) {
+                    try {
+                        const toolDoc = await this.toolsService.findOneById(tool._id.toString());
+                        if (toolDoc) {
+                            tool.name = toolDoc.name;
+                        }
+                    } catch (error) {
+                        this.logger.warn(`Failed to fetch tool name for ID ${tool._id}: ${error.message}`);
+                    }
+                }
+            }
+        }
+
+        return plainToInstance(
+            SubscriptionGetResponseDto,
+            {
+                ...subscription,
+                user_id: subscription.user_id?.toString(),
+                company_id: subscription.company_id?.toString(),
+                plan_id: subscription.plan_id?.toString(),
+                discount_id: subscription.discount_id?.toString(),
+                user: subscription.user ? {
+                    _id: subscription.user._id?.toString(),
+                    name: subscription.user.name,
+                    email: subscription.user.email,
+                    status: subscription.user.status,
+                } : null,
+                plan: subscription.plan ? {
+                    _id: subscription.plan._id?.toString(),
+                    name: subscription.plan.name,
+                    description: subscription.plan.description,
+                    price: subscription.plan.price,
+                    status: subscription.plan.status,
+                } : null,
+                company: subscription.company ? {
+                    _id: subscription.company._id?.toString(),
+                    company_name: subscription.company.company_name,
+                    contact_name: subscription.company.contact_name,
+                    email: subscription.company.email,
+                } : null,
+                tax_label: taxLabel,
+                tax_percentage: taxValue,
+            }
+        );
+    }
+
+    async mapGetWithJoinsArray(subscription: any[]): Promise<SubscriptionGetResponseDto[]> {
+        const mappedSubscriptions = await Promise.all(subscription.map(async (sub: any) => {
+            // Update tool names with latest from tools entity
+            if (sub.tools && Array.isArray(sub.tools)) {
+                for (const tool of sub.tools) {
+                    if (tool._id) {
+                        try {
+                            const toolDoc = await this.toolsService.findOneById(tool._id.toString());
+                            if (toolDoc) {
+                                tool.name = toolDoc.name;
+                            }
+                        } catch (error) {
+                            this.logger.warn(`Failed to fetch tool name for ID ${tool._id}: ${error.message}`);
+                        }
+                    }
+                }
+            }
+
+            return {
+                ...sub,
+                user_id: sub.user_id?.toString(),
+                plan_id: sub.plan_id?.toString(),
+                user: sub.user ? {
+                    _id: sub.user._id?.toString(),
+                    name: sub.user.name,
+                    email: sub.user.email,
+                    status: sub.user.status,
+                } : null,
+                plan: sub.plan ? {
+                    _id: sub.plan._id?.toString(),
+                    name: sub.plan.name,
+                    description: sub.plan.description,
+                    price: sub.plan.price,
+                    status: sub.plan.status,
+                } : null,
+            };
+        }));
+
+        return plainToInstance(
+            SubscriptionGetResponseDto,
+            mappedSubscriptions
+        );
+    }
+
+    /**
+     * Handles tool changes during subscription update
+     * - Provisions new tools that were added using ToolProvisioningService logic
+     * - Soft deletes tenant tools that were removed
+     */
+    private async handleToolChanges(
+        subscription: SubscriptionDoc,
+        newTools: any[]
+    ): Promise<void> {
+        try {
+            this.logger.log(`[TOOL CHANGES] Handling tool changes for subscription: ${subscription._id}`);
+
+            const currentTools = subscription.tools || [];
+            const currentToolIds = currentTools.map(tool => tool._id.toString());
+            const newToolIds = newTools.map(tool => tool._id.toString());
+
+            const toolsToAdd = newTools.filter(tool => !currentToolIds.includes(tool._id.toString()));
+            const toolsToRemove = currentTools.filter(tool => !newToolIds.includes(tool._id.toString()));
+
+            this.logger.log(`[TOOL CHANGES] Tools to add: ${toolsToAdd.length}, Tools to remove: ${toolsToRemove.length}`);
+
+            if (toolsToAdd.length === 0 && toolsToRemove.length === 0) {
+                this.logger.log('[TOOL CHANGES] No tool changes detected');
+                return;
+            }
+
+            const company = await this.getCompanyByUserId(subscription.user_id.toString());
+            if (!company || !company.tenantId) {
+                throw new Error(`Company or tenantId not found for subscription: ${subscription._id}`);
+            }
+
+            const tenantId = company.tenantId;
+            const subscriptionId = subscription._id.toString();
+
+            if (toolsToRemove.length > 0) {
+                this.logger.log(`[TOOL CHANGES] Removing ${toolsToRemove.length} tools`);
+                for (const tool of toolsToRemove) {
+                    // Tenant service removed: const settings = await this.tenantToolSettingsService.getSettingsByTenantTool(tenantId, tool._id.toString());
+                    for (const setting of settings) {
+                        // Tenant service removed: await this.tenantToolSettingsService.deleteSetting(setting._id.toString(), tenantId);
+                    }
+                }
+            }
+
+            if (toolsToAdd.length > 0) {
+                this.logger.log(`[TOOL CHANGES] Adding ${toolsToAdd.length} tools`);
+                const validatedToolsToAdd = await this.toolProvisioningService.fetchAndValidateTools(toolsToAdd);
+                for (const tool of validatedToolsToAdd) {
+                    // Tenant service removed: await this.tenantToolSettingsService.createSettingsForTenantToolByToolId(
+                        tenantId,
+                        subscriptionId,
+                        tool._id.toString()
+                    );
+                }
+            }
+
+            this.logger.log(`[TOOL CHANGES] ✅ Tool changes completed for subscription: ${subscription._id}`);
+        } catch (error) {
+            this.logger.error(`[TOOL CHANGES] ❌ Failed to handle tool changes for subscription ${subscription._id}: ${error.message}`, error.stack);
+            throw error;
+        }
+    }
+
+    private validateToolsAndPlan(tools: any[], planId: string): void {
+        if (!tools || tools.length === 0) {
+            if (planId && planId.trim() !== '') {
+                throw new InvalidToolsPlanCombinationException();
+            }
+        }
+    }
+
+    async applyDiscountToSubscription(
+        discountCode: string,
+        totalPrice: number,
+        userId: string,
+        companyId: string
+    ): Promise<{
+        discount_id: string;
+        discount_code: string;
+        discount_price: number;
+        final_price: number;
+    }> {
+        try {
+            const sanitizedCode = discountCode.trim().toUpperCase();
+
+            // Apply discount using DiscountService
+            const discountResult = await this.discountService.applyDiscountCode(
+                sanitizedCode,
+                totalPrice,
+                new Date(),
+                companyId,
+                userId
+            );
+
+            // Check if discount was successfully applied
+            if (!discountResult.flag) {
+                let errorMessage = discountResult.message || 'Discount code could not be applied';
+                this.logger.warn(`Discount validation failed: ${errorMessage}`);
+                throw new Error(errorMessage);
+            }
+
+            // Calculate discount price
+            let discountPrice = discountResult.discounted_price || 0;
+            const finalPrice = discountResult.price || totalPrice;
+
+            this.logger.log(
+                `Discount applied successfully: code=${sanitizedCode}, ` +
+                `discount_price=${discountPrice}, final_price=${finalPrice}`
+            );
+
+            return {
+                discount_id: discountResult.data?._id?.toString() || '',
+                discount_code: sanitizedCode,
+                discount_price: discountPrice,
+                final_price: finalPrice,
+            };
+        } catch (error) {
+            this.logger.error(`Failed to apply discount: ${error.message}`, error.stack);
+            throw error;
+        }
+    }
+
+    async updateSubscriptionProvisioningStatus(
+        subscriptionId: string,
+        status: 'pending' | 'provisioning' | 'provisioned' | 'failed',
+        error?: string
+    ): Promise<void> {
+        const subscription = await this.findOneById(subscriptionId);
+        if (!subscription) {
+            throw new Error(`Subscription not found: ${subscriptionId}`);
+        }
+
+        const updateData: any = {
+            provisioningStatus: status
+        };
+
+        if (status === 'provisioned') {
+            updateData.provisionedAt = new Date();
+            updateData.provisioningError = null;
+        } else if (status === 'failed' && error) {
+            updateData.provisioningError = error;
+        }
+
+        await this.update(subscription, updateData);
+    }
+
+    async findSubscriptionsByProvisioningStatus(
+        status: 'pending' | 'provisioning' | 'provisioned' | 'failed',
+        options?: IDatabaseFindAllOptions
+    ): Promise<SubscriptionDoc[]> {
+        return this.subscriptionRepository.findAll<SubscriptionDoc>({
+            provisioningStatus: status,
+            soft_delete: false
+        }, options);
+    }
+
+    async findFailedProvisioningSubscriptions(options?: IDatabaseFindAllOptions): Promise<SubscriptionDoc[]> {
+        return this.findSubscriptionsByProvisioningStatus('failed', options);
+    }
+
+    async findPendingProvisioningSubscriptions(options?: IDatabaseFindAllOptions): Promise<SubscriptionDoc[]> {
+        return this.findSubscriptionsByProvisioningStatus('pending', options);
+    }
+
+    async retryProvisioningForSubscription(subscriptionId: string): Promise<void> {
+        const subscription = await this.findOneById(subscriptionId);
+        if (!subscription) {
+            throw new Error(`Subscription not found: ${subscriptionId}`);
+        }
+
+        if (subscription.provisioningStatus !== 'failed') {
+            throw new Error(`Cannot retry provisioning for subscription with status: ${subscription.provisioningStatus}`);
+        }
+
+        await this.updateSubscriptionProvisioningStatus(subscriptionId, 'pending');
+    }
+
+    async invalidateCache(userId?: string, subscriptionId?: string): Promise<void> {
+        const keysToInvalidate = [
+            this.CACHE_KEYS.ACTIVE_SUBSCRIPTIONS,
+        ];
+
+        if (userId) {
+            keysToInvalidate.push(this.CACHE_KEYS.SUBSCRIPTION_BY_USER(userId));
+        }
+
+        if (subscriptionId) {
+            keysToInvalidate.push(this.CACHE_KEYS.SUBSCRIPTION_BY_ID(subscriptionId));
+        }
+
+        await Promise.all(
+            keysToInvalidate.map(key => this.cacheManager.del(key))
+        );
+    }
+
+    calculateToolAdditionPricing(
+        currentSubscription: SubscriptionDoc,
+        newTools: Array<{ _id: string; name: string; price: number }>
+    ): {
+        tools_price: number;
+        total_price: number;
+        tax_value: number;
+        final_price: number;
+    } {
+        const newToolsPrice = newTools.reduce((sum, tool) => sum + tool.price, 0);
+        const updatedToolsPrice = currentSubscription.tools_price + newToolsPrice;
+        const updatedTotalPrice = currentSubscription.platform_price + updatedToolsPrice;
+        const taxRate = this.configService.get<number>('TAX_VALUE') || 0;
+        const taxValue = (updatedTotalPrice * taxRate) / 100;
+        const finalPrice = updatedTotalPrice + taxValue;
+
+        return {
+            tools_price: Number(updatedToolsPrice.toFixed(2)),
+            total_price: Number(updatedTotalPrice.toFixed(2)),
+            tax_value: Number(taxValue.toFixed(2)),
+            final_price: Number(finalPrice.toFixed(2)),
+        };
+    }
+
+    async validateSubscriptionUpdate(
+        subscriptionId: string,
+        userId: string
+    ): Promise<SubscriptionDoc> {
+        const subscription = await this.findOneById(subscriptionId);
+
+        if (!subscription) {
+            throw new SubscriptionNotFoundException(subscriptionId);
+        }
+
+        if (!subscription.status) {
+            throw new Error('Cannot update an inactive subscription');
+        }
+
+        if (subscription.soft_delete) {
+            throw new Error('Cannot update a deleted subscription');
+        }
+
+        const company = await this.getCompanyByUserId(userId);
+        if (!company || subscription.company_id.toString() !== company._id.toString()) {
+            throw new Error('You are not authorized to update this subscription');
+        }
+
+        return subscription;
+    }
+
+    async validateToolSelection(
+        tools: Array<{ _id: string; name: string; price: number }>,
+        currentSubscription: SubscriptionDoc
+    ): Promise<Array<{ _id: string; name: string; price: number; slug: string }>> {
+        if (!tools || tools.length === 0) {
+            throw new Error('At least one tool must be provided');
+        }
+
+        const validatedTools: Array<{ _id: string; name: string; price: number; slug: string }> = [];
+        const existingToolIds = new Set(
+            currentSubscription.tools.map(t => t._id.toString())
+        );
+
+        const requestToolIds = new Set<string>();
+
+        for (const tool of tools) {
+            if (!Types.ObjectId.isValid(tool._id)) {
+                throw new Error(`Invalid tool ID: ${tool._id}`);
+            }
+
+            if (requestToolIds.has(tool._id)) {
+                throw new Error(`Duplicate tool in request: ${tool.name}`);
+            }
+            requestToolIds.add(tool._id);
+
+            if (existingToolIds.has(tool._id)) {
+                throw new Error(`Tool '${tool.name}' is already in your subscription`);
+            }
+
+            const toolDoc = await this.toolsService.findOneById(tool._id);
+            if (!toolDoc) {
+                throw new Error(`Tool with ID '${tool._id}' does not exist`);
+            }
+
+            if (!toolDoc.status) {
+                throw new Error(`Tool '${toolDoc.name}' is not available`);
+            }
+
+            validatedTools.push({
+                _id: tool._id,
+                name: toolDoc.name,
+                price: tool.price,
+                slug: toolDoc.slug || toolDoc.name,
+            });
+        }
+
+        return validatedTools;
+    }
+
+    async resolvePaymentMethod(
+        paymentData: {
+            cardId?: string;
+            cardDetails?: {
+                holder_name: string;
+                card_number: string;
+                expiry_month: string;
+                expiry_year: string;
+                cvv: string;
+            };
+        },
+        userId: string,
+        cardService: any
+    ): Promise<any> {
+        if (paymentData.cardId) {
+            const card = await cardService.findOneById(paymentData.cardId);
+            if (!card) throw new Error('Card not found');
+            if (card.user_id.toString() !== userId) throw new Error('Card does not belong to you');
+            if (!card.status || card.soft_delete) throw new Error('Card is not active');
+            return card;
+        }
+
+        if (paymentData.cardDetails) {
+            return await cardService.create({
+                user_id: userId,
+                gateway: 'paypal',
+                holder_name: paymentData.cardDetails.holder_name,
+                card_number: paymentData.cardDetails.card_number,
+                last4: paymentData.cardDetails.card_number.slice(-4),
+                expiry_month: paymentData.cardDetails.expiry_month,
+                expiry_year: paymentData.cardDetails.expiry_year,
+                status: true,
+                is_default: false,
+            });
+        }
+
+        throw new Error('Either cardId or cardDetails must be provided');
+    }
+
+    async updateSubscriptionWithTools(
+        subscription: SubscriptionDoc,
+        validatedTools: Array<{ _id: string; name: string; price: number; slug: string }>,
+        pricing: {
+            tools_price: number;
+            total_price: number;
+            tax_value: number;
+            final_price: number;
+        }
+    ): Promise<SubscriptionDoc> {
+        const updatedTools = [...subscription.tools, ...validatedTools];
+        subscription.tools = updatedTools as any;
+        subscription.tools_price = pricing.tools_price;
+        subscription.total_price = pricing.total_price;
+        subscription.tax_value = pricing.tax_value;
+        subscription.final_price = pricing.final_price;
+
+        return await this.subscriptionRepository.save(subscription);
+    }
+
+    private async populateToolsInSubscriptions(subscriptions: SubscriptionDoc[]): Promise<SubscriptionDoc[]> {
+        const toolIds = subscriptions
+            .flatMap(subscription => subscription.tools || [])
+            .map(tool => tool._id.toString())
+            .filter((id, index, self) => self.indexOf(id) === index);
+
+        if (toolIds.length === 0) return subscriptions;
+
+        const tools: any[] = [];
+        for (const toolId of toolIds) {
+            try {
+                const tool = await this.toolsService.findOneById(toolId);
+                if (tool) tools.push(tool);
+            } catch (error) {
+                this.logger.warn(`Failed to fetch tool with ID: ${toolId}`);
+            }
+        }
+
+        const toolMap = new Map<string, any>();
+        tools.forEach(tool => toolMap.set(tool._id.toString(), tool));
+
+        return subscriptions.map(subscription => {
+            if (subscription.tools && subscription.tools.length > 0) {
+                subscription.tools = subscription.tools.map(tool => {
+                    const toolDoc = toolMap.get(tool._id.toString());
+                    return toolDoc ? { ...tool, name: toolDoc.name } : tool;
+                });
+            }
+            return subscription;
+        });
+    }
+
+    async findAllWithPopulatedTools(find?: Record<string, any>, options?: IDatabaseFindAllOptions): Promise<SubscriptionDoc[]> {
+        const subscriptions = await this.findAll(find, options);
+        return this.populateToolsInSubscriptions(subscriptions);
+    }
+
+    async findAllActiveWithPopulatedTools(find?: Record<string, any>, options?: IDatabaseFindAllOptions): Promise<SubscriptionDoc[]> {
+        const subscriptions = await this.findAllActive(find, options);
+        return this.populateToolsInSubscriptions(subscriptions);
+    }
+
+    async findOneByIdWithPopulatedTools(_id: string, options?: IDatabaseFindOneOptions): Promise<SubscriptionDoc> {
+        const subscription = await this.findOneById(_id, options);
+        if (subscription) {
+            const populated = await this.populateToolsInSubscriptions([subscription]);
+            return populated[0];
+        }
+        return subscription;
+    }
+
+    async findOneWithPopulatedTools(find: Record<string, any>, options?: IDatabaseFindOneOptions): Promise<SubscriptionDoc> {
+        const subscription = await this.findOne(find, options);
+        if (subscription) {
+            const populated = await this.populateToolsInSubscriptions([subscription]);
+            return populated[0];
+        }
+        return subscription;
+    }
+
+    async findActiveByUserIdWithPopulatedTools(userId: string, options?: IDatabaseFindOneOptions): Promise<SubscriptionDoc> {
+        const subscription = await this.findActiveByUserId(userId, options);
+        if (subscription) {
+            const populated = await this.populateToolsInSubscriptions([subscription]);
+            return populated[0];
+        }
+        return subscription;
+    }
+
+    async findAllActiveByUserIdWithPopulatedTools(userId: string, options?: IDatabaseFindOneOptions): Promise<SubscriptionDoc[]> {
+        const subscriptions = await this.findAllActiveByUserId(userId, options);
+        return this.populateToolsInSubscriptions(subscriptions);
+    }
+
+    async findAllWithJoinsAndPopulatedTools(find?: Record<string, any>, options?: IDatabaseFindAllOptions): Promise<any[]> {
+        const subscriptions = await this.subscriptionRepository.findAllWithJoinsAndPopulatedTools(find, options);
+        const subscriptionDocs = subscriptions.map(sub => ({ _id: sub._id, tools: sub.tools || [] }));
+        const populated = await this.populateToolsInSubscriptions(subscriptionDocs as SubscriptionDoc[]);
+        return subscriptions.map((sub, index) => ({ ...sub, tools: populated[index].tools || sub.tools }));
+    }
+
+    async findOneWithJoinsAndPopulatedTools(_id: string): Promise<any> {
+        const subscription = await this.subscriptionRepository.findOneWithJoinsAndPopulatedTools(_id);
+        if (subscription) {
+            const doc = { _id: subscription._id, tools: subscription.tools || [] };
+            const populated = await this.populateToolsInSubscriptions([doc as SubscriptionDoc]);
+            return { ...subscription, tools: populated[0].tools || subscription.tools };
+        }
+        return subscription;
+    }
+}

@@ -1,0 +1,11 @@
+{
+    "list":"List Discounts successfully.",
+    "get": "Get Discount successfully.",
+    "create": "Create Discount successfully.",
+    "update": "Update Discount successfully.",
+    "delete": "Delete Discount successfully.",
+    "analytics": "Get Discount analytics successfully.",
+    "markExpired": "Mark Discounts as expired successfully.",
+    "apply": "Apply discount code successfully.",
+    "validate": "Validate discount code successfully."
+}

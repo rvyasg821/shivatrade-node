@@ -1,0 +1,102 @@
+<style>
+    .content h2 {
+        font-size: 36px;
+        font-weight: 700;
+        padding-bottom: 32px;
+    }
+    .footer p {
+        margin-bottom: 0;
+    }
+    .cancel-note {
+        display: inline-block;
+        margin: 20px 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: #000000;
+        background-color: #ffebee;
+        padding: 16px 32px;
+        border-radius: 8px;
+        border-left: 5px solid #000000;
+        font-family: Poppins, sans-serif;
+    }
+</style>
+
+<div class='header-top' style='background-color: #edf0f3; padding-top:20px;'>
+    <div class='container--' style='max-width: 650px; margin:0 auto; background-color:#fff;'>
+        
+        <!-- Logo -->
+        <div style='padding: 32px 0px; text-align: center;'>
+            <img
+                alt='PeopleGem Logo'
+                src="{{{logo}}}"
+                style='height: auto; width: auto; max-width: 200px;'
+            />
+        </div>
+
+        <!-- Title -->
+        <div style='text-align: center; max-width: 500px; margin: 0 auto; padding: 0 20px;'>
+            <h3 style='font-family: Poppins; font-weight: 700; margin: 0; font-size: 36px; color: #000000;'>
+                Subscription Cancelled
+            </h3>
+        </div>
+
+        <!-- Greeting -->
+        <div style='text-align: center; max-width: 500px; margin: 0 auto; padding: 10px 20px 0;'>
+            <p style='font-size: 16px; font-family: Poppins, sans-serif; margin: 0; font-weight: 400; color: #555;'>
+                Dear <span style='font-weight: 600;'>{{name}}</span>,
+            </p>
+        </div>
+
+        <!-- Body Content -->
+        <div class='content' style='text-align: center; max-width: 600px; margin: 0 auto; padding: 32px 20px;'>
+            <p style='font-size: 16px; font-family: Poppins, sans-serif; margin: 0 0 16px; font-weight: 500; color: #333;'>
+                We’re sorry to see you go. Your subscription has been <strong>successfully cancelled</strong>.
+            </p>
+
+            <!-- Cancellation Note -->
+            <div class='cancel-note'>
+                Access will remain active until the end of your current billing period.
+            </div>
+
+            <p style='font-size: 14px; font-family: Poppins, sans-serif; margin: 20px 0 0; font-weight: 400; color: #666;'>
+                If this was a mistake or you’d like to reactivate your account, you can do so anytime from your dashboard.
+            </p>
+
+            <p style='font-size: 14px; font-family: Poppins, sans-serif; margin: 16px 0 0; font-weight: 500; color: #333;'>
+                We’d love to hear your feedback — it helps us improve.
+            </p>
+        </div>
+
+        <!-- Support Section -->
+        <div class='footer' style='text-align: center; padding: 32px 20px; margin: 0 auto; max-width: 600px; border-top: 1px solid #00000029;'>
+            <p style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0 0 12px; font-weight: 400; color: #555;'>
+                Questions? We’re here to help.
+            </p>
+            <ul style='list-style-type: none; padding: 0; margin: 0;'>
+                <li style='font-size: 14px; font-family: Poppins, sans-serif; margin: 8px 0;'>
+                    <a href='mailto:{{{supportEmail}}}' style='color: #000000; text-decoration: none; font-weight: 500;'>
+                        {{{supportEmail}}}
+                    </a>
+                </li>
+                <li style='font-size: 14px; font-family: Poppins, sans-serif; margin: 8px 0;'>
+                    <a href='{{domain}}' style='color: #000000; text-decoration: none; font-weight: 500;'>
+                        Return to PeopleGem
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Bottom Footer -->
+        <div style='width: 100%; background-color:#edf0f3; text-align:center; padding:26px 0px;'>
+            <div style='text-align: center;'>
+                <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
+                    <img
+                        alt='PeopleGem Logo'
+                        src="{{{logo}}}"
+                        style='height: auto; width: auto; max-width: 200px;'
+                    />
+                </a>
+            </div>
+        </div>
+    </div>
+</div>

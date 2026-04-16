@@ -1,0 +1,25 @@
+{
+    "success": {
+        "list": " Company list retrieved successfully.",
+        "get": " Company details retrieved successfully.",
+        "getByUser": " Company retrieved successfully.",
+        "create": " Company created successfully.",
+        "update": " Company updated successfully.",
+        "delete": " Company deleted successfully.",
+        "profile": " Profile retrieved successfully.",
+        "updateProfile": " Profile updated successfully.",
+        "suspend": " Company suspended successfully.",
+        "overallStats": "Stats retrieved successfully."
+    },
+    "error": {
+        "notFound": " Sorry, we couldn't find the company you requested.",
+        "unauthorizedCompany": " You are not authorized to perform this action on this company.",
+        "tenantIdRequired": " Tenant ID is required.",
+        "invalidUserType": " Invalid user type.",
+        "adminUserCompanyFetchFailed": " Failed to fetch company for admin user.",
+        "tenantUserCompanyFetchFailed": " Failed to fetch company for tenant user.",
+        "emailExist": " This email already exists.",
+        "alreadyDeleted": " This company has been deleted.",
+        "alreadySuspended": " This company has been suspended."
+    }
+}

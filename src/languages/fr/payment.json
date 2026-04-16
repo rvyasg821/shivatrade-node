@@ -1,0 +1,12 @@
+{
+    "list": "Liste des paiements récupérée avec succès.",
+    "get": "Paiement récupéré avec succès.",
+    "create": "Paiement créé avec succès.",
+    "updateStatus": "Statut du paiement mis à jour avec succès.",
+    "analytics": "Analyses des paiements récupérées avec succès.",
+    "delete": "Paiement supprimé avec succès.",
+    "myPaymentsList": "Ma liste de paiements récupérée avec succès.",
+    "myPayments": "Mes paiements récupérés avec succès.",
+    "paypalCardPayment": "Paiement traité avec succès.",
+    "confirmRedirectPaypalPayment": "Confirmation du paiement réussie."
+}

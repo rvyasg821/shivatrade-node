@@ -1,0 +1,15 @@
+{
+    "list": "Liste des tâches cron des paramètres d'outils de locataire récupérée avec succès.",
+    "active": "Tâche cron des paramètres d'outils de locataire activée avec succès.",
+    "due": "Tâches cron des paramètres d'outils de locataire dues récupérées avec succès.",
+    "bySetting": "Tâches cron des paramètres d'outils de locataire par paramètre récupérées avec succès.",
+    "get": "Détails de la tâche cron des paramètres d'outils de locataire récupérés avec succès.",
+    "create": "Tâche cron des paramètres d'outils de locataire créée avec succès.",
+    "update": "Tâche cron des paramètres d'outils de locataire mise à jour avec succès.",
+    "activate": "Tâche cron des paramètres d'outils de locataire activée avec succès.",
+    "deactivate": "Tâche cron des paramètres d'outils de locataire désactivée avec succès.",
+    "pause": "Tâche cron des paramètres d'outils de locataire mise en pause avec succès.",
+    "updateExecution": "Exécution de la tâche cron des paramètres d'outils de locataire mise à jour avec succès.",
+    "delete": "Tâche cron des paramètres d'outils de locataire supprimée avec succès.",
+    "deleteBySetting": "Tâches cron des paramètres d'outils de locataire par paramètre supprimées avec succès."
+}

@@ -1,0 +1,9 @@
+{
+    "list": " Tenant Users list retrieved successfully.",
+    "get": " Tenant User details retrieved successfully.",
+    "getByEmail": " Tenant User details by email retrieved successfully.",
+    "create": " Tenant User created successfully.",
+    "update": " Tenant User updated successfully.",
+    "delete": " Tenant User deleted successfully.",
+    "updateLastLogin": " Tenant User last login updated successfully."
+}

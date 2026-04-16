@@ -1,0 +1,25 @@
+{
+    "success": {
+        "list": "Liste des entreprises récupérée avec succès.",
+        "get": "Détails de l'entreprise récupérés avec succès.",
+        "getByUser": "Entreprise récupérée avec succès.",
+        "create": "Entreprise créée avec succès.",
+        "update": "Entreprise mise à jour avec succès.",
+        "delete": "Entreprise supprimée avec succès.",
+        "profile": "Profil récupéré avec succès.",
+        "updateProfile": "Profil mis à jour avec succès.",
+        "suspend": "Suspendre l'entreprise avec succès.",
+        "overallStats": "Statistiques globales recuperées avec succès."
+    },
+    "error": {
+        "notFound": " Désolé, nous n'avons pas pu trouver l'entreprise que vous avez demandée.",
+        "unauthorizedCompany": " Vous n'êtes pas autorisé à effectuer cette action sur cette entreprise.",
+        "tenantIdRequired": " L'identifiant du locataire est requis.",
+        "invalidUserType": " Type d'utilisateur invalide.",
+        "adminUserCompanyFetchFailed": " Échec de la récupération de l'entreprise pour l'utilisateur administrateur.",
+        "tenantUserCompanyFetchFailed": " Échec de la récupération de l'entreprise pour l'utilisateur locataire.",
+        "emailExist": " Cet e-mail existe déjà.",
+        "alreadyDeleted": " Cette entreprise a déjà été supprimée.",
+        "alreadySuspended": " Cette entreprise a été suspendue."
+    }
+}

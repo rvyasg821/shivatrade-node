@@ -1,0 +1,188 @@
+import {
+    Injectable,
+    NestInterceptor,
+    ExecutionContext,
+    CallHandler,
+    HttpStatus,
+    Logger,
+} from '@nestjs/common';
+import { appendFileSync, existsSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { HttpArgumentsHost } from '@nestjs/common/interfaces';
+import { Response } from 'express';
+import { MessageService } from '@common/message/services/message.service';
+import { Reflector } from '@nestjs/core';
+import { IRequestApp } from '@common/request/interfaces/request.interface';
+import { IMessageOptionsProperties } from '@common/message/interfaces/message.interface';
+import {
+    RESPONSE_MESSAGE_PATH_META_KEY,
+    RESPONSE_MESSAGE_PROPERTIES_META_KEY,
+} from '@common/response/constants/response.constant';
+import { IResponse } from '@common/response/interfaces/response.interface';
+import {
+    ResponseDto,
+    ResponseMetadataDto,
+} from '@common/response/dtos/response.dto';
+import { ConfigService } from '@nestjs/config';
+import { HelperDateService } from '@common/helper/services/helper.date.service';
+import { ENUM_MESSAGE_LANGUAGE } from '@common/message/enums/message.enum';
+
+@Injectable()
+export class ResponseInterceptor
+    implements NestInterceptor<Promise<ResponseDto>> {
+    private readonly logger = new Logger(ResponseInterceptor.name);
+
+    constructor(
+        private readonly reflector: Reflector,
+        private readonly messageService: MessageService,
+        private readonly configService: ConfigService,
+        private readonly helperDateService: HelperDateService
+    ) { }
+
+    intercept(
+        context: ExecutionContext,
+        next: CallHandler
+    ): Observable<Promise<ResponseDto>> {
+        if (context.getType() === 'http') {
+            return next.handle().pipe(
+                map(async (res: Promise<any>) => {
+                    const ctx: HttpArgumentsHost = context.switchToHttp();
+                    const response: Response = ctx.getResponse();
+                    const request: IRequestApp = ctx.getRequest<IRequestApp>();
+
+                    let messagePath: string = this.reflector.get<string>(
+                        RESPONSE_MESSAGE_PATH_META_KEY,
+                        context.getHandler()
+                    );
+                    let messageProperties: IMessageOptionsProperties =
+                        this.reflector.get<IMessageOptionsProperties>(
+                            RESPONSE_MESSAGE_PROPERTIES_META_KEY,
+                            context.getHandler()
+                        );
+
+                    // set default response
+                    let httpStatus: HttpStatus = response.statusCode;
+                    let statusCode: number = response.statusCode;
+                    let data: Record<string, any> = undefined;
+
+                    // metadata
+                    const today = this.helperDateService.create();
+                    const xPath = request.path;
+                    const xLanguage: string =
+                        request.__language ??
+                        this.configService.get<ENUM_MESSAGE_LANGUAGE>(
+                            'message.language'
+                        );
+                    const xTimestamp =
+                        this.helperDateService.getTimestamp(today);
+                    const xTimezone = this.helperDateService.getZone(today);
+                    const xVersion =
+                        request.__version ??
+                        this.configService.get<string>(
+                            'app.urlVersion.version'
+                        );
+                    const xRepoVersion =
+                        this.configService.get<string>('app.version');
+                    let metadata: ResponseMetadataDto = {
+                        language: xLanguage,
+                        timestamp: xTimestamp,
+                        timezone: xTimezone,
+                        path: xPath,
+                        version: xVersion,
+                        repoVersion: xRepoVersion,
+                    };
+
+                    // response
+                    const responseData = (await res) as IResponse<any>;
+
+                    if (responseData) {
+                        const { _metadata } = responseData;
+
+                        data = responseData.data;
+                        httpStatus =
+                            _metadata?.customProperty?.httpStatus ?? httpStatus;
+                        statusCode =
+                            _metadata?.customProperty?.statusCode ?? statusCode;
+                        messagePath =
+                            _metadata?.customProperty?.message ?? messagePath;
+                        messageProperties =
+                            _metadata?.customProperty?.messageProperties ??
+                            messageProperties;
+
+                        delete _metadata?.customProperty;
+
+                        metadata = {
+                            ...metadata,
+                            ..._metadata,
+                        };
+                    }
+
+                    const message: string = this.messageService.setMessage(
+                        messagePath,
+                        {
+                            customLanguage: xLanguage,
+                            properties: messageProperties,
+                        }
+                    );
+
+                    response.setHeader('x-custom-lang', xLanguage);
+                    response.setHeader('x-timestamp', xTimestamp);
+                    response.setHeader('x-timezone', xTimezone);
+                    response.setHeader('x-version', xVersion);
+                    response.setHeader('x-repo-version', xRepoVersion);
+                    response.status(httpStatus);
+
+                    // Log 500 errors
+                    if (statusCode === 500 || httpStatus === HttpStatus.INTERNAL_SERVER_ERROR || statusCode === 5040) {
+                        const logEntry = `[${xTimestamp}] ERROR 500: ${request.method} ${request.path}\n` +
+                            `Message: ${message}\n` +
+                            `Path: ${xPath}\n` +
+                            `User Agent: ${request.get('user-agent') || 'Unknown'}\n` +
+                            `IP: ${request.ip}\n` +
+                            `Status Code: ${statusCode}\n` +
+                            `Metadata: ${JSON.stringify(metadata)}\n` +
+                            `----------------------------------------\n`;
+
+                        try {
+                            const logFilePath = join(process.cwd(), 'src/errorLogs/log.txt');
+
+                            // Check if file exists, if not create it
+                            if (!existsSync(logFilePath)) {
+                                writeFileSync(logFilePath, '');
+                            }
+
+                            appendFileSync(logFilePath, logEntry);
+                        } catch (error) {
+                            this.logger.error('Failed to write to error log file:', error);
+                        }
+
+                        // Also log to console/logger for immediate visibility
+                        this.logger.error(
+                            `Internal Server Error: ${request.method} ${request.path}`,
+                            {
+                                statusCode,
+                                message,
+                                path: xPath,
+                                timestamp: xTimestamp,
+                                userAgent: request.get('user-agent'),
+                                ip: request.ip,
+                                metadata,
+                            }
+                        );
+                    }
+
+                    return {
+                        statusCode,
+                        message,
+                        _metadata: metadata,
+                        data,
+                    };
+                })
+            );
+        }
+
+        return next.handle();
+    }
+}

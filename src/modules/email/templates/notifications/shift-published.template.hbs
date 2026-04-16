@@ -1,0 +1,15 @@
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #2563eb;">Shift Schedule Published</h2>
+    <p>Hi {{employee_name}},</p>
+    <p>Your shift schedule for the week starting <strong>{{week_start}}</strong> has been published. Please log in to view your shifts.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 40%;">Week Starting</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{week_start}}</td></tr>
+      {{#if location_name}}<tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Location</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{location_name}}</td></tr>{{/if}}
+    </table>
+    <p>Please review your assigned shifts and contact your manager if you have any questions.</p>
+    {{#if frontUrl}}<p><a href="{{frontUrl}}" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 5px;">View My Shifts</a></p>{{/if}}
+  </div>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<style>
+    .content h2 {
+        font-size: 36px;
+        font-weight: 700;
+        padding-bottom: 32px;
+    }
+    .footer p {
+        margin-bottom: 0;
+    }
+</style>
+
+<div class='header-top' style='background-color: #edf0f3; padding-top:20px;'>
+    <div
+        class='container--'
+        style='max-width: 650px; margin:0 auto; background-color:#fff;'
+    >
+        <div style='padding: 32px 0px; text-align: center;'>
+            <img
+                alt='PeopleGem Logo'
+                src="{{{logo}}}"
+                style='height: auto; width: auto; max-width: 200px;'
+            />
+        </div>
+
+        <div style='text-align: center; max-width: 400px; margin: 0 auto;'>
+            <h3
+                style='font-family: Poppins; font-weight: 700; margin: 0; padding: 10px 0; font-size: 36px;'
+            >Welcome to PeopleGem</h3>
+        </div>
+
+        <div style='text-align: center; max-width: 400px; margin: 0 auto;'>
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0; font-weight: 400;'
+            >
+                Hello
+                <span style='font-weight: 500;'>{{name}}</span>,
+            </p>
+        </div>
+
+        <div
+            class='content'
+            style='text-align: center; width: 100%; padding-bottom: 30px; max-width: 600px; margin: 0 auto; padding: 32px 0;'
+        >
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0 auto; font-weight: 500;'
+            >
+                Your account has been successfully created on PeopleGem. Below
+                are your account credentials:
+            </p>
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 10px 0; font-weight: 500;'
+            >
+                <strong>Email:</strong>
+                {{email}}
+            </p>
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 10px 0; font-weight: 500;'
+            >
+                <strong>Password:</strong>
+                {{password}}
+            </p>
+
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 10px 0; font-weight: 500;'
+            >
+                Please log in using the credentials above. For your security, we
+                recommend changing your password as soon as you log in.
+            </p>
+        </div>
+
+        <div style='text-align: center; padding-bottom: 32px;'>
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0; font-weight: 500;'
+            >
+                <a
+                    href='{{frontUrl}}/login'
+                    target='_blank'
+                    class='login-btn'
+                    style='color: #fff; background-color: #008ecc; border-radius: 5px; border: 2px solid #008ecc; text-decoration: none; padding: 10px 30px;'
+                >
+                    Login to Your Account
+                </a>
+            </p>
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 20px 0; font-weight: 500;'
+            >
+                After logging in, please change your password through the
+                account settings to ensure your account remains secure.
+            </p>
+        </div>
+
+        <div
+            class='footer'
+            style='text-align: center; padding: 32px; margin: 0 auto; max-width: 600px; border-top: 1px solid #00000029'
+        >
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0; font-weight: 400;'
+            >
+                If you have any issues or did not create an account, please
+                contact support immediately.
+            </p>
+            <ul style='list-style-type: none; padding: 0; margin: 0;'>
+                <li
+                    style='font-size: 14px; font-family: Poppins, sans-serif; margin: 10px 0;'
+                >
+                    Change your password by visiting the
+                    <a href='{{frontUrl}}/login'>account settings</a>
+                    page.
+                </li>
+                <li
+                    style='font-size: 14px; font-family: Poppins, sans-serif; margin: 10px 0;'
+                >
+                    Contact our support team at
+                    <a
+                        href='mailto:{{{supportEmail}}}'
+                    >{{{supportEmail}}}</a>.
+                </li>
+            </ul>
+        </div>
+
+        <div
+            style='width: 100%; background-color:#edf0f3; text-align:center; padding:26px 0px;'
+        >
+            <div
+                style='text-align: center; justify-content: center; align-items: center;'
+            >
+                <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
+                    <img
+                        alt='PeopleGem Logo'
+                        src="{{{logo}}}"
+                        style='height: auto; width: auto; max-width: 200px;'
+                    />
+                </a>
+            </div>
+        </div>
+    </div>
+</div>

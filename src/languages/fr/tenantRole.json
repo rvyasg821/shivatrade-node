@@ -1,0 +1,8 @@
+{
+    "list": "Liste des rôles de locataire récupérée avec succès.",
+    "defaultList": "Liste des rôles de locataire par défaut récupérée avec succès.",
+    "get": "Détails du rôle de locataire récupérés avec succès.",
+    "create": "Rôle de locataire créé avec succès.",
+    "update": "Rôle de locataire mis à jour avec succès.",
+    "delete": "Rôle de locataire supprimé avec succès."
+}

@@ -1,0 +1,6 @@
+{
+    "error": {
+        "inactive": "Cette fonctionnalité est actuellement désactivée",
+        "notFound": "Désolé, nous n'avons pas pu trouver le paramètre demandé."
+    }
+}

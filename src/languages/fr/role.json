@@ -1,0 +1,15 @@
+{
+    "list": "Rôles récupérés avec succès.",
+    "get": "Détails du rôle récupérés avec succès.",
+    "create": "Nouveau rôle créé avec succès.",
+    "update": "Rôle mis à jour avec succès.",
+    "delete": "Rôle supprimé avec succès.",
+    "inactive": "Rôle marqué comme inactif.",
+    "active": "Rôle marqué comme actif.",
+    "error": {
+        "exist": "Un rôle avec ce nom existe déjà.",
+        "used": "Ce rôle est actuellement utilisé et ne peut pas être supprimé.",
+        "isActiveInvalid": "Statut actif invalide pour le rôle.",
+        "notFound": "Désolé, nous n'avons pas pu trouver le rôle demandé."
+    }
+}

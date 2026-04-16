@@ -1,0 +1,86 @@
+<html lang='en'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+        <title>OTP Verification</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f4f4f4;
+                margin: 0;
+                padding: 0;
+            }
+
+            .email-container {
+                max-width: 600px;
+                margin: 20px auto;
+                background: #ffffff;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                overflow: hidden;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+
+            .email-header {
+                background-color: #4caf50;
+                color: #ffffff;
+                text-align: center;
+                padding: 20px;
+            }
+
+            .email-body {
+                padding: 20px;
+                color: #333333;
+                line-height: 1.6;
+            }
+
+            .email-body p {
+                margin: 0 0 10px;
+            }
+
+            .otp-code {
+                display: inline-block;
+                margin: 20px 0;
+                font-size: 24px;
+                font-weight: bold;
+                color: #4caf50;
+                background-color: #f9f9f9;
+                padding: 10px 20px;
+                border: 1px dashed #4caf50;
+                border-radius: 5px;
+            }
+
+            .email-footer {
+                text-align: center;
+                padding: 10px;
+                background: #f9f9f9;
+                font-size: 12px;
+                color: #666;
+            }
+
+            .email-footer a {
+                color: #4caf50;
+                text-decoration: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class='email-container'>
+            <div class='email-header'>
+                <h1>OTP Verification</h1>
+            </div>
+            <div class='email-body'>
+                <p>Dear {{name}},</p>
+                <p>Please use the following OTP to login:</p>
+                <div class='otp-code'>{{otp}}</div>
+                <p>If you didn’t request this, please ignore this email or
+                    contact our support team.</p>
+                <p>Thank you.</p>
+            </div>
+            <div class='email-footer'>
+                <p>If you have any questions, feel free to
+                    <a href='mailto:{{{supportEmail}}}'>contact us</a>.</p>
+            </div>
+        </div>
+    </body>
+</html>

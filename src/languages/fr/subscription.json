@@ -1,0 +1,27 @@
+{
+    "list": "Liste des abonnements récupérée avec succès.",
+    "get": "Abonnement récupéré avec succès.",
+    "create": "Abonnement créé avec succès.",
+    "update": "Abonnement mis à jour avec succès.",
+    "updateStatus": "Statut de l'abonnement mis à jour avec succès.",
+    "cancel": "Abonnement annulé avec succès.",
+    "delete": "Abonnement supprimé avec succès.",
+    "analytics": "Analyses de l'abonnement récupérées avec succès.",
+    "provision": "Abonnement provisionné avec succès.",
+    "provisions": {
+        "validate": "Validation du provisionnement de l'abonnement récupérée avec succès.",
+        "rollback": "Annulation du provisionnement de l'abonnement récupérée avec succès."
+    },
+    "provisioning": {
+        "status": "Statut du provisionnement de l'abonnement récupéré avec succès.",
+        "failed": "Échec du provisionnement de l'abonnement récupéré avec succès.",
+        "retry": "Nouvelle tentative de provisionnement de l'abonnement récupérée avec succès."
+    },
+    "startTrial": "L'abonnement a démarré avec succès.",
+    "convertTrial": "Essai de l'abonnement converti avec succès.",
+    "checkTrialEligibility": "Éligibilité à l'essai de l'abonnement vérifiée avec succès.",
+    "mySubscription": "Mon abonnement récupéré avec succès.",
+    "createWithPayment": "Abonnement créé avec paiement avec succès.",
+    "cancelAll": "Tous les abonnements de l'entreprise ont été annulés avec succès.",
+    "listByCompany": " Liste des abonnements par entreprise récupérée avec succès."
+}

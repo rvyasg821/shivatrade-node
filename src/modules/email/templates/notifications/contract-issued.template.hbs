@@ -1,0 +1,17 @@
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #2563eb;">New Contract Issued</h2>
+    <p>Hi {{employee_name}},</p>
+    <p>A new contract <strong>'{{contract_name}}'</strong> has been issued to you by <strong>{{issued_by}}</strong>.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 40%;">Contract</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{contract_name}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Effective Date</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{effective_date}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">End Date</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{end_date}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Issued By</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{issued_by}}</td></tr>
+    </table>
+    <p>Please log in to review and sign your contract.</p>
+    {{#if frontUrl}}<p><a href="{{frontUrl}}" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 5px;">Review & Sign Contract</a></p>{{/if}}
+  </div>
+</body>
+</html>

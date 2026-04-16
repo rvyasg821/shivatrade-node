@@ -1,0 +1,9 @@
+{
+    "list": "Liste des utilisateurs de locataire récupérée avec succès.",
+    "get": "Détails de l'utilisateur de locataire récupérés avec succès.",
+    "getByEmail": "Détails de l'utilisateur de locataire par email récupérés avec succès.",
+    "create": "Utilisateur de locataire créé avec succès.",
+    "update": "Utilisateur de locataire mis à jour avec succès.",
+    "delete": "Utilisateur de locataire supprimé avec succès.",
+    "updateLastLogin": "Dernière connexion de l'utilisateur de locataire mise à jour avec succès."
+}

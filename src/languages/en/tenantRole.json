@@ -1,0 +1,8 @@
+{
+    "list":"Tenant Roles List retrieved successfully.",
+    "defaultList":" Default Tenant Roles List retrieved successfully.",
+    "get":"Tenant Role details retrieved successfully.",
+    "create":"Tenant Role created successfully.",
+    "update":"Tenant Role updated successfully.",
+    "delete":"Tenant Role deleted successfully."
+}

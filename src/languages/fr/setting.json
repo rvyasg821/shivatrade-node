@@ -1,0 +1,11 @@
+{
+    "list": "Liste des paramètres récupérée avec succès.",
+    "get": "Détails du paramètre récupérés avec succès.",
+    "update": "Paramètre mis à jour avec succès.",
+    "core": "Paramètre principal mis à jour avec succès.",
+    "reload": "Paramètre rechargé avec succès.",
+    "error": {
+        "valueNotAllowed": "La valeur que vous avez fournie n'est pas autorisée pour ce paramètre.",
+        "notFound": "Désolé, nous n'avons pas pu trouver le paramètre demandé."
+    }
+}

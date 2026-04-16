@@ -1,0 +1,25 @@
+export enum ENUM_EMPLOYEE_GENDER {
+    MALE = 'MALE',
+    FEMALE = 'FEMALE',
+    OTHER = 'OTHER',
+}
+
+export enum ENUM_MARITAL_STATUS {
+    SINGLE = 'SINGLE',
+    MARRIED = 'MARRIED',
+    DIVORCED = 'DIVORCED',
+    WIDOWED = 'WIDOWED',
+    OTHER = 'OTHER',
+}
+
+export enum ENUM_PAYROLL_FREQUENCY {
+    WEEKLY = 'WEEKLY',
+    BI_WEEKLY = 'BI_WEEKLY',
+    MONTHLY = 'MONTHLY',
+}
+
+export enum ENUM_MODE_OF_TRANSFER {
+    BANK = 'BANK',
+    CASH = 'CASH',
+    CHEQUE = 'CHEQUE',
+}

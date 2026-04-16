@@ -1,0 +1,5 @@
+
+export enum ENUM_COMPANY_STATUS {
+    ACTIVE = 'ACTIVE',
+    INACTIVE = 'INACTIVE',
+}

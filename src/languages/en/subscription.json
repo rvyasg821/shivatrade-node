@@ -1,0 +1,27 @@
+{
+    "list": " Subscription list retrieved successfully.",
+    "get": " Subscription list retrieved successfully.",
+    "create": " Subscription list retrieved successfully.",
+    "update": " Subscription list retrieved successfully.",
+    "updateStatus": " Subscription list retrieved successfully.",
+    "cancel": " Subscription list retrieved successfully.",
+    "delete": " Subscription list retrieved successfully.",
+    "analytics": " Subscription list retrieved successfully.",
+    "provision": " Subscription list retrieved successfully.",
+    "provisions": {
+        "validate": " Subscription provisioning validation retrieved successfully.",
+        "rollback": " Subscription provisioning rollback retrieved successfully."
+    },
+    "provisioning": {
+        "status": " Subscription provisioning status retrieved successfully.",
+        "failed": " Subscription provisioning failed retrieved successfully.",
+        "retry": " Subscription provisioning retry retrieved successfully."
+    },
+    "startTrial": " Subscription started successfully.",
+    "convertTrial": " Subscription trial converted successfully.",
+    "checkTrialEligibility": " Subscription trial eligibility checked successfully.",
+    "mySubscription": " My subscription retrieved successfully.",
+    "createWithPayment": " Subscription created with payment successfully.",
+    "cancelAll": "All company subscriptions cancelled successfully.",
+    "listByCompany": " Subscription list by company retrieved successfully."
+}

@@ -1,0 +1,14 @@
+{
+    "getEmail": "Veuillez vérifier votre email pour le code de vérification.",
+    "getMobileNumber": "Veuillez vérifier votre téléphone mobile pour le code de vérification.",
+    "resendEmail": "Le code de vérification a été renvoyé à votre email.",
+    "resendMobileNumber": "Le code de vérification a été renvoyé à votre téléphone mobile.",
+    "verifyEmail": "L'email a été vérifié avec succès.",
+    "verifyMobileNumber": "Le téléphone mobile a été vérifié avec succès.",
+    "error": {
+        "notFound": "Vérification non trouvée.",
+        "otpNotMatch": "Le code de vérification ne correspond pas.",
+        "userEmailVerified": "Cet email a déjà été vérifié.",
+        "userMobileNumberVerified": "Ce numéro de mobile a déjà été vérifié."
+    }
+}

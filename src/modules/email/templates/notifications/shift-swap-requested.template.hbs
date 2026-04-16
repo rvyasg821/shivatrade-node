@@ -1,0 +1,17 @@
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #2563eb;">Shift Swap Request</h2>
+    <p>Hi {{target_name}},</p>
+    <p><strong>{{requester_name}}</strong> has requested to swap shifts with you on <strong>{{swap_date}}</strong>.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 40%;">Requested By</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{requester_name}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Date</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{swap_date}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Shift</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{shift_name}}</td></tr>
+      {{#if reason}}<tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Reason</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{reason}}</td></tr>{{/if}}
+    </table>
+    <p>Please log in to accept or decline this swap request.</p>
+    {{#if frontUrl}}<p><a href="{{frontUrl}}" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 5px;">View Swap Request</a></p>{{/if}}
+  </div>
+</body>
+</html>

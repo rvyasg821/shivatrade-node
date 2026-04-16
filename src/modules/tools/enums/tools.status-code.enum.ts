@@ -1,0 +1,6 @@
+export enum ENUM_TOOLS_STATUS_CODE_ERROR {
+    NOT_FOUND = 6001,
+    ALREADY_EXISTS = 6002,
+    INACTIVE = 6003,
+    USED = 6004,
+}

@@ -1,0 +1,196 @@
+<style>
+    .content h2 {
+        font-size: 36px;
+        font-weight: 700;
+        padding-bottom: 32px;
+    }
+    .footer p {
+        margin-bottom: 0;
+    }
+    .info-box {
+        display: inline-block;
+        margin: 20px auto;
+        padding: 18px 32px;
+        background-color: #e8f5e9;
+        border: 1px solid #4caf50;
+        border-left: 5px solid #4caf50;
+        border-radius: 8px;
+        font-family: Poppins, sans-serif;
+        text-align: left;
+        max-width: 500px;
+        width: 100%;
+    }
+    .info-box.failed {
+        background-color: #ffebee;
+        border-color: #f44336;
+        border-left-color: #f44336;
+    }
+    .info-row {
+        margin: 8px 0;
+        font-size: 14px;
+        color: #333;
+    }
+    .info-label {
+        font-weight: 600;
+        color: #2e7d32;
+        display: inline-block;
+        min-width: 140px;
+    }
+    .info-box.failed .info-label {
+        color: #c62828;
+    }
+    .highlight {
+        color: #2e7d32;
+        font-weight: 600;
+    }
+    .highlight-error {
+        color: #c62828;
+        font-weight: 600;
+    }
+</style>
+
+<div class='header-top' style='background-color: #edf0f3; padding-top:20px;'>
+    <div
+        class='container--'
+        style='max-width: 650px; margin:0 auto; background-color:#fff;'
+    >
+
+        <!-- Logo -->
+        <div style='padding: 32px 0px; text-align: center;'>
+            <img
+                alt='{{appName}} Logo'
+                src="{{{logo}}}"
+                style='height: auto; width: auto; max-width: 200px;'
+            />
+        </div>
+
+        <!-- Title -->
+        <div
+            style='text-align: center; max-width: 500px; margin: 0 auto; padding: 0 20px;'
+        >
+            <h3
+                style='font-family: Poppins; font-weight: 700; margin: 0; font-size: 32px; color: {{#if success}}#2e7d32{{else}}#c62828{{/if}};'
+            >
+                {{#if success}}
+                {{currencySymbol}}{{amount}} Recurring Payment Captured
+                {{else}}
+                Recurring Payment Failed
+                {{/if}}
+            </h3>
+        </div>
+
+        <!-- Greeting -->
+        <div
+            style='text-align: center; max-width: 500px; margin: 0 auto; padding: 10px 20px 0;'
+        >
+            <p
+                style='font-size: 16px; font-family: Poppins, sans-serif; margin: 0; font-weight: 400; color: #555;'
+            >
+                Hello Admin,
+            </p>
+        </div>
+
+        <!-- Body Content -->
+        <div
+            class='content'
+            style='text-align: center; max-width: 600px; margin: 0 auto; padding: 32px 20px;'
+        >
+
+            <p
+                style='font-size: 16px; font-family: Poppins, sans-serif; margin: 0 0 16px; font-weight: 500; color: #333;'
+            >
+                {{#if success}}
+                A recurring subscription payment has been successfully processed.
+                {{else}}
+                A recurring subscription payment has failed. Customer subscription has been deactivated.
+                {{/if}}
+            </p>
+
+            <!-- Info Box -->
+            <div class='info-box {{#unless success}}failed{{/unless}}'>
+                <div class='info-row'>
+                    <span class='info-label'>Company:</span>
+                    <span>{{companyName}}</span>
+                </div>
+                <div class='info-row'>
+                    <span class='info-label'>Customer:</span>
+                    <span>{{customerName}}</span>
+                </div>
+                <div class='info-row'>
+                    <span class='info-label'>Email:</span>
+                    <span>{{customerEmail}}</span>
+                </div>
+                <div class='info-row'>
+                    <span class='info-label'>Plan:</span>
+                    <span>{{planName}}</span>
+                </div>
+                <div class='info-row'>
+                    <span class='info-label'>Amount:</span>
+                    <span class='{{#if success}}highlight{{else}}highlight-error{{/if}}'>{{currencySymbol}}{{amount}}</span>
+                </div>
+                <div class='info-row'>
+                    <span class='info-label'>Gateway:</span>
+                    <span>{{gateway}}</span>
+                </div>
+                <div class='info-row'>
+                    <span class='info-label'>Status:</span>
+                    <span class='{{#if success}}highlight{{else}}highlight-error{{/if}}'>
+                        {{#if success}}Success{{else}}Failed{{/if}}
+                    </span>
+                </div>
+                {{#if transactionId}}
+                <div class='info-row'>
+                    <span class='info-label'>Transaction ID:</span>
+                    <span>{{transactionId}}</span>
+                </div>
+                {{/if}}
+                {{#if nextBillingDate}}
+                <div class='info-row'>
+                    <span class='info-label'>Next Billing:</span>
+                    <span>{{nextBillingDate}}</span>
+                </div>
+                {{/if}}
+                {{#if errorMessage}}
+                <div class='info-row'>
+                    <span class='info-label'>Error:</span>
+                    <span class='highlight-error'>{{errorMessage}}</span>
+                </div>
+                {{/if}}
+            </div>
+
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 20px 0 0; font-weight: 400; color: #555; line-height: 1.6;'
+            >
+                Processed at: {{processedAt}}
+            </p>
+
+        </div>
+
+        <!-- Support Footer -->
+        <div
+            class='footer'
+            style='text-align: center; padding: 32px 20px; margin: 0 auto; max-width: 600px; border-top: 1px solid #00000029;'
+        >
+            <p
+                style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0 0 12px; font-weight: 400; color: #555;'
+            >
+                {{appName}} Admin Dashboard
+            </p>
+        </div>
+
+        <!-- Bottom Branding -->
+        <div
+            style='width: 100%; background-color:#edf0f3; text-align:center; padding:26px 0px;'
+        >
+            <div style='text-align: center;'>
+                <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
+                    <img
+                        alt='{{appName}} Logo'
+                        src="{{{logo}}}"
+                        style='height: auto; width: auto; max-width: 200px;'
+                    />
+                </a>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,15 @@
+{
+    "list": "Tenant Tool Settings list retrieved successfully.",
+    "byTool": " Tenant Tool Settings by tool retrieved successfully.",
+    "get": " Tenant Tool Setting details retrieved successfully.",
+    "create": " Tenant Tool Setting created successfully.",
+    "update": " Tenant Tool Setting updated successfully.",
+    "activate": " Tenant Tool Setting activated successfully.",
+    "deactivate": " Tenant Tool Setting deactivated successfully.",
+    "updateValue": " Tenant Tool Setting value updated successfully.",
+    "updateToolConfig": " Tenant Tool Setting tool config updated successfully.",
+    "byToolType": " Tenant Tool Settings by tool type retrieved successfully.",
+    "byIpAddress": " Tenant Tool Settings by IP address retrieved successfully.",
+    "delete": " Tenant Tool Setting deleted successfully.",
+    "deleteByTool": " Tenant Tool Settings by tool deleted successfully."
+}

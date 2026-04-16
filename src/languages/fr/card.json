@@ -1,0 +1,11 @@
+{
+    "list": "Liste des cartes récupérée avec succès.",
+    "get": "Détails de la carte récupérés avec succès.",
+    "create": "Carte créée avec succès.",
+    "update": "Carte mise à jour avec succès.",
+    "delete": "Carte supprimée avec succès.",
+    "myCards": "Mes cartes récupérées avec succès.",
+    "myActiveCards": "Mes cartes actives récupérées avec succès.",
+    "myDefaultCard": "Ma carte par défaut récupérée avec succès.",
+    "setDefault": "Carte définie par défaut avec succès."
+}

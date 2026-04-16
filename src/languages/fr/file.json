@@ -1,0 +1,8 @@
+{
+    "error": {
+        "validationDto": "Les données fournies ne répondent pas aux critères de validation.",
+        "mimeInvalid": "Le type MIME du fichier n'est pas valide.",
+        "requiredParseFirst": "Veuillez analyser les données avant de continuer.",
+        "required": "Ce champ est obligatoire et ne peut pas être laissé vide."
+    }
+}

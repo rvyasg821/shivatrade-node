@@ -1,0 +1,65 @@
+<style>
+    .content h2 {
+        font-size: 36px;
+        font-weight: 700;
+        padding-bottom: 32px;
+    }
+    .otp-code {
+        display: inline-block;
+        margin: 20px 0;
+        font-size: 32px;
+        font-weight: bold;
+        color: #000000;
+        background-color: #f0f8ff;
+        padding: 16px 32px;
+        border: 2px dashed #008ecc;
+        border-radius: 8px;
+        letter-spacing: 4px;
+        font-family: 'Courier New', monospace;
+    }
+</style>
+
+<div style='background-color: #edf0f3; padding-top:20px;'>
+    <div style='max-width: 650px; margin:0 auto; background-color:#fff;'>
+
+        <!-- Logo -->
+        <div style='padding: 32px 0px; text-align: center;'>
+            <img
+                alt='PeopleGem Logo'
+                src="{{{logo}}}"
+                style='height: auto; width: auto; max-width: 200px;'
+            />
+        </div>
+
+        <!-- Title -->
+        <div style='text-align: center; margin: 0 auto; padding: 0 20px;'>
+            <h3 style='font-family: Poppins; font-weight: 700; margin: 0; font-size: 36px; color: #000000;'>
+                Your OTP Code
+            </h3>
+        </div>
+
+        <!-- OTP Section Only -->
+        <div style='text-align: center; max-width: 600px; margin: 0 auto; padding: 32px 20px;'>
+            <p style='font-size: 16px; font-family: Poppins, sans-serif; margin: 0 0 16px; font-weight: 500; color: #333;'>
+                Use the OTP below to verify your action:
+            </p>
+
+            <!-- OTP -->
+            <div class='otp-code'>{{otp}}</div>
+        </div>
+
+        <!-- Bottom Footer -->
+        <div style='width: 100%; background-color:#edf0f3; text-align:center; padding:26px 0px;'>
+            <div style='text-align: center;'>
+                <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
+                    <img
+                        alt='PeopleGem Logo'
+                        src="{{{logo}}}"
+                        style='height: auto; width: auto; max-width: 200px;'
+                    />
+                </a>
+            </div>
+        </div>
+
+    </div>
+</div>

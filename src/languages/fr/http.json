@@ -1,0 +1,61 @@
+{
+    "success": {
+        "ok": "OK",
+        "created": "Créé",
+        "accepted": "Accepté",
+        "noContent": "Aucun Contenu"
+    },
+    "redirection": {
+        "movePermanently": "Déplacement Permanent",
+        "found": "Trouvé",
+        "notModified": "Non Modifié",
+        "temporaryRedirect": "Redirection Temporaire",
+        "permanentRedirect": "Redirection Permanente"
+    },
+    "clientError": {
+        "badRequest": "Mauvaise Requête",
+        "unauthorized": "Non Autorisé",
+        "forbidden": "Interdit",
+        "notFound": "Non Trouvé",
+        "methodNotAllowed": "Méthode Non Autorisée",
+        "notAcceptable": "Non Acceptable",
+        "payloadToLarge": "Charge Utile Trop Grande",
+        "uriToLarge": "URI Trop Longue",
+        "unsupportedMediaType": "Type de Média Non Supporté",
+        "unprocessableEntity": "Entité Non Traitrable",
+        "tooManyRequest": "Trop de Requêtes",
+        "requestTimeOut": "Délai d'Attente de la Requête"
+    },
+    "serverError": {
+        "internalServerError": "Erreur Interne du Serveur",
+        "notImplemented": "Non Implémenté",
+        "badGateway": "Mauvaise Passerelle",
+        "serviceUnavailable": "Service Indisponible",
+        "gatewayTimeout": "Délai d'Attente de la Passerelle"
+    },
+    "200": "OK",
+    "201": "Créé",
+    "202": "Accepté",
+    "204": "Aucun Contenu",
+    "301": "Déplacement Permanent",
+    "302": "Trouvé",
+    "304": "Non Modifié",
+    "307": "Redirection Temporaire",
+    "308": "Redirection Permanente",
+    "400": "Mauvaise Requête",
+    "401": "Non Autorisé",
+    "403": "Interdit",
+    "404": "Non Trouvé",
+    "405": "Méthode Non Autorisée",
+    "406": "Non Acceptable",
+    "413": "Charge Utile Trop Grande",
+    "414": "URI Trop Longue",
+    "415": "Type de Média Non Supporté",
+    "422": "Entité Non Traitrable",
+    "429": "Trop de Requêtes",
+    "500": "Erreur Interne du Serveur",
+    "501": "Non Implémenté",
+    "502": "Mauvaise Passerelle",
+    "503": "Service Indisponible",
+    "504": "Délai d'Attente de la Passerelle"
+}

@@ -1,0 +1,20 @@
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #dc2626;">Visa/BRP Expiry Warning</h2>
+    <p>Hi {{admin_name}},</p>
+    <p>This is an urgent reminder that the following employee's visa/BRP is {{#if days_remaining}}expiring in <strong>{{days_remaining}} days</strong>{{else}}<strong>expiring today</strong>{{/if}}.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 40%;">Employee</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{employee_name}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Visa Type</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{visa_type}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Expiry Date</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{visa_expiry_date}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #fef2f2; font-weight: bold; color: #dc2626;">Days Remaining</td><td style="padding: 8px; border: 1px solid #e5e7eb; color: #dc2626; font-weight: bold;">{{days_remaining}}</td></tr>
+      {{#if brp_number}}<tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">BRP Number</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{brp_number}}</td></tr>{{/if}}
+      {{#if location_name}}<tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Location</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{location_name}}</td></tr>{{/if}}
+    </table>
+    <p><strong>Action Required:</strong> Please ensure the employee's immigration status is reviewed and any necessary visa renewal or Right to Work checks are completed before the expiry date.</p>
+    {{#if frontUrl}}<p><a href="{{frontUrl}}" style="display: inline-block; padding: 10px 20px; background: #dc2626; color: #fff; text-decoration: none; border-radius: 5px;">Review Immigration Record</a></p>{{/if}}
+    <p style="font-size: 12px; color: #9ca3af;">This is an automated compliance notification. Please do not reply to this email.</p>
+  </div>
+</body>
+</html>

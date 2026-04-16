@@ -1,0 +1,16 @@
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #16a34a;">Contract Signed</h2>
+    <p>Hi,</p>
+    <p><strong>{{employee_name}}</strong> has signed their contract <strong>'{{contract_name}}'</strong>.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold; width: 40%;">Employee</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{employee_name}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Contract</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{contract_name}}</td></tr>
+      <tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Signed Date</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{signed_date}}</td></tr>
+      {{#if location_name}}<tr><td style="padding: 8px; border: 1px solid #e5e7eb; background: #f9fafb; font-weight: bold;">Location</td><td style="padding: 8px; border: 1px solid #e5e7eb;">{{location_name}}</td></tr>{{/if}}
+    </table>
+    {{#if frontUrl}}<p><a href="{{frontUrl}}" style="display: inline-block; padding: 10px 20px; background: #16a34a; color: #fff; text-decoration: none; border-radius: 5px;">View Contract</a></p>{{/if}}
+  </div>
+</body>
+</html>

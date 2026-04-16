@@ -1,0 +1,293 @@
+import { Injectable } from '@nestjs/common';
+import { Model, Connection, Types } from 'mongoose';
+import { InjectDatabaseModel } from '@common/database/decorators/database.decorator';
+import { WidgetDoc, WidgetEntity, WidgetSchema } from '../entities/widget.entity';
+import { IWidgetBulkUpdate } from '../../interfaces/widget.interface';
+@Injectable()
+export class WidgetRepository {
+    private connection: Connection;
+
+    constructor(
+        @InjectDatabaseModel(WidgetEntity.name)
+        private readonly widgetModel: Model<WidgetEntity>,) { }
+
+    setConnection(connection: Connection): this {
+        this.connection = connection;
+        return this;
+    }
+
+    protected get model(): Model<WidgetDoc> {
+        if (this.connection) {
+            try {
+                return this.connection.model(WidgetEntity.name) as any;
+            } catch (error) {
+                return this.connection.model(WidgetEntity.name, WidgetSchema) as any;
+            }
+        }
+        return this.widgetModel as any;
+    }
+
+    async findByUserId(userId: string): Promise<WidgetDoc[]> {
+        return this.model.find({
+            user_id: new Types.ObjectId(userId),
+            soft_delete: false,
+        })
+            .select({
+                user_id: 1,
+                slug: 1,
+                order: 1,
+                is_visible: 1,
+                tool_slug: 1,
+                status: 1,
+                soft_delete: 1,
+                createdAt: 1,
+                updatedAt: 1,
+            })
+            .sort({ order: 1 })
+            .exec();
+    }
+
+    async findByUserIdAndToolSlug(userId: string, toolSlug: string): Promise<WidgetDoc[]> {
+        return this.model.find({
+            user_id: new Types.ObjectId(userId),
+            tool_slug: toolSlug,
+            soft_delete: false,
+        })
+            .select({
+                user_id: 1,
+                slug: 1,
+                order: 1,
+                is_visible: 1,
+                tool_slug: 1,
+                status: 1,
+                soft_delete: 1,
+                createdAt: 1,
+                updatedAt: 1,
+            })
+            .sort({ order: 1 })
+            .exec();
+    }
+
+    async findAllInvisibleWidgetsByUserId(userId: string): Promise<WidgetDoc[]> {
+        return this.model.find({
+            user_id: new Types.ObjectId(userId),
+            is_visible: false,
+            soft_delete: false,
+        })
+            .select({
+                user_id: 1,
+                slug: 1,
+                order: 1,
+                is_visible: 1,
+                tool_slug: 1,
+                status: 1,
+                soft_delete: 1,
+                createdAt: 1,
+                updatedAt: 1,
+            })
+            .sort({ order: 1 })
+            .exec();
+    }
+
+    async findByUserIdAndSlugs(userId: string, slugs: string[]): Promise<WidgetDoc[]> {
+        return this.model.find({
+            user_id: new Types.ObjectId(userId),
+            slug: { $in: slugs },
+            soft_delete: false,
+        })
+            .sort({ order: 1 })
+            .exec();
+    }
+
+    async bulkUpdateWidgets(widgets: IWidgetBulkUpdate[]): Promise<void> {
+        const bulkOps = widgets.map(widget => ({
+            updateOne: {
+                filter: { _id: new Types.ObjectId(widget._id) },
+                update: {
+                    $set: {
+                        order: widget.order,
+                        is_visible: widget.is_visible,
+                        updatedAt: new Date(),
+                    },
+                },
+            },
+        }));
+
+        if (bulkOps.length > 0) {
+            await this.model.bulkWrite(bulkOps, { ordered: false });
+        }
+    }
+
+    async softDeleteByUserIdAndToolSlug(userId: string, toolSlug: string): Promise<void> {
+        await this.model.updateMany(
+            { user_id: new Types.ObjectId(userId), tool_slug: toolSlug },
+            { $set: { soft_delete: true, updatedAt: new Date() } }
+        );
+    }
+
+    async createDefaultWidgets(widgets: Partial<WidgetEntity>[]): Promise<WidgetDoc[]> {
+        const createdWidgets: WidgetDoc[] = [];
+        for (const widget of widgets) {
+            const created = await this.model.create(widget);
+            createdWidgets.push(created as WidgetDoc);
+        }
+        return createdWidgets;
+    }
+
+    async findExistingWidgetsByUserIdAndSlugs(userId: string, slugs: string[]): Promise<WidgetDoc[]> {
+        return this.model.find({
+            user_id: new Types.ObjectId(userId),
+            slug: { $in: slugs },
+        })
+            .select({
+                _id: 1,
+                user_id: 1,
+                slug: 1,
+                tool_slug: 1,
+                soft_delete: 1,
+            })
+            .exec();
+    }
+
+    async countWidgetsByUserId(userId: string): Promise<number> {
+        return this.model.countDocuments({
+            user_id: new Types.ObjectId(userId),
+            soft_delete: false,
+        });
+    }
+
+    async findWidgetsByUserIdPaginated(
+        userId: string,
+        limit: number,
+        offset: number
+    ): Promise<WidgetDoc[]> {
+        return this.model.find({
+            user_id: new Types.ObjectId(userId),
+            soft_delete: false,
+        })
+            .sort({ order: 1 })
+            .limit(limit)
+            .skip(offset)
+            .exec();
+    }
+
+    async findOneById(widgetId: string): Promise<WidgetDoc | null> {
+        return this.model.findById(widgetId)
+            .where({ soft_delete: false })
+            .exec();
+    }
+
+    async findOneByIdIncludeDeleted(widgetId: string): Promise<WidgetDoc | null> {
+        return this.model.findById(widgetId).exec();
+    }
+
+    async softDeleteById(tenantId: string, widgetId: string): Promise<void> {
+        if (tenantId) {
+            const connection = await this.tenantConnectionService.getConnection(tenantId);
+            this.setConnection(connection);
+        }
+        await this.model.updateOne(
+            { _id: new Types.ObjectId(widgetId) },
+            {
+                $set: {
+                    soft_delete: true,
+                    updatedAt: new Date()
+                }
+            }
+        );
+    }
+
+    async restoreById(tenantId: string, widgetId: string): Promise<void> {
+        if (tenantId) {
+            const connection = await this.tenantConnectionService.getConnection(tenantId);
+            this.setConnection(connection);
+        }
+        await this.model.updateOne(
+            { _id: new Types.ObjectId(widgetId) },
+            {
+                $set: {
+                    soft_delete: false,
+                    updatedAt: new Date()
+                }
+            }
+        );
+    }
+
+    async updateSingleWidget(tenantId: string, widgetId: string, updateData: any): Promise<void> {
+        if (tenantId) {
+            const connection = await this.tenantConnectionService.getConnection(tenantId);
+            this.setConnection(connection);
+        }
+        await this.model.updateOne(
+            { _id: new Types.ObjectId(widgetId) },
+            {
+                $set: {
+                    ...updateData,
+                    updatedAt: new Date()
+                }
+            }
+        );
+    }
+
+    async findByTenantAndFilters(
+        tenantId: string,
+        filters: Record<string, any> = {}
+    ): Promise<WidgetDoc[]> {
+        if (tenantId) {
+            const connection = await this.tenantConnectionService.getConnection(tenantId);
+            this.setConnection(connection);
+        }
+
+        const query = {
+            ...filters,
+            soft_delete: false,
+        };
+
+        return this.model.find(query)
+            .sort({ order: 1 })
+            .exec();
+    }
+
+    async findAll(find?: Record<string, any>, options?: any): Promise<WidgetDoc[]> {
+        return this.model.find(find || {}).exec();
+    }
+
+    async getTotalByTenantAndFilters(
+        tenantId: string,
+        filters: Record<string, any> = {}
+    ): Promise<number> {
+        if (tenantId) {
+            const connection = await this.tenantConnectionService.getConnection(tenantId);
+            this.setConnection(connection);
+        }
+
+        const query = {
+            ...filters,
+            soft_delete: false,
+        };
+
+        return this.model.countDocuments(query).exec();
+    }
+
+    // For compatibility with base methods if needed, though we dropped inheritance
+    async create<T extends WidgetEntity>(data: T): Promise<WidgetDoc> {
+        const created = new this.model(data);
+        return created.save() as any;
+    }
+
+    async save(doc: WidgetDoc): Promise<WidgetDoc> {
+        return doc.save();
+    }
+
+    async softDelete(doc: WidgetDoc): Promise<WidgetDoc> {
+        doc.soft_delete = true;
+        doc.updatedAt = new Date();
+        return doc.save();
+    }
+
+    async restore(doc: WidgetDoc): Promise<WidgetDoc> {
+        doc.soft_delete = false;
+        doc.updatedAt = new Date();
+        return doc.save();
+    }
+}

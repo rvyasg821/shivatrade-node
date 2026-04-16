@@ -1,0 +1,9 @@
+{
+    "list": "Liste des paramètres d'outils de locataire récupérée avec succès.",
+    "activeList": "Liste active des paramètres d'outils de locataire récupérée avec succès.",
+    "get": "Paramètres d'outils de locataire récupérés avec succès.",
+    "create": "Paramètres d'outils de locataire créés avec succès.",
+    "update": "Paramètres d'outils de locataire mis à jour avec succès.",
+    "delete": "Paramètres d'outils de locataire supprimés avec succès.",
+    "testSettings": "Paramètres d'outils de locataire testés avec succès."
+}

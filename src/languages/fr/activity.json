@@ -1,0 +1,12 @@
+{
+    "list": "Bienvenue ! Voici l'historique de vos activités.",
+    "user": {
+        "createByAdmin": "Bienvenue ! Votre compte a été configuré avec succès par notre équipe administrative.",
+        "updateByAdmin": "Les détails de votre compte ont été mis à jour par notre équipe administrative.",
+        "inactiveByAdmin": "Votre compte a été temporairement désactivé par notre équipe administrative.",
+        "activeByAdmin": "Bonne nouvelle ! Votre compte a été réactivé par notre équipe administrative.",
+        "blockedByAdmin": "L'accès à votre compte a été temporairement restreint par notre équipe administrative.",
+        "changePassword": "Parfait ! Votre mot de passe a été mis à jour avec succès.",
+        "uploadProfile": "Parfait ! Votre nouvelle photo de profil a été téléchargée."
+    }
+}
