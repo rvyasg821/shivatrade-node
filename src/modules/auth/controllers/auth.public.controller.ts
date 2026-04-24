@@ -759,7 +759,7 @@ export class AuthPublicController {
 
             //Sending Email to User
             try {
-                const subject = 'Welcome to PeopleGem';
+                const subject = 'Welcome to ShivaTrade';
                 await this.nodemailerService.sendEmailWithTemplate(
                     updatedCompany.email,
                     subject,

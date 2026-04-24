@@ -36,7 +36,7 @@ export class PayPalService {
         private readonly helperStringService: HelperStringService
     ) {
         this.http = axios.create();
-        this.companyName = this.configService.get<string>('app.name', 'PeopleGem');
+        this.companyName = this.configService.get<string>('app.name', 'ShivaTrade');
     }
 
     async getPayPalCredentials(payload = null): Promise<PayPalCredentials> {

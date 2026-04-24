@@ -733,7 +733,7 @@ export class CompanyAdminController {
 
             // 8. Send welcome email
             try {
-                const subject = 'Welcome to PeopleGem — Your account has been created';
+                const subject = 'Welcome to ShivaTrade — Your account has been created';
                 const context = { name: `${fname} ${lname}`.trim(), email: email, password: rawPassword };
                 await this.nodemailerService.sendEmailWithTemplate(email, subject, 'welcome.hjs', context);
                 this.logger.log(`Welcome email sent to: ${email}`);

@@ -277,7 +277,7 @@ export class AzureEmailService {
             const contextTemplateData = {
                 ...templateData,
                 logo: process.env.FRONT_LOGO_URL ?? '',
-                frontUrl: process.env.MAIN_URL ?? 'https://app.peoplegem.io',
+                frontUrl: process.env.MAIN_URL ?? 'https://app.shivatrade.com',
             };
             const compiledTemplate = handlebars.compile(templateContent);
             const html = compiledTemplate(contextTemplateData);

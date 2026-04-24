@@ -188,7 +188,7 @@ export class MigrationFreshInitSeed {
                     name: 'System Admin',
                     first_name: 'System',
                     last_name: 'Admin',
-                    email: 'admin@peoplegem.io',
+                    email: 'admin@shivatrade.com',
                     gender: ENUM_USER_GENDER.MALE,
                     roleLevel: 1,
                 },
@@ -205,7 +205,7 @@ export class MigrationFreshInitSeed {
             console.log('✅ Password history created');
 
             console.log('\n🎉 Fresh initialization completed successfully!');
-            console.log('📧 Email: admin@peoplegem.io');
+            console.log('📧 Email: admin@shivatrade.io');
             console.log('🔑 Password: Admin@123');
 
         } catch (err: any) {

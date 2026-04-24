@@ -27,7 +27,7 @@
         <!-- Logo -->
         <div style='padding: 32px 0px; text-align: center;'>
             <img
-                alt='PeopleGem Logo'
+                alt='ShivaTrade Logo'
                 src="{{{logo}}}"
                 style='height: auto; width: auto; max-width: 200px;'
             />
@@ -80,7 +80,7 @@
                 </li>
                 <li style='font-size: 14px; font-family: Poppins, sans-serif; margin: 8px 0;'>
                     <a href='{{domain}}' style='color: #000000; text-decoration: none; font-weight: 500;'>
-                        Return to PeopleGem
+                        Return to ShivaTrade
                     </a>
                 </li>
             </ul>
@@ -91,7 +91,7 @@
             <div style='text-align: center;'>
                 <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
                     <img
-                        alt='PeopleGem Logo'
+                        alt='ShivaTrade Logo'
                         src="{{{logo}}}"
                         style='height: auto; width: auto; max-width: 200px;'
                     />

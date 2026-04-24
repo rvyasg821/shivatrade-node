@@ -161,9 +161,9 @@ export function getTemplateContext<T extends keyof TemplateContextMap>(
 export const exampleContexts = {
   'change-password.template.hbs': {
     name: 'John Doe',
-    supportEmail: 'support@peoplegem.io',
-    homeUrl: 'https://app.peoplegem.io',
-    homeName: 'PeopleGem'
+    supportEmail: 'support@shivatrade.com',
+    homeUrl: 'https://app.shivatrade.com',
+    homeName: 'ShivaTrade'
   } as ChangePasswordContext,
 
   'customer_subscription.hjs': {
@@ -215,7 +215,7 @@ export const exampleContexts = {
       email: 'john@example.com',
       footer: true
     },
-    link: 'https://app.peoplegem.io/reset-password?token=abc123',
+    link: 'https://app.shivatrade.com/reset-password?token=abc123',
     expiresIn: 30
   } as ForgotPasswordContext,
 
@@ -233,12 +233,12 @@ export const exampleContexts = {
     plan_price: '$29.99',
     card_last4: '1234',
     gateway: 'stripe',
-    domain: 'https://app.peoplegem.io'
+    domain: 'https://app.shivatrade.com'
   } as RecurringPaymentReminderContext,
 
   'reset_password.hjs': {
     name: 'John Doe',
-    resetPasswordFrontLink: 'https://app.peoplegem.io/reset-password',
+    resetPasswordFrontLink: 'https://app.shivatrade.com/reset-password',
     text: {
       reset_token: 'abc123def456'
     }
@@ -252,6 +252,6 @@ export const exampleContexts = {
     name: 'John Doe',
     email: 'john@example.com',
     password: 'tempPassword123',
-    domain: 'https://app.peoplegem.io'
+    domain: 'https://app.shivatrade.com'
   } as WelcomeContext
 };

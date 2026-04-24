@@ -291,7 +291,7 @@ export class SubscriptionInvoiceHelper {
                     amount: amount,
                     locations: locations || 1,
                     date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-                    dashboardUrl: this.configService.get<string>('FRONTEND_URL') || 'https://app.peoplegem.io/apps/dashboard',
+                    dashboardUrl: this.configService.get<string>('FRONTEND_URL') || 'https://app.shivatrade.com/apps/dashboard',
                     // Discount info
                     discountApplied: discountApplied,
                     discountCode: discountData?.discount_code || '',

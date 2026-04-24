@@ -59,7 +59,7 @@ export class MigrationUserSeed {
         }
 
         try {
-            const existingAdmin = await this.userService.findOneByEmail('admin@peoplegem.io');
+            const existingAdmin = await this.userService.findOneByEmail('admin@shivatrade.com');
 
             if (existingAdmin) {
                 console.log('✅ System users already exists.');
@@ -72,7 +72,7 @@ export class MigrationUserSeed {
                         name: 'System Admin',
                         first_name: 'System',
                         last_name: 'Admin',
-                        email: 'admin@peoplegem.io',
+                        email: 'admin@shivatrade.com',
                         gender: ENUM_USER_GENDER.MALE,
                         roleLevel: 1,
                     },

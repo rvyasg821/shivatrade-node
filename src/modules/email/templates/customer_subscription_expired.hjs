@@ -39,7 +39,7 @@
         <!-- Logo -->
         <div style='padding: 32px 0px; text-align: center;'>
             <img
-                alt='PeopleGem Logo'
+                alt='ShivaTrade Logo'
                 src="{{{logo}}}"
                 style='height: auto; width: auto; max-width: 200px;'
             />
@@ -90,7 +90,7 @@
                 style='font-size: 14px; font-family: Poppins, sans-serif; margin: 20px 0 0; font-weight: 400; color: #555; line-height: 1.6; max-width: 560px; margin-left: auto; margin-right: auto;'
             >
                 Your
-                <strong>PeopleGem plan</strong>
+                <strong>ShivaTrade plan</strong>
                 has expired and access to your premium features has been paused.
                 To continue enjoying uninterrupted services and secure access to
                 your tools, please renew or upgrade your plan immediately.
@@ -129,7 +129,7 @@
             <div style='text-align: center;'>
                 <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
                     <img
-                        alt='PeopleGem Logo'
+                        alt='ShivaTrade Logo'
                         src="{{{logo}}}"
                         style='height: auto; width: auto; max-width: 200px;'
                     />
