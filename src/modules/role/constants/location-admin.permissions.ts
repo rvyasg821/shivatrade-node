@@ -174,6 +174,48 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: true,
     },
+
+    // ── Catalogue Modules (read-only — cannot manage per spec) ──
+    categories: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    products: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    vendors: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    customers: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    currencies: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
 } as const;
 
 export type LocationAdminPermissions = typeof LOCATION_ADMIN_DEFAULT_PERMISSIONS;

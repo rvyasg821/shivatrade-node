@@ -22,7 +22,12 @@ export class MigrationRoleCategorySeed {
                 let category: string;
 
                 // Determine category based on role name
-                if (role.name === ENUM_SYSTEM_ROLE.SUPER_ADMIN || role.name === ENUM_SYSTEM_ROLE.AGENT) {
+                if (
+                    role.name === ENUM_SYSTEM_ROLE.SUPER_ADMIN ||
+                    role.name === ENUM_SYSTEM_ROLE.AGENT ||
+                    role.name === ENUM_SYSTEM_ROLE.VENDOR ||
+                    role.name === ENUM_SYSTEM_ROLE.CUSTOMER
+                ) {
                     category = 'admin';
                 } else if (
                     role.name === ENUM_SYSTEM_ROLE.COMPANY_ADMIN ||

@@ -174,6 +174,48 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_update: false,
         can_delete: false,
     },
+
+    // ── Catalogue Modules (no access) ──
+    categories: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    products: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    vendors: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    customers: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    currencies: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
 } as const;
 
 export type EmployeePermissions = typeof EMPLOYEE_DEFAULT_PERMISSIONS;

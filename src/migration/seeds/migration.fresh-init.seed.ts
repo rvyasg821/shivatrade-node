@@ -16,6 +16,8 @@ import { COMPANY_DEFAULT_PERMISSIONS } from '@modules/role/constants/company.per
 import { AGENT_DEFAULT_PERMISSIONS } from '@modules/role/constants/agent.permissions';
 import { LOCATION_ADMIN_DEFAULT_PERMISSIONS } from '@modules/role/constants/location-admin.permissions';
 import { EMPLOYEE_DEFAULT_PERMISSIONS } from '@modules/role/constants/employee.permissions';
+import { VENDOR_DEFAULT_PERMISSIONS } from '@modules/role/constants/vendor.permissions';
+import { CUSTOMER_DEFAULT_PERMISSIONS } from '@modules/role/constants/customer.permissions';
 
 @Injectable()
 export class MigrationFreshInitSeed {
@@ -145,6 +147,26 @@ export class MigrationFreshInitSeed {
                     access_scope: 'self',
                     category: 'admin',
                 },
+                {
+                    name: ENUM_SYSTEM_ROLE.VENDOR,
+                    type: ENUM_ROLE_TYPE.SYSTEM,
+                    isDefault: true,
+                    permissions: VENDOR_DEFAULT_PERMISSIONS,
+                    manageable_roles: [],
+                    editable_roles: [],
+                    access_scope: 'self',
+                    category: 'admin',
+                },
+                {
+                    name: ENUM_SYSTEM_ROLE.CUSTOMER,
+                    type: ENUM_ROLE_TYPE.SYSTEM,
+                    isDefault: true,
+                    permissions: CUSTOMER_DEFAULT_PERMISSIONS,
+                    manageable_roles: [],
+                    editable_roles: [],
+                    access_scope: 'self',
+                    category: 'admin',
+                },
             ];
 
             // Create all roles
@@ -155,6 +177,8 @@ export class MigrationFreshInitSeed {
             console.log('   - Location Admin (location access)');
             console.log('   - Employee (self access)');
             console.log('   - Agent (self access)');
+            console.log('   - Vendor (self access, hidden from tenant UI)');
+            console.log('   - Customer (self access, hidden from tenant UI)');
 
             // Get the Super Admin role for user creation
             const superAdminRole = await this.roleService.findOneByName(ENUM_SYSTEM_ROLE.SUPER_ADMIN);

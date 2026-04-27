@@ -31,6 +31,7 @@ import { ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR } from '@modules/auth/enums/auth.un
 import { SYSTEM_USER_DEFAULT_PERMISSIONS } from '@modules/role/constants/system-users.permissions copy';
 import { RoleService } from '@modules/role/services/role.service';
 import { COMPANY_DEFAULT_PERMISSIONS } from '@modules/role/constants/company.permissions';
+import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { CompanyService } from '@modules/company/services/company.service';
 // import { CompanyService } from '@modules/company/services/company.service';
 
@@ -432,6 +433,18 @@ export class AuthService implements IAuthService {
             // Derive userType from role
             const userWithRole = await this.userService.findOneById(String(user._id), { join: true });
             const roleName = (userWithRole as any)?.role?.name || '';
+
+            // Block login for roles whose login is not yet enabled (e.g. Vendor).
+            // Returns the same error shape as wrong-password to avoid leaking
+            // the existence of a vendor account.
+            if (!this.isLoginAllowedForRole(roleName)) {
+                this.logger.warn(`Login blocked for role '${roleName}': ${email}`);
+                throw new BadRequestException({
+                    statusCode: ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR.SHARED_USER_INVALID_CREDENTIALS,
+                    message: 'Invalid credentials',
+                });
+            }
+
             const userType = this.deriveUserType(roleName);
 
             this.logger.log(`Auth successful for: ${email} (role: ${roleName}, type: ${userType})`);
@@ -453,6 +466,19 @@ export class AuthService implements IAuthService {
                 message: 'User not found',
             });
         }
+    }
+
+    /**
+     * Roles that cannot log in or request password resets yet.
+     * Remove a role from this list to enable login + reset for it.
+     */
+    private static readonly LOGIN_BLOCKED_ROLES: string[] = [
+        ENUM_SYSTEM_ROLE.VENDOR,
+        ENUM_SYSTEM_ROLE.CUSTOMER,
+    ];
+
+    isLoginAllowedForRole(roleName: string): boolean {
+        return !AuthService.LOGIN_BLOCKED_ROLES.includes(roleName);
     }
 
     deriveUserType(roleName: string): ENUM_USER_TYPE {

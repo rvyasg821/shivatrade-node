@@ -23,7 +23,10 @@ async function bootstrap() {
     });
 
     const configService = app.get(ConfigService);
-    const databaseUri: string = configService.get<string>('database.url');
+    const dbConfig = configService.get<any>('database');
+    const databaseUri: string = dbConfig
+        ? `postgres://${dbConfig.username}@${dbConfig.host}:${dbConfig.port}/${dbConfig.name}`
+        : 'unknown';
     const env: string = configService.get<string>('app.env');
     const timezone: string = configService.get<string>('app.timezone');
     const host: string = configService.get<string>('app.http.host');

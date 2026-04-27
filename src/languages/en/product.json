@@ -1,0 +1,14 @@
+{
+    "list": "Products retrieved successfully.",
+    "get": "Product details fetched successfully.",
+    "create": "Product created successfully.",
+    "update": "Product updated successfully.",
+    "delete": "Product deleted successfully.",
+    "dropdown": "Products dropdown loaded.",
+    "checkCode": "Code availability checked.",
+    "error": {
+        "exist": "A product with this code already exists.",
+        "categoryNotFound": "Category not found.",
+        "notFound": "Sorry, we couldn't find the requested product."
+    }
+}

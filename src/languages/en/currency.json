@@ -1,0 +1,16 @@
+{
+    "list": "Currencies retrieved successfully.",
+    "get": "Currency details fetched successfully.",
+    "create": "Currency created successfully.",
+    "update": "Currency updated successfully.",
+    "delete": "Currency deleted successfully.",
+    "dropdown": "Currencies dropdown loaded.",
+    "rateList": "Exchange rate history loaded.",
+    "rateCreate": "Exchange rate added.",
+    "error": {
+        "exist": "A currency with this code already exists.",
+        "samePair": "From and To currencies must be different.",
+        "targetNotFound": "Target currency not found.",
+        "notFound": "Sorry, we couldn't find the requested currency."
+    }
+}

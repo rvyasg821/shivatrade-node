@@ -174,6 +174,48 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: true,
     },
+
+    // ── Catalogue Modules (full access) ──
+    categories: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    products: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    vendors: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    customers: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    currencies: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
 } as const;
 
 export type CompanyPermissions = typeof COMPANY_DEFAULT_PERMISSIONS;

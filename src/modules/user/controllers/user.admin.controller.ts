@@ -157,13 +157,15 @@ export class UserAdminController {
         if (role && Object.keys(role).length > 0) {
             find['role'] = role['role'];
         } else {
-            // Otherwise, exclude Agent and Employee roles from the main users list
-            const [agentRole, employeeRole] = await Promise.all([
+            // Otherwise, exclude Agent, Employee, Vendor, and Customer roles from the main users list
+            const [agentRole, employeeRole, vendorRole, customerRole] = await Promise.all([
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.AGENT }),
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE }),
+                this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.VENDOR }),
+                this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.CUSTOMER }),
             ]);
 
-            const excludeRoleIds = [agentRole?._id, employeeRole?._id].filter(Boolean);
+            const excludeRoleIds = [agentRole?._id, employeeRole?._id, vendorRole?._id, customerRole?._id].filter(Boolean);
             if (excludeRoleIds.length > 0) {
                 find['role'] = { $nin: excludeRoleIds };
             }

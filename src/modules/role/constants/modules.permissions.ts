@@ -3,200 +3,68 @@ export const MODULES_PERMISSIONS = {
         user: {
             name: "User Management",
             description: "Manage user accounts and profiles",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         role: {
             name: "Role Management",
             description: "Manage roles and permissions",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         // setting: {
         //     name: "Settings Management",
         //     description: "Manage system settings and configurations",
-        //     permissions: [
-        //         "can_all",
-        //         "can_read",
-        //         "can_add",
-        //         "can_update",
-        //         "can_delete"
-        //     ],
-        //     default: {
-        //         can_all: false,
-        //         can_read: false,
-        //         can_add: false,
-        //         can_update: false,
-        //         can_delete: false
-        //     }
+        //     permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+        //     default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         // },
         company: {
             name: "Company Management",
             description: "Manage company information and profiles",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         plans: {
-            name: "Company Management",
-            description: "Manage company information and profiles",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            name: "Plan Management",
+            description: "Manage plan",
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         subscription: {
-            name: "Company Management",
-            description: "Manage company information and profiles",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            name: "Subscription Management",
+            description: "Manage subscriptions",
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         payments: {
-            name: "Company Management",
-            description: "Manage company information and profiles",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            name: "Payment Management",
+            description: "Manage payments",
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         discount: {
             name: "Discount Management",
             description: "Manage discount codes and promotions",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         tools: {
             name: "Tools Management",
             description: "Manage tools and applications",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         location: {
             name: "Location Management",
             description: "Manage company locations",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         employee: {
             name: "Employee Management",
             description: "Manage employees",
-            permissions: [
-                "can_all",
-                "can_read",
-                "can_add",
-                "can_update",
-                "can_delete"
-            ],
-            default: {
-                can_all: false,
-                can_read: false,
-                can_add: false,
-                can_update: false,
-                can_delete: false
-            }
+            permissions: [ "can_all", "can_read", "can_add", "can_update", "can_delete" ],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
         holiday_calendar: {
             name: "Holiday Calendar",
@@ -240,42 +108,36 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
-        // tenant_tools: {
-        //     name: "Company Management",
-        //     description: "Manage company information and profiles",
-        //     permissions: [
-        //         "can_all",
-        //         "can_read",
-        //         "can_add",
-        //         "can_update",
-        //         "can_delete"
-        //     ],
-        //     default: {
-        //         can_all: false,
-        //         can_read: false,
-        //         can_add: false,
-        //         can_update: false,
-        //         can_delete: false
-        //     }
-        // },
-        // tools_schedule: {
-        //     name: "Company Management",
-        //     description: "Manage company information and profiles",
-        //     permissions: [
-        //         "can_all",
-        //         "can_read",
-        //         "can_add",
-        //         "can_update",
-        //         "can_delete"
-        //     ],
-        //     default: {
-        //         can_all: false,
-        //         can_read: false,
-        //         can_add: false,
-        //         can_update: false,
-        //         can_delete: false
-        //     }
-        // },
+        categories: {
+            name: "Categories",
+            description: "Manage product and vendor categories",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        products: {
+            name: "Products",
+            description: "Manage product / item master used in quotations, POs, price lists",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        vendors: {
+            name: "Vendors",
+            description: "Manage vendor master with contacts, payment terms and incoterms",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        customers: {
+            name: "Customers",
+            description: "Manage customer master with contacts and address",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        currencies: {
+            name: "Currencies",
+            description: "Manage currencies and exchange rates",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
     },
     version: "1.0.0",
     lastUpdated: "2025-09-26"
