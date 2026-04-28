@@ -138,6 +138,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
+        "price-list": {
+            name: "Price List",
+            description: "Manage vendor pricing for products",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
     },
     version: "1.0.0",
     lastUpdated: "2025-09-26"

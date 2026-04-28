@@ -53,6 +53,7 @@ export interface ICompanyPermissions {
     vendors?: IModulePermissions;
     customers?: IModulePermissions;
     currencies?: IModulePermissions;
+    'price-list'?: IModulePermissions;
     [key: string]: IModulePermissions | Record<string, boolean> | undefined;
 }
 
@@ -96,6 +97,7 @@ export const PermissionModule = {
     VENDORS: 'vendors',
     CUSTOMERS: 'customers',
     CURRENCIES: 'currencies',
+    PRICE_LIST: 'price-list',
 } as const;
 
 export type PermissionModuleName = typeof PermissionModule[keyof typeof PermissionModule];

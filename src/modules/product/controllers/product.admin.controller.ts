@@ -135,9 +135,12 @@ export class ProductAdminController {
     @Response('product.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:productId')
-    async delete(@Param('productId') productId: string): Promise<void> {
+    async delete(
+        @AuthJwtPayload('user') userId: string,
+        @Param('productId') productId: string
+    ): Promise<void> {
         const product = await this.productService.findOneById(productId);
-        await this.productService.softDelete(product);
+        await this.productService.softDelete(product, userId);
     }
 
     @Response('product.checkCode')

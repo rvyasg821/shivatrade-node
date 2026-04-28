@@ -216,6 +216,14 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_update: false,
         can_delete: false,
     },
+    "price-list": {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
 } as const;
 
 export type EmployeePermissions = typeof EMPLOYEE_DEFAULT_PERMISSIONS;

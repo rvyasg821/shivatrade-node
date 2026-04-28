@@ -216,6 +216,14 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_update: false,
         can_delete: false,
     },
+    "price-list": {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
 } as const;
 
 export type LocationAdminPermissions = typeof LOCATION_ADMIN_DEFAULT_PERMISSIONS;

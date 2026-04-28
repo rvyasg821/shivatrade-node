@@ -116,6 +116,7 @@ export class CategoryService {
 
     async softDelete(
         category: CategoryDoc,
+        deletedBy?: string,
         options?: IDatabaseSaveOptions
     ): Promise<CategoryDoc> {
         const childCount = await this.categoryRepository.countChildren(
@@ -129,9 +130,25 @@ export class CategoryService {
 
         category.soft_delete = true;
         category.is_active = false;
+        (category as any).deleted = true;
+        (category as any).deletedAt = new Date();
+        if (deletedBy) (category as any).deletedBy = deletedBy;
+
         const updated = await this.categoryRepository.save(category, options);
 
         this.logger.log(`Category soft deleted: ${category._id}`);
+        return updated;
+    }
+
+    async restore(category: CategoryDoc): Promise<CategoryDoc> {
+        category.soft_delete = false;
+        category.is_active = true;
+        (category as any).deleted = false;
+        (category as any).deletedAt = null;
+        (category as any).deletedBy = null;
+
+        const updated = await this.categoryRepository.save(category);
+        this.logger.log(`Category restored: ${category._id}`);
         return updated;
     }
 

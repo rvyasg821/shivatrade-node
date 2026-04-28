@@ -140,8 +140,11 @@ export class VendorAdminController {
     @Response('vendor.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:vendorId')
-    async delete(@Param('vendorId') vendorId: string): Promise<void> {
+    async delete(
+        @AuthJwtPayload('user') userId: string,
+        @Param('vendorId') vendorId: string
+    ): Promise<void> {
         const vendor = await this.vendorService.findOneById(vendorId);
-        await this.vendorService.softDelete(vendor);
+        await this.vendorService.softDelete(vendor, userId);
     }
 }

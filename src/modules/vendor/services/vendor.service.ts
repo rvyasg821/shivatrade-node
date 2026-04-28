@@ -117,12 +117,29 @@ export class VendorService {
         return true;
     }
 
-    private async deactivateVendorUser(userId: string): Promise<void> {
+    private async deactivateVendorUser(
+        userId: string,
+        deletedBy?: string
+    ): Promise<void> {
         const user = await this.userService.findOneById(userId);
         if (!user) return;
         user.deleted = true;
         user.deletedAt = this.helperDateService.create();
+        if (deletedBy) (user as any).deletedBy = deletedBy;
         user.status = ENUM_USER_STATUS.INACTIVE;
+        await this.userService.save(user);
+    }
+
+    private async syncVendorUserStatus(
+        userId: string,
+        vendorIsActive: boolean
+    ): Promise<void> {
+        const user = await this.userService.findOneById(userId);
+        if (!user) return;
+        user.is_active = vendorIsActive;
+        user.status = vendorIsActive
+            ? ENUM_USER_STATUS.ACTIVE
+            : ENUM_USER_STATUS.INACTIVE;
         await this.userService.save(user);
     }
 
@@ -267,11 +284,26 @@ export class VendorService {
         }
 
         const nextCategoryIds = data.category_ids;
+        const wasActive = !!vendor.is_active;
 
         // Strip relations from the body before assigning scalar fields
         const { contacts: _c, category_ids: _ci, ...scalarFields } = data;
         Object.assign(vendor, scalarFields);
         const updated = await this.vendorRepository.save(vendor);
+
+        if (wasActive !== !!vendor.is_active) {
+            const existingPrimary = await this.contactRepository.findOne({
+                vendor_id: vendor._id.toString(),
+                is_primary: true,
+                soft_delete: false,
+            } as any);
+            if (existingPrimary?.user_id) {
+                await this.syncVendorUserStatus(
+                    existingPrimary.user_id.toString(),
+                    !!vendor.is_active
+                );
+            }
+        }
 
         if (nextCategoryIds) {
             await this.replaceVendorCategories(
@@ -339,19 +371,22 @@ export class VendorService {
         return updated;
     }
 
-    async softDelete(vendor: VendorDoc): Promise<VendorDoc> {
+    async softDelete(vendor: VendorDoc, deletedBy?: string): Promise<VendorDoc> {
         // Deactivate linked vendor user(s) before wiping the contact rows.
         const existingContacts = await this.contactRepository.findByVendorId(
             vendor._id.toString()
         );
         for (const c of existingContacts) {
             if (c.user_id) {
-                await this.deactivateVendorUser(c.user_id.toString());
+                await this.deactivateVendorUser(c.user_id.toString(), deletedBy);
             }
         }
 
         vendor.soft_delete = true;
         vendor.is_active = false;
+        (vendor as any).deleted = true;
+        (vendor as any).deletedAt = new Date();
+        if (deletedBy) (vendor as any).deletedBy = deletedBy;
         const updated = await this.vendorRepository.save(vendor);
         await this.contactRepository.softDeleteByVendorId(vendor._id.toString());
         await this.vendorCategoryRepository.deleteByVendorId(vendor._id.toString());

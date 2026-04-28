@@ -138,8 +138,11 @@ export class CategoryAdminController {
     @Response('category.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:categoryId')
-    async delete(@Param('categoryId') categoryId: string): Promise<void> {
+    async delete(
+        @AuthJwtPayload('user') userId: string,
+        @Param('categoryId') categoryId: string
+    ): Promise<void> {
         const category = await this.categoryService.findOneById(categoryId);
-        await this.categoryService.softDelete(category);
+        await this.categoryService.softDelete(category, userId);
     }
 }

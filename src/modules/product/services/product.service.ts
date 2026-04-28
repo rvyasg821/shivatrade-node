@@ -111,10 +111,15 @@ export class ProductService {
 
     async softDelete(
         product: ProductDoc,
+        deletedBy?: string,
         options?: IDatabaseSaveOptions
     ): Promise<ProductDoc> {
         product.soft_delete = true;
         product.is_active = false;
+        (product as any).deleted = true;
+        (product as any).deletedAt = new Date();
+        if (deletedBy) (product as any).deletedBy = deletedBy;
+
         const updated = await this.productRepository.save(product, options);
 
         this.logger.log(`Product soft deleted: ${product._id}`);
