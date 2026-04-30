@@ -212,7 +212,7 @@ export class MigrationFreshInitSeed {
                     name: 'System Admin',
                     first_name: 'System',
                     last_name: 'Admin',
-                    email: 'admin@shivatrade.com',
+                    email: 'admin@admin.com',
                     gender: ENUM_USER_GENDER.MALE,
                     roleLevel: 1,
                 },

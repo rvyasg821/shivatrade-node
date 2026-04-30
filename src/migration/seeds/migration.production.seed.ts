@@ -212,7 +212,7 @@ export class MigrationProductionSeed {
             console.log('╠══════════════════════════════════════════════════════════════╣');
             console.log('║                                                             ║');
             console.log('║  Super Admin Login:                                         ║');
-            console.log('║    Email:    admin@shivatrade.com                                ║');
+            console.log('║    Email:    admin@admin.com                                ║');
             console.log('║    Password: Admin@123                                      ║');
             console.log('║                                                             ║');
             console.log('║  Seeded Data:                                               ║');
