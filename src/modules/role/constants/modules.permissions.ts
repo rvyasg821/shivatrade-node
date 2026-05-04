@@ -132,6 +132,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
+        leads: {
+            name: "Leads",
+            description: "Manage sales leads, assignments and conversion to customers",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
         currencies: {
             name: "Currencies",
             description: "Manage currencies and exchange rates",

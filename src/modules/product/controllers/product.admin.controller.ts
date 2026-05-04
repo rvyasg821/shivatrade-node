@@ -90,7 +90,7 @@ export class ProductAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; code: string; name: string; unit_of_measure?: string }[]>> {
+    ): Promise<IResponse<{ _id: string; code: string; name: string; unit_of_measure?: string; category_id?: string }[]>> {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
 
@@ -104,6 +104,7 @@ export class ProductAdminController {
                 code: p.code,
                 name: p.name,
                 unit_of_measure: p.unit_of_measure,
+                category_id: p.category_id ? p.category_id.toString() : undefined,
             })),
         };
     }

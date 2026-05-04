@@ -51,6 +51,8 @@ import { VendorModule } from '@modules/vendor/vendor.module';
 import { VendorAdminController } from '@modules/vendor/controllers/vendor.admin.controller';
 import { CustomerModule } from '@modules/customer/customer.module';
 import { CustomerAdminController } from '@modules/customer/controllers/customer.admin.controller';
+import { LeadModule } from '@modules/lead/lead.module';
+import { LeadAdminController } from '@modules/lead/controllers/lead.admin.controller';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { CurrencyAdminController } from '@modules/currency/controllers/currency.admin.controller';
 import { PriceListModule } from '@modules/price-list/price-list.module';
@@ -125,6 +127,9 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         // Customer controller
         CustomerAdminController,
+
+        // Lead controller
+        LeadAdminController,
 
         // Currency controller
         CurrencyAdminController,
@@ -208,6 +213,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         ProductModule,
         VendorModule,
         CustomerModule,
+        LeadModule,
         CurrencyModule,
         PriceListModule,
         EmployeeModule,
