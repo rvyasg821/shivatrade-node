@@ -248,6 +248,32 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_update: false,
         can_delete: false,
     },
+
+    // ── Sales Group (no access by default — Admin can grant per-role) ──
+    quotations: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    pfi: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    "purchase-orders": {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
 } as const;
 
 export type LocationAdminPermissions = typeof LOCATION_ADMIN_DEFAULT_PERMISSIONS;

@@ -230,6 +230,20 @@ export class LeadService {
     }
 
     /**
+     * Idempotent — flip a lead to WON. Used as a side-effect when an
+     * approved Quotation references this lead. No-ops when the lead is
+     * already WON or doesn't exist.
+     */
+    async markWon(leadId: string): Promise<void> {
+        if (!leadId) return;
+        const lead = await this.leadRepository.findOneById(leadId);
+        if (!lead || lead.status === ENUM_LEAD_STATUS.WON) return;
+        lead.status = ENUM_LEAD_STATUS.WON;
+        await this.leadRepository.save(lead);
+        this.logger.log(`Lead ${leadId} marked WON via Quotation approval`);
+    }
+
+    /**
      * Look up an existing (non-deleted) customer in the same company that has
      * a contact with the given email. Returns the customer _id or undefined.
      */

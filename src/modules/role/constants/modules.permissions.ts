@@ -162,9 +162,27 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
+        quotations: {
+            name: "Quotations",
+            description: "Manage export quotations with costing — sent to customers as the first pricing offer",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        pfi: {
+            name: "PFI",
+            description: "Manage Proforma Invoices created from approved quotations",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        "purchase-orders": {
+            name: "Purchase Orders",
+            description: "Manage POs sent to vendors, generated from approved Quotations / PFIs",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
     },
     version: "1.0.0",
-    lastUpdated: "2025-09-26"
+    lastUpdated: "2026-05-05"
 } as const;
 
 export type ModulePermissions = typeof MODULES_PERMISSIONS;
