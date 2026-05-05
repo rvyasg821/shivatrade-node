@@ -1,6 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Exclude } from 'class-transformer';
-import { ENUM_CUSTOMER_STATUS } from '@modules/customer/enums/customer.enum';
+import {
+    ENUM_CUSTOMER_ADDRESS_TYPE,
+    ENUM_CUSTOMER_STATUS,
+} from '@modules/customer/enums/customer.enum';
 import { ICustomerSocialMedia } from '@modules/customer/repository/entities/customer.entity';
 
 export class CustomerContactResponseDto {
@@ -14,6 +17,22 @@ export class CustomerContactResponseDto {
     @ApiProperty({ required: true, type: Boolean }) is_primary: boolean;
 }
 
+export class CustomerAddressResponseDto {
+    @ApiProperty({ required: true, type: String }) _id: string;
+    @ApiProperty({ required: true, enum: ENUM_CUSTOMER_ADDRESS_TYPE })
+    type: ENUM_CUSTOMER_ADDRESS_TYPE;
+    @ApiProperty({ required: false, type: String }) label?: string;
+    @ApiProperty({ required: false, type: String }) address_line1?: string;
+    @ApiProperty({ required: false, type: String }) address_line2?: string;
+    @ApiProperty({ required: false, type: String }) city?: string;
+    @ApiProperty({ required: false, type: String }) state?: string;
+    @ApiProperty({ required: false, type: String }) country?: string;
+    @ApiProperty({ required: false, type: String }) postcode?: string;
+    @ApiProperty({ required: false, type: String }) gstin?: string;
+    @ApiProperty({ required: false, type: String }) iec?: string;
+    @ApiProperty({ required: true, type: Boolean }) is_default: boolean;
+}
+
 export class CustomerGetResponseDto {
     @ApiProperty({ required: true, type: String }) _id: string;
     @ApiProperty({ required: true, type: String }) company_id: string;
@@ -23,18 +42,18 @@ export class CustomerGetResponseDto {
     @ApiProperty({ required: false, type: String }) website?: string;
     @ApiProperty({ required: false, type: Object }) social_media?: ICustomerSocialMedia;
 
-    @ApiProperty({ required: false, type: String }) address_line1?: string;
-    @ApiProperty({ required: false, type: String }) address_line2?: string;
-    @ApiProperty({ required: false, type: String }) city?: string;
-    @ApiProperty({ required: false, type: String }) state?: string;
-    @ApiProperty({ required: false, type: String }) country?: string;
-    @ApiProperty({ required: false, type: String }) postcode?: string;
+    @ApiProperty({ required: false, type: String }) gstin?: string;
+    @ApiProperty({ required: false, type: String }) pan?: string;
+    @ApiProperty({ required: false, type: String }) iec?: string;
 
     @ApiProperty({ required: true, type: Boolean }) is_active: boolean;
     @ApiProperty({ required: true, enum: ENUM_CUSTOMER_STATUS }) status: ENUM_CUSTOMER_STATUS;
 
     @ApiProperty({ required: true, type: [CustomerContactResponseDto] })
     contacts: CustomerContactResponseDto[];
+
+    @ApiProperty({ required: false, type: [CustomerAddressResponseDto] })
+    addresses?: CustomerAddressResponseDto[];
 
     @ApiProperty({ required: false, type: String }) primary_contact_name?: string;
     @ApiProperty({ required: false, type: String }) primary_contact_email?: string;

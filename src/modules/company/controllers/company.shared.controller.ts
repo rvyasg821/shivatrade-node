@@ -89,6 +89,7 @@ export class CompanySharedController {
         }
 
         const mapped: CompanyGetResponseDto = this.companyService.mapProfile(company);
+        await this.companyService.hydrateRelationsOnto(String(company._id), mapped);
 
         return { data: mapped };
     }
@@ -105,8 +106,15 @@ export class CompanySharedController {
     async updateProfile(
         @Req() request: Request,
         @AuthJwtPayload('roleName') roleName: string,
-        @Body() { company_name, contact_name, contact_first_name, contact_last_name, email, mobile, country_code, website, address_1, address_2, city, state, country, zipcode }: CompanyUpdateRequestDto
+        @Body() body: CompanyUpdateRequestDto
     ): Promise<IResponse<DatabaseIdResponseDto>> {
+        const {
+            company_name, contact_name, contact_first_name, contact_last_name,
+            email, mobile, country_code, website,
+            address_1, address_2, city, state, country, zipcode,
+            iec, lut_no, lut_date, cin,
+            addresses, bank_accounts,
+        } = body;
         const user = (request as any).user;
         const userId = user && user.user ? String(user.user) : null;
         const company: CompanyDoc = await this.companyService.findOneByUserId(
@@ -146,8 +154,26 @@ export class CompanySharedController {
         try {
             const updated = await this.companyService.update(
                 company,
-                { company_name, contact_name, contact_first_name, contact_last_name, email, mobile, country_code, website, address_1, address_2, city, state, country, zipcode }
+                {
+                    company_name, contact_name, contact_first_name, contact_last_name,
+                    email, mobile, country_code, website,
+                    address_1, address_2, city, state, country, zipcode,
+                    iec, lut_no, lut_date, cin,
+                }
             );
+
+            if (addresses !== undefined) {
+                await this.companyService.replaceAddresses(
+                    String(updated._id),
+                    addresses
+                );
+            }
+            if (bank_accounts !== undefined) {
+                await this.companyService.replaceBankAccounts(
+                    String(updated._id),
+                    bank_accounts
+                );
+            }
 
             // TODO: Create company-specific activity logging
             // await this.activityService.createByUser(

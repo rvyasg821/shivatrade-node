@@ -53,10 +53,17 @@ import { CustomerModule } from '@modules/customer/customer.module';
 import { CustomerAdminController } from '@modules/customer/controllers/customer.admin.controller';
 import { LeadModule } from '@modules/lead/lead.module';
 import { LeadAdminController } from '@modules/lead/controllers/lead.admin.controller';
+import { RebateModule } from '@modules/rebate/rebate.module';
+import { RebateAdminController } from '@modules/rebate/controllers/rebate.admin.controller';
+import { ExpenseModule } from '@modules/expense/expense.module';
+import { ExpenseAdminController } from '@modules/expense/controllers/expense.admin.controller';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { CurrencyAdminController } from '@modules/currency/controllers/currency.admin.controller';
 import { PriceListModule } from '@modules/price-list/price-list.module';
 import { PriceListAdminController } from '@modules/price-list/controllers/price-list.admin.controller';
+import { VoucherModule } from '@common/voucher/voucher.module';
+import { QuotationModule } from '@modules/quotation/quotation.module';
+import { QuotationAdminController } from '@modules/quotation/controllers/quotation.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
 import { EmployeeAdminController } from '@modules/employee/controllers/employee.admin.controller';
 import { HolidayCalendarModule } from '@modules/holiday-calendar/holiday-calendar.module';
@@ -131,6 +138,12 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         // Lead controller
         LeadAdminController,
 
+        // Rebate controller
+        RebateAdminController,
+
+        // Expense controller
+        ExpenseAdminController,
+
         // Currency controller
         CurrencyAdminController,
 
@@ -175,6 +188,9 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         // Payroll controller
         PayrollAdminController,
+
+        // Quotation controller
+        QuotationAdminController,
     ],
     providers: [],
     exports: [],
@@ -214,8 +230,12 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         VendorModule,
         CustomerModule,
         LeadModule,
+        RebateModule,
+        ExpenseModule,
         CurrencyModule,
         PriceListModule,
+        VoucherModule,
+        QuotationModule,
         EmployeeModule,
         HolidayCalendarModule,
         DocumentModule,

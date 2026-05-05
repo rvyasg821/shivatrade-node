@@ -216,6 +216,22 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: false,
     },
+    rebates: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    expenses: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
     currencies: {
         can_all: false,
         can_read: true,

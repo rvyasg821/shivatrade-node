@@ -177,16 +177,19 @@ export class LeadService {
         }
 
         if (!customerId) {
+            const hasAddress =
+                !!(
+                    lead.address_line1 ||
+                    lead.address_line2 ||
+                    lead.city ||
+                    lead.state ||
+                    lead.country ||
+                    lead.postcode
+                );
             const customer = await this.customerService.create(
                 companyId,
                 {
                     company_name: lead.company_name,
-                    address_line1: lead.address_line1,
-                    address_line2: lead.address_line2,
-                    city: lead.city,
-                    state: lead.state,
-                    country: lead.country,
-                    postcode: lead.postcode,
                     contacts: [
                         {
                             name: lead.contact_name,
@@ -196,6 +199,20 @@ export class LeadService {
                             is_primary: true,
                         },
                     ],
+                    addresses: hasAddress
+                        ? [
+                              {
+                                  type: 'bill_to' as any,
+                                  address_line1: lead.address_line1,
+                                  address_line2: lead.address_line2,
+                                  city: lead.city,
+                                  state: lead.state,
+                                  country: lead.country,
+                                  postcode: lead.postcode,
+                                  is_default: true,
+                              },
+                          ]
+                        : [],
                 } as any,
                 userId
             );

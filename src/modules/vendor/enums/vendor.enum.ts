@@ -3,6 +3,18 @@ export enum ENUM_VENDOR_STATUS {
     INACTIVE = 'inactive',
 }
 
+export enum ENUM_VENDOR_ADDRESS_TYPE {
+    BILL_FROM = 'bill_from',
+    SHIP_FROM = 'ship_from',
+    OTHER = 'other',
+}
+
+export enum ENUM_VENDOR_BANK_ACCOUNT_TYPE {
+    CURRENT = 'current',
+    SAVINGS = 'savings',
+    OTHER = 'other',
+}
+
 /**
  * Common payment terms used in international trade.
  * Stored as varchar; the FE uses these as a hardcoded dropdown.

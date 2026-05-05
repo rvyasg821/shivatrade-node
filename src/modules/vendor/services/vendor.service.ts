@@ -4,17 +4,30 @@ import { plainToInstance } from 'class-transformer';
 import { VendorRepository } from '../repository/repositories/vendor.repository';
 import { VendorContactRepository } from '../repository/repositories/vendor-contact.repository';
 import { VendorCategoryRepository } from '../repository/repositories/vendor-category.repository';
+import { VendorAddressRepository } from '../repository/repositories/vendor-address.repository';
+import { VendorBankAccountRepository } from '../repository/repositories/vendor-bank-account.repository';
 import { VendorDoc } from '../repository/entities/vendor.entity';
 import { VendorContactDoc } from '../repository/entities/vendor-contact.entity';
 import { VendorCategoryDoc } from '../repository/entities/vendor-category.entity';
-import { VendorCreateRequestDto, VendorContactRequestDto } from '../dtos/request/vendor.create.request.dto';
+import { VendorAddressDoc } from '../repository/entities/vendor-address.entity';
+import { VendorBankAccountDoc } from '../repository/entities/vendor-bank-account.entity';
+import {
+    VendorCreateRequestDto,
+    VendorContactRequestDto,
+    VendorAddressRequestDto,
+    VendorBankAccountRequestDto,
+} from '../dtos/request/vendor.create.request.dto';
 import { VendorUpdateRequestDto } from '../dtos/request/vendor.update.request.dto';
 import {
     VendorGetResponseDto,
     VendorContactResponseDto,
+    VendorAddressResponseDto,
+    VendorBankAccountResponseDto,
 } from '../dtos/response/vendor.get.response.dto';
 import { VendorListResponseDto } from '../dtos/response/vendor.list.response.dto';
+import { ENUM_VENDOR_ADDRESS_TYPE } from '../enums/vendor.enum';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
+import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { UserService } from '@modules/user/services/user.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { AuthService } from '@modules/auth/services/auth.service';
@@ -34,7 +47,10 @@ export class VendorService {
         private readonly vendorRepository: VendorRepository,
         private readonly contactRepository: VendorContactRepository,
         private readonly vendorCategoryRepository: VendorCategoryRepository,
+        private readonly addressRepository: VendorAddressRepository,
+        private readonly bankAccountRepository: VendorBankAccountRepository,
         private readonly categoryRepository: CategoryRepository,
+        private readonly currencyRepository: CurrencyRepository,
         private readonly userService: UserService,
         private readonly roleService: RoleService,
         private readonly authService: AuthService,
@@ -188,8 +204,10 @@ export class VendorService {
         await this.assertCategoriesValid(companyId, data.category_ids);
         this.assertContactsValid(data.contacts);
         await this.assertContactEmailsUnique(companyId, data.contacts);
+        this.assertAddressesValid(data.addresses);
+        await this.assertBankAccountsValid(companyId, data.bank_accounts);
 
-        const { contacts, category_ids, ...vendorFields } = data;
+        const { contacts, category_ids, addresses, bank_accounts, ...vendorFields } = data;
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
 
         // Pre-flight: primary email must be free in the users table BEFORE any writes
@@ -223,6 +241,13 @@ export class VendorService {
                 user_id: c === primaryContact ? primaryUserId : undefined,
             } as any);
         }
+
+        await this.replaceAddresses(companyId, vendor._id.toString(), addresses);
+        await this.replaceBankAccounts(
+            companyId,
+            vendor._id.toString(),
+            bank_accounts
+        );
 
         this.logger.log(
             `Vendor created: ${vendor._id} for company: ${companyId} (vendor user: ${primaryUserId})`
@@ -283,12 +308,33 @@ export class VendorService {
             nextContacts = data.contacts;
         }
 
+        if (data.addresses !== undefined) {
+            this.assertAddressesValid(data.addresses);
+        }
+        if (data.bank_accounts !== undefined) {
+            await this.assertBankAccountsValid(companyId, data.bank_accounts);
+        }
+
         const nextCategoryIds = data.category_ids;
         const wasActive = !!vendor.is_active;
 
         // Strip relations from the body before assigning scalar fields
-        const { contacts: _c, category_ids: _ci, ...scalarFields } = data;
+        const {
+            contacts: _c,
+            category_ids: _ci,
+            addresses: _a,
+            bank_accounts: _ba,
+            ...scalarFields
+        } = data;
         Object.assign(vendor, scalarFields);
+        // Keep status and is_active consistent — caller may send only one.
+        if (data.status !== undefined) {
+            vendor.is_active = data.status === ('active' as any);
+        } else if (data.is_active !== undefined) {
+            vendor.status = data.is_active
+                ? ('active' as any)
+                : ('inactive' as any);
+        }
         const updated = await this.vendorRepository.save(vendor);
 
         if (wasActive !== !!vendor.is_active) {
@@ -367,6 +413,21 @@ export class VendorService {
             }
         }
 
+        if (data.addresses !== undefined) {
+            await this.replaceAddresses(
+                companyId,
+                vendor._id.toString(),
+                data.addresses
+            );
+        }
+        if (data.bank_accounts !== undefined) {
+            await this.replaceBankAccounts(
+                companyId,
+                vendor._id.toString(),
+                data.bank_accounts
+            );
+        }
+
         this.logger.log(`Vendor updated: ${vendor._id}`);
         return updated;
     }
@@ -390,6 +451,8 @@ export class VendorService {
         const updated = await this.vendorRepository.save(vendor);
         await this.contactRepository.softDeleteByVendorId(vendor._id.toString());
         await this.vendorCategoryRepository.deleteByVendorId(vendor._id.toString());
+        await this.addressRepository.softDeleteByVendorId(vendor._id.toString());
+        await this.bankAccountRepository.softDeleteByVendorId(vendor._id.toString());
 
         this.logger.log(`Vendor soft deleted: ${vendor._id}`);
         return updated;
@@ -417,6 +480,108 @@ export class VendorService {
                 vendor_id: vendorId,
                 category_id: cid,
                 company_id: companyId,
+            } as any);
+        }
+    }
+
+    private assertAddressesValid(
+        addresses: VendorAddressRequestDto[] | undefined
+    ): void {
+        if (!addresses || addresses.length === 0) return;
+        const seenDefault: Record<string, boolean> = {};
+        for (const a of addresses) {
+            if (!a.is_default) continue;
+            const t = (a.type || ENUM_VENDOR_ADDRESS_TYPE.BILL_FROM) as string;
+            if (seenDefault[t]) {
+                throw new BadRequestException(
+                    `Only one default address allowed per type (${t})`
+                );
+            }
+            seenDefault[t] = true;
+        }
+    }
+
+    private async replaceAddresses(
+        companyId: string,
+        vendorId: string,
+        addresses: VendorAddressRequestDto[] | undefined
+    ): Promise<void> {
+        await this.addressRepository.softDeleteByVendorId(vendorId);
+        if (!addresses || addresses.length === 0) return;
+        for (const a of addresses) {
+            await this.addressRepository.create({
+                vendor_id: vendorId,
+                company_id: companyId,
+                type: a.type || ENUM_VENDOR_ADDRESS_TYPE.BILL_FROM,
+                label: a.label,
+                address_line1: a.address_line1,
+                address_line2: a.address_line2,
+                city: a.city,
+                state: a.state,
+                country: a.country,
+                postcode: a.postcode,
+                gstin: a.gstin,
+                is_default: !!a.is_default,
+            } as any);
+        }
+    }
+
+    private async assertBankAccountsValid(
+        companyId: string,
+        accounts: VendorBankAccountRequestDto[] | undefined
+    ): Promise<void> {
+        if (!accounts || accounts.length === 0) return;
+
+        // Max one default per (currency_id).
+        const seenDefault: Record<string, boolean> = {};
+        for (const a of accounts) {
+            if (!a.is_default) continue;
+            const k = a.currency_id;
+            if (seenDefault[k]) {
+                throw new BadRequestException(
+                    `Only one default bank account allowed per currency`
+                );
+            }
+            seenDefault[k] = true;
+        }
+
+        const ids = Array.from(new Set(accounts.map((a) => a.currency_id)));
+        const found = await this.currencyRepository.findAll({
+            _id: { $in: ids },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (found.length !== ids.length) {
+            throw new BadRequestException(
+                'One or more bank-account currencies are invalid'
+            );
+        }
+    }
+
+    private async replaceBankAccounts(
+        companyId: string,
+        vendorId: string,
+        accounts: VendorBankAccountRequestDto[] | undefined
+    ): Promise<void> {
+        await this.bankAccountRepository.softDeleteByVendorId(vendorId);
+        if (!accounts || accounts.length === 0) return;
+        for (const a of accounts) {
+            await this.bankAccountRepository.create({
+                vendor_id: vendorId,
+                company_id: companyId,
+                bank_name: a.bank_name,
+                account_holder_name: a.account_holder_name,
+                account_number: a.account_number,
+                ifsc: a.ifsc,
+                swift_code: a.swift_code,
+                iban: a.iban,
+                currency_id: a.currency_id,
+                branch_name: a.branch_name,
+                branch_address: a.branch_address,
+                account_type: a.account_type,
+                is_default: !!a.is_default,
+                notes: a.notes,
+                is_active: a.is_active !== undefined ? a.is_active : true,
             } as any);
         }
     }
@@ -526,10 +691,38 @@ export class VendorService {
             .filter((id) => catMap[id])
             .map((id) => ({ _id: id, name: catMap[id] }));
 
-        const contacts = await this.contactRepository.findByVendorId(
-            vendor._id.toString()
+        const [contacts, addresses, bankAccounts] = await Promise.all([
+            this.contactRepository.findByVendorId(vendor._id.toString()),
+            this.addressRepository.findByVendorId(vendor._id.toString()),
+            this.bankAccountRepository.findByVendorId(vendor._id.toString()),
+        ]);
+        this.hydrateWithContacts(dto, contacts);
+        dto.addresses = addresses.map((a) =>
+            plainToInstance(VendorAddressResponseDto, a)
         );
-        return this.hydrateWithContacts(dto, contacts);
+
+        const currencyIds = Array.from(
+            new Set(bankAccounts.map((b) => b.currency_id.toString()))
+        );
+        const currencyCodeMap = await this.buildCurrencyCodeMap(currencyIds);
+        dto.bank_accounts = bankAccounts.map((b) => {
+            const r = plainToInstance(VendorBankAccountResponseDto, b);
+            r.currency_code = currencyCodeMap[b.currency_id.toString()];
+            return r;
+        });
+        return dto;
+    }
+
+    private async buildCurrencyCodeMap(
+        ids: string[]
+    ): Promise<Record<string, string>> {
+        if (ids.length === 0) return {};
+        const rows = await this.currencyRepository.findAll({
+            _id: { $in: ids },
+        } as any);
+        const map: Record<string, string> = {};
+        for (const r of rows) map[r._id.toString()] = r.code;
+        return map;
     }
 
     async mapListWithRelations(
@@ -537,16 +730,28 @@ export class VendorService {
     ): Promise<VendorListResponseDto[]> {
         const vendorIds = vendors.map((v) => v._id.toString());
 
-        // Pull all category links + contacts in two queries
-        const [allLinks, allContacts] = await Promise.all([
-            this.vendorCategoryRepository.findByVendorIds(vendorIds),
-            vendorIds.length
-                ? this.contactRepository.findAll({
-                      vendor_id: { $in: vendorIds },
-                      soft_delete: false,
-                  } as any)
-                : Promise.resolve([] as VendorContactDoc[]),
-        ]);
+        // Pull category links + contacts + addresses + bank accounts in parallel
+        const [allLinks, allContacts, allAddresses, allBankAccounts] =
+            await Promise.all([
+                this.vendorCategoryRepository.findByVendorIds(vendorIds),
+                vendorIds.length
+                    ? this.contactRepository.findAll({
+                          vendor_id: { $in: vendorIds },
+                          soft_delete: false,
+                      } as any)
+                    : Promise.resolve([] as VendorContactDoc[]),
+                vendorIds.length
+                    ? this.addressRepository.findByVendorIds(vendorIds)
+                    : Promise.resolve([] as VendorAddressDoc[]),
+                vendorIds.length
+                    ? this.bankAccountRepository.findByVendorIds(vendorIds)
+                    : Promise.resolve([] as VendorBankAccountDoc[]),
+            ]);
+
+        const allCurrencyIds = Array.from(
+            new Set(allBankAccounts.map((b) => b.currency_id.toString()))
+        );
+        const currencyCodeMap = await this.buildCurrencyCodeMap(allCurrencyIds);
 
         const allCategoryIds = Array.from(
             new Set(allLinks.map((l) => l.category_id.toString()))
@@ -563,6 +768,16 @@ export class VendorService {
             const vid = c.vendor_id.toString();
             (contactsByVendor[vid] ||= []).push(c);
         }
+        const addressesByVendor: Record<string, VendorAddressDoc[]> = {};
+        for (const a of allAddresses) {
+            const vid = a.vendor_id.toString();
+            (addressesByVendor[vid] ||= []).push(a);
+        }
+        const banksByVendor: Record<string, VendorBankAccountDoc[]> = {};
+        for (const b of allBankAccounts) {
+            const vid = b.vendor_id.toString();
+            (banksByVendor[vid] ||= []).push(b);
+        }
 
         return vendors.map((v) => {
             const dto = plainToInstance(VendorListResponseDto, v);
@@ -571,7 +786,16 @@ export class VendorService {
                 .map((l) => l.category_id.toString())
                 .filter((cid) => catMap[cid])
                 .map((cid) => ({ _id: cid, name: catMap[cid] }));
-            return this.hydrateWithContacts(dto, contactsByVendor[vid] || []);
+            this.hydrateWithContacts(dto, contactsByVendor[vid] || []);
+            dto.addresses = (addressesByVendor[vid] || []).map((a) =>
+                plainToInstance(VendorAddressResponseDto, a)
+            );
+            dto.bank_accounts = (banksByVendor[vid] || []).map((b) => {
+                const r = plainToInstance(VendorBankAccountResponseDto, b);
+                r.currency_code = currencyCodeMap[b.currency_id.toString()];
+                return r;
+            });
+            return dto;
         });
     }
 }

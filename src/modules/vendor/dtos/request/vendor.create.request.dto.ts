@@ -13,7 +13,11 @@ import {
     ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ENUM_VENDOR_STATUS } from '@modules/vendor/enums/vendor.enum';
+import {
+    ENUM_VENDOR_ADDRESS_TYPE,
+    ENUM_VENDOR_BANK_ACCOUNT_TYPE,
+    ENUM_VENDOR_STATUS,
+} from '@modules/vendor/enums/vendor.enum';
 
 export class VendorSocialMediaDto {
     @IsString()
@@ -76,6 +80,52 @@ export class VendorContactRequestDto {
     is_primary?: boolean;
 }
 
+export class VendorBankAccountRequestDto {
+    @IsString() @IsOptional() _id?: string;
+
+    @IsString() @IsNotEmpty() @MaxLength(200) bank_name: string;
+    @IsString() @IsOptional() @MaxLength(200) account_holder_name?: string;
+    @IsString() @IsNotEmpty() @MaxLength(50) account_number: string;
+
+    @IsString() @IsOptional() @MaxLength(11) ifsc?: string;
+    @IsString() @IsOptional() @MaxLength(11) swift_code?: string;
+    @IsString() @IsOptional() @MaxLength(34) iban?: string;
+
+    @IsUUID() currency_id: string;
+
+    @IsString() @IsOptional() @MaxLength(200) branch_name?: string;
+    @IsString() @IsOptional() @MaxLength(500) branch_address?: string;
+
+    @IsEnum(ENUM_VENDOR_BANK_ACCOUNT_TYPE) @IsOptional()
+    account_type?: ENUM_VENDOR_BANK_ACCOUNT_TYPE;
+
+    @IsBoolean() @IsOptional() is_default?: boolean;
+
+    @IsString() @IsOptional() notes?: string;
+
+    @IsBoolean() @IsOptional() is_active?: boolean;
+}
+
+export class VendorAddressRequestDto {
+    @IsString() @IsOptional() _id?: string;
+
+    @IsEnum(ENUM_VENDOR_ADDRESS_TYPE) @IsOptional()
+    type?: ENUM_VENDOR_ADDRESS_TYPE;
+
+    @IsString() @IsOptional() @MaxLength(150) label?: string;
+
+    @IsString() @IsOptional() @MaxLength(200) address_line1?: string;
+    @IsString() @IsOptional() @MaxLength(200) address_line2?: string;
+    @IsString() @IsOptional() @MaxLength(100) city?: string;
+    @IsString() @IsOptional() @MaxLength(100) state?: string;
+    @IsString() @IsOptional() @MaxLength(100) country?: string;
+    @IsString() @IsOptional() @MaxLength(20) postcode?: string;
+
+    @IsString() @IsOptional() @MaxLength(15) gstin?: string;
+
+    @IsBoolean() @IsOptional() is_default?: boolean;
+}
+
 export class VendorCreateRequestDto {
     @IsString()
     @IsNotEmpty()
@@ -98,6 +148,11 @@ export class VendorCreateRequestDto {
     @IsUUID('4', { each: true })
     category_ids: string[];
 
+    // ── Tax & Compliance (all optional) ──
+    @IsString() @IsOptional() @MaxLength(15) gstin?: string;
+    @IsString() @IsOptional() @MaxLength(10) pan?: string;
+    @IsString() @IsOptional() @MaxLength(50) vendor_code?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(50)
@@ -107,37 +162,6 @@ export class VendorCreateRequestDto {
     @IsOptional()
     @MaxLength(20)
     incoterms?: string;
-
-    // Address (all optional)
-    @IsString()
-    @IsOptional()
-    @MaxLength(200)
-    address_line1?: string;
-
-    @IsString()
-    @IsOptional()
-    @MaxLength(200)
-    address_line2?: string;
-
-    @IsString()
-    @IsOptional()
-    @MaxLength(100)
-    city?: string;
-
-    @IsString()
-    @IsOptional()
-    @MaxLength(100)
-    state?: string;
-
-    @IsString()
-    @IsOptional()
-    @MaxLength(100)
-    country?: string;
-
-    @IsString()
-    @IsOptional()
-    @MaxLength(20)
-    postcode?: string;
 
     @IsEnum(ENUM_VENDOR_STATUS)
     @IsOptional()
@@ -152,4 +176,16 @@ export class VendorCreateRequestDto {
     @ValidateNested({ each: true })
     @Type(() => VendorContactRequestDto)
     contacts: VendorContactRequestDto[];
+
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => VendorAddressRequestDto)
+    @IsOptional()
+    addresses?: VendorAddressRequestDto[];
+
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => VendorBankAccountRequestDto)
+    @IsOptional()
+    bank_accounts?: VendorBankAccountRequestDto[];
 }
