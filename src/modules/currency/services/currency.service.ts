@@ -49,6 +49,10 @@ export class CurrencyService {
             created_by: createdBy,
         } as any);
 
+        if (data.is_default) {
+            await this.unsetOtherDefaults(companyId, currency._id.toString());
+        }
+
         this.logger.log(`Currency created: ${currency._id} (${code}) for company: ${companyId}`);
         return currency;
     }
@@ -97,8 +101,30 @@ export class CurrencyService {
         Object.assign(currency, data);
         const updated = await this.currencyRepository.save(currency);
 
+        if (data.is_default) {
+            await this.unsetOtherDefaults(companyId, currency._id.toString());
+        }
+
         this.logger.log(`Currency updated: ${currency._id}`);
         return updated;
+    }
+
+    /**
+     * Ensures only one currency per company is marked is_default=true.
+     * Single UPDATE query — flips all sibling rows off in one round-trip.
+     */
+    private async unsetOtherDefaults(
+        companyId: string,
+        keepId: string
+    ): Promise<void> {
+        await this.currencyRepository.updateMany(
+            {
+                company_id: companyId,
+                is_default: true,
+                _id: { $ne: keepId },
+            } as any,
+            { is_default: false } as any
+        );
     }
 
     async softDelete(
