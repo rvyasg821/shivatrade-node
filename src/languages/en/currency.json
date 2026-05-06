@@ -6,6 +6,7 @@
     "delete": "Currency deleted successfully.",
     "dropdown": "Currencies dropdown loaded.",
     "rateList": "Exchange rate history loaded.",
+    "currentRate": "Current exchange rate retrieved.",
     "rateCreate": "Exchange rate added.",
     "error": {
         "exist": "A currency with this code already exists.",

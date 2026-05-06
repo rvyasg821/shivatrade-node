@@ -85,7 +85,7 @@ export class CurrencyAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; code: string; name: string; symbol?: string }[]>> {
+    ): Promise<IResponse<{ _id: string; code: string; name: string; symbol?: string; is_default?: boolean }[]>> {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
         const currencies = await this.currencyRepository.findAll(find, {
@@ -97,7 +97,56 @@ export class CurrencyAdminController {
                 code: c.code,
                 name: c.name,
                 symbol: c.symbol,
+                is_default: !!c.is_default,
             })),
+        };
+    }
+
+    /**
+     * Returns the latest exchange rate for a `from → to` currency pair, or
+     * `{ rate: '1', same: true }` when both IDs match. Used by the Quotation /
+     * PFI / PO forms to auto-fill the exchange_rate field on currency pick.
+     */
+    @Response('currency.currentRate')
+    @AuthJwtAccessProtected()
+    @Get('/exchange-rate/current')
+    async currentExchangeRate(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('from') fromCurrencyId: string,
+        @Query('to') toCurrencyId: string
+    ): Promise<
+        IResponse<{
+            from_currency_id?: string;
+            to_currency_id?: string;
+            rate: string;
+            effective_date?: string;
+            same?: boolean;
+        } | null>
+    > {
+        if (!fromCurrencyId || !toCurrencyId) return { data: null };
+        if (fromCurrencyId === toCurrencyId) {
+            return {
+                data: {
+                    from_currency_id: fromCurrencyId,
+                    to_currency_id: toCurrencyId,
+                    rate: '1',
+                    same: true,
+                },
+            };
+        }
+        const row = await this.currencyService.getCurrentRate(
+            companyId,
+            fromCurrencyId,
+            toCurrencyId
+        );
+        if (!row) return { data: null };
+        return {
+            data: {
+                from_currency_id: row.from_currency_id?.toString(),
+                to_currency_id: row.to_currency_id?.toString(),
+                rate: row.rate,
+                effective_date: row.effective_date,
+            },
         };
     }
 
