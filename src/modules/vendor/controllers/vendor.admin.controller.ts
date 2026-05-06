@@ -17,6 +17,7 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { VendorService } from '../services/vendor.service';
 import { VendorRepository } from '../repository/repositories/vendor.repository';
+import { VendorCategoryRepository } from '../repository/repositories/vendor-category.repository';
 import { VendorCreateRequestDto } from '../dtos/request/vendor.create.request.dto';
 import { VendorUpdateRequestDto } from '../dtos/request/vendor.update.request.dto';
 import { VendorGetResponseDto } from '../dtos/response/vendor.get.response.dto';
@@ -27,7 +28,8 @@ import { VendorListResponseDto } from '../dtos/response/vendor.list.response.dto
 export class VendorAdminController {
     constructor(
         private readonly vendorService: VendorService,
-        private readonly vendorRepository: VendorRepository
+        private readonly vendorRepository: VendorRepository,
+        private readonly vendorCategoryRepository: VendorCategoryRepository
     ) {}
 
     @Response('vendor.create')
@@ -99,16 +101,43 @@ export class VendorAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; company_name: string }[]>> {
+    ): Promise<
+        IResponse<
+            {
+                _id: string;
+                company_name: string;
+                vendor_code?: string;
+                category_ids: string[];
+            }[]
+        >
+    > {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
         const vendors = await this.vendorRepository.findAll(find, {
             order: { company_name: 'asc' as any },
         });
+
+        // Fetch all vendor↔category links for this company in one query and
+        // group by vendor_id so each vendor in the response gets its
+        // categories without N+1 round-trips.
+        const links = await this.vendorCategoryRepository.findAll(
+            { company_id: companyId } as any
+        );
+        const byVendor = new Map<string, string[]>();
+        for (const l of links as any[]) {
+            const vid = l.vendor_id?.toString();
+            const cid = l.category_id?.toString();
+            if (!vid || !cid) continue;
+            if (!byVendor.has(vid)) byVendor.set(vid, []);
+            byVendor.get(vid)!.push(cid);
+        }
+
         return {
             data: vendors.map((v) => ({
                 _id: v._id.toString(),
                 company_name: v.company_name,
+                vendor_code: v.vendor_code,
+                category_ids: byVendor.get(v._id.toString()) || [],
             })),
         };
     }
