@@ -31,6 +31,13 @@ export class CurrencyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', nullable: false, default: ENUM_CURRENCY_STATUS.ACTIVE })
     status: ENUM_CURRENCY_STATUS;
 
+    /** Marks the company's home/base currency. Used as the `from` side of
+     *  exchange rate lookups on Quotation/PFI/PO forms. Exactly one row per
+     *  company should be `true` (not enforced at DB level — service layer). */
+    @Index()
+    @Column({ type: 'boolean', default: false })
+    is_default: boolean;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

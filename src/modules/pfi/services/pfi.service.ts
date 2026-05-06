@@ -4,31 +4,34 @@ import {
     BadRequestException,
     NotFoundException,
 } from '@nestjs/common';
-import { QuotationRepository } from '../repository/repositories/quotation.repository';
-import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
-import { QuotationExpenseRepository } from '../repository/repositories/quotation-expense.repository';
-import { QuotationRebateRepository } from '../repository/repositories/quotation-rebate.repository';
-import { QuotationDoc } from '../repository/entities/quotation.entity';
-import { QuotationCreateRequestDto } from '../dtos/request/quotation.create.request.dto';
-import { QuotationUpdateRequestDto } from '../dtos/request/quotation.update.request.dto';
+import { PfiRepository } from '../repository/repositories/pfi.repository';
+import { PfiLineRepository } from '../repository/repositories/pfi-line.repository';
+import { PfiExpenseRepository } from '../repository/repositories/pfi-expense.repository';
+import { PfiRebateRepository } from '../repository/repositories/pfi-rebate.repository';
+import { PfiDoc } from '../repository/entities/pfi.entity';
+import { PfiCreateRequestDto } from '../dtos/request/pfi.create.request.dto';
+import { PfiUpdateRequestDto } from '../dtos/request/pfi.update.request.dto';
 import {
-    QuotationGetResponseDto,
-    QuotationLineResponseDto,
-    QuotationExpenseResponseDto,
-    QuotationRebateResponseDto,
-} from '../dtos/response/quotation.get.response.dto';
-import { ENUM_QUOTATION_STATUS } from '../enums/quotation.enum';
+    PfiGetResponseDto,
+    PfiLineResponseDto,
+    PfiExpenseResponseDto,
+    PfiRebateResponseDto,
+} from '../dtos/response/pfi.get.response.dto';
+import { ENUM_PFI_STATUS } from '../enums/pfi.enum';
 
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
-import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
-import { LeadService } from '@modules/lead/services/lead.service';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
+
+import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
+import { QuotationExpenseRepository } from '@modules/quotation/repository/repositories/quotation-expense.repository';
+import { QuotationRebateRepository } from '@modules/quotation/repository/repositories/quotation-rebate.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -40,24 +43,26 @@ const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
 
 @Injectable()
-export class QuotationService {
-    private readonly logger = new Logger(QuotationService.name);
+export class PfiService {
+    private readonly logger = new Logger(PfiService.name);
 
     constructor(
-        private readonly quotationRepository: QuotationRepository,
-        private readonly quotationLineRepository: QuotationLineRepository,
-        private readonly quotationExpenseRepository: QuotationExpenseRepository,
-        private readonly quotationRebateRepository: QuotationRebateRepository,
+        private readonly pfiRepository: PfiRepository,
+        private readonly pfiLineRepository: PfiLineRepository,
+        private readonly pfiExpenseRepository: PfiExpenseRepository,
+        private readonly pfiRebateRepository: PfiRebateRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerAddressRepository: CustomerAddressRepository,
         private readonly currencyRepository: CurrencyRepository,
-        private readonly leadRepository: LeadRepository,
-        private readonly leadService: LeadService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly rebateRepository: RebateRepository,
+        private readonly quotationRepository: QuotationRepository,
+        private readonly quotationLineRepository: QuotationLineRepository,
+        private readonly quotationExpenseRepository: QuotationExpenseRepository,
+        private readonly quotationRebateRepository: QuotationRebateRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -67,7 +72,6 @@ export class QuotationService {
         companyId: string,
         customerId: string,
         currencyId: string,
-        leadId?: string,
         customerAddressId?: string
     ): Promise<void> {
         const customer = await this.customerRepository.findOne({
@@ -84,15 +88,6 @@ export class QuotationService {
         } as any);
         if (!currency) throw new BadRequestException('Currency not found');
 
-        if (leadId) {
-            const lead = await this.leadRepository.findOne({
-                _id: leadId,
-                company_id: companyId,
-                soft_delete: false,
-            } as any);
-            if (!lead) throw new BadRequestException('Lead not found');
-        }
-
         if (customerAddressId) {
             const addr = await this.customerAddressRepository.findOne({
                 _id: customerAddressId,
@@ -105,8 +100,6 @@ export class QuotationService {
                 );
         }
     }
-
-    // ─── Voucher prefix lookup ──────────────────────────────────────────
 
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
         const company = await this.companyService.findOneById(companyId);
@@ -124,32 +117,32 @@ export class QuotationService {
 
     async create(
         companyId: string,
-        data: QuotationCreateRequestDto,
+        data: PfiCreateRequestDto,
         createdBy: string
-    ): Promise<QuotationDoc> {
+    ): Promise<PfiDoc> {
         await this.assertReferences(
             companyId,
             data.customer_id,
             data.currency_id,
-            data.lead_id,
             data.customer_address_id
         );
 
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucher_no = await this.voucherService.getNext(
             companyId,
-            ENUM_VOUCHER_DOC_TYPE.QUOTATION,
+            ENUM_VOUCHER_DOC_TYPE.PFI,
             prefix
         );
 
-        const header = await this.quotationRepository.create({
+        const header = await this.pfiRepository.create({
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
+            quotation_id: data.quotation_id || null,
             lead_id: data.lead_id || null,
             customer_id: data.customer_id,
             customer_address_id: data.customer_address_id || null,
-            quotation_date: data.quotation_date,
+            pfi_date: data.pfi_date,
             valid_until: data.valid_until || null,
             currency_id: data.currency_id,
             exchange_rate: data.exchange_rate || '1',
@@ -159,7 +152,7 @@ export class QuotationService {
             notes_to_client: data.notes_to_client || null,
             internal_notes: data.internal_notes || null,
             margin_pct: data.margin_pct || '0',
-            status: data.status || ENUM_QUOTATION_STATUS.DRAFT,
+            status: data.status || ENUM_PFI_STATUS.DRAFT,
             version: 1,
         } as any);
 
@@ -177,43 +170,29 @@ export class QuotationService {
 
         await this.recompute(header._id.toString(), companyId);
 
-        this.logger.log(
-            `Quotation created: ${header._id} (${voucher_no})`
-        );
-        return this.quotationRepository.findOneById(header._id.toString());
+        this.logger.log(`PFI created: ${header._id} (${voucher_no})`);
+        return this.pfiRepository.findOneById(header._id.toString());
     }
 
-    async findOneById(id: string): Promise<QuotationDoc> {
-        const row = await this.quotationRepository.findOneById(id);
-        if (!row) throw new NotFoundException('Quotation not found');
+    async findOneById(id: string): Promise<PfiDoc> {
+        const row = await this.pfiRepository.findOneById(id);
+        if (!row) throw new NotFoundException('PFI not found');
         return row;
     }
 
-    async update(
-        row: QuotationDoc,
-        data: QuotationUpdateRequestDto
-    ): Promise<QuotationDoc> {
+    async update(row: PfiDoc, data: PfiUpdateRequestDto): Promise<PfiDoc> {
         const companyId = row.company_id.toString();
 
         await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
             data.currency_id || row.currency_id.toString(),
-            data.lead_id ?? row.lead_id?.toString(),
             data.customer_address_id ?? row.customer_address_id?.toString()
         );
 
-        const wasApproved = row.status === ENUM_QUOTATION_STATUS.APPROVED;
-
-        // Apply scalar updates (skip nested arrays — replaced separately).
-        const {
-            lines,
-            expenses,
-            rebates,
-            ...scalar
-        } = data as any;
+        const { lines, expenses, rebates, ...scalar } = data as any;
         Object.assign(row, scalar);
-        await this.quotationRepository.save(row);
+        await this.pfiRepository.save(row);
 
         if (Array.isArray(lines)) {
             await this.replaceLines(companyId, row._id.toString(), lines);
@@ -226,48 +205,107 @@ export class QuotationService {
         }
 
         await this.recompute(row._id.toString(), companyId);
-
-        const refreshed = await this.quotationRepository.findOneById(
+        const refreshed = await this.pfiRepository.findOneById(
             row._id.toString()
         );
-
-        // Side-effect: when status flips draft|sent → approved AND a lead is
-        // linked, mark the lead as Won.
-        const becomesApproved =
-            !wasApproved &&
-            refreshed.status === ENUM_QUOTATION_STATUS.APPROVED;
-        if (becomesApproved && refreshed.lead_id) {
-            await this.leadService.markWon(
-                refreshed.lead_id.toString(),
-                refreshed.customer_id?.toString()
-            );
-        }
-
-        this.logger.log(`Quotation updated: ${row._id}`);
+        this.logger.log(`PFI updated: ${row._id}`);
         return refreshed;
     }
 
-    async softDelete(row: QuotationDoc): Promise<void> {
+    async softDelete(row: PfiDoc): Promise<void> {
         row.soft_delete = true;
-        await this.quotationRepository.save(row);
-        this.logger.log(`Quotation soft-deleted: ${row._id}`);
+        await this.pfiRepository.save(row);
+        this.logger.log(`PFI soft-deleted: ${row._id}`);
+    }
+
+    /**
+     * Clone an approved Quotation into a new PFI: header fields, lines,
+     * expenses, rebates. New voucher_no is allocated from the PFI sequence.
+     * The PFI starts as DRAFT regardless of the source Quotation status.
+     */
+    async createFromQuotation(
+        companyId: string,
+        quotationId: string,
+        createdBy: string
+    ): Promise<PfiDoc> {
+        const q = await this.quotationRepository.findOne({
+            _id: quotationId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!q) throw new NotFoundException('Source quotation not found');
+
+        const [qLines, qExpenses, qRebates] = await Promise.all([
+            this.quotationLineRepository.findAll({
+                quotation_id: quotationId,
+            } as any),
+            this.quotationExpenseRepository.findAll({
+                quotation_id: quotationId,
+            } as any),
+            this.quotationRebateRepository.findAll({
+                quotation_id: quotationId,
+            } as any),
+        ]);
+
+        const today = new Date().toISOString().slice(0, 10);
+        const payload: PfiCreateRequestDto = {
+            quotation_id: quotationId,
+            lead_id: q.lead_id?.toString(),
+            customer_id: q.customer_id.toString(),
+            customer_address_id: q.customer_address_id?.toString(),
+            pfi_date: today,
+            valid_until: q.valid_until,
+            currency_id: q.currency_id.toString(),
+            exchange_rate: q.exchange_rate,
+            payment_terms: q.payment_terms,
+            delivery_terms: q.delivery_terms,
+            delivery_location: q.delivery_location,
+            notes_to_client: q.notes_to_client,
+            internal_notes: q.internal_notes,
+            margin_pct: q.margin_pct,
+            status: ENUM_PFI_STATUS.DRAFT,
+            lines: qLines.map((l: any) => ({
+                product_id: l.product_id?.toString(),
+                vendor_id: l.vendor_id?.toString(),
+                description: l.description,
+                qty: l.qty,
+                unit: l.unit,
+                unit_price: l.unit_price,
+                discount_pct: l.discount_pct,
+                tax_pct: l.tax_pct,
+            })),
+            expenses: qExpenses.map((e: any) => ({
+                expense_id: e.expense_id?.toString(),
+                name: e.name,
+                amount: e.amount,
+                is_overridden: !!e.is_overridden,
+            })),
+            rebates: qRebates.map((r: any) => ({
+                rebate_id: r.rebate_id?.toString(),
+                name: r.name,
+                amount: r.amount,
+                is_overridden: !!r.is_overridden,
+            })),
+        };
+
+        return this.create(companyId, payload, createdBy);
     }
 
     // ─── Replace-on-update for nested arrays ────────────────────────────
 
     private async replaceLines(
         companyId: string,
-        quotationId: string,
+        pfiId: string,
         lines?: any[]
     ): Promise<void> {
-        await this.quotationLineRepository.deleteByQuotationId(quotationId);
+        await this.pfiLineRepository.deleteByPfiId(pfiId);
         if (!lines?.length) return;
         let seq = 0;
         for (const l of lines) {
             seq += 1;
-            await this.quotationLineRepository.create({
+            await this.pfiLineRepository.create({
                 company_id: companyId,
-                quotation_id: quotationId,
+                pfi_id: pfiId,
                 product_id: l.product_id,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
@@ -288,17 +326,17 @@ export class QuotationService {
 
     private async replaceExpenses(
         companyId: string,
-        quotationId: string,
+        pfiId: string,
         expenses?: any[]
     ): Promise<void> {
-        await this.quotationExpenseRepository.deleteByQuotationId(quotationId);
+        await this.pfiExpenseRepository.deleteByPfiId(pfiId);
         if (!expenses?.length) return;
         let seq = 0;
         for (const e of expenses) {
             seq += 1;
-            await this.quotationExpenseRepository.create({
+            await this.pfiExpenseRepository.create({
                 company_id: companyId,
-                quotation_id: quotationId,
+                pfi_id: pfiId,
                 expense_id: e.expense_id || null,
                 name: e.name,
                 amount: e.amount || '0',
@@ -310,17 +348,17 @@ export class QuotationService {
 
     private async replaceRebates(
         companyId: string,
-        quotationId: string,
+        pfiId: string,
         rebates?: any[]
     ): Promise<void> {
-        await this.quotationRebateRepository.deleteByQuotationId(quotationId);
+        await this.pfiRebateRepository.deleteByPfiId(pfiId);
         if (!rebates?.length) return;
         let seq = 0;
         for (const r of rebates) {
             seq += 1;
-            await this.quotationRebateRepository.create({
+            await this.pfiRebateRepository.create({
                 company_id: companyId,
-                quotation_id: quotationId,
+                pfi_id: pfiId,
                 rebate_id: r.rebate_id || null,
                 name: r.name,
                 amount: r.amount || '0',
@@ -330,43 +368,18 @@ export class QuotationService {
         }
     }
 
-    // ─── Costing engine ─────────────────────────────────────────────────
+    // ─── Costing engine (mirrors Quotation recompute) ───────────────────
 
-    /**
-     * Recomputes per-line tax snapshots and header totals according to the
-     * costing formula:
-     *   subtotal       = Σ taxable per line  (qty × unit_price − discount)
-     *   expenses_total = Σ expense.amount
-     *   rebates_total  = Σ rebate.amount
-     *   net_pre_margin = subtotal + expenses − rebates
-     *   margin_amount  = net_pre_margin × (margin_pct / 100)
-     *   tax_total      = Σ per-line tax (from tax engine; usually 0 for export)
-     *   grand_total    = (net_pre_margin + margin_amount + tax_total) × exchange_rate
-     *
-     * For ShivaTrades exports, tax_pct is 0 on every line (LUT) so tax_total is 0.
-     * The grand_total is in the customer's currency (currency_id), where
-     * exchange_rate is "1 INR = X customer-currency-units".
-     */
-    private async recompute(
-        quotationId: string,
-        companyId: string
-    ): Promise<void> {
-        const header = await this.quotationRepository.findOneById(quotationId);
+    private async recompute(pfiId: string, companyId: string): Promise<void> {
+        const header = await this.pfiRepository.findOneById(pfiId);
         if (!header) return;
 
         const [lines, expenses, rebates] = await Promise.all([
-            this.quotationLineRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-            this.quotationExpenseRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-            this.quotationRebateRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
+            this.pfiLineRepository.findAll({ pfi_id: pfiId } as any),
+            this.pfiExpenseRepository.findAll({ pfi_id: pfiId } as any),
+            this.pfiRebateRepository.findAll({ pfi_id: pfiId } as any),
         ]);
 
-        // Resolve states for tax engine (intra-state vs inter-state).
         const customerState = await this.lookupCustomerState(
             header.customer_address_id?.toString()
         );
@@ -390,30 +403,21 @@ export class QuotationService {
             ln.sgst = String(out.sgst);
             ln.igst = String(out.igst);
             ln.line_total = String(out.line_total);
-            await this.quotationLineRepository.save(ln);
+            await this.pfiLineRepository.save(ln);
 
             subtotal += out.taxable;
             tax_total += out.total_tax;
         }
 
-        // Derive expense/rebate amounts from master rules when not overridden.
-        // Master-linked, !is_overridden → recompute (flat or % of subtotal).
-        // Else → trust stored amount.
-        const expenseMasterIds = Array.from(
-            new Set(
-                expenses
-                    .filter((e: any) => e.expense_id && !e.is_overridden)
-                    .map((e: any) => e.expense_id?.toString())
-                    .filter((v): v is string => !!v)
-            )
+        const expenseMasterIds = unique(
+            expenses
+                .filter((e: any) => e.expense_id && !e.is_overridden)
+                .map((e: any) => e.expense_id?.toString())
         );
-        const rebateMasterIds = Array.from(
-            new Set(
-                rebates
-                    .filter((r: any) => r.rebate_id && !r.is_overridden)
-                    .map((r: any) => r.rebate_id?.toString())
-                    .filter((v): v is string => !!v)
-            )
+        const rebateMasterIds = unique(
+            rebates
+                .filter((r: any) => r.rebate_id && !r.is_overridden)
+                .map((r: any) => r.rebate_id?.toString())
         );
         const [expenseMasters, rebateMasters] = await Promise.all([
             expenseMasterIds.length
@@ -445,7 +449,7 @@ export class QuotationService {
                             ? (subtotal * num(master.value)) / 100
                             : num(master.value);
                     e.amount = String(round2(amt));
-                    await this.quotationExpenseRepository.save(e);
+                    await this.pfiExpenseRepository.save(e);
                 }
             }
             expenses_total += amt;
@@ -458,7 +462,7 @@ export class QuotationService {
                 if (master) {
                     amt = (subtotal * num(master.pct)) / 100;
                     r.amount = String(round2(amt));
-                    await this.quotationRebateRepository.save(r);
+                    await this.pfiRebateRepository.save(r);
                 }
             }
             rebates_total += amt;
@@ -467,7 +471,6 @@ export class QuotationService {
         const net_pre_margin = subtotal + expenses_total - rebates_total;
         const margin_pct = num(header.margin_pct);
         const margin_amount = net_pre_margin * (margin_pct / 100);
-
         const er = num(header.exchange_rate) || 1;
         const grand_total =
             (net_pre_margin + margin_amount + tax_total) * er;
@@ -479,7 +482,7 @@ export class QuotationService {
         header.tax_total = String(round2(tax_total));
         header.grand_total = String(round2(grand_total));
 
-        await this.quotationRepository.save(header);
+        await this.pfiRepository.save(header);
     }
 
     private async lookupCustomerState(
@@ -500,9 +503,7 @@ export class QuotationService {
         );
         if (!addresses?.length) return undefined;
         const corp =
-            addresses.find(
-                (a) => a.type === 'corporate' && a.is_default
-            ) ||
+            addresses.find((a) => a.type === 'corporate' && a.is_default) ||
             addresses.find((a) => a.type === 'corporate') ||
             addresses.find((a) => a.is_default) ||
             addresses[0];
@@ -511,21 +512,20 @@ export class QuotationService {
 
     // ─── Hydration ──────────────────────────────────────────────────────
 
-    async mapList(rows: QuotationDoc[]): Promise<QuotationGetResponseDto[]> {
+    async mapList(rows: PfiDoc[]): Promise<PfiGetResponseDto[]> {
         if (!rows.length) return [];
 
         const customerIds = unique(rows.map((r) => r.customer_id?.toString()));
         const currencyIds = unique(rows.map((r) => r.currency_id?.toString()));
-        const leadIds = unique(
+        const quotationIds = unique(
             rows
-                .map((r) => r.lead_id?.toString())
+                .map((r) => r.quotation_id?.toString())
                 .filter((v): v is string => !!v)
         );
-        const quotationIds = rows.map((r) => r._id.toString());
+        const pfiIds = rows.map((r) => r._id.toString());
 
-        // Pre-load lines once so we can collect vendor_ids before the parallel fan-out.
-        const allLines = await this.quotationLineRepository.findAll({
-            quotation_id: { $in: quotationIds },
+        const allLines = await this.pfiLineRepository.findAll({
+            pfi_id: { $in: pfiIds },
         } as any);
         const vendorIds = unique(
             allLines
@@ -533,7 +533,7 @@ export class QuotationService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, currencies, leads, vendors, expenses, rebates] =
+        const [customers, currencies, quotations, vendors, expenses, rebates] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
@@ -545,9 +545,9 @@ export class QuotationService {
                           _id: { $in: currencyIds },
                       } as any)
                     : Promise.resolve([] as any[]),
-                leadIds.length
-                    ? this.leadRepository.findAll({
-                          _id: { $in: leadIds },
+                quotationIds.length
+                    ? this.quotationRepository.findAll({
+                          _id: { $in: quotationIds },
                       } as any)
                     : Promise.resolve([] as any[]),
                 vendorIds.length
@@ -555,41 +555,39 @@ export class QuotationService {
                           _id: { $in: vendorIds },
                       } as any)
                     : Promise.resolve([] as any[]),
-                this.quotationExpenseRepository.findAll({
-                    quotation_id: { $in: quotationIds },
+                this.pfiExpenseRepository.findAll({
+                    pfi_id: { $in: pfiIds },
                 } as any),
-                this.quotationRebateRepository.findAll({
-                    quotation_id: { $in: quotationIds },
+                this.pfiRebateRepository.findAll({
+                    pfi_id: { $in: pfiIds },
                 } as any),
             ]);
 
-        const customerMap = toMap(customers, '_id');
-        const currencyMap = toMap(currencies, '_id');
-        const leadMap = toMap(leads, '_id');
-        const vendorMap = toMap(vendors, '_id');
-
-        const linesByQ = groupBy(allLines, (l: any) =>
-            l.quotation_id.toString()
-        );
-        const expensesByQ = groupBy(expenses, (e: any) =>
-            e.quotation_id.toString()
-        );
-        const rebatesByQ = groupBy(rebates, (r: any) =>
-            r.quotation_id.toString()
-        );
+        const customerMap = toMap(customers);
+        const currencyMap = toMap(currencies);
+        const quotationMap = toMap(quotations);
+        const vendorMap = toMap(vendors);
+        const linesByP = groupBy(allLines, (l: any) => l.pfi_id.toString());
+        const expensesByP = groupBy(expenses, (e: any) => e.pfi_id.toString());
+        const rebatesByP = groupBy(rebates, (r: any) => r.pfi_id.toString());
 
         return rows.map((r) => {
             const cust = customerMap.get(r.customer_id?.toString());
             const cur = currencyMap.get(r.currency_id?.toString());
-            const qid = r._id.toString();
-            const dto: QuotationGetResponseDto = {
-                _id: qid,
+            const q = r.quotation_id
+                ? quotationMap.get(r.quotation_id.toString())
+                : null;
+            const pid = r._id.toString();
+            const dto: PfiGetResponseDto = {
+                _id: pid,
                 voucher_no: r.voucher_no,
+                quotation_id: r.quotation_id?.toString(),
+                quotation_voucher_no: (q as any)?.voucher_no,
                 lead_id: r.lead_id?.toString(),
                 customer_id: r.customer_id?.toString(),
                 customer_name: (cust as any)?.company_name,
                 customer_address_id: r.customer_address_id?.toString(),
-                quotation_date: r.quotation_date,
+                pfi_date: r.pfi_date,
                 valid_until: r.valid_until,
                 currency_id: r.currency_id?.toString(),
                 currency_code: (cur as any)?.code,
@@ -613,10 +611,10 @@ export class QuotationService {
                 created_by: r.created_by?.toString(),
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
-                lines: (linesByQ.get(qid) || [])
+                lines: (linesByP.get(pid) || [])
                     .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
                     .map(
-                        (l: any): QuotationLineResponseDto => ({
+                        (l: any): PfiLineResponseDto => ({
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
                             vendor_id: l.vendor_id?.toString(),
@@ -637,10 +635,10 @@ export class QuotationService {
                             seq: l.seq,
                         })
                     ),
-                expenses: (expensesByQ.get(qid) || [])
+                expenses: (expensesByP.get(pid) || [])
                     .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
                     .map(
-                        (e: any): QuotationExpenseResponseDto => ({
+                        (e: any): PfiExpenseResponseDto => ({
                             _id: e._id?.toString(),
                             expense_id: e.expense_id?.toString(),
                             name: e.name,
@@ -649,10 +647,10 @@ export class QuotationService {
                             seq: e.seq,
                         })
                     ),
-                rebates: (rebatesByQ.get(qid) || [])
+                rebates: (rebatesByP.get(pid) || [])
                     .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
                     .map(
-                        (r2: any): QuotationRebateResponseDto => ({
+                        (r2: any): PfiRebateResponseDto => ({
                             _id: r2._id?.toString(),
                             rebate_id: r2.rebate_id?.toString(),
                             name: r2.name,
@@ -666,7 +664,7 @@ export class QuotationService {
         });
     }
 
-    async mapGet(row: QuotationDoc): Promise<QuotationGetResponseDto> {
+    async mapGet(row: PfiDoc): Promise<PfiGetResponseDto> {
         const [mapped] = await this.mapList([row]);
         return mapped;
     }
@@ -680,13 +678,10 @@ function unique(arr: (string | undefined)[]): string[] {
     );
 }
 
-function toMap<T extends { _id: any }>(
-    arr: T[],
-    key: keyof T = '_id' as keyof T
-): Map<string, T> {
+function toMap<T extends { _id: any }>(arr: T[]): Map<string, T> {
     const m = new Map<string, T>();
     for (const item of arr) {
-        const k = (item[key] as any)?.toString();
+        const k = item._id?.toString();
         if (k) m.set(k, item);
     }
     return m;
@@ -696,9 +691,8 @@ function groupBy<T>(arr: T[], keyFn: (item: T) => string): Map<string, T[]> {
     const m = new Map<string, T[]>();
     for (const item of arr) {
         const k = keyFn(item);
-        const list = m.get(k) || [];
-        list.push(item);
-        m.set(k, list);
+        if (!m.has(k)) m.set(k, []);
+        m.get(k)!.push(item);
     }
     return m;
 }

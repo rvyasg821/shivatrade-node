@@ -64,6 +64,8 @@ import { PriceListAdminController } from '@modules/price-list/controllers/price-
 import { VoucherModule } from '@common/voucher/voucher.module';
 import { QuotationModule } from '@modules/quotation/quotation.module';
 import { QuotationAdminController } from '@modules/quotation/controllers/quotation.admin.controller';
+import { PfiModule } from '@modules/pfi/pfi.module';
+import { PfiAdminController } from '@modules/pfi/controllers/pfi.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
 import { EmployeeAdminController } from '@modules/employee/controllers/employee.admin.controller';
 import { HolidayCalendarModule } from '@modules/holiday-calendar/holiday-calendar.module';
@@ -191,6 +193,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         // Quotation controller
         QuotationAdminController,
+        PfiAdminController,
     ],
     providers: [],
     exports: [],
@@ -236,6 +239,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         PriceListModule,
         VoucherModule,
         QuotationModule,
+        PfiModule,
         EmployeeModule,
         HolidayCalendarModule,
         DocumentModule,

@@ -234,13 +234,38 @@ export class LeadService {
      * approved Quotation references this lead. No-ops when the lead is
      * already WON or doesn't exist.
      */
-    async markWon(leadId: string): Promise<void> {
+    /**
+     * Idempotent helper called when an upstream document (Quotation/PFI)
+     * is approved. Sets status=WON and, if a customer_id is provided AND
+     * the lead isn't already converted, stamps the conversion link so the
+     * Lead points at the customer that was used on the approving doc.
+     *
+     * Does NOT create a new customer — the upstream doc already required
+     * one to exist.
+     */
+    async markWon(leadId: string, customerId?: string): Promise<void> {
         if (!leadId) return;
         const lead = await this.leadRepository.findOneById(leadId);
-        if (!lead || lead.status === ENUM_LEAD_STATUS.WON) return;
-        lead.status = ENUM_LEAD_STATUS.WON;
+        if (!lead) return;
+
+        let dirty = false;
+        if (lead.status !== ENUM_LEAD_STATUS.WON) {
+            lead.status = ENUM_LEAD_STATUS.WON;
+            dirty = true;
+        }
+        if (customerId && !lead.converted_customer_id) {
+            lead.converted_customer_id = customerId;
+            lead.converted_at = new Date();
+            dirty = true;
+        }
+        if (!dirty) return;
+
         await this.leadRepository.save(lead);
-        this.logger.log(`Lead ${leadId} marked WON via Quotation approval`);
+        this.logger.log(
+            `Lead ${leadId} marked WON${
+                customerId ? ` and linked to customer ${customerId}` : ''
+            }`
+        );
     }
 
     /**
