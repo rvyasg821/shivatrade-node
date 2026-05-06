@@ -1,5 +1,6 @@
 {
     "list": "Price list retrieved successfully.",
+    "byProduct": "Vendor prices for product retrieved successfully.",
     "get": "Price list entry fetched successfully.",
     "create": "Price list entry created successfully.",
     "update": "Price list entry updated successfully.",

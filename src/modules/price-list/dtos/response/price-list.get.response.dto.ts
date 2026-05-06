@@ -7,6 +7,7 @@ export class PriceListGetResponseDto {
 
     @ApiProperty({ type: String }) vendor_id: string;
     @ApiProperty({ type: String, required: false }) vendor_name?: string;
+    @ApiProperty({ type: String, required: false }) vendor_code?: string;
 
     @ApiProperty({ type: String }) product_id: string;
     @ApiProperty({ type: String, required: false }) product_code?: string;

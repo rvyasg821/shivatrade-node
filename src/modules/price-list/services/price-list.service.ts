@@ -213,6 +213,7 @@ export class PriceListService {
             const p = productMap[r.product_id.toString()];
             const c = currencyMap[r.currency_id.toString()];
             dto.vendor_name = v?.company_name;
+            dto.vendor_code = v?.vendor_code;
             dto.product_code = p?.code;
             dto.product_name = p?.name;
             dto.currency_code = c?.code;

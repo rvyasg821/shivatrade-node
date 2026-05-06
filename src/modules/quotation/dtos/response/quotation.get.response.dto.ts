@@ -5,6 +5,8 @@ export class QuotationLineResponseDto {
     product_id?: string;
     product_code?: string;
     product_name?: string;
+    vendor_id?: string;
+    vendor_name?: string;
     description?: string;
     qty?: string;
     unit?: string;
@@ -24,6 +26,7 @@ export class QuotationExpenseResponseDto {
     expense_id?: string;
     name?: string;
     amount?: string;
+    is_overridden?: boolean;
     seq?: number;
 }
 
@@ -32,6 +35,7 @@ export class QuotationRebateResponseDto {
     rebate_id?: string;
     name?: string;
     amount?: string;
+    is_overridden?: boolean;
     seq?: number;
 }
 

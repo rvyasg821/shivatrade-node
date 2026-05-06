@@ -16,6 +16,11 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     product_id: string;
 
+    /** Vendor selected for this line (from price list). Drives PO grouping. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    vendor_id?: string;
+
     /** Snapshot of product description at quote time. */
     @Column({ type: 'text', nullable: true })
     description?: string;

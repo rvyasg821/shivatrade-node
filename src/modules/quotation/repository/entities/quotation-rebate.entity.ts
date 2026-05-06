@@ -27,6 +27,9 @@ export class QuotationRebateEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     amount: string;
 
+    @Column({ type: 'boolean', nullable: false, default: false })
+    is_overridden: boolean;
+
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 }

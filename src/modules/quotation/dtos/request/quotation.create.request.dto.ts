@@ -18,6 +18,10 @@ export class QuotationLineCreateDto {
     @IsNotEmpty()
     product_id: string;
 
+    @IsUUID()
+    @IsOptional()
+    vendor_id?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(2000)
@@ -56,8 +60,11 @@ export class QuotationExpenseCreateDto {
     name: string;
 
     @IsNumberString({}, { message: 'amount must be a numeric string' })
-    @IsNotEmpty()
-    amount: string;
+    @IsOptional()
+    amount?: string;
+
+    @IsOptional()
+    is_overridden?: boolean;
 }
 
 export class QuotationRebateCreateDto {
@@ -71,8 +78,11 @@ export class QuotationRebateCreateDto {
     name: string;
 
     @IsNumberString({}, { message: 'amount must be a numeric string' })
-    @IsNotEmpty()
-    amount: string;
+    @IsOptional()
+    amount?: string;
+
+    @IsOptional()
+    is_overridden?: boolean;
 }
 
 export class QuotationCreateRequestDto {

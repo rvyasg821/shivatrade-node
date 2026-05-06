@@ -26,6 +26,9 @@ import { LeadRepository } from '@modules/lead/repository/repositories/lead.repos
 import { LeadService } from '@modules/lead/services/lead.service';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
+import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
+import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -52,6 +55,9 @@ export class QuotationService {
         private readonly leadService: LeadService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly vendorRepository: VendorRepository,
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly rebateRepository: RebateRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -260,6 +266,7 @@ export class QuotationService {
                 company_id: companyId,
                 quotation_id: quotationId,
                 product_id: l.product_id,
+                vendor_id: l.vendor_id || null,
                 description: l.description || null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
@@ -292,6 +299,7 @@ export class QuotationService {
                 expense_id: e.expense_id || null,
                 name: e.name,
                 amount: e.amount || '0',
+                is_overridden: !!e.is_overridden,
                 seq,
             } as any);
         }
@@ -313,6 +321,7 @@ export class QuotationService {
                 rebate_id: r.rebate_id || null,
                 name: r.name,
                 amount: r.amount || '0',
+                is_overridden: !!r.is_overridden,
                 seq,
             } as any);
         }
@@ -384,14 +393,73 @@ export class QuotationService {
             tax_total += out.total_tax;
         }
 
-        const expenses_total = expenses.reduce(
-            (sum, e) => sum + num(e.amount),
-            0
+        // Derive expense/rebate amounts from master rules when not overridden.
+        // Master-linked, !is_overridden → recompute (flat or % of subtotal).
+        // Else → trust stored amount.
+        const expenseMasterIds = Array.from(
+            new Set(
+                expenses
+                    .filter((e: any) => e.expense_id && !e.is_overridden)
+                    .map((e: any) => e.expense_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
         );
-        const rebates_total = rebates.reduce(
-            (sum, r) => sum + num(r.amount),
-            0
+        const rebateMasterIds = Array.from(
+            new Set(
+                rebates
+                    .filter((r: any) => r.rebate_id && !r.is_overridden)
+                    .map((r: any) => r.rebate_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
         );
+        const [expenseMasters, rebateMasters] = await Promise.all([
+            expenseMasterIds.length
+                ? this.expenseRepository.findAll({
+                      _id: { $in: expenseMasterIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            rebateMasterIds.length
+                ? this.rebateRepository.findAll({
+                      _id: { $in: rebateMasterIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const expMap = new Map(
+            expenseMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const rebMap = new Map(
+            rebateMasters.map((m: any) => [m._id.toString(), m])
+        );
+
+        let expenses_total = 0;
+        for (const e of expenses) {
+            let amt = num(e.amount);
+            if (e.expense_id && !e.is_overridden) {
+                const master: any = expMap.get(e.expense_id.toString());
+                if (master) {
+                    amt =
+                        master.type === 'percent'
+                            ? (subtotal * num(master.value)) / 100
+                            : num(master.value);
+                    e.amount = String(round2(amt));
+                    await this.quotationExpenseRepository.save(e);
+                }
+            }
+            expenses_total += amt;
+        }
+        let rebates_total = 0;
+        for (const r of rebates) {
+            let amt = num(r.amount);
+            if (r.rebate_id && !r.is_overridden) {
+                const master: any = rebMap.get(r.rebate_id.toString());
+                if (master) {
+                    amt = (subtotal * num(master.pct)) / 100;
+                    r.amount = String(round2(amt));
+                    await this.quotationRebateRepository.save(r);
+                }
+            }
+            rebates_total += amt;
+        }
 
         const net_pre_margin = subtotal + expenses_total - rebates_total;
         const margin_pct = num(header.margin_pct);
@@ -452,7 +520,17 @@ export class QuotationService {
         );
         const quotationIds = rows.map((r) => r._id.toString());
 
-        const [customers, currencies, leads, lines, expenses, rebates] =
+        // Pre-load lines once so we can collect vendor_ids before the parallel fan-out.
+        const allLines = await this.quotationLineRepository.findAll({
+            quotation_id: { $in: quotationIds },
+        } as any);
+        const vendorIds = unique(
+            allLines
+                .map((l: any) => l.vendor_id?.toString())
+                .filter((v: any): v is string => !!v)
+        );
+
+        const [customers, currencies, leads, vendors, expenses, rebates] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
@@ -469,9 +547,11 @@ export class QuotationService {
                           _id: { $in: leadIds },
                       } as any)
                     : Promise.resolve([] as any[]),
-                this.quotationLineRepository.findAll({
-                    quotation_id: { $in: quotationIds },
-                } as any),
+                vendorIds.length
+                    ? this.vendorRepository.findAll({
+                          _id: { $in: vendorIds },
+                      } as any)
+                    : Promise.resolve([] as any[]),
                 this.quotationExpenseRepository.findAll({
                     quotation_id: { $in: quotationIds },
                 } as any),
@@ -483,8 +563,9 @@ export class QuotationService {
         const customerMap = toMap(customers, '_id');
         const currencyMap = toMap(currencies, '_id');
         const leadMap = toMap(leads, '_id');
+        const vendorMap = toMap(vendors, '_id');
 
-        const linesByQ = groupBy(lines, (l: any) =>
+        const linesByQ = groupBy(allLines, (l: any) =>
             l.quotation_id.toString()
         );
         const expensesByQ = groupBy(expenses, (e: any) =>
@@ -535,6 +616,10 @@ export class QuotationService {
                         (l: any): QuotationLineResponseDto => ({
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
+                            vendor_id: l.vendor_id?.toString(),
+                            vendor_name: (vendorMap.get(
+                                l.vendor_id?.toString()
+                            ) as any)?.company_name,
                             description: l.description,
                             qty: l.qty,
                             unit: l.unit,
@@ -557,6 +642,7 @@ export class QuotationService {
                             expense_id: e.expense_id?.toString(),
                             name: e.name,
                             amount: e.amount,
+                            is_overridden: !!e.is_overridden,
                             seq: e.seq,
                         })
                     ),
@@ -568,6 +654,7 @@ export class QuotationService {
                             rebate_id: r2.rebate_id?.toString(),
                             name: r2.name,
                             amount: r2.amount,
+                            is_overridden: !!r2.is_overridden,
                             seq: r2.seq,
                         })
                     ),

@@ -26,6 +26,12 @@ export class QuotationExpenseEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     amount: string;
 
+    /** When true, recompute trusts the stored amount as user override.
+     *  When false (and expense_id set), recompute derives from master rule
+     *  (flat or % of subtotal). */
+    @Column({ type: 'boolean', nullable: false, default: false })
+    is_overridden: boolean;
+
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 }
