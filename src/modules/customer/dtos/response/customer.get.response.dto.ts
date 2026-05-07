@@ -58,6 +58,7 @@ export class CustomerGetResponseDto {
     @ApiProperty({ required: false, type: String }) primary_contact_name?: string;
     @ApiProperty({ required: false, type: String }) primary_contact_email?: string;
     @ApiProperty({ required: false, type: String }) primary_contact_phone?: string;
+    @ApiProperty({ required: false, type: Object }) primary_contact_country_code?: any;
 
     @ApiProperty({ required: true, type: Date }) createdAt: Date;
     @ApiProperty({ required: true, type: Date }) updatedAt: Date;

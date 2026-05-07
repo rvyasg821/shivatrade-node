@@ -5,6 +5,7 @@
     "update": "Vendor updated successfully.",
     "delete": "Vendor deleted successfully.",
     "dropdown": "Vendors dropdown loaded.",
+    "checkCode": "Vendor code availability checked.",
     "error": {
         "exist": "A vendor with this name already exists.",
         "categoryNotFound": "Category not found.",
