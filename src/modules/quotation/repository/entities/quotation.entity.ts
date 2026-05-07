@@ -66,8 +66,24 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     expenses_total: string;
 
+    /** Per-product expenses, summed from each line's product master link.
+     *  Kept separate from `expenses_total` (which is user-added per-quote)
+     *  so the costing card can show both buckets independently. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_expenses_total: string;
+
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     rebates_total: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_rebates_total: string;
+
+    /** When true, the recompute zeros out product_rebates_total and
+     *  product_expenses_total — useful when the user wants to apply rebates
+     *  and expenses ONLY at the quotation level (one-off custom rates) and
+     *  skip the per-product master configuration entirely. */
+    @Column({ type: 'boolean', nullable: false, default: false })
+    skip_product_costing: boolean;
 
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
     margin_pct?: string;

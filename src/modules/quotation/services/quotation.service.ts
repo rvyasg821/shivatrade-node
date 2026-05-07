@@ -29,6 +29,8 @@ import { CompanyAddressRepository } from '@modules/company/repository/repositori
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
+import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
+import { ProductExpenseRepository } from '@modules/product/repository/repositories/product-expense.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -58,6 +60,8 @@ export class QuotationService {
         private readonly vendorRepository: VendorRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly rebateRepository: RebateRepository,
+        private readonly productRebateRepository: ProductRebateRepository,
+        private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -127,6 +131,46 @@ export class QuotationService {
         data: QuotationCreateRequestDto,
         createdBy: string
     ): Promise<QuotationDoc> {
+        // Auto-resolve customer when only a lead is provided. Lead carries
+        // company_name, contact, address — enough to materialise a Customer
+        // record so the Quotation can reference it. Idempotent: if the lead
+        // already has customer_id / converted_customer_id, that is reused.
+        if (!data.customer_id && data.lead_id) {
+            const customerId = await this.leadService.linkOrCreateCustomerForLead(
+                data.lead_id,
+                createdBy
+            );
+            (data as any).customer_id = customerId;
+        }
+
+        if (!data.customer_id) {
+            throw new BadRequestException(
+                'Either customer_id or lead_id is required'
+            );
+        }
+
+        // Auto-fill bill-to address from customer's default if FE didn't
+        // provide one. Common when arriving from a lead — backend just
+        // materialised the customer + address, but the form's payload had
+        // no address selected.
+        if (!data.customer_address_id) {
+            const defaultAddr = await this.customerAddressRepository.findOne({
+                customer_id: data.customer_id,
+                is_default: true,
+                soft_delete: false,
+            } as any);
+            const fallback =
+                defaultAddr ||
+                (await this.customerAddressRepository.findOne({
+                    customer_id: data.customer_id,
+                    type: 'bill_to',
+                    soft_delete: false,
+                } as any));
+            if (fallback) {
+                (data as any).customer_address_id = fallback._id.toString();
+            }
+        }
+
         await this.assertReferences(
             companyId,
             data.customer_id,
@@ -195,6 +239,26 @@ export class QuotationService {
     ): Promise<QuotationDoc> {
         const companyId = row.company_id.toString();
 
+        // ── Status lock ───────────────────────────────────────────────
+        // Only DRAFT is fully editable. Other statuses accept ONLY a
+        // status transition (and internal_notes), nothing else.
+        const isLocked = row.status !== ENUM_QUOTATION_STATUS.DRAFT;
+        const isStatusOnlyChange = (() => {
+            if (!isLocked) return true;
+            const allowedKeys = new Set(['status', 'internal_notes']);
+            return Object.keys(data || {}).every((k) =>
+                allowedKeys.has(k) || (data as any)[k] === undefined
+            );
+        })();
+        if (isLocked && !isStatusOnlyChange) {
+            throw new BadRequestException(
+                `Quotation is ${row.status}. Revert to draft to edit fields.`
+            );
+        }
+        if (data.status && data.status !== row.status) {
+            this.assertStatusTransitionAllowed(row.status, data.status);
+        }
+
         await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
@@ -204,6 +268,7 @@ export class QuotationService {
         );
 
         const wasApproved = row.status === ENUM_QUOTATION_STATUS.APPROVED;
+        const wasSent = row.status === ENUM_QUOTATION_STATUS.SENT;
 
         // Apply scalar updates (skip nested arrays — replaced separately).
         const {
@@ -231,20 +296,65 @@ export class QuotationService {
             row._id.toString()
         );
 
-        // Side-effect: when status flips draft|sent → approved AND a lead is
-        // linked, mark the lead as Won.
-        const becomesApproved =
-            !wasApproved &&
-            refreshed.status === ENUM_QUOTATION_STATUS.APPROVED;
-        if (becomesApproved && refreshed.lead_id) {
-            await this.leadService.markWon(
-                refreshed.lead_id.toString(),
-                refreshed.customer_id?.toString()
-            );
+        // Side-effects on linked lead:
+        //   draft → sent      → mark lead PROPOSAL_SENT
+        //   draft|sent → approved → mark lead WON (+ link customer)
+        if (refreshed.lead_id) {
+            const becomesSent =
+                !wasSent &&
+                !wasApproved &&
+                refreshed.status === ENUM_QUOTATION_STATUS.SENT;
+            const becomesApproved =
+                !wasApproved &&
+                refreshed.status === ENUM_QUOTATION_STATUS.APPROVED;
+
+            if (becomesApproved) {
+                await this.leadService.markWon(
+                    refreshed.lead_id.toString(),
+                    refreshed.customer_id?.toString()
+                );
+            } else if (becomesSent) {
+                await this.leadService.markProposalSent(
+                    refreshed.lead_id.toString()
+                );
+            }
         }
 
         this.logger.log(`Quotation updated: ${row._id}`);
         return refreshed;
+    }
+
+    /**
+     * Allowed status transitions:
+     *   draft     → sent | approved | rejected
+     *   sent      → draft | approved | rejected
+     *   approved  → draft (revert; no other moves)
+     *   rejected  → draft (re-quote; no other moves)
+     */
+    private assertStatusTransitionAllowed(
+        from: ENUM_QUOTATION_STATUS,
+        to: ENUM_QUOTATION_STATUS
+    ): void {
+        const map: Record<string, ENUM_QUOTATION_STATUS[]> = {
+            [ENUM_QUOTATION_STATUS.DRAFT]: [
+                ENUM_QUOTATION_STATUS.SENT,
+                ENUM_QUOTATION_STATUS.APPROVED,
+                ENUM_QUOTATION_STATUS.REJECTED,
+            ],
+            [ENUM_QUOTATION_STATUS.SENT]: [
+                ENUM_QUOTATION_STATUS.DRAFT,
+                ENUM_QUOTATION_STATUS.APPROVED,
+                ENUM_QUOTATION_STATUS.REJECTED,
+            ],
+            [ENUM_QUOTATION_STATUS.APPROVED]: [ENUM_QUOTATION_STATUS.DRAFT],
+            [ENUM_QUOTATION_STATUS.REJECTED]: [ENUM_QUOTATION_STATUS.DRAFT],
+        };
+        const allowed = map[from] || [];
+        if (!allowed.includes(to)) {
+            throw new BadRequestException(
+                `Cannot transition quotation from ${from} to ${to}.`
+            );
+        }
     }
 
     async softDelete(row: QuotationDoc): Promise<void> {
@@ -262,13 +372,88 @@ export class QuotationService {
     ): Promise<void> {
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
         if (!lines?.length) return;
+
+        // Pre-load product master rebate/expense links for ALL products
+        // referenced by these lines, in two queries — avoids N+1.
+        const productIds = Array.from(
+            new Set(
+                lines.map((l) => l.product_id).filter((id): id is string => !!id)
+            )
+        );
+        const [pRebateLinks, pExpenseLinks] = await Promise.all([
+            productIds.length
+                ? this.productRebateRepository.findAll({
+                      product_id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            productIds.length
+                ? this.productExpenseRepository.findAll({
+                      product_id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const rebateMasterIds = unique(
+            pRebateLinks.map((l: any) => l.rebate_id?.toString())
+        );
+        const expenseMasterIds = unique(
+            pExpenseLinks.map((l: any) => l.expense_id?.toString())
+        );
+        const [rebateMasters, expenseMasters] = await Promise.all([
+            rebateMasterIds.length
+                ? this.rebateRepository.findAll({
+                      _id: { $in: rebateMasterIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            expenseMasterIds.length
+                ? this.expenseRepository.findAll({
+                      _id: { $in: expenseMasterIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const rebMap = new Map(
+            rebateMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const expMap = new Map(
+            expenseMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const rebatesByProduct = new Map<string, any[]>();
+        for (const l of pRebateLinks as any[]) {
+            const m: any = rebMap.get(l.rebate_id?.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            const arr = rebatesByProduct.get(pid) || [];
+            arr.push({
+                rebate_id: l.rebate_id.toString(),
+                code: m.code,
+                name: m.name,
+                pct: l.pct != null ? String(l.pct) : String(m.pct),
+            });
+            rebatesByProduct.set(pid, arr);
+        }
+        const expensesByProduct = new Map<string, any[]>();
+        for (const l of pExpenseLinks as any[]) {
+            const m: any = expMap.get(l.expense_id?.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            const arr = expensesByProduct.get(pid) || [];
+            arr.push({
+                expense_id: l.expense_id.toString(),
+                code: m.code,
+                name: m.name,
+                type: m.type,
+                value: l.value != null ? String(l.value) : String(m.value),
+            });
+            expensesByProduct.set(pid, arr);
+        }
+
         let seq = 0;
         for (const l of lines) {
             seq += 1;
+            const pid = l.product_id;
             await this.quotationLineRepository.create({
                 company_id: companyId,
                 quotation_id: quotationId,
-                product_id: l.product_id,
+                product_id: pid,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
                 qty: l.qty || '0',
@@ -281,6 +466,10 @@ export class QuotationService {
                 igst: '0',
                 taxable: '0',
                 line_total: '0',
+                product_rebates_snapshot: rebatesByProduct.get(pid) || [],
+                product_expenses_snapshot: expensesByProduct.get(pid) || [],
+                product_rebates_amount: '0',
+                product_expenses_amount: '0',
                 seq,
             } as any);
         }
@@ -374,6 +563,8 @@ export class QuotationService {
 
         let subtotal = 0;
         let tax_total = 0;
+        let product_rebates_total = 0;
+        let product_expenses_total = 0;
 
         for (const ln of lines) {
             const out = computeLineTax({
@@ -390,10 +581,29 @@ export class QuotationService {
             ln.sgst = String(out.sgst);
             ln.igst = String(out.igst);
             ln.line_total = String(out.line_total);
+
+            // Per-line product rebates: each entry is (taxable × pct/100).
+            let lineRebatesAmt = 0;
+            for (const r of (ln as any).product_rebates_snapshot || []) {
+                lineRebatesAmt += (out.taxable * num(r.pct)) / 100;
+            }
+            // Per-line product expenses: percent → taxable × value/100;
+            // amount → flat value applied once per line.
+            let lineExpensesAmt = 0;
+            for (const e of (ln as any).product_expenses_snapshot || []) {
+                lineExpensesAmt +=
+                    e.type === 'percent'
+                        ? (out.taxable * num(e.value)) / 100
+                        : num(e.value);
+            }
+            (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
+            (ln as any).product_expenses_amount = String(round2(lineExpensesAmt));
             await this.quotationLineRepository.save(ln);
 
             subtotal += out.taxable;
             tax_total += out.total_tax;
+            product_rebates_total += lineRebatesAmt;
+            product_expenses_total += lineExpensesAmt;
         }
 
         // Derive expense/rebate amounts from master rules when not overridden.
@@ -464,7 +674,23 @@ export class QuotationService {
             rebates_total += amt;
         }
 
-        const net_pre_margin = subtotal + expenses_total - rebates_total;
+        // When skip_product_costing is true, ignore the per-product buckets
+        // — user has chosen to apply rebates/expenses only at quote level.
+        const skipProduct = !!(header as any).skip_product_costing;
+        const effective_product_rebates = skipProduct
+            ? 0
+            : product_rebates_total;
+        const effective_product_expenses = skipProduct
+            ? 0
+            : product_expenses_total;
+
+        // Net pre-margin includes BOTH manual and product-derived buckets.
+        const net_pre_margin =
+            subtotal +
+            expenses_total +
+            effective_product_expenses -
+            rebates_total -
+            effective_product_rebates;
         const margin_pct = num(header.margin_pct);
         const margin_amount = net_pre_margin * (margin_pct / 100);
 
@@ -475,6 +701,14 @@ export class QuotationService {
         header.subtotal = String(round2(subtotal));
         header.expenses_total = String(round2(expenses_total));
         header.rebates_total = String(round2(rebates_total));
+        // Store the EFFECTIVE per-product totals (zeroed if skipped) so the
+        // header aggregate matches what was actually used in the math.
+        (header as any).product_expenses_total = String(
+            round2(effective_product_expenses)
+        );
+        (header as any).product_rebates_total = String(
+            round2(effective_product_rebates)
+        );
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));
         header.grand_total = String(round2(grand_total));
@@ -602,7 +836,10 @@ export class QuotationService {
                 internal_notes: r.internal_notes,
                 subtotal: r.subtotal,
                 expenses_total: r.expenses_total,
+                product_expenses_total: (r as any).product_expenses_total,
                 rebates_total: r.rebates_total,
+                product_rebates_total: (r as any).product_rebates_total,
+                skip_product_costing: !!(r as any).skip_product_costing,
                 margin_pct: r.margin_pct,
                 margin_amount: r.margin_amount,
                 tax_total: r.tax_total,
@@ -634,6 +871,12 @@ export class QuotationService {
                             igst: l.igst,
                             taxable: l.taxable,
                             line_total: l.line_total,
+                            product_rebates_snapshot:
+                                l.product_rebates_snapshot || [],
+                            product_expenses_snapshot:
+                                l.product_expenses_snapshot || [],
+                            product_rebates_amount: l.product_rebates_amount,
+                            product_expenses_amount: l.product_expenses_amount,
                             seq: l.seq,
                         })
                     ),

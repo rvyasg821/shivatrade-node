@@ -32,6 +32,7 @@ import { QuotationRepository } from '@modules/quotation/repository/repositories/
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { QuotationExpenseRepository } from '@modules/quotation/repository/repositories/quotation-expense.repository';
 import { QuotationRebateRepository } from '@modules/quotation/repository/repositories/quotation-rebate.repository';
+import { LeadService } from '@modules/lead/services/lead.service';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -63,6 +64,7 @@ export class PfiService {
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly quotationExpenseRepository: QuotationExpenseRepository,
         private readonly quotationRebateRepository: QuotationRebateRepository,
+        private readonly leadService: LeadService,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -183,12 +185,33 @@ export class PfiService {
     async update(row: PfiDoc, data: PfiUpdateRequestDto): Promise<PfiDoc> {
         const companyId = row.company_id.toString();
 
+        // Status lock — only DRAFT is fully editable.
+        const isLocked = row.status !== ENUM_PFI_STATUS.DRAFT;
+        const isStatusOnlyChange = (() => {
+            if (!isLocked) return true;
+            const allowedKeys = new Set(['status', 'internal_notes']);
+            return Object.keys(data || {}).every((k) =>
+                allowedKeys.has(k) || (data as any)[k] === undefined
+            );
+        })();
+        if (isLocked && !isStatusOnlyChange) {
+            throw new BadRequestException(
+                `PFI is ${row.status}. Revert to draft to edit fields.`
+            );
+        }
+        if (data.status && data.status !== row.status) {
+            this.assertStatusTransitionAllowed(row.status, data.status);
+        }
+
         await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
             data.currency_id || row.currency_id.toString(),
             data.customer_address_id ?? row.customer_address_id?.toString()
         );
+
+        const wasApproved = row.status === ENUM_PFI_STATUS.APPROVED;
+        const wasSent = row.status === ENUM_PFI_STATUS.SENT;
 
         const { lines, expenses, rebates, ...scalar } = data as any;
         Object.assign(row, scalar);
@@ -208,8 +231,60 @@ export class PfiService {
         const refreshed = await this.pfiRepository.findOneById(
             row._id.toString()
         );
+
+        // Side-effects on linked lead (mirror Quotation):
+        //   draft → sent     → mark lead PROPOSAL_SENT
+        //   *    → approved → mark lead WON (+ link customer)
+        // markWon / markProposalSent are idempotent so re-firing is safe
+        // when Quotation already triggered the same transition.
+        if (refreshed.lead_id) {
+            const becomesSent =
+                !wasSent &&
+                !wasApproved &&
+                refreshed.status === ENUM_PFI_STATUS.SENT;
+            const becomesApproved =
+                !wasApproved &&
+                refreshed.status === ENUM_PFI_STATUS.APPROVED;
+            if (becomesApproved) {
+                await this.leadService.markWon(
+                    refreshed.lead_id.toString(),
+                    refreshed.customer_id?.toString()
+                );
+            } else if (becomesSent) {
+                await this.leadService.markProposalSent(
+                    refreshed.lead_id.toString()
+                );
+            }
+        }
+
         this.logger.log(`PFI updated: ${row._id}`);
         return refreshed;
+    }
+
+    private assertStatusTransitionAllowed(
+        from: ENUM_PFI_STATUS,
+        to: ENUM_PFI_STATUS
+    ): void {
+        const map: Record<string, ENUM_PFI_STATUS[]> = {
+            [ENUM_PFI_STATUS.DRAFT]: [
+                ENUM_PFI_STATUS.SENT,
+                ENUM_PFI_STATUS.APPROVED,
+                ENUM_PFI_STATUS.REJECTED,
+            ],
+            [ENUM_PFI_STATUS.SENT]: [
+                ENUM_PFI_STATUS.DRAFT,
+                ENUM_PFI_STATUS.APPROVED,
+                ENUM_PFI_STATUS.REJECTED,
+            ],
+            [ENUM_PFI_STATUS.APPROVED]: [ENUM_PFI_STATUS.DRAFT],
+            [ENUM_PFI_STATUS.REJECTED]: [ENUM_PFI_STATUS.DRAFT],
+        };
+        const allowed = map[from] || [];
+        if (!allowed.includes(to)) {
+            throw new BadRequestException(
+                `Cannot transition PFI from ${from} to ${to}.`
+            );
+        }
     }
 
     async softDelete(row: PfiDoc): Promise<void> {

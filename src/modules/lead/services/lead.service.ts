@@ -18,6 +18,7 @@ import { CustomerContactRepository } from '@modules/customer/repository/reposito
 import { UserRepository } from '@modules/user/repository/repositories/user.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
+import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { ILike } from 'typeorm';
 import {
     IDatabaseFindAllOptions,
@@ -35,7 +36,8 @@ export class LeadService {
         private readonly customerService: CustomerService,
         private readonly userRepository: UserRepository,
         private readonly productRepository: ProductRepository,
-        private readonly categoryRepository: CategoryRepository
+        private readonly categoryRepository: CategoryRepository,
+        private readonly quotationRepository: QuotationRepository
     ) {}
 
     async create(
@@ -243,6 +245,111 @@ export class LeadService {
      * Does NOT create a new customer — the upstream doc already required
      * one to exist.
      */
+    /**
+     * Idempotent — flip a lead to PROPOSAL_SENT when an upstream Quotation
+     * or PFI moves into the SENT state. Skipped if the lead is already
+     * past that point in the pipeline (proposal_sent / won / lost).
+     */
+    async markProposalSent(leadId: string): Promise<void> {
+        if (!leadId) return;
+        const lead = await this.leadRepository.findOneById(leadId);
+        if (!lead) return;
+        const skip = [
+            ENUM_LEAD_STATUS.PROPOSAL_SENT,
+            ENUM_LEAD_STATUS.WON,
+            ENUM_LEAD_STATUS.LOST,
+        ];
+        if (skip.includes(lead.status)) return;
+        lead.status = ENUM_LEAD_STATUS.PROPOSAL_SENT;
+        await this.leadRepository.save(lead);
+        this.logger.log(`Lead ${leadId} marked PROPOSAL_SENT`);
+    }
+
+    /**
+     * Resolve a customer for a lead WITHOUT advancing lead status.
+     * Used by Quotation/PFI create when a lead_id is provided but no
+     * customer_id yet — we need a real customer record so the doc has
+     * something to reference.
+     *
+     *  1. lead.converted_customer_id — already linked, return it.
+     *  2. lead.customer_id — explicit form link, use it.
+     *  3. Match by primary-contact email — reuse existing customer.
+     *  4. Create a new customer from lead fields.
+     *
+     * Stamps lead.customer_id (not converted_customer_id — that's
+     * reserved for the Won transition).
+     */
+    async linkOrCreateCustomerForLead(
+        leadId: string,
+        userId: string
+    ): Promise<string> {
+        const lead = await this.leadRepository.findOneById(leadId);
+        if (!lead) throw new NotFoundException('Lead not found');
+        const companyId = lead.company_id.toString();
+
+        if (lead.converted_customer_id) {
+            return lead.converted_customer_id.toString();
+        }
+        if (lead.customer_id) {
+            return lead.customer_id.toString();
+        }
+
+        const matched = await this.findCustomerByEmail(
+            companyId,
+            lead.contact_email
+        );
+        if (matched) {
+            lead.customer_id = matched;
+            await this.leadRepository.save(lead);
+            return matched;
+        }
+
+        const hasAddress = !!(
+            lead.address_line1 ||
+            lead.address_line2 ||
+            lead.city ||
+            lead.state ||
+            lead.country ||
+            lead.postcode
+        );
+        const customer = await this.customerService.create(
+            companyId,
+            {
+                company_name: lead.company_name,
+                contacts: [
+                    {
+                        name: lead.contact_name,
+                        email: lead.contact_email,
+                        phone: lead.contact_phone,
+                        country_code: lead.country_code,
+                        is_primary: true,
+                    },
+                ],
+                addresses: hasAddress
+                    ? [
+                          {
+                              type: 'bill_to' as any,
+                              address_line1: lead.address_line1,
+                              address_line2: lead.address_line2,
+                              city: lead.city,
+                              state: lead.state,
+                              country: lead.country,
+                              postcode: lead.postcode,
+                              is_default: true,
+                          },
+                      ]
+                    : [],
+            } as any,
+            userId
+        );
+        lead.customer_id = customer._id.toString();
+        await this.leadRepository.save(lead);
+        this.logger.log(
+            `Lead ${lead._id} linked to new customer ${customer._id} (no status change)`
+        );
+        return customer._id.toString();
+    }
+
     async markWon(leadId: string, customerId?: string): Promise<void> {
         if (!leadId) return;
         const lead = await this.leadRepository.findOneById(leadId);
@@ -359,6 +466,11 @@ export class LeadService {
     async mapGetWithRelations(lead: LeadDoc): Promise<LeadGetResponseDto> {
         const dto = plainToInstance(LeadGetResponseDto, lead);
         await this.attachRelationsToOne(dto, lead);
+        const count = await this.quotationRepository.getTotal({
+            lead_id: lead._id.toString(),
+            soft_delete: false,
+        } as any);
+        (dto as any).quotations_count = count;
         return dto;
     }
 
@@ -383,6 +495,7 @@ export class LeadService {
                     .filter(Boolean) as string[]
             )
         );
+        const leadIds = leads.map((l) => l._id.toString());
 
         const customerMap = new Map<string, string>();
         if (customerIds.length) {
@@ -404,6 +517,21 @@ export class LeadService {
             );
         }
 
+        // Count quotations per lead (excluding soft-deleted) so the FE can
+        // surface "X quotations already created" without an extra round trip.
+        const quotationCounts = new Map<string, number>();
+        if (leadIds.length) {
+            const quotations = await this.quotationRepository.findAll({
+                lead_id: { $in: leadIds },
+                soft_delete: false,
+            } as any);
+            for (const q of quotations as any[]) {
+                const lid = q.lead_id?.toString();
+                if (!lid) continue;
+                quotationCounts.set(lid, (quotationCounts.get(lid) || 0) + 1);
+            }
+        }
+
         leads.forEach((l, i) => {
             if (l.customer_id) {
                 dtos[i].customer_name = customerMap.get(l.customer_id.toString());
@@ -411,6 +539,8 @@ export class LeadService {
             if (l.assigned_to) {
                 dtos[i].assigned_to_name = userMap.get(l.assigned_to.toString());
             }
+            (dtos[i] as any).quotations_count =
+                quotationCounts.get(l._id.toString()) || 0;
         });
         return dtos;
     }

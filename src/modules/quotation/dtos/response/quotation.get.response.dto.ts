@@ -18,6 +18,22 @@ export class QuotationLineResponseDto {
     igst?: string;
     taxable?: string;
     line_total?: string;
+    /** Per-line product master rebate snapshots (each: rebate_id, code, name, pct). */
+    product_rebates_snapshot?: Array<{
+        rebate_id: string;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
+    product_expenses_snapshot?: Array<{
+        expense_id: string;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+    product_rebates_amount?: string;
+    product_expenses_amount?: string;
     seq?: number;
 }
 
@@ -60,7 +76,10 @@ export class QuotationGetResponseDto {
 
     subtotal?: string;
     expenses_total?: string;
+    product_expenses_total?: string;
     rebates_total?: string;
+    product_rebates_total?: string;
+    skip_product_costing?: boolean;
     margin_pct?: string;
     margin_amount?: string;
     tax_total?: string;

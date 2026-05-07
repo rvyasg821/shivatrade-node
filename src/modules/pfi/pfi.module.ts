@@ -11,6 +11,7 @@ import { RebateModule } from '@modules/rebate/rebate.module';
 import { CompanyModule } from '@modules/company/company.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { QuotationModule } from '@modules/quotation/quotation.module';
+import { LeadModule } from '@modules/lead/lead.module';
 
 @Module({
     imports: [
@@ -24,6 +25,7 @@ import { QuotationModule } from '@modules/quotation/quotation.module';
         CompanyModule,
         CompanyRepositoryModule,
         QuotationModule,
+        LeadModule,
     ],
     providers: [PfiService],
     exports: [PfiRepositoryModule, PfiService],

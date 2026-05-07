@@ -17,6 +17,10 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { ProductService } from '../services/product.service';
 import { ProductRepository } from '../repository/repositories/product.repository';
+import { ProductRebateRepository } from '../repository/repositories/product-rebate.repository';
+import { ProductExpenseRepository } from '../repository/repositories/product-expense.repository';
+import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
+import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { ProductCreateRequestDto } from '../dtos/request/product.create.request.dto';
 import { ProductUpdateRequestDto } from '../dtos/request/product.update.request.dto';
 import { ProductGetResponseDto } from '../dtos/response/product.get.response.dto';
@@ -30,7 +34,11 @@ import { ProductListResponseDto } from '../dtos/response/product.list.response.d
 export class ProductAdminController {
     constructor(
         private readonly productService: ProductService,
-        private readonly productRepository: ProductRepository
+        private readonly productRepository: ProductRepository,
+        private readonly productRebateRepository: ProductRebateRepository,
+        private readonly productExpenseRepository: ProductExpenseRepository,
+        private readonly rebateRepository: RebateRepository,
+        private readonly expenseRepository: ExpenseRepository
     ) {}
 
     @Response('product.create')
@@ -90,13 +98,108 @@ export class ProductAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; code: string; name: string; unit_of_measure?: string; category_id?: string; selling_price?: string; currency_id?: string }[]>> {
+    ): Promise<
+        IResponse<
+            Array<{
+                _id: string;
+                code: string;
+                name: string;
+                unit_of_measure?: string;
+                category_id?: string;
+                selling_price?: string;
+                currency_id?: string;
+                product_rebates?: Array<{
+                    rebate_id: string;
+                    code?: string;
+                    name?: string;
+                    pct: string;
+                }>;
+                product_expenses?: Array<{
+                    expense_id: string;
+                    code?: string;
+                    name?: string;
+                    type: string;
+                    value: string;
+                }>;
+            }>
+        >
+    > {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
 
         const products = await this.productRepository.findAll(find, {
             order: { name: 'asc' as any },
         });
+        const productIds = products.map((p) => p._id.toString());
+
+        // Fetch all rebate/expense links + their masters in parallel.
+        const [rebateLinks, expenseLinks] = await Promise.all([
+            productIds.length
+                ? this.productRebateRepository.findAll({
+                      product_id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            productIds.length
+                ? this.productExpenseRepository.findAll({
+                      product_id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const rebateMasterIds = Array.from(
+            new Set(rebateLinks.map((l: any) => l.rebate_id?.toString()).filter(Boolean))
+        );
+        const expenseMasterIds = Array.from(
+            new Set(expenseLinks.map((l: any) => l.expense_id?.toString()).filter(Boolean))
+        );
+        const [rebateMasters, expenseMasters] = await Promise.all([
+            rebateMasterIds.length
+                ? this.rebateRepository.findAll({
+                      _id: { $in: rebateMasterIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            expenseMasterIds.length
+                ? this.expenseRepository.findAll({
+                      _id: { $in: expenseMasterIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const rmMap = new Map(
+            rebateMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const emMap = new Map(
+            expenseMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const rebatesByProduct = new Map<string, any[]>();
+        for (const l of rebateLinks as any[]) {
+            const m: any = rmMap.get(l.rebate_id?.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            (
+                rebatesByProduct.get(pid) ||
+                rebatesByProduct.set(pid, []).get(pid)!
+            ).push({
+                rebate_id: l.rebate_id.toString(),
+                code: m.code,
+                name: m.name,
+                pct: l.pct != null ? String(l.pct) : String(m.pct),
+            });
+        }
+        const expensesByProduct = new Map<string, any[]>();
+        for (const l of expenseLinks as any[]) {
+            const m: any = emMap.get(l.expense_id?.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            (
+                expensesByProduct.get(pid) ||
+                expensesByProduct.set(pid, []).get(pid)!
+            ).push({
+                expense_id: l.expense_id.toString(),
+                code: m.code,
+                name: m.name,
+                type: m.type,
+                value: l.value != null ? String(l.value) : String(m.value),
+            });
+        }
 
         return {
             data: products.map((p) => ({
@@ -107,6 +210,9 @@ export class ProductAdminController {
                 category_id: p.category_id ? p.category_id.toString() : undefined,
                 selling_price: p.selling_price,
                 currency_id: p.currency_id ? p.currency_id.toString() : undefined,
+                product_rebates: rebatesByProduct.get(p._id.toString()) || [],
+                product_expenses:
+                    expensesByProduct.get(p._id.toString()) || [],
             })),
         };
     }

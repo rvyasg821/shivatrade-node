@@ -20,9 +20,9 @@ export class VoucherSequenceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 20, nullable: false })
     doc_type: string;
 
-    /** Indian FY encoded as 4 chars: FY 2026-27 = '2627'. */
+    /** Indian FY in hyphenated form, e.g. '2026-27' (7 chars). */
     @Index()
-    @Column({ type: 'varchar', length: 4, nullable: false })
+    @Column({ type: 'varchar', length: 10, nullable: false })
     fy: string;
 
     /** Display prefix used in the formatted voucher_no. Usually equals doc_type

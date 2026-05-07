@@ -58,6 +58,38 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     line_total: string;
 
+    /** Snapshot of product master's rebates at line-save time. Each entry:
+     *  { rebate_id, code, name, pct }. `pct` is the effective rate (override
+     *  on product link if present, else master's pct). Lets recompute apply
+     *  per-line rebates without re-reading masters and shields old quotes
+     *  from rate changes. */
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_rebates_snapshot?: Array<{
+        rebate_id: string;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
+
+    /** Same idea for expenses. type='percent' applies value as % of line
+     *  taxable; type='amount' applies value as flat per-line. */
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_expenses_snapshot?: Array<{
+        expense_id: string;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+
+    /** Sum of rebate amounts derived from product_rebates_snapshot.
+     *  Cached for fast totals without re-iterating the jsonb array. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_rebates_amount: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_expenses_amount: string;
+
     /** Display order in the quotation document. */
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;

@@ -90,9 +90,11 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     lead_id?: string;
 
+    /** Required UNLESS lead_id is provided — service will auto-resolve a
+     *  customer from the lead in that case. */
     @IsUUID()
-    @IsNotEmpty()
-    customer_id: string;
+    @IsOptional()
+    customer_id?: string;
 
     @IsUUID()
     @IsOptional()
@@ -142,6 +144,11 @@ export class QuotationCreateRequestDto {
     @IsNumberString({}, { message: 'margin_pct must be a numeric string' })
     @IsOptional()
     margin_pct?: string;
+
+    /** When true, recompute zeros out per-product rebates/expenses — apply
+     *  rebates and expenses ONLY at quotation level for this quote. */
+    @IsOptional()
+    skip_product_costing?: boolean;
 
     @IsEnum(ENUM_QUOTATION_STATUS)
     @IsOptional()
