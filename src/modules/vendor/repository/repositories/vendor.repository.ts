@@ -38,6 +38,27 @@ export class VendorRepository extends DatabaseObjectIdRepositoryBase<VendorEntit
         return count > 0;
     }
 
+    /**
+     * Case-insensitive vendor_code uniqueness check within a company.
+     * Returns false for empty/null codes (vendor_code is optional). Excludes
+     * soft-deleted rows so a code can be reused after a vendor is deleted.
+     */
+    async isVendorCodeExists(
+        companyId: string,
+        vendorCode: string,
+        excludeId?: string
+    ): Promise<boolean> {
+        if (!vendorCode || !vendorCode.trim()) return false;
+        const where: any = {
+            company_id: companyId,
+            vendor_code: ILike(vendorCode.trim()),
+            soft_delete: false,
+        };
+        if (excludeId) where._id = Not(excludeId);
+        const count = await this._repository.count({ where });
+        return count > 0;
+    }
+
     async deleteAllByCompanyId(companyId: string): Promise<number> {
         const result = await this._repository.delete({
             company_id: companyId,

@@ -46,6 +46,34 @@ export class CustomerService {
         private readonly helperDateService: HelperDateService
     ) {}
 
+    /**
+     * Translate the simple { dial_code, phone, formatted, country_iso }
+     * shape used on Vendor / Customer / Lead contacts into the richer
+     * shape that the Users module's PhoneInput renders from. Missing
+     * fields are filled with empty strings — they're cosmetic and the
+     * PhoneInput will repopulate them when the user next edits the
+     * profile.
+     */
+    private toUserCountryCode(simple: any): any {
+        if (!simple || typeof simple !== 'object') return undefined;
+        // Already in users' shape (camelCase) — pass through unchanged.
+        if (simple.dialCode || simple.countryCode) return simple;
+        const dialCode = simple.dial_code || '';
+        const iso = simple.country_iso || '';
+        const phone = simple.phone || '';
+        return {
+            dialCode,
+            countryCode: iso,
+            internationalNumber:
+                simple.formatted || (dialCode ? `${dialCode}${phone}` : phone),
+            nationalNumber: phone,
+            number: phone,
+            name: '',
+            country_flag: '',
+            format: '',
+        };
+    }
+
     private async provisionCustomerUser(
         companyId: string,
         contact: CustomerContactRequestDto
@@ -74,7 +102,7 @@ export class CustomerService {
                 first_name: firstName || fullName,
                 last_name: rest.join(' ') || '',
                 email: contact.email.trim().toLowerCase(),
-                country_code: (contact.country_code as any) || undefined,
+                country_code: this.toUserCountryCode(contact.country_code),
                 mobile: contact.phone || '',
                 gender: ENUM_USER_GENDER.MALE,
                 companyId,
@@ -104,7 +132,7 @@ export class CustomerService {
         user.email = contact.email.trim().toLowerCase();
         user.mobile = contact.phone || '';
         if (contact.country_code) {
-            user.country_code = contact.country_code as any;
+            user.country_code = this.toUserCountryCode(contact.country_code);
         }
         await this.userService.save(user);
         return true;
@@ -480,6 +508,23 @@ export class CustomerService {
             dto.primary_contact_name = primary.name;
             dto.primary_contact_email = primary.email;
             dto.primary_contact_phone = primary.phone;
+            // Compose a usable country_code for listing display, including
+            // fabricating one with India default for legacy records that have
+            // no country_code saved at all.
+            let cc: any = primary.country_code || null;
+            if (!cc && primary.phone) {
+                cc = { dial_code: '+91', phone: primary.phone };
+            }
+            if (cc && !cc.formatted) {
+                const dial = cc.dial_code || cc.dialCode || '';
+                const digits = cc.phone || primary.phone || '';
+                if (dial || digits) {
+                    cc.formatted = dial && digits
+                        ? `${dial} ${digits}`
+                        : dial || digits;
+                }
+            }
+            (dto as any).primary_contact_country_code = cc;
         }
         return dto;
     }

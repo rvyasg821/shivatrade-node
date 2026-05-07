@@ -65,6 +65,30 @@ export class VendorService {
      * the password through normal flows. Login is currently blocked at the
      * AuthService layer (see isLoginAllowedForRole).
      */
+    /**
+     * Translate the simple country_code shape stored on Vendor contacts
+     * (`{ dial_code, phone, formatted, country_iso }`) into the richer
+     * shape that the Users module's PhoneInput expects.
+     */
+    private toUserCountryCode(simple: any): any {
+        if (!simple || typeof simple !== 'object') return undefined;
+        if (simple.dialCode || simple.countryCode) return simple;
+        const dialCode = simple.dial_code || '';
+        const iso = simple.country_iso || '';
+        const phone = simple.phone || '';
+        return {
+            dialCode,
+            countryCode: iso,
+            internationalNumber:
+                simple.formatted || (dialCode ? `${dialCode}${phone}` : phone),
+            nationalNumber: phone,
+            number: phone,
+            name: '',
+            country_flag: '',
+            format: '',
+        };
+    }
+
     private async provisionVendorUser(
         companyId: string,
         contact: VendorContactRequestDto
@@ -93,7 +117,7 @@ export class VendorService {
                 first_name: firstName || fullName,
                 last_name: rest.join(' ') || '',
                 email: contact.email.trim().toLowerCase(),
-                country_code: (contact.country_code as any) || undefined,
+                country_code: this.toUserCountryCode(contact.country_code),
                 mobile: contact.phone || '',
                 gender: ENUM_USER_GENDER.MALE,
                 companyId,
@@ -201,6 +225,21 @@ export class VendorService {
             );
         }
 
+        // Vendor code is optional, but when provided it must be unique
+        // (case-insensitive) within the company.
+        const vendorCode = data.vendor_code?.trim();
+        if (vendorCode) {
+            const codeExists = await this.vendorRepository.isVendorCodeExists(
+                companyId,
+                vendorCode
+            );
+            if (codeExists) {
+                throw new BadRequestException(
+                    `Vendor code '${vendorCode}' already exists for this company`
+                );
+            }
+        }
+
         await this.assertCategoriesValid(companyId, data.category_ids);
         this.assertContactsValid(data.contacts);
         await this.assertContactEmailsUnique(companyId, data.contacts);
@@ -291,6 +330,28 @@ export class VendorService {
                 );
             }
             data.company_name = data.company_name.trim();
+        }
+
+        // Vendor code uniqueness — only enforce when caller provided a value
+        // AND it differs from current. Empty string clears the code.
+        if (
+            data.vendor_code !== undefined &&
+            (data.vendor_code || '').trim() !== (vendor.vendor_code || '')
+        ) {
+            const nextCode = (data.vendor_code || '').trim();
+            if (nextCode) {
+                const codeExists = await this.vendorRepository.isVendorCodeExists(
+                    companyId,
+                    nextCode,
+                    vendor._id.toString()
+                );
+                if (codeExists) {
+                    throw new BadRequestException(
+                        `Vendor code '${nextCode}' already exists for this company`
+                    );
+                }
+            }
+            data.vendor_code = nextCode;
         }
 
         if (data.category_ids) {
@@ -675,6 +736,26 @@ export class VendorService {
             dto.primary_contact_name = primary.name;
             dto.primary_contact_email = primary.email;
             dto.primary_contact_phone = primary.phone;
+            // Assemble a usable `country_code` for listing display:
+            //   - if saved object is missing `formatted` → compose it from
+            //     dial_code + phone digits.
+            //   - if no saved object at all (legacy null) → fabricate one
+            //     using a default dial code (+91 India) so the listing still
+            //     prefixes the country code instead of showing bare digits.
+            let cc: any = primary.country_code || null;
+            if (!cc && primary.phone) {
+                cc = { dial_code: '+91', phone: primary.phone };
+            }
+            if (cc && !cc.formatted) {
+                const dial = cc.dial_code || cc.dialCode || '';
+                const digits = cc.phone || primary.phone || '';
+                if (dial || digits) {
+                    cc.formatted = dial && digits
+                        ? `${dial} ${digits}`
+                        : dial || digits;
+                }
+            }
+            (dto as any).primary_contact_country_code = cc;
         }
         return dto;
     }

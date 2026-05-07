@@ -45,6 +45,25 @@ export class VendorAdminController {
         return { data };
     }
 
+    @Response('vendor.checkCode')
+    @AuthJwtAccessProtected()
+    @Post('/check-code')
+    async checkCode(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body('code') code: string,
+        @Body('vendorId') vendorId?: string
+    ): Promise<IResponse<{ exists: boolean }>> {
+        if (!code || !code.trim()) {
+            return { data: { exists: false } };
+        }
+        const exists = await this.vendorRepository.isVendorCodeExists(
+            companyId,
+            code,
+            vendorId
+        );
+        return { data: { exists } };
+    }
+
     @ResponsePaging('vendor.list')
     @AuthJwtAccessProtected()
     @Get('/list')
