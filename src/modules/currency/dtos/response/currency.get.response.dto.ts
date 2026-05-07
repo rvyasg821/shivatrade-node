@@ -12,6 +12,7 @@ export class CurrencyGetResponseDto {
     @ApiProperty({ required: false, type: String }) symbol?: string;
 
     @ApiProperty({ required: true, type: Boolean }) is_active: boolean;
+    @ApiProperty({ required: false, type: Boolean }) is_default?: boolean;
     @ApiProperty({ required: true, enum: ENUM_CURRENCY_STATUS }) status: ENUM_CURRENCY_STATUS;
 
     @ApiProperty({ required: true, type: Date }) createdAt: Date;

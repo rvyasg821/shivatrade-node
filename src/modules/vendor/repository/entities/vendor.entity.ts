@@ -32,30 +32,25 @@ export class VendorEntity extends DatabaseObjectIdEntityBase {
 
     // Categories are stored in the `vendor_categories` join table.
 
+    // ── Tax & Compliance ──
+    @Index()
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    gstin?: string;
+
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    pan?: string;
+
+    @Index()
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    vendor_code?: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true })
     payment_terms?: string;
 
     @Column({ type: 'varchar', length: 20, nullable: true })
     incoterms?: string;
 
-    // ── Address ──
-    @Column({ type: 'varchar', length: 200, nullable: true })
-    address_line1?: string;
-
-    @Column({ type: 'varchar', length: 200, nullable: true })
-    address_line2?: string;
-
-    @Column({ type: 'varchar', length: 100, nullable: true })
-    city?: string;
-
-    @Column({ type: 'varchar', length: 100, nullable: true })
-    state?: string;
-
-    @Column({ type: 'varchar', length: 100, nullable: true })
-    country?: string;
-
-    @Column({ type: 'varchar', length: 20, nullable: true })
-    postcode?: string;
+    // Addresses are stored in `vendor_addresses` join table.
 
     @Index()
     @Column({ type: 'boolean', default: true })

@@ -216,6 +216,22 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: true,
     },
+    rebates: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    expenses: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
     currencies: {
         can_all: true,
         can_read: true,
@@ -225,6 +241,32 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_delete: true,
     },
     "price-list": {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+
+    // ── Sales Group (Quotation → PFI → Purchase Order) ──
+    quotations: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    pfi: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
+    "purchase-orders": {
         can_all: true,
         can_read: true,
         can_add: true,

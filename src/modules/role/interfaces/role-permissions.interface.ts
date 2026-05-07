@@ -53,6 +53,8 @@ export interface ICompanyPermissions {
     vendors?: IModulePermissions;
     customers?: IModulePermissions;
     leads?: IModulePermissions;
+    rebates?: IModulePermissions;
+    expenses?: IModulePermissions;
     currencies?: IModulePermissions;
     'price-list'?: IModulePermissions;
     [key: string]: IModulePermissions | Record<string, boolean> | undefined;
@@ -98,6 +100,8 @@ export const PermissionModule = {
     VENDORS: 'vendors',
     CUSTOMERS: 'customers',
     LEADS: 'leads',
+    REBATES: 'rebates',
+    EXPENSES: 'expenses',
     CURRENCIES: 'currencies',
     PRICE_LIST: 'price-list',
 } as const;

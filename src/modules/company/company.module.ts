@@ -19,6 +19,7 @@ import { CardModule } from '@modules/card/card.module';
 import { SessionModule } from '@modules/session/session.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { EmailModule } from '@modules/email/email.module';
+import { CurrencyModule } from '@modules/currency/currency.module';
 
 @Module({
         imports: [
@@ -36,6 +37,7 @@ import { EmailModule } from '@modules/email/email.module';
                 forwardRef(() => SessionModule),
                 forwardRef(() => CompanySettingsModule),
                 forwardRef(() => EmailModule),
+                CurrencyModule,
         ],
         exports: [CompanyService, CompanyCleanupService],
         providers: [CompanyService, CompanyCleanupService, CompanyParsePipe, CompanyOwnershipPipe],

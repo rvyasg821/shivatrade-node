@@ -42,6 +42,31 @@ export class ProductEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 50, nullable: true })
     unit_of_measure?: string;
 
+    // ── Pricing ──
+    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
+    selling_price?: string;
+
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    currency_id?: string;
+
+    // ── Identification (extra) ──
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    part_no?: string;
+
+    // ── Logistics ──
+    @Column({ type: 'int', nullable: true })
+    pack_size?: number;
+
+    @Column({ type: 'numeric', precision: 12, scale: 3, nullable: true })
+    net_weight_per_unit?: string;
+
+    @Column({ type: 'numeric', precision: 12, scale: 3, nullable: true })
+    gross_weight_per_unit?: string;
+
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    country_of_origin?: string;
+
     @Index()
     @Column({ type: 'boolean', default: true })
     is_active: boolean;

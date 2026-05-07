@@ -3,15 +3,23 @@ import { ConfigService } from '@nestjs/config';
 import { plainToInstance } from 'class-transformer';
 import { CustomerRepository } from '../repository/repositories/customer.repository';
 import { CustomerContactRepository } from '../repository/repositories/customer-contact.repository';
+import { CustomerAddressRepository } from '../repository/repositories/customer-address.repository';
 import { CustomerDoc } from '../repository/entities/customer.entity';
 import { CustomerContactDoc } from '../repository/entities/customer-contact.entity';
-import { CustomerCreateRequestDto, CustomerContactRequestDto } from '../dtos/request/customer.create.request.dto';
+import { CustomerAddressDoc } from '../repository/entities/customer-address.entity';
+import {
+    CustomerCreateRequestDto,
+    CustomerContactRequestDto,
+    CustomerAddressRequestDto,
+} from '../dtos/request/customer.create.request.dto';
 import { CustomerUpdateRequestDto } from '../dtos/request/customer.update.request.dto';
 import {
     CustomerGetResponseDto,
     CustomerContactResponseDto,
+    CustomerAddressResponseDto,
 } from '../dtos/response/customer.get.response.dto';
 import { CustomerListResponseDto } from '../dtos/response/customer.list.response.dto';
+import { ENUM_CUSTOMER_ADDRESS_TYPE } from '../enums/customer.enum';
 import { UserService } from '@modules/user/services/user.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { AuthService } from '@modules/auth/services/auth.service';
@@ -30,6 +38,7 @@ export class CustomerService {
     constructor(
         private readonly customerRepository: CustomerRepository,
         private readonly contactRepository: CustomerContactRepository,
+        private readonly addressRepository: CustomerAddressRepository,
         private readonly userService: UserService,
         private readonly roleService: RoleService,
         private readonly authService: AuthService,
@@ -171,8 +180,9 @@ export class CustomerService {
 
         this.assertContactsValid(data.contacts);
         await this.assertContactEmailsUnique(companyId, data.contacts);
+        this.assertAddressesValid(data.addresses);
 
-        const { contacts, ...customerFields } = data;
+        const { contacts, addresses, ...customerFields } = data;
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
 
         // Pre-flight: primary email must be free in users table BEFORE any writes
@@ -197,6 +207,8 @@ export class CustomerService {
                 user_id: c === primaryContact ? primaryUserId : undefined,
             } as any);
         }
+
+        await this.replaceAddresses(companyId, customer._id.toString(), addresses);
 
         this.logger.log(
             `Customer created: ${customer._id} for company: ${companyId} (customer user: ${primaryUserId})`
@@ -253,10 +265,22 @@ export class CustomerService {
             nextContacts = data.contacts;
         }
 
+        if (data.addresses !== undefined) {
+            this.assertAddressesValid(data.addresses);
+        }
+
         const wasActive = !!customer.is_active;
 
-        const { contacts: _c, ...scalarFields } = data;
+        const { contacts: _c, addresses: _a, ...scalarFields } = data;
         Object.assign(customer, scalarFields);
+        // Keep status and is_active consistent.
+        if (data.status !== undefined) {
+            customer.is_active = data.status === ('active' as any);
+        } else if (data.is_active !== undefined) {
+            customer.status = data.is_active
+                ? ('active' as any)
+                : ('inactive' as any);
+        }
         const updated = await this.customerRepository.save(customer);
 
         if (wasActive !== !!customer.is_active) {
@@ -319,6 +343,14 @@ export class CustomerService {
             }
         }
 
+        if (data.addresses !== undefined) {
+            await this.replaceAddresses(
+                companyId,
+                customer._id.toString(),
+                data.addresses
+            );
+        }
+
         this.logger.log(`Customer updated: ${customer._id}`);
         return updated;
     }
@@ -340,9 +372,54 @@ export class CustomerService {
         if (deletedBy) (customer as any).deletedBy = deletedBy;
         const updated = await this.customerRepository.save(customer);
         await this.contactRepository.softDeleteByCustomerId(customer._id.toString());
+        await this.addressRepository.softDeleteByCustomerId(customer._id.toString());
 
         this.logger.log(`Customer soft deleted: ${customer._id}`);
         return updated;
+    }
+
+    private assertAddressesValid(
+        addresses: CustomerAddressRequestDto[] | undefined
+    ): void {
+        if (!addresses || addresses.length === 0) return;
+        // At most one default per type.
+        const seenDefault: Record<string, boolean> = {};
+        for (const a of addresses) {
+            if (!a.is_default) continue;
+            const t = (a.type || ENUM_CUSTOMER_ADDRESS_TYPE.BILL_TO) as string;
+            if (seenDefault[t]) {
+                throw new BadRequestException(
+                    `Only one default address allowed per type (${t})`
+                );
+            }
+            seenDefault[t] = true;
+        }
+    }
+
+    private async replaceAddresses(
+        companyId: string,
+        customerId: string,
+        addresses: CustomerAddressRequestDto[] | undefined
+    ): Promise<void> {
+        await this.addressRepository.softDeleteByCustomerId(customerId);
+        if (!addresses || addresses.length === 0) return;
+        for (const a of addresses) {
+            await this.addressRepository.create({
+                customer_id: customerId,
+                company_id: companyId,
+                type: a.type || ENUM_CUSTOMER_ADDRESS_TYPE.BILL_TO,
+                label: a.label,
+                address_line1: a.address_line1,
+                address_line2: a.address_line2,
+                city: a.city,
+                state: a.state,
+                country: a.country,
+                postcode: a.postcode,
+                gstin: a.gstin,
+                iec: a.iec,
+                is_default: !!a.is_default,
+            } as any);
+        }
     }
 
     private assertContactsValid(contacts: CustomerContactRequestDto[]): void {
@@ -409,31 +486,50 @@ export class CustomerService {
 
     async mapGetWithRelations(customer: CustomerDoc): Promise<CustomerGetResponseDto> {
         const dto = plainToInstance(CustomerGetResponseDto, customer);
-        const contacts = await this.contactRepository.findByCustomerId(
-            customer._id.toString()
+        const [contacts, addresses] = await Promise.all([
+            this.contactRepository.findByCustomerId(customer._id.toString()),
+            this.addressRepository.findByCustomerId(customer._id.toString()),
+        ]);
+        this.hydrateWithContacts(dto, contacts);
+        dto.addresses = addresses.map((a) =>
+            plainToInstance(CustomerAddressResponseDto, a)
         );
-        return this.hydrateWithContacts(dto, contacts);
+        return dto;
     }
 
     async mapListWithRelations(
         customers: CustomerDoc[]
     ): Promise<CustomerListResponseDto[]> {
         const customerIds = customers.map((c) => c._id.toString());
-        const allContacts = customerIds.length
-            ? await this.contactRepository.findAll({
-                  customer_id: { $in: customerIds },
-                  soft_delete: false,
-              } as any)
-            : [];
+        const [allContacts, allAddresses] = await Promise.all([
+            customerIds.length
+                ? this.contactRepository.findAll({
+                      customer_id: { $in: customerIds },
+                      soft_delete: false,
+                  } as any)
+                : Promise.resolve([] as CustomerContactDoc[]),
+            customerIds.length
+                ? this.addressRepository.findByCustomerIds(customerIds)
+                : Promise.resolve([] as CustomerAddressDoc[]),
+        ]);
         const contactsByCustomer: Record<string, CustomerContactDoc[]> = {};
         for (const c of allContacts) {
             const cid = c.customer_id.toString();
             (contactsByCustomer[cid] ||= []).push(c);
         }
+        const addressesByCustomer: Record<string, CustomerAddressDoc[]> = {};
+        for (const a of allAddresses) {
+            const cid = a.customer_id.toString();
+            (addressesByCustomer[cid] ||= []).push(a);
+        }
 
         return customers.map((c) => {
             const dto = plainToInstance(CustomerListResponseDto, c);
-            return this.hydrateWithContacts(dto, contactsByCustomer[c._id.toString()] || []);
+            this.hydrateWithContacts(dto, contactsByCustomer[c._id.toString()] || []);
+            dto.addresses = (addressesByCustomer[c._id.toString()] || []).map((a) =>
+                plainToInstance(CustomerAddressResponseDto, a)
+            );
+            return dto;
         });
     }
 }

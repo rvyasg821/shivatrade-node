@@ -1,12 +1,30 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    BadRequestException,
+    NotFoundException,
+} from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { ProductRepository } from '../repository/repositories/product.repository';
+import { ProductRebateRepository } from '../repository/repositories/product-rebate.repository';
+import { ProductExpenseRepository } from '../repository/repositories/product-expense.repository';
 import { ProductDoc } from '../repository/entities/product.entity';
-import { ProductCreateRequestDto } from '../dtos/request/product.create.request.dto';
+import {
+    ProductCreateRequestDto,
+    ProductRebateLinkDto,
+    ProductExpenseLinkDto,
+} from '../dtos/request/product.create.request.dto';
 import { ProductUpdateRequestDto } from '../dtos/request/product.update.request.dto';
-import { ProductGetResponseDto } from '../dtos/response/product.get.response.dto';
+import {
+    ProductExpenseLinkResponseDto,
+    ProductGetResponseDto,
+    ProductRebateLinkResponseDto,
+} from '../dtos/response/product.get.response.dto';
 import { ProductListResponseDto } from '../dtos/response/product.list.response.dto';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
+import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
+import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import {
     IDatabaseCreateOptions,
     IDatabaseFindAllOptions,
@@ -21,6 +39,11 @@ export class ProductService {
     constructor(
         private readonly productRepository: ProductRepository,
         private readonly categoryRepository: CategoryRepository,
+        private readonly currencyRepository: CurrencyRepository,
+        private readonly rebateRepository: RebateRepository,
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly productRebateRepository: ProductRebateRepository,
+        private readonly productExpenseRepository: ProductExpenseRepository
     ) {}
 
     async create(
@@ -41,10 +64,16 @@ export class ProductService {
         if (data.category_id) {
             await this.assertCategoryValid(companyId, data.category_id);
         }
+        await this.assertCurrencyForPrice(companyId, data.selling_price, data.currency_id);
+        this.assertWeightConsistent(data.net_weight_per_unit, data.gross_weight_per_unit);
+        await this.assertRebatesValid(companyId, data.rebates);
+        await this.assertExpensesValid(companyId, data.expenses);
+
+        const { rebates, expenses, ...scalar } = data;
 
         const product = await this.productRepository.create(
             {
-                ...data,
+                ...scalar,
                 code,
                 name: data.name.trim(),
                 company_id: companyId,
@@ -52,6 +81,9 @@ export class ProductService {
             } as any,
             options
         );
+
+        await this.replaceRebateLinks(companyId, product._id.toString(), rebates);
+        await this.replaceExpenseLinks(companyId, product._id.toString(), expenses);
 
         this.logger.log(`Product created: ${product._id} for company: ${companyId}`);
         return product;
@@ -102,8 +134,34 @@ export class ProductService {
             await this.assertCategoryValid(companyId, data.category_id);
         }
 
-        Object.assign(product, data);
+        // Cross-validate the post-update price/currency state.
+        const nextPrice = data.selling_price ?? Number(product.selling_price ?? 0);
+        const nextCurrencyId = data.currency_id ?? product.currency_id;
+        if (data.selling_price !== undefined || data.currency_id !== undefined) {
+            await this.assertCurrencyForPrice(companyId, nextPrice, nextCurrencyId as any);
+        }
+        this.assertWeightConsistent(
+            data.net_weight_per_unit ?? Number(product.net_weight_per_unit ?? NaN),
+            data.gross_weight_per_unit ?? Number(product.gross_weight_per_unit ?? NaN)
+        );
+
+        if (data.rebates !== undefined) {
+            await this.assertRebatesValid(companyId, data.rebates);
+        }
+        if (data.expenses !== undefined) {
+            await this.assertExpensesValid(companyId, data.expenses);
+        }
+
+        const { rebates, expenses, ...scalar } = data;
+        Object.assign(product, scalar);
         const updated = await this.productRepository.save(product, options);
+
+        if (rebates !== undefined) {
+            await this.replaceRebateLinks(companyId, product._id.toString(), rebates);
+        }
+        if (expenses !== undefined) {
+            await this.replaceExpenseLinks(companyId, product._id.toString(), expenses);
+        }
 
         this.logger.log(`Product updated: ${product._id}`);
         return updated;
@@ -130,6 +188,10 @@ export class ProductService {
         return this.productRepository.deleteAllByCompanyId(companyId);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Validation helpers
+    // ─────────────────────────────────────────────────────────────────────
+
     private async assertCategoryValid(companyId: string, categoryId: string): Promise<void> {
         const category = await this.categoryRepository.findOne({
             _id: categoryId,
@@ -141,9 +203,124 @@ export class ProductService {
         }
     }
 
-    /**
-     * Build category id→name map without N+1.
-     */
+    private async assertCurrencyForPrice(
+        companyId: string,
+        sellingPrice: number | string | undefined | null,
+        currencyId: string | undefined | null
+    ): Promise<void> {
+        const hasPrice =
+            sellingPrice !== undefined &&
+            sellingPrice !== null &&
+            Number(sellingPrice) > 0;
+        if (!hasPrice) return;
+        if (!currencyId) {
+            throw new BadRequestException(
+                'Currency is required when a selling price is set'
+            );
+        }
+        const currency = await this.currencyRepository.findOne({
+            _id: currencyId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!currency) {
+            throw new BadRequestException('Selected currency is invalid');
+        }
+    }
+
+    private assertWeightConsistent(
+        net: number | string | undefined | null,
+        gross: number | string | undefined | null
+    ): void {
+        const n = net == null || net === '' ? NaN : Number(net);
+        const g = gross == null || gross === '' ? NaN : Number(gross);
+        if (Number.isFinite(n) && Number.isFinite(g) && g < n) {
+            throw new BadRequestException(
+                'Gross weight must be greater than or equal to net weight'
+            );
+        }
+    }
+
+    private async assertRebatesValid(
+        companyId: string,
+        links: ProductRebateLinkDto[] | undefined
+    ): Promise<void> {
+        if (!links || links.length === 0) return;
+        const ids = Array.from(new Set(links.map((l) => l.rebate_id)));
+        if (ids.length !== links.length) {
+            throw new BadRequestException('Duplicate rebate selected');
+        }
+        const found = await this.rebateRepository.findAll({
+            _id: { $in: ids },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (found.length !== ids.length) {
+            throw new BadRequestException('One or more rebates are invalid');
+        }
+    }
+
+    private async assertExpensesValid(
+        companyId: string,
+        links: ProductExpenseLinkDto[] | undefined
+    ): Promise<void> {
+        if (!links || links.length === 0) return;
+        const ids = Array.from(new Set(links.map((l) => l.expense_id)));
+        if (ids.length !== links.length) {
+            throw new BadRequestException('Duplicate expense selected');
+        }
+        const found = await this.expenseRepository.findAll({
+            _id: { $in: ids },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (found.length !== ids.length) {
+            throw new BadRequestException('One or more expenses are invalid');
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Link CRUD (replace-on-update pattern)
+    // ─────────────────────────────────────────────────────────────────────
+
+    private async replaceRebateLinks(
+        companyId: string,
+        productId: string,
+        links: ProductRebateLinkDto[] | undefined
+    ): Promise<void> {
+        await this.productRebateRepository.deleteByProductId(productId);
+        if (!links || links.length === 0) return;
+        for (const l of links) {
+            await this.productRebateRepository.create({
+                product_id: productId,
+                rebate_id: l.rebate_id,
+                company_id: companyId,
+                pct: l.pct ?? null,
+            } as any);
+        }
+    }
+
+    private async replaceExpenseLinks(
+        companyId: string,
+        productId: string,
+        links: ProductExpenseLinkDto[] | undefined
+    ): Promise<void> {
+        await this.productExpenseRepository.deleteByProductId(productId);
+        if (!links || links.length === 0) return;
+        for (const l of links) {
+            await this.productExpenseRepository.create({
+                product_id: productId,
+                expense_id: l.expense_id,
+                company_id: companyId,
+                value: l.value ?? null,
+            } as any);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Hydration
+    // ─────────────────────────────────────────────────────────────────────
+
     private async buildCategoryNameMap(
         products: ProductDoc[]
     ): Promise<Record<string, string>> {
@@ -168,27 +345,206 @@ export class ProductService {
         return map;
     }
 
-    async mapGetWithCategory(product: ProductDoc): Promise<ProductGetResponseDto> {
+    private async buildCurrencyCodeMap(
+        products: ProductDoc[]
+    ): Promise<Record<string, string>> {
+        const ids = Array.from(
+            new Set(
+                products
+                    .map((p) => (p.currency_id ? p.currency_id.toString() : null))
+                    .filter(Boolean) as string[]
+            )
+        );
+        if (ids.length === 0) return {};
+        const rows = await this.currencyRepository.findAll({
+            _id: { $in: ids },
+        } as any);
+        const map: Record<string, string> = {};
+        for (const r of rows) map[r._id.toString()] = r.code;
+        return map;
+    }
+
+    /**
+     * Hydrate one product with category name, currency code and the
+     * effective rebate/expense link rows (deactivated masters are filtered out).
+     */
+    async mapGetWithRelations(product: ProductDoc): Promise<ProductGetResponseDto> {
         const dto = plainToInstance(ProductGetResponseDto, product);
+
         if (product.category_id) {
             const cat = await this.categoryRepository.findOneById(
                 product.category_id.toString()
             );
             dto.category_name = cat?.name;
         }
+        if (product.currency_id) {
+            const cur = await this.currencyRepository.findOneById(
+                product.currency_id.toString()
+            );
+            dto.currency_code = cur?.code;
+        }
+
+        const [rebateLinks, expenseLinks] = await Promise.all([
+            this.productRebateRepository.findByProductId(product._id.toString()),
+            this.productExpenseRepository.findByProductId(product._id.toString()),
+        ]);
+
+        const rebateIds = Array.from(new Set(rebateLinks.map((l) => l.rebate_id.toString())));
+        const expenseIds = Array.from(new Set(expenseLinks.map((l) => l.expense_id.toString())));
+
+        const [rebateMasters, expenseMasters] = await Promise.all([
+            rebateIds.length
+                ? this.rebateRepository.findAll({
+                      _id: { $in: rebateIds },
+                      is_active: true,
+                      soft_delete: false,
+                  } as any)
+                : [],
+            expenseIds.length
+                ? this.expenseRepository.findAll({
+                      _id: { $in: expenseIds },
+                      is_active: true,
+                      soft_delete: false,
+                  } as any)
+                : [],
+        ]);
+
+        const rebateMap = new Map(
+            rebateMasters.map((r) => [r._id.toString(), r] as const)
+        );
+        const expenseMap = new Map(
+            expenseMasters.map((e) => [e._id.toString(), e] as const)
+        );
+
+        dto.rebates = rebateLinks
+            .map((l): ProductRebateLinkResponseDto | null => {
+                const m = rebateMap.get(l.rebate_id.toString());
+                if (!m) return null; // master inactive — silently drop
+                return {
+                    _id: l._id.toString(),
+                    rebate_id: l.rebate_id.toString(),
+                    code: m.code,
+                    name: m.name,
+                    pct: l.pct != null ? l.pct.toString() : m.pct.toString(),
+                    is_override: l.pct != null,
+                };
+            })
+            .filter((x): x is ProductRebateLinkResponseDto => x !== null);
+
+        dto.expenses = expenseLinks
+            .map((l): ProductExpenseLinkResponseDto | null => {
+                const m = expenseMap.get(l.expense_id.toString());
+                if (!m) return null;
+                return {
+                    _id: l._id.toString(),
+                    expense_id: l.expense_id.toString(),
+                    code: m.code,
+                    name: m.name,
+                    type: m.type,
+                    base: m.base,
+                    value: l.value != null ? l.value.toString() : m.value.toString(),
+                    is_override: l.value != null,
+                };
+            })
+            .filter((x): x is ProductExpenseLinkResponseDto => x !== null);
+
         return dto;
     }
 
-    async mapListWithCategory(
+    async mapListWithRelations(
         products: ProductDoc[]
     ): Promise<ProductListResponseDto[]> {
-        const catMap = await this.buildCategoryNameMap(products);
+        if (products.length === 0) return [];
+        const productIds = products.map((p) => p._id.toString());
+
+        const [catMap, curMap, allRebateLinks, allExpenseLinks] = await Promise.all([
+            this.buildCategoryNameMap(products),
+            this.buildCurrencyCodeMap(products),
+            this.productRebateRepository.findByProductIds(productIds),
+            this.productExpenseRepository.findByProductIds(productIds),
+        ]);
+
+        const rebateIds = Array.from(
+            new Set(allRebateLinks.map((l) => l.rebate_id.toString()))
+        );
+        const expenseIds = Array.from(
+            new Set(allExpenseLinks.map((l) => l.expense_id.toString()))
+        );
+
+        const [rebateMasters, expenseMasters] = await Promise.all([
+            rebateIds.length
+                ? this.rebateRepository.findAll({
+                      _id: { $in: rebateIds },
+                      is_active: true,
+                      soft_delete: false,
+                  } as any)
+                : [],
+            expenseIds.length
+                ? this.expenseRepository.findAll({
+                      _id: { $in: expenseIds },
+                      is_active: true,
+                      soft_delete: false,
+                  } as any)
+                : [],
+        ]);
+        const rebateMap = new Map(
+            rebateMasters.map((r) => [r._id.toString(), r] as const)
+        );
+        const expenseMap = new Map(
+            expenseMasters.map((e) => [e._id.toString(), e] as const)
+        );
+
+        const rebatesByProduct: Record<string, ProductRebateLinkResponseDto[]> = {};
+        for (const l of allRebateLinks) {
+            const m = rebateMap.get(l.rebate_id.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            (rebatesByProduct[pid] ||= []).push({
+                _id: l._id.toString(),
+                rebate_id: l.rebate_id.toString(),
+                code: m.code,
+                name: m.name,
+                pct: l.pct != null ? l.pct.toString() : m.pct.toString(),
+                is_override: l.pct != null,
+            });
+        }
+
+        const expensesByProduct: Record<string, ProductExpenseLinkResponseDto[]> = {};
+        for (const l of allExpenseLinks) {
+            const m = expenseMap.get(l.expense_id.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            (expensesByProduct[pid] ||= []).push({
+                _id: l._id.toString(),
+                expense_id: l.expense_id.toString(),
+                code: m.code,
+                name: m.name,
+                type: m.type,
+                base: m.base,
+                value: l.value != null ? l.value.toString() : m.value.toString(),
+                is_override: l.value != null,
+            });
+        }
+
         return products.map((p) => {
             const dto = plainToInstance(ProductListResponseDto, p);
             if (p.category_id) {
                 dto.category_name = catMap[p.category_id.toString()];
             }
+            if (p.currency_id) {
+                dto.currency_code = curMap[p.currency_id.toString()];
+            }
+            dto.rebates = rebatesByProduct[p._id.toString()] || [];
+            dto.expenses = expensesByProduct[p._id.toString()] || [];
             return dto;
         });
+    }
+
+    // Backward-compat aliases (existing controller callsites still use these names).
+    async mapGetWithCategory(product: ProductDoc): Promise<ProductGetResponseDto> {
+        return this.mapGetWithRelations(product);
+    }
+    async mapListWithCategory(products: ProductDoc[]): Promise<ProductListResponseDto[]> {
+        return this.mapListWithRelations(products);
     }
 }

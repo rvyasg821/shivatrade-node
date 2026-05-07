@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import {
     IDatabaseCreateOptions,
     IDatabaseFindAllOptions,
@@ -7,15 +7,35 @@ import {
     IDatabaseSaveOptions,
 } from '@common/database/interfaces/database.interface';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import {
     CompanyDoc,
     CompanyEntity,
 } from '@modules/company/repository/entities/company.entity';
+import {
+    CompanyAddressDoc,
+} from '@modules/company/repository/entities/company-address.entity';
+import {
+    CompanyBankAccountDoc,
+} from '@modules/company/repository/entities/company-bank-account.entity';
 import { CompanyListResponseDto } from '@modules/company/dtos/response/company.list.response.dto';
-import { CompanyGetResponseDto } from '@modules/company/dtos/response/company.get.response.dto';
+import {
+    CompanyGetResponseDto,
+    CompanyAddressResponseDto,
+    CompanyBankAccountResponseDto,
+} from '@modules/company/dtos/response/company.get.response.dto';
+import {
+    CompanyAddressRequestDto,
+    CompanyBankAccountRequestDto,
+} from '@modules/company/dtos/request/company.update.request.dto';
 import { plainToInstance } from 'class-transformer';
-import { ENUM_COMPANY_STATUS } from '../enums/company.enum';
+import {
+    ENUM_COMPANY_ADDRESS_TYPE,
+    ENUM_COMPANY_STATUS,
+} from '../enums/company.enum';
 import { SubscriptionCleanupService } from '@modules/subscription/services/subscription-cleanup.service';
+import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 
 export interface ICompanyCreate {
     user_id: string;
@@ -48,6 +68,10 @@ export interface ICompanyCreate {
     referal_code?: string;
     agent_id?: string;
     agent_commission?: number;
+    iec?: string;
+    lut_no?: string;
+    lut_date?: string;
+    cin?: string;
 }
 
 @Injectable()
@@ -56,7 +80,10 @@ export class CompanyService {
 
     constructor(
         private readonly companyRepository: CompanyRepository,
-        private readonly subscriptionCleanupService: SubscriptionCleanupService
+        private readonly subscriptionCleanupService: SubscriptionCleanupService,
+        private readonly addressRepository: CompanyAddressRepository,
+        private readonly bankAccountRepository: CompanyBankAccountRepository,
+        private readonly currencyRepository: CurrencyRepository
     ) { }
 
     convertToObjectId(id: string) {
@@ -204,7 +231,183 @@ export class CompanyService {
         if (data.zipcode !== undefined) repository.zipcode = data.zipcode;
         if (data.status !== undefined) repository.status = data.status;
 
+        if (data.iec !== undefined) repository.iec = data.iec;
+        if (data.lut_no !== undefined) repository.lut_no = data.lut_no;
+        if (data.lut_date !== undefined) repository.lut_date = data.lut_date;
+        if (data.cin !== undefined) repository.cin = data.cin;
+
         return this.companyRepository.save(repository, options);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Multi-address & multi-bank: validate, replace, hydrate
+    // ─────────────────────────────────────────────────────────────────────
+
+    private assertAddressesValid(
+        addresses: CompanyAddressRequestDto[] | undefined
+    ): void {
+        if (!addresses || addresses.length === 0) return;
+        const seenDefault: Record<string, boolean> = {};
+        for (const a of addresses) {
+            if (!a.is_default) continue;
+            const t = (a.type || ENUM_COMPANY_ADDRESS_TYPE.CORPORATE) as string;
+            if (seenDefault[t]) {
+                throw new BadRequestException(
+                    `Only one default address allowed per type (${t})`
+                );
+            }
+            seenDefault[t] = true;
+        }
+    }
+
+    async replaceAddresses(
+        companyId: string,
+        addresses: CompanyAddressRequestDto[] | undefined
+    ): Promise<void> {
+        this.assertAddressesValid(addresses);
+        await this.addressRepository.softDeleteByCompanyId(companyId);
+        if (!addresses || addresses.length === 0) return;
+        for (const a of addresses) {
+            await this.addressRepository.create({
+                company_id: companyId,
+                type: a.type || ENUM_COMPANY_ADDRESS_TYPE.CORPORATE,
+                label: a.label,
+                address_line1: a.address_line1,
+                address_line2: a.address_line2,
+                city: a.city,
+                state: a.state,
+                country: a.country,
+                postcode: a.postcode,
+                gstin: a.gstin,
+                is_default: !!a.is_default,
+            } as any);
+        }
+
+        // Sync the registered address back to the company's legacy scalar
+        // address columns so PDF templates / payroll / other modules that
+        // still read address_1 / city / etc. keep working. Pick:
+        //   1) the default Corporate address, else
+        //   2) the first Corporate address, else
+        //   3) the first address of any type.
+        const corporates = addresses.filter(
+            (a) => (a.type || ENUM_COMPANY_ADDRESS_TYPE.CORPORATE) ===
+                ENUM_COMPANY_ADDRESS_TYPE.CORPORATE
+        );
+        const primary =
+            corporates.find((a) => a.is_default) ||
+            corporates[0] ||
+            addresses[0];
+        if (primary) {
+            const company = await this.companyRepository.findOneById<CompanyDoc>(
+                companyId
+            );
+            if (company) {
+                company.address_1 = primary.address_line1 || '';
+                company.address_2 = primary.address_line2 || '';
+                company.city = primary.city || '';
+                company.state = primary.state || '';
+                company.country = primary.country || company.country || '';
+                company.zipcode = primary.postcode || '';
+                await this.companyRepository.save(company);
+            }
+        }
+    }
+
+    private async assertBankAccountsValid(
+        accounts: CompanyBankAccountRequestDto[] | undefined
+    ): Promise<void> {
+        if (!accounts || accounts.length === 0) return;
+
+        const seenDefault: Record<string, boolean> = {};
+        for (const a of accounts) {
+            if (!a.is_default) continue;
+            const k = a.currency_id;
+            if (seenDefault[k]) {
+                throw new BadRequestException(
+                    'Only one default bank account allowed per currency'
+                );
+            }
+            seenDefault[k] = true;
+        }
+
+        const ids = Array.from(new Set(accounts.map((a) => a.currency_id)));
+        const found = await this.currencyRepository.findAll({
+            _id: { $in: ids },
+            soft_delete: false,
+        } as any);
+        if (found.length !== ids.length) {
+            throw new BadRequestException(
+                'One or more bank-account currencies are invalid'
+            );
+        }
+    }
+
+    async replaceBankAccounts(
+        companyId: string,
+        accounts: CompanyBankAccountRequestDto[] | undefined
+    ): Promise<void> {
+        await this.assertBankAccountsValid(accounts);
+        await this.bankAccountRepository.softDeleteByCompanyId(companyId);
+        if (!accounts || accounts.length === 0) return;
+        for (const a of accounts) {
+            await this.bankAccountRepository.create({
+                company_id: companyId,
+                bank_name: a.bank_name,
+                account_holder_name: a.account_holder_name,
+                account_number: a.account_number,
+                ifsc: a.ifsc,
+                swift_code: a.swift_code,
+                iban: a.iban,
+                ad_code: a.ad_code,
+                currency_id: a.currency_id,
+                branch_name: a.branch_name,
+                branch_address: a.branch_address,
+                account_type: a.account_type,
+                is_default: !!a.is_default,
+                notes: a.notes,
+                is_active: a.is_active !== undefined ? a.is_active : true,
+            } as any);
+        }
+    }
+
+    async findAddressesByCompanyId(companyId: string): Promise<CompanyAddressDoc[]> {
+        return this.addressRepository.findByCompanyId(companyId);
+    }
+
+    async findBankAccountsByCompanyId(
+        companyId: string
+    ): Promise<CompanyBankAccountDoc[]> {
+        return this.bankAccountRepository.findByCompanyId(companyId);
+    }
+
+    async hydrateRelationsOnto(
+        companyId: string,
+        target: any
+    ): Promise<void> {
+        const [addresses, banks] = await Promise.all([
+            this.findAddressesByCompanyId(companyId),
+            this.findBankAccountsByCompanyId(companyId),
+        ]);
+
+        target.addresses = addresses.map((a) =>
+            plainToInstance(CompanyAddressResponseDto, a)
+        );
+
+        const currencyIds = Array.from(
+            new Set(banks.map((b) => b.currency_id.toString()))
+        );
+        const currencyCodeMap: Record<string, string> = {};
+        if (currencyIds.length) {
+            const rows = await this.currencyRepository.findAll({
+                _id: { $in: currencyIds },
+            } as any);
+            for (const r of rows) currencyCodeMap[r._id.toString()] = r.code;
+        }
+        target.bank_accounts = banks.map((b) => {
+            const r = plainToInstance(CompanyBankAccountResponseDto, b);
+            r.currency_code = currencyCodeMap[b.currency_id.toString()];
+            return r;
+        });
     }
 
     async delete(

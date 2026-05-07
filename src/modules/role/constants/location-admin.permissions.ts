@@ -216,6 +216,22 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: false,
     },
+    rebates: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    expenses: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
     currencies: {
         can_all: false,
         can_read: true,
@@ -227,6 +243,32 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
     "price-list": {
         can_all: false,
         can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+
+    // ── Sales Group (no access by default — Admin can grant per-role) ──
+    quotations: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    pfi: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    "purchase-orders": {
+        can_all: false,
+        can_read: false,
         can_add: false,
         can_create: false,
         can_update: false,

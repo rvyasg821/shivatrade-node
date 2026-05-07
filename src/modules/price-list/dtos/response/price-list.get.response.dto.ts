@@ -7,6 +7,7 @@ export class PriceListGetResponseDto {
 
     @ApiProperty({ type: String }) vendor_id: string;
     @ApiProperty({ type: String, required: false }) vendor_name?: string;
+    @ApiProperty({ type: String, required: false }) vendor_code?: string;
 
     @ApiProperty({ type: String }) product_id: string;
     @ApiProperty({ type: String, required: false }) product_code?: string;
@@ -22,6 +23,13 @@ export class PriceListGetResponseDto {
     @ApiProperty({ type: String, required: false }) discount_pct?: string;
     @ApiProperty({ type: Number, required: false }) lead_time_days?: number;
     @ApiProperty({ type: String }) effective_date: string;
+    /** Explicit quote expiry — null if no explicit expiry was set. */
+    @ApiProperty({ type: String, required: false }) valid_until?: string;
+    /** Effective end date — explicit valid_until if set, else next row's
+     *  effective_date - 1 day for the same (vendor, product), else null
+     *  (still active). Computed at hydration time, not stored. */
+    @ApiProperty({ type: String, required: false }) effective_until?: string;
+    @ApiProperty({ type: Boolean, required: false }) is_primary?: boolean;
     @ApiProperty({ type: String, required: false }) notes?: string;
 
     @ApiProperty({ type: Date }) createdAt: Date;

@@ -5,56 +5,96 @@ import {
     IsEnum,
     IsUUID,
     IsBoolean,
+    IsNumber,
+    IsInt,
+    IsArray,
+    Min,
     MaxLength,
+    ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ENUM_PRODUCT_STATUS } from '@modules/product/enums/product.enum';
 
+export class ProductRebateLinkDto {
+    @IsUUID() rebate_id: string;
+
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 4 })
+    @Min(0)
+    @IsOptional()
+    pct?: number;
+}
+
+export class ProductExpenseLinkDto {
+    @IsUUID() expense_id: string;
+
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 4 })
+    @Min(0)
+    @IsOptional()
+    value?: number;
+}
+
 export class ProductCreateRequestDto {
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(50)
-    code: string;
+    @IsString() @IsNotEmpty() @MaxLength(50) code: string;
+    @IsString() @IsNotEmpty() @MaxLength(200) name: string;
 
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(200)
-    name: string;
+    @IsUUID() @IsNotEmpty() category_id: string;
 
-    @IsUUID()
-    @IsNotEmpty()
-    category_id: string;
+    @IsString() @IsOptional() description?: string;
+    @IsString() @IsOptional() specifications?: string;
+    @IsString() @IsOptional() packaging_details?: string;
+    @IsString() @IsOptional() quality_parameters?: string;
 
-    @IsString()
+    @IsString() @IsOptional() @MaxLength(50) hsn_code?: string;
+    @IsString() @IsOptional() @MaxLength(50) unit_of_measure?: string;
+
+    // ── Pricing ──
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 4 })
+    @Min(0)
     @IsOptional()
-    description?: string;
+    selling_price?: number;
 
-    @IsString()
-    @IsOptional()
-    specifications?: string;
+    @IsUUID() @IsOptional() currency_id?: string;
 
-    @IsString()
-    @IsOptional()
-    packaging_details?: string;
+    // ── Identification (extra) ──
+    @IsString() @IsOptional() @MaxLength(100) part_no?: string;
 
-    @IsString()
+    // ── Logistics ──
+    @Type(() => Number)
+    @IsInt()
+    @Min(1)
     @IsOptional()
-    quality_parameters?: string;
+    pack_size?: number;
 
-    @IsString()
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 3 })
+    @Min(0)
     @IsOptional()
-    @MaxLength(50)
-    hsn_code?: string;
+    net_weight_per_unit?: number;
 
-    @IsString()
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 3 })
+    @Min(0)
     @IsOptional()
-    @MaxLength(50)
-    unit_of_measure?: string;
+    gross_weight_per_unit?: number;
 
-    @IsEnum(ENUM_PRODUCT_STATUS)
-    @IsOptional()
-    status?: ENUM_PRODUCT_STATUS;
+    @IsString() @IsOptional() @MaxLength(100) country_of_origin?: string;
 
-    @IsBoolean()
+    // ── Links ──
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => ProductRebateLinkDto)
     @IsOptional()
-    is_active?: boolean;
+    rebates?: ProductRebateLinkDto[];
+
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => ProductExpenseLinkDto)
+    @IsOptional()
+    expenses?: ProductExpenseLinkDto[];
+
+    @IsEnum(ENUM_PRODUCT_STATUS) @IsOptional() status?: ENUM_PRODUCT_STATUS;
+    @IsBoolean() @IsOptional() is_active?: boolean;
 }

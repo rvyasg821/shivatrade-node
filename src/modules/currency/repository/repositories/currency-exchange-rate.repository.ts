@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import { Repository, LessThanOrEqual } from 'typeorm';
 import { DatabaseObjectIdRepositoryBase } from '@common/database/bases/database.object-id.repository';
 import { InjectDatabaseModel } from '@common/database/decorators/database.decorator';
 import {
@@ -30,18 +30,24 @@ export class CurrencyExchangeRateRepository extends DatabaseObjectIdRepositoryBa
     }
 
     /**
-     * Most-recent rate for the given from→to pair (or null).
+     * Most-recent effective rate for the given from→to pair as of `asOfDate`
+     * (defaults to today). Future-dated rates are ignored — they only become
+     * "current" once their `effective_date` has arrived.
      */
     async findCurrentRate(
         companyId: string,
         fromCurrencyId: string,
-        toCurrencyId: string
+        toCurrencyId: string,
+        asOfDate?: string
     ): Promise<CurrencyExchangeRateDoc | null> {
+        const today =
+            asOfDate || new Date().toISOString().slice(0, 10); // YYYY-MM-DD
         const row = await this._repository.findOne({
             where: {
                 company_id: companyId,
                 from_currency_id: fromCurrencyId,
                 to_currency_id: toCurrencyId,
+                effective_date: LessThanOrEqual(today),
             } as any,
             order: { effective_date: 'DESC', createdAt: 'DESC' },
         });

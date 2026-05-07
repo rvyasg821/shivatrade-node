@@ -6,6 +6,8 @@ import { CustomerModule } from '@modules/customer/customer.module';
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
 import { ProductModule } from '@modules/product/product.module';
 import { CategoryModule } from '@modules/category/category.module';
+// Repository-only import (no service-level cycle with QuotationModule).
+import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
 
 @Module({
     imports: [
@@ -14,6 +16,7 @@ import { CategoryModule } from '@modules/category/category.module';
         UserRepositoryModule,
         ProductModule,
         CategoryModule,
+        QuotationRepositoryModule,
     ],
     providers: [LeadService],
     exports: [LeadRepositoryModule, LeadService],

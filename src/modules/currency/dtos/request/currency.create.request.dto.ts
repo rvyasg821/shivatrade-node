@@ -32,4 +32,8 @@ export class CurrencyCreateRequestDto {
     @IsBoolean()
     @IsOptional()
     is_active?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    is_default?: boolean;
 }

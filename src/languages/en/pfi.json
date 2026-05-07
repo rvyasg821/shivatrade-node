@@ -1,0 +1,12 @@
+{
+    "list": "PFIs retrieved successfully.",
+    "get": "PFI fetched successfully.",
+    "create": "PFI created successfully.",
+    "createFromQuotation": "PFI created from Quotation.",
+    "update": "PFI updated successfully.",
+    "delete": "PFI deleted successfully.",
+    "error": {
+        "notFound": "Sorry, we couldn't find the requested PFI.",
+        "sourceNotFound": "Source quotation not found."
+    }
+}

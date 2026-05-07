@@ -30,25 +30,15 @@ export class CustomerEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'jsonb', nullable: true, default: null })
     social_media?: ICustomerSocialMedia;
 
-    // ── Address ──
-    @Column({ type: 'varchar', length: 200, nullable: true })
-    address_line1?: string;
+    // ── Tax & Compliance ──
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    gstin?: string;
 
-    @Column({ type: 'varchar', length: 200, nullable: true })
-    address_line2?: string;
-
-    @Column({ type: 'varchar', length: 100, nullable: true })
-    city?: string;
-
-    @Column({ type: 'varchar', length: 100, nullable: true })
-    state?: string;
-
-    @Index()
-    @Column({ type: 'varchar', length: 100, nullable: true })
-    country?: string;
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    pan?: string;
 
     @Column({ type: 'varchar', length: 20, nullable: true })
-    postcode?: string;
+    iec?: string;
 
     @Index()
     @Column({ type: 'boolean', default: true })

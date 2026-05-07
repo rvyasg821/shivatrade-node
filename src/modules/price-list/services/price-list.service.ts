@@ -71,6 +71,14 @@ export class PriceListService {
             created_by: createdBy,
         } as any);
 
+        if (data.is_primary) {
+            await this.clearOtherPrimaries(
+                companyId,
+                data.product_id,
+                row._id.toString()
+            );
+        }
+
         this.logger.log(
             `Price list entry created: ${row._id} (vendor ${data.vendor_id}, product ${data.product_id})`
         );
@@ -100,8 +108,34 @@ export class PriceListService {
 
         Object.assign(row, data);
         const updated = await this.priceListRepository.save(row);
+
+        if (data.is_primary === true) {
+            await this.clearOtherPrimaries(
+                companyId,
+                row.product_id.toString(),
+                row._id.toString()
+            );
+        }
+
         this.logger.log(`Price list entry updated: ${row._id}`);
         return updated;
+    }
+
+    /** Un-flag any other primary rows for the same (company, product). */
+    private async clearOtherPrimaries(
+        companyId: string,
+        productId: string,
+        keepRowId: string
+    ): Promise<void> {
+        const rows = await this.priceListRepository.findPrimaryRows(
+            companyId,
+            productId
+        );
+        for (const r of rows) {
+            if (r._id.toString() === keepRowId) continue;
+            r.is_primary = false;
+            await this.priceListRepository.save(r);
+        }
     }
 
     async hardDelete(row: PriceListDoc): Promise<void> {
@@ -147,16 +181,54 @@ export class PriceListService {
         const currencyMap: Record<string, any> = {};
         currencies.forEach((c: any) => (currencyMap[c._id.toString()] = c));
 
+        // Build a lookup of effective_dates per (vendor, product) for derived
+        // valid_until calculation. We only need rows in the same set (same
+        // company already, since list endpoint filtered).
+        const companyId = rows[0].company_id.toString();
+        const allForDerivation =
+            await this.priceListRepository.findNextRowsAfter(
+                companyId,
+                rows.map((r) => ({
+                    vendor_id: r.vendor_id.toString(),
+                    product_id: r.product_id.toString(),
+                    effective_date: r.effective_date,
+                }))
+            );
+        const datesByPair: Record<string, string[]> = {};
+        for (const r of allForDerivation) {
+            const key = `${r.vendor_id}|${r.product_id}`;
+            (datesByPair[key] ||= []).push(r.effective_date);
+        }
+        Object.values(datesByPair).forEach((arr) => arr.sort());
+
+        const minusOneDay = (iso: string): string => {
+            const d = new Date(iso);
+            d.setDate(d.getDate() - 1);
+            return d.toISOString().slice(0, 10);
+        };
+
         return rows.map((r) => {
             const dto = plainToInstance(PriceListGetResponseDto, r);
             const v = vendorMap[r.vendor_id.toString()];
             const p = productMap[r.product_id.toString()];
             const c = currencyMap[r.currency_id.toString()];
             dto.vendor_name = v?.company_name;
+            dto.vendor_code = v?.vendor_code;
             dto.product_code = p?.code;
             dto.product_name = p?.name;
             dto.currency_code = c?.code;
             dto.currency_symbol = c?.symbol;
+
+            // Derive effective_until: explicit valid_until wins; otherwise
+            // (next row's effective_date − 1 day) for same (vendor, product).
+            if (r.valid_until) {
+                dto.effective_until = r.valid_until;
+            } else {
+                const key = `${r.vendor_id}|${r.product_id}`;
+                const dates = datesByPair[key] || [];
+                const next = dates.find((d) => d > r.effective_date);
+                dto.effective_until = next ? minusOneDay(next) : undefined;
+            }
             return dto;
         });
     }

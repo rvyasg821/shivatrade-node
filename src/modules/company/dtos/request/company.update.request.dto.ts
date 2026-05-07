@@ -9,10 +9,66 @@ import {
     IsUrl,
     IsBoolean,
     IsEmail,
+    IsArray,
+    IsEnum,
+    IsUUID,
+    IsDateString,
+    ValidateNested,
 } from 'class-validator';
 import { IsCustomEmail } from '@common/request/validations/request.custom-email.validation';
-import { Transform } from 'class-transformer';
-import { ENUM_COMPANY_STATUS } from '@modules/company/enums/company.enum';
+import { Transform, Type } from 'class-transformer';
+import {
+    ENUM_COMPANY_ADDRESS_TYPE,
+    ENUM_COMPANY_BANK_ACCOUNT_TYPE,
+    ENUM_COMPANY_STATUS,
+} from '@modules/company/enums/company.enum';
+
+export class CompanyAddressRequestDto {
+    @IsString() @IsOptional() _id?: string;
+
+    @IsEnum(ENUM_COMPANY_ADDRESS_TYPE) @IsOptional()
+    type?: ENUM_COMPANY_ADDRESS_TYPE;
+
+    @IsString() @IsOptional() @MaxLength(150) label?: string;
+
+    @IsString() @IsOptional() @MaxLength(200) address_line1?: string;
+    @IsString() @IsOptional() @MaxLength(200) address_line2?: string;
+    @IsString() @IsOptional() @MaxLength(100) city?: string;
+    @IsString() @IsOptional() @MaxLength(100) state?: string;
+    @IsString() @IsOptional() @MaxLength(100) country?: string;
+    @IsString() @IsOptional() @MaxLength(20) postcode?: string;
+
+    @IsString() @IsOptional() @MaxLength(15) gstin?: string;
+
+    @IsBoolean() @IsOptional() is_default?: boolean;
+}
+
+export class CompanyBankAccountRequestDto {
+    @IsString() @IsOptional() _id?: string;
+
+    @IsString() @MaxLength(200) bank_name: string;
+    @IsString() @IsOptional() @MaxLength(200) account_holder_name?: string;
+    @IsString() @MaxLength(50) account_number: string;
+
+    @IsString() @IsOptional() @MaxLength(11) ifsc?: string;
+    @IsString() @IsOptional() @MaxLength(11) swift_code?: string;
+    @IsString() @IsOptional() @MaxLength(34) iban?: string;
+
+    /** AD code — required for forex-receiving accounts. */
+    @IsString() @IsOptional() @MaxLength(30) ad_code?: string;
+
+    @IsUUID() currency_id: string;
+
+    @IsString() @IsOptional() @MaxLength(200) branch_name?: string;
+    @IsString() @IsOptional() @MaxLength(500) branch_address?: string;
+
+    @IsEnum(ENUM_COMPANY_BANK_ACCOUNT_TYPE) @IsOptional()
+    account_type?: ENUM_COMPANY_BANK_ACCOUNT_TYPE;
+
+    @IsBoolean() @IsOptional() is_default?: boolean;
+    @IsString() @IsOptional() notes?: string;
+    @IsBoolean() @IsOptional() is_active?: boolean;
+}
 
 export class CompanyUpdateRequestDto {
     @ApiProperty({
@@ -266,4 +322,24 @@ export class CompanyUpdateRequestDto {
     @IsOptional()
     @IsString()
     status?: ENUM_COMPANY_STATUS;
+
+    // ── India export compliance ──
+    @IsOptional() @IsString() @MaxLength(20) iec?: string;
+    @IsOptional() @IsString() @MaxLength(50) lut_no?: string;
+    @IsOptional() @IsDateString() lut_date?: string;
+    @IsOptional() @IsString() @MaxLength(21) cin?: string;
+
+    // ── Multi-address ──
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => CompanyAddressRequestDto)
+    addresses?: CompanyAddressRequestDto[];
+
+    // ── Multi-bank ──
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => CompanyBankAccountRequestDto)
+    bank_accounts?: CompanyBankAccountRequestDto[];
 }

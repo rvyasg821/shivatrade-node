@@ -25,7 +25,7 @@
                 "outDir": "dist"
             }
         ],
-        "deleteOutDir": true,
+        "deleteOutDir": false,
         "watchAssets": true
     }
 }

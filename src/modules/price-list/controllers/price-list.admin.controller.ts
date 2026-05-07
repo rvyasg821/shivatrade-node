@@ -82,6 +82,43 @@ export class PriceListAdminController {
         };
     }
 
+    @Response('priceList.byProduct')
+    @AuthJwtAccessProtected()
+    @Get('/by-product/:productId')
+    async byProduct(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('productId') productId: string
+    ): Promise<IResponse<PriceListGetResponseDto[]>> {
+        const today = new Date().toISOString().slice(0, 10);
+        const rows = await this.priceListRepository.findAll(
+            {
+                company_id: companyId,
+                product_id: productId,
+                effective_date: { $lte: today },
+            } as any,
+            { order: { effective_date: 'desc' as any } }
+        );
+        const mapped = await this.priceListService.mapList(rows);
+        // Filter out expired rows (where effective_until < today).
+        const active = mapped.filter(
+            (r) => !r.effective_until || r.effective_until >= today
+        );
+        // Keep the most recent row per vendor (first occurrence in desc order).
+        const byVendor = new Map<string, PriceListGetResponseDto>();
+        for (const r of active) {
+            const key = (r as any).vendor_id?.toString();
+            if (key && !byVendor.has(key)) byVendor.set(key, r);
+        }
+        // Sort: primary first, then unit_price asc.
+        const result = Array.from(byVendor.values()).sort((a, b) => {
+            if (!!(a as any).is_primary !== !!(b as any).is_primary) {
+                return (a as any).is_primary ? -1 : 1;
+            }
+            return Number(a.unit_price || 0) - Number(b.unit_price || 0);
+        });
+        return { data: result };
+    }
+
     @Response('priceList.get')
     @AuthJwtAccessProtected()
     @Get('/get/:priceListId')
