@@ -6,16 +6,12 @@ import {
 } from '@nestjs/common';
 import { PfiRepository } from '../repository/repositories/pfi.repository';
 import { PfiLineRepository } from '../repository/repositories/pfi-line.repository';
-import { PfiExpenseRepository } from '../repository/repositories/pfi-expense.repository';
-import { PfiRebateRepository } from '../repository/repositories/pfi-rebate.repository';
 import { PfiDoc } from '../repository/entities/pfi.entity';
 import { PfiCreateRequestDto } from '../dtos/request/pfi.create.request.dto';
 import { PfiUpdateRequestDto } from '../dtos/request/pfi.update.request.dto';
 import {
     PfiGetResponseDto,
     PfiLineResponseDto,
-    PfiExpenseResponseDto,
-    PfiRebateResponseDto,
 } from '../dtos/response/pfi.get.response.dto';
 import { ENUM_PFI_STATUS } from '../enums/pfi.enum';
 
@@ -27,11 +23,11 @@ import { CompanyAddressRepository } from '@modules/company/repository/repositori
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
+import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
+import { ProductExpenseRepository } from '@modules/product/repository/repositories/product-expense.repository';
 
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
-import { QuotationExpenseRepository } from '@modules/quotation/repository/repositories/quotation-expense.repository';
-import { QuotationRebateRepository } from '@modules/quotation/repository/repositories/quotation-rebate.repository';
 import { LeadService } from '@modules/lead/services/lead.service';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
@@ -50,8 +46,6 @@ export class PfiService {
     constructor(
         private readonly pfiRepository: PfiRepository,
         private readonly pfiLineRepository: PfiLineRepository,
-        private readonly pfiExpenseRepository: PfiExpenseRepository,
-        private readonly pfiRebateRepository: PfiRebateRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerAddressRepository: CustomerAddressRepository,
         private readonly currencyRepository: CurrencyRepository,
@@ -60,10 +54,10 @@ export class PfiService {
         private readonly vendorRepository: VendorRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly rebateRepository: RebateRepository,
+        private readonly productRebateRepository: ProductRebateRepository,
+        private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
-        private readonly quotationExpenseRepository: QuotationExpenseRepository,
-        private readonly quotationRebateRepository: QuotationRebateRepository,
         private readonly leadService: LeadService,
         private readonly voucherService: VoucherService
     ) {}
@@ -157,6 +151,7 @@ export class PfiService {
             notes_to_client: data.notes_to_client || null,
             internal_notes: data.internal_notes || null,
             margin_pct: data.margin_pct || '0',
+            skip_product_costing: !!data.skip_product_costing,
             status: data.status || ENUM_PFI_STATUS.DRAFT,
             version: 1,
         } as any);
@@ -166,16 +161,6 @@ export class PfiService {
             header._id.toString(),
             data.lines,
             data.margin_pct || '0'
-        );
-        await this.replaceExpenses(
-            companyId,
-            header._id.toString(),
-            data.expenses
-        );
-        await this.replaceRebates(
-            companyId,
-            header._id.toString(),
-            data.rebates
         );
 
         await this.recompute(header._id.toString(), companyId);
@@ -228,7 +213,7 @@ export class PfiService {
         const wasApproved = row.status === ENUM_PFI_STATUS.APPROVED;
         const wasSent = row.status === ENUM_PFI_STATUS.SENT;
 
-        const { lines, expenses, rebates, ...scalar } = data as any;
+        const { lines, ...scalar } = data as any;
         Object.assign(row, scalar);
         await this.pfiRepository.save(row);
 
@@ -239,12 +224,6 @@ export class PfiService {
                 lines,
                 (data.margin_pct ?? row.margin_pct) || '0'
             );
-        }
-        if (Array.isArray(expenses)) {
-            await this.replaceExpenses(companyId, row._id.toString(), expenses);
-        }
-        if (Array.isArray(rebates)) {
-            await this.replaceRebates(companyId, row._id.toString(), rebates);
         }
 
         await this.recompute(row._id.toString(), companyId);
@@ -330,17 +309,9 @@ export class PfiService {
         } as any);
         if (!q) throw new NotFoundException('Source quotation not found');
 
-        const [qLines, qExpenses, qRebates] = await Promise.all([
-            this.quotationLineRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-            this.quotationExpenseRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-            this.quotationRebateRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-        ]);
+        const qLines = await this.quotationLineRepository.findAll({
+            quotation_id: quotationId,
+        } as any);
 
         const today = new Date().toISOString().slice(0, 10);
         const payload: PfiCreateRequestDto = {
@@ -358,6 +329,7 @@ export class PfiService {
             notes_to_client: q.notes_to_client,
             internal_notes: q.internal_notes,
             margin_pct: q.margin_pct,
+            skip_product_costing: !!(q as any).skip_product_costing,
             status: ENUM_PFI_STATUS.DRAFT,
             lines: qLines.map((l: any) => ({
                 product_id: l.product_id?.toString(),
@@ -369,18 +341,10 @@ export class PfiService {
                 discount_pct: l.discount_pct,
                 tax_pct: l.tax_pct,
                 margin_pct: l.margin_pct,
-            })),
-            expenses: qExpenses.map((e: any) => ({
-                expense_id: e.expense_id?.toString(),
-                name: e.name,
-                amount: e.amount,
-                is_overridden: !!e.is_overridden,
-            })),
-            rebates: qRebates.map((r: any) => ({
-                rebate_id: r.rebate_id?.toString(),
-                name: r.name,
-                amount: r.amount,
-                is_overridden: !!r.is_overridden,
+                // Carry the product rebate/expense snapshots forward so the
+                // PFI uses the SAME rates the source quotation captured.
+                product_rebates_snapshot: l.product_rebates_snapshot,
+                product_expenses_snapshot: l.product_expenses_snapshot,
             })),
         };
 
@@ -397,13 +361,100 @@ export class PfiService {
     ): Promise<void> {
         await this.pfiLineRepository.deleteByPfiId(pfiId);
         if (!lines?.length) return;
+
+        // Mirror Quotation.replaceLines: pre-load product master rebate/expense
+        // links for ALL referenced products in two batched queries (no N+1).
+        const productIds = Array.from(
+            new Set(
+                lines
+                    .map((l) => l.product_id)
+                    .filter((id): id is string => !!id)
+            )
+        );
+        const [pRebateLinks, pExpenseLinks] = await Promise.all([
+            productIds.length
+                ? this.productRebateRepository.findAll({
+                      product_id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            productIds.length
+                ? this.productExpenseRepository.findAll({
+                      product_id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const rebateMasterIds = unique(
+            pRebateLinks.map((l: any) => l.rebate_id?.toString())
+        );
+        const expenseMasterIds = unique(
+            pExpenseLinks.map((l: any) => l.expense_id?.toString())
+        );
+        const [rebateMasters, expenseMasters] = await Promise.all([
+            rebateMasterIds.length
+                ? this.rebateRepository.findAll({
+                      _id: { $in: rebateMasterIds },
+                      is_active: true,
+                      soft_delete: false,
+                  } as any)
+                : Promise.resolve([] as any[]),
+            expenseMasterIds.length
+                ? this.expenseRepository.findAll({
+                      _id: { $in: expenseMasterIds },
+                      is_active: true,
+                      soft_delete: false,
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const rebMap = new Map(
+            rebateMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const expMap = new Map(
+            expenseMasters.map((m: any) => [m._id.toString(), m])
+        );
+        const rebatesByProduct = new Map<string, any[]>();
+        for (const l of pRebateLinks as any[]) {
+            const m: any = rebMap.get(l.rebate_id?.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            const arr = rebatesByProduct.get(pid) || [];
+            arr.push({
+                rebate_id: l.rebate_id.toString(),
+                code: m.code,
+                name: m.name,
+                pct: l.pct != null ? String(l.pct) : String(m.pct),
+            });
+            rebatesByProduct.set(pid, arr);
+        }
+        const expensesByProduct = new Map<string, any[]>();
+        for (const l of pExpenseLinks as any[]) {
+            const m: any = expMap.get(l.expense_id?.toString());
+            if (!m) continue;
+            const pid = l.product_id.toString();
+            const arr = expensesByProduct.get(pid) || [];
+            arr.push({
+                expense_id: l.expense_id.toString(),
+                code: m.code,
+                name: m.name,
+                type: m.type,
+                value: l.value != null ? String(l.value) : String(m.value),
+            });
+            expensesByProduct.set(pid, arr);
+        }
+
         let seq = 0;
         for (const l of lines) {
             seq += 1;
+            const pid = l.product_id;
+            // If the caller already provided snapshots (e.g. createFromQuotation
+            // passes them through), trust those; otherwise rebuild from master.
+            const rebSnap =
+                l.product_rebates_snapshot ?? rebatesByProduct.get(pid) ?? [];
+            const expSnap =
+                l.product_expenses_snapshot ?? expensesByProduct.get(pid) ?? [];
             await this.pfiLineRepository.create({
                 company_id: companyId,
                 pfi_id: pfiId,
-                product_id: l.product_id,
+                product_id: pid,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
                 qty: l.qty || '0',
@@ -416,6 +467,10 @@ export class PfiService {
                 igst: '0',
                 taxable: '0',
                 line_total: '0',
+                product_rebates_snapshot: rebSnap,
+                product_expenses_snapshot: expSnap,
+                product_rebates_amount: '0',
+                product_expenses_amount: '0',
                 // null = inherit from header.margin_pct at recompute time.
                 margin_pct:
                     l.margin_pct != null && l.margin_pct !== ''
@@ -427,61 +482,15 @@ export class PfiService {
         }
     }
 
-    private async replaceExpenses(
-        companyId: string,
-        pfiId: string,
-        expenses?: any[]
-    ): Promise<void> {
-        await this.pfiExpenseRepository.deleteByPfiId(pfiId);
-        if (!expenses?.length) return;
-        let seq = 0;
-        for (const e of expenses) {
-            seq += 1;
-            await this.pfiExpenseRepository.create({
-                company_id: companyId,
-                pfi_id: pfiId,
-                expense_id: e.expense_id || null,
-                name: e.name,
-                amount: e.amount || '0',
-                is_overridden: !!e.is_overridden,
-                seq,
-            } as any);
-        }
-    }
-
-    private async replaceRebates(
-        companyId: string,
-        pfiId: string,
-        rebates?: any[]
-    ): Promise<void> {
-        await this.pfiRebateRepository.deleteByPfiId(pfiId);
-        if (!rebates?.length) return;
-        let seq = 0;
-        for (const r of rebates) {
-            seq += 1;
-            await this.pfiRebateRepository.create({
-                company_id: companyId,
-                pfi_id: pfiId,
-                rebate_id: r.rebate_id || null,
-                name: r.name,
-                amount: r.amount || '0',
-                is_overridden: !!r.is_overridden,
-                seq,
-            } as any);
-        }
-    }
-
     // ─── Costing engine (mirrors Quotation recompute) ───────────────────
 
     private async recompute(pfiId: string, companyId: string): Promise<void> {
         const header = await this.pfiRepository.findOneById(pfiId);
         if (!header) return;
 
-        const [lines, expenses, rebates] = await Promise.all([
-            this.pfiLineRepository.findAll({ pfi_id: pfiId } as any),
-            this.pfiExpenseRepository.findAll({ pfi_id: pfiId } as any),
-            this.pfiRebateRepository.findAll({ pfi_id: pfiId } as any),
-        ]);
+        const lines = await this.pfiLineRepository.findAll({
+            pfi_id: pfiId,
+        } as any);
 
         const customerState = await this.lookupCustomerState(
             header.customer_address_id?.toString()
@@ -491,6 +500,9 @@ export class PfiService {
         let subtotal = 0;
         let tax_total = 0;
         let line_margin_total = 0;
+        let product_rebates_total = 0;
+        let product_expenses_total = 0;
+        const skipProductForLine = !!(header as any).skip_product_costing;
 
         for (const ln of lines) {
             const out = computeLineTax({
@@ -508,92 +520,70 @@ export class PfiService {
             ln.igst = String(out.igst);
             ln.line_total = String(out.line_total);
 
-            // PFI lines don't yet carry per-line product expense/rebate
-            // snapshots (a future port from Quotation), so the line margin
-            // base is just the taxable goods cost.
+            // Per-line product rebates (taxable × pct) + expenses (flat or pct).
+            let lineRebatesAmt = 0;
+            for (const r of (ln as any).product_rebates_snapshot || []) {
+                lineRebatesAmt += (out.taxable * num(r.pct)) / 100;
+            }
+            let lineExpensesAmt = 0;
+            for (const e of (ln as any).product_expenses_snapshot || []) {
+                lineExpensesAmt +=
+                    e.type === 'percent'
+                        ? (out.taxable * num(e.value)) / 100
+                        : num(e.value);
+            }
+            (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
+            (ln as any).product_expenses_amount = String(
+                round2(lineExpensesAmt)
+            );
+
+            // Margin base mirrors costing-sheet model: taxable + line product
+            // expenses − line product rebates. Skip flag zeroes the buckets.
+            const effLineExp = skipProductForLine ? 0 : lineExpensesAmt;
+            const effLineReb = skipProductForLine ? 0 : lineRebatesAmt;
             const lineMarginPct = num((ln as any).margin_pct);
-            const lineMarginAmt = out.taxable * (lineMarginPct / 100);
+            const lineMarginBase = out.taxable + effLineExp - effLineReb;
+            const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
             await this.pfiLineRepository.save(ln);
 
             subtotal += out.taxable;
             tax_total += out.total_tax;
             line_margin_total += lineMarginAmt;
+            product_rebates_total += lineRebatesAmt;
+            product_expenses_total += lineExpensesAmt;
         }
 
-        const expenseMasterIds = unique(
-            expenses
-                .filter((e: any) => e.expense_id && !e.is_overridden)
-                .map((e: any) => e.expense_id?.toString())
-        );
-        const rebateMasterIds = unique(
-            rebates
-                .filter((r: any) => r.rebate_id && !r.is_overridden)
-                .map((r: any) => r.rebate_id?.toString())
-        );
-        const [expenseMasters, rebateMasters] = await Promise.all([
-            expenseMasterIds.length
-                ? this.expenseRepository.findAll({
-                      _id: { $in: expenseMasterIds },
-                  } as any)
-                : Promise.resolve([] as any[]),
-            rebateMasterIds.length
-                ? this.rebateRepository.findAll({
-                      _id: { $in: rebateMasterIds },
-                  } as any)
-                : Promise.resolve([] as any[]),
-        ]);
-        const expMap = new Map(
-            expenseMasters.map((m: any) => [m._id.toString(), m])
-        );
-        const rebMap = new Map(
-            rebateMasters.map((m: any) => [m._id.toString(), m])
-        );
+        // skip_product_costing zeroes out the per-line product buckets.
+        const skipProduct = !!(header as any).skip_product_costing;
+        const effective_product_rebates = skipProduct
+            ? 0
+            : product_rebates_total;
+        const effective_product_expenses = skipProduct
+            ? 0
+            : product_expenses_total;
 
-        let expenses_total = 0;
-        for (const e of expenses) {
-            let amt = num(e.amount);
-            if (e.expense_id && !e.is_overridden) {
-                const master: any = expMap.get(e.expense_id.toString());
-                if (master) {
-                    amt =
-                        master.type === 'percent'
-                            ? (subtotal * num(master.value)) / 100
-                            : num(master.value);
-                    e.amount = String(round2(amt));
-                    await this.pfiExpenseRepository.save(e);
-                }
-            }
-            expenses_total += amt;
-        }
-        let rebates_total = 0;
-        for (const r of rebates) {
-            let amt = num(r.amount);
-            if (r.rebate_id && !r.is_overridden) {
-                const master: any = rebMap.get(r.rebate_id.toString());
-                if (master) {
-                    amt = (subtotal * num(master.pct)) / 100;
-                    r.amount = String(round2(amt));
-                    await this.pfiRebateRepository.save(r);
-                }
-            }
-            rebates_total += amt;
-        }
-
-        // Margin is now per-line (sum of line.margin_amount above).
         const margin_amount = line_margin_total;
         const er = num(header.exchange_rate) || 1;
         const grand_total =
             (subtotal +
-                expenses_total -
-                rebates_total +
+                effective_product_expenses -
+                effective_product_rebates +
                 margin_amount +
                 tax_total) *
             er;
 
         header.subtotal = String(round2(subtotal));
-        header.expenses_total = String(round2(expenses_total));
-        header.rebates_total = String(round2(rebates_total));
+        // Header expense/rebate aggregates retained on the entity (DB) but
+        // unused — write zeros.
+        (header as any).expenses_total = '0';
+        (header as any).rebates_total = '0';
+        (header as any).product_expenses_total = String(
+            round2(effective_product_expenses)
+        );
+        (header as any).product_rebates_total = String(
+            round2(effective_product_rebates)
+        );
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));
         header.grand_total = String(round2(grand_total));
@@ -649,7 +639,7 @@ export class PfiService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, currencies, quotations, vendors, expenses, rebates] =
+        const [customers, currencies, quotations, vendors] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
@@ -671,12 +661,6 @@ export class PfiService {
                           _id: { $in: vendorIds },
                       } as any)
                     : Promise.resolve([] as any[]),
-                this.pfiExpenseRepository.findAll({
-                    pfi_id: { $in: pfiIds },
-                } as any),
-                this.pfiRebateRepository.findAll({
-                    pfi_id: { $in: pfiIds },
-                } as any),
             ]);
 
         const customerMap = toMap(customers);
@@ -684,8 +668,6 @@ export class PfiService {
         const quotationMap = toMap(quotations);
         const vendorMap = toMap(vendors);
         const linesByP = groupBy(allLines, (l: any) => l.pfi_id.toString());
-        const expensesByP = groupBy(expenses, (e: any) => e.pfi_id.toString());
-        const rebatesByP = groupBy(rebates, (r: any) => r.pfi_id.toString());
 
         return rows.map((r) => {
             const cust = customerMap.get(r.customer_id?.toString());
@@ -715,8 +697,9 @@ export class PfiService {
                 notes_to_client: r.notes_to_client,
                 internal_notes: r.internal_notes,
                 subtotal: r.subtotal,
-                expenses_total: r.expenses_total,
-                rebates_total: r.rebates_total,
+                product_expenses_total: (r as any).product_expenses_total,
+                product_rebates_total: (r as any).product_rebates_total,
+                skip_product_costing: !!(r as any).skip_product_costing,
                 margin_pct: r.margin_pct,
                 margin_amount: r.margin_amount,
                 tax_total: r.tax_total,
@@ -748,33 +731,13 @@ export class PfiService {
                             igst: l.igst,
                             taxable: l.taxable,
                             line_total: l.line_total,
+                            product_rebates_snapshot: l.product_rebates_snapshot,
+                            product_expenses_snapshot: l.product_expenses_snapshot,
+                            product_rebates_amount: l.product_rebates_amount,
+                            product_expenses_amount: l.product_expenses_amount,
                             margin_pct: l.margin_pct,
                             margin_amount: l.margin_amount,
                             seq: l.seq,
-                        })
-                    ),
-                expenses: (expensesByP.get(pid) || [])
-                    .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
-                    .map(
-                        (e: any): PfiExpenseResponseDto => ({
-                            _id: e._id?.toString(),
-                            expense_id: e.expense_id?.toString(),
-                            name: e.name,
-                            amount: e.amount,
-                            is_overridden: !!e.is_overridden,
-                            seq: e.seq,
-                        })
-                    ),
-                rebates: (rebatesByP.get(pid) || [])
-                    .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
-                    .map(
-                        (r2: any): PfiRebateResponseDto => ({
-                            _id: r2._id?.toString(),
-                            rebate_id: r2.rebate_id?.toString(),
-                            name: r2.name,
-                            amount: r2.amount,
-                            is_overridden: !!r2.is_overridden,
-                            seq: r2.seq,
                         })
                     ),
             };

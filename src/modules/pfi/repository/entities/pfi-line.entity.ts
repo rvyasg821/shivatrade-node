@@ -54,8 +54,33 @@ export class PfiLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     line_total: string;
 
-    /** Per-line margin %. Seeded from header.margin_pct on create or copied
-     *  from source quotation_line on createFromQuotation. */
+    /** Snapshot of product master's rebates at line-save time — same
+     *  semantics as quotation_line.product_rebates_snapshot. */
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_rebates_snapshot?: Array<{
+        rebate_id: string;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
+
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_expenses_snapshot?: Array<{
+        expense_id: string;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_rebates_amount: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_expenses_amount: string;
+
+    /** Per-line margin %. Copied from source quotation_line on
+     *  createFromQuotation, or auto-filled from price-list on line save. */
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
     margin_pct?: string;
 

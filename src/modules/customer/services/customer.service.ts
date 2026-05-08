@@ -571,9 +571,14 @@ export class CustomerService {
         return customers.map((c) => {
             const dto = plainToInstance(CustomerListResponseDto, c);
             this.hydrateWithContacts(dto, contactsByCustomer[c._id.toString()] || []);
-            dto.addresses = (addressesByCustomer[c._id.toString()] || []).map((a) =>
+            const addrs = addressesByCustomer[c._id.toString()] || [];
+            dto.addresses = addrs.map((a) =>
                 plainToInstance(CustomerAddressResponseDto, a)
             );
+            // Surface a single country on the row for listing display —
+            // default-or-first address wins.
+            const addr = addrs.find((a) => a.is_default) || addrs[0];
+            if (addr?.country) dto.country = addr.country;
             return dto;
         });
     }

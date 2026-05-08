@@ -72,6 +72,18 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     rebates_total: string;
 
+    /** Effective per-product totals (zeroed when skip_product_costing=true). */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_expenses_total: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_rebates_total: string;
+
+    /** Opt out of per-line product rebates/expenses (e.g. when the
+     *  customer-facing rebate is already captured at quote level). */
+    @Column({ type: 'boolean', default: false })
+    skip_product_costing: boolean;
+
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
     margin_pct?: string;
 
