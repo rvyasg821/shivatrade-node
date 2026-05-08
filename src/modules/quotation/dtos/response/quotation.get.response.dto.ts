@@ -39,30 +39,16 @@ export class QuotationLineResponseDto {
     seq?: number;
 }
 
-export class QuotationExpenseResponseDto {
-    _id?: string;
-    expense_id?: string;
-    name?: string;
-    amount?: string;
-    is_overridden?: boolean;
-    seq?: number;
-}
-
-export class QuotationRebateResponseDto {
-    _id?: string;
-    rebate_id?: string;
-    name?: string;
-    amount?: string;
-    is_overridden?: boolean;
-    seq?: number;
-}
-
 export class QuotationGetResponseDto {
     _id?: string;
     voucher_no?: string;
     lead_id?: string;
     customer_id?: string;
     customer_name?: string;
+    customer_contact_name?: string;
+    customer_contact_email?: string;
+    customer_contact_phone?: string;
+    customer_contact_country_code?: any;
     customer_address_id?: string;
     quotation_date?: string;
     valid_until?: string;
@@ -77,9 +63,7 @@ export class QuotationGetResponseDto {
     internal_notes?: string;
 
     subtotal?: string;
-    expenses_total?: string;
     product_expenses_total?: string;
-    rebates_total?: string;
     product_rebates_total?: string;
     skip_product_costing?: boolean;
     margin_pct?: string;
@@ -96,6 +80,4 @@ export class QuotationGetResponseDto {
     updatedAt?: Date;
 
     lines?: QuotationLineResponseDto[];
-    expenses?: QuotationExpenseResponseDto[];
-    rebates?: QuotationRebateResponseDto[];
 }

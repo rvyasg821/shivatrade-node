@@ -32,6 +32,14 @@ export class LeadGetResponseDto {
     @ApiProperty({ required: false, type: Number }) expected_value?: number;
     @ApiProperty({ required: false, type: String }) currency?: string;
 
+    @ApiProperty({ required: false, type: String }) website_url?: string;
+    @ApiProperty({ required: false, type: Object })
+    social_media_urls?: Record<string, string>;
+    @ApiProperty({ required: false, type: String }) quantity?: string;
+    @ApiProperty({ required: false, type: String }) delivery_expectation?: string;
+    @ApiProperty({ required: false, type: [String] }) preferred_vendors?: string[];
+    @ApiProperty({ required: false, type: String }) follow_up_date?: string;
+
     @ApiProperty({ required: false, type: String }) assigned_to?: string;
     @ApiProperty({ required: false, type: String }) assigned_to_name?: string;
     @ApiProperty({ required: false, type: Number }) quotations_count?: number;

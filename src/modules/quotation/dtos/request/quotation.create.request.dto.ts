@@ -51,42 +51,25 @@ export class QuotationLineCreateDto {
     @IsNumberString({}, { message: 'margin_pct must be a numeric string' })
     @IsOptional()
     margin_pct?: string;
-}
 
-export class QuotationExpenseCreateDto {
-    @IsUUID()
+    @IsArray()
     @IsOptional()
-    expense_id?: string;
+    product_rebates_snapshot?: Array<{
+        rebate_id?: string | null;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
 
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(200)
-    name: string;
-
-    @IsNumberString({}, { message: 'amount must be a numeric string' })
+    @IsArray()
     @IsOptional()
-    amount?: string;
-
-    @IsOptional()
-    is_overridden?: boolean;
-}
-
-export class QuotationRebateCreateDto {
-    @IsUUID()
-    @IsOptional()
-    rebate_id?: string;
-
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(200)
-    name: string;
-
-    @IsNumberString({}, { message: 'amount must be a numeric string' })
-    @IsOptional()
-    amount?: string;
-
-    @IsOptional()
-    is_overridden?: boolean;
+    product_expenses_snapshot?: Array<{
+        expense_id?: string | null;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
 }
 
 export class QuotationCreateRequestDto {
@@ -163,16 +146,4 @@ export class QuotationCreateRequestDto {
     @Type(() => QuotationLineCreateDto)
     @IsOptional()
     lines?: QuotationLineCreateDto[];
-
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => QuotationExpenseCreateDto)
-    @IsOptional()
-    expenses?: QuotationExpenseCreateDto[];
-
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => QuotationRebateCreateDto)
-    @IsOptional()
-    rebates?: QuotationRebateCreateDto[];
 }

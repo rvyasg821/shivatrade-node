@@ -41,6 +41,16 @@ export class LeadCreateRequestDto {
     @IsNumber() @IsOptional() expected_value?: number;
     @IsString() @IsOptional() @MaxLength(10) currency?: string;
 
+    @IsString() @IsOptional() @MaxLength(300) website_url?: string;
+    @IsObject() @IsOptional() social_media_urls?: Record<string, string>;
+    @IsString() @IsOptional() @MaxLength(200) quantity?: string;
+    @IsString() @IsOptional() @MaxLength(200) delivery_expectation?: string;
+
+    @IsArray() @IsOptional() @IsUUID('all', { each: true })
+    preferred_vendors?: string[];
+
+    @IsString() @IsOptional() follow_up_date?: string;
+
     @IsUUID() @IsOptional() assigned_to?: string;
 
     @IsString() @IsOptional() notes?: string;

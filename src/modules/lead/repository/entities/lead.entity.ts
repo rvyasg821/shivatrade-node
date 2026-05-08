@@ -56,6 +56,34 @@ export class LeadEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
     expected_value?: number;
 
+    @Column({ type: 'varchar', length: 300, nullable: true })
+    website_url?: string;
+
+    /** Free-form social map: { facebook, linkedin, instagram, twitter, ... }.
+     *  Stored as jsonb so we can add platforms without schema changes. */
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    social_media_urls?: Record<string, string>;
+
+    /** Free text — quantity is often a range or unit-bound spec
+     *  (e.g. "500 PCS" or "approx 2 tonnes"). */
+    @Column({ type: 'varchar', length: 200, nullable: true })
+    quantity?: string;
+
+    /** Customer's expected delivery timeline / window
+     *  (e.g. "within 30 days", "Q3 2026"). */
+    @Column({ type: 'varchar', length: 200, nullable: true })
+    delivery_expectation?: string;
+
+    /** Vendor _ids the customer named as preferred suppliers. Hint for
+     *  Quotation line-vendor pre-selection later. */
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    preferred_vendors?: string[];
+
+    /** Next planned outreach. List view highlights overdue rows. */
+    @Index()
+    @Column({ type: 'date', nullable: true })
+    follow_up_date?: string;
+
     @Column({ type: 'varchar', length: 10, nullable: true })
     currency?: string;
 

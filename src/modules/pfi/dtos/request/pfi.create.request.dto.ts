@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
     IsArray,
+    IsBoolean,
     IsDateString,
     IsEnum,
     IsNotEmpty,
@@ -51,42 +52,25 @@ export class PfiLineCreateDto {
     @IsNumberString({}, { message: 'margin_pct must be a numeric string' })
     @IsOptional()
     margin_pct?: string;
-}
 
-export class PfiExpenseCreateDto {
-    @IsUUID()
+    @IsArray()
     @IsOptional()
-    expense_id?: string;
+    product_rebates_snapshot?: Array<{
+        rebate_id?: string | null;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
 
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(200)
-    name: string;
-
-    @IsNumberString({}, { message: 'amount must be a numeric string' })
+    @IsArray()
     @IsOptional()
-    amount?: string;
-
-    @IsOptional()
-    is_overridden?: boolean;
-}
-
-export class PfiRebateCreateDto {
-    @IsUUID()
-    @IsOptional()
-    rebate_id?: string;
-
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(200)
-    name: string;
-
-    @IsNumberString({}, { message: 'amount must be a numeric string' })
-    @IsOptional()
-    amount?: string;
-
-    @IsOptional()
-    is_overridden?: boolean;
+    product_expenses_snapshot?: Array<{
+        expense_id?: string | null;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
 }
 
 export class PfiCreateRequestDto {
@@ -151,6 +135,10 @@ export class PfiCreateRequestDto {
     @IsOptional()
     margin_pct?: string;
 
+    @IsBoolean()
+    @IsOptional()
+    skip_product_costing?: boolean;
+
     @IsEnum(ENUM_PFI_STATUS)
     @IsOptional()
     status?: ENUM_PFI_STATUS;
@@ -160,16 +148,4 @@ export class PfiCreateRequestDto {
     @Type(() => PfiLineCreateDto)
     @IsOptional()
     lines?: PfiLineCreateDto[];
-
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => PfiExpenseCreateDto)
-    @IsOptional()
-    expenses?: PfiExpenseCreateDto[];
-
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => PfiRebateCreateDto)
-    @IsOptional()
-    rebates?: PfiRebateCreateDto[];
 }

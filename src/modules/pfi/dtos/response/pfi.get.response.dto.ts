@@ -18,26 +18,23 @@ export class PfiLineResponseDto {
     igst?: string;
     taxable?: string;
     line_total?: string;
+    product_rebates_snapshot?: Array<{
+        rebate_id: string;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
+    product_expenses_snapshot?: Array<{
+        expense_id: string;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+    product_rebates_amount?: string;
+    product_expenses_amount?: string;
     margin_pct?: string;
     margin_amount?: string;
-    seq?: number;
-}
-
-export class PfiExpenseResponseDto {
-    _id?: string;
-    expense_id?: string;
-    name?: string;
-    amount?: string;
-    is_overridden?: boolean;
-    seq?: number;
-}
-
-export class PfiRebateResponseDto {
-    _id?: string;
-    rebate_id?: string;
-    name?: string;
-    amount?: string;
-    is_overridden?: boolean;
     seq?: number;
 }
 
@@ -63,8 +60,9 @@ export class PfiGetResponseDto {
     internal_notes?: string;
 
     subtotal?: string;
-    expenses_total?: string;
-    rebates_total?: string;
+    product_expenses_total?: string;
+    product_rebates_total?: string;
+    skip_product_costing?: boolean;
     margin_pct?: string;
     margin_amount?: string;
     tax_total?: string;
@@ -79,6 +77,4 @@ export class PfiGetResponseDto {
     updatedAt?: Date;
 
     lines?: PfiLineResponseDto[];
-    expenses?: PfiExpenseResponseDto[];
-    rebates?: PfiRebateResponseDto[];
 }

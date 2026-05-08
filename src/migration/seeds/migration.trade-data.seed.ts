@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DATABASE_CONNECTION_NAME } from '@common/database/constants/database.constant';
+import { ENUM_CURRENCY_STATUS } from '@modules/currency/enums/currency.enum';
 
 /**
  * Trade data seed — destructive helpers for UAT / dev resets.
@@ -253,8 +254,16 @@ export class MigrationTradeDataSeed {
                  (_id, company_id, created_by, code, name, symbol,
                   is_active, is_default, status, soft_delete, "createdAt", "updatedAt")
                  VALUES (gen_random_uuid(), $1, $2, $3, $4, $5,
-                         true, $6, 'ACTIVE', false, NOW(), NOW())`,
-                [companyId, createdBy, c.code, c.name, c.symbol, c.is_default]
+                         true, $6, $7, false, NOW(), NOW())`,
+                [
+                    companyId,
+                    createdBy,
+                    c.code,
+                    c.name,
+                    c.symbol,
+                    c.is_default,
+                    ENUM_CURRENCY_STATUS.ACTIVE,
+                ]
             );
             this.logger.log(`  +  Currency ${c.code} created`);
         }

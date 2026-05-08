@@ -6,21 +6,18 @@ import {
 } from '@nestjs/common';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
-import { QuotationExpenseRepository } from '../repository/repositories/quotation-expense.repository';
-import { QuotationRebateRepository } from '../repository/repositories/quotation-rebate.repository';
 import { QuotationDoc } from '../repository/entities/quotation.entity';
 import { QuotationCreateRequestDto } from '../dtos/request/quotation.create.request.dto';
 import { QuotationUpdateRequestDto } from '../dtos/request/quotation.update.request.dto';
 import {
     QuotationGetResponseDto,
     QuotationLineResponseDto,
-    QuotationExpenseResponseDto,
-    QuotationRebateResponseDto,
 } from '../dtos/response/quotation.get.response.dto';
 import { ENUM_QUOTATION_STATUS } from '../enums/quotation.enum';
 
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
+import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { LeadService } from '@modules/lead/services/lead.service';
@@ -48,10 +45,9 @@ export class QuotationService {
     constructor(
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
-        private readonly quotationExpenseRepository: QuotationExpenseRepository,
-        private readonly quotationRebateRepository: QuotationRebateRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerAddressRepository: CustomerAddressRepository,
+        private readonly customerContactRepository: CustomerContactRepository,
         private readonly currencyRepository: CurrencyRepository,
         private readonly leadRepository: LeadRepository,
         private readonly leadService: LeadService,
@@ -219,16 +215,6 @@ export class QuotationService {
             data.lines,
             data.margin_pct || '0'
         );
-        await this.replaceExpenses(
-            companyId,
-            header._id.toString(),
-            data.expenses
-        );
-        await this.replaceRebates(
-            companyId,
-            header._id.toString(),
-            data.rebates
-        );
 
         await this.recompute(header._id.toString(), companyId);
 
@@ -293,12 +279,7 @@ export class QuotationService {
         const wasSent = row.status === ENUM_QUOTATION_STATUS.SENT;
 
         // Apply scalar updates (skip nested arrays — replaced separately).
-        const {
-            lines,
-            expenses,
-            rebates,
-            ...scalar
-        } = data as any;
+        const { lines, ...scalar } = data as any;
         Object.assign(row, scalar);
         await this.quotationRepository.save(row);
 
@@ -309,12 +290,6 @@ export class QuotationService {
                 lines,
                 (data.margin_pct ?? row.margin_pct) || '0'
             );
-        }
-        if (Array.isArray(expenses)) {
-            await this.replaceExpenses(companyId, row._id.toString(), expenses);
-        }
-        if (Array.isArray(rebates)) {
-            await this.replaceRebates(companyId, row._id.toString(), rebates);
         }
 
         await this.recompute(row._id.toString(), companyId);
@@ -430,11 +405,15 @@ export class QuotationService {
             rebateMasterIds.length
                 ? this.rebateRepository.findAll({
                       _id: { $in: rebateMasterIds },
+                      is_active: true,
+                      soft_delete: false,
                   } as any)
                 : Promise.resolve([] as any[]),
             expenseMasterIds.length
                 ? this.expenseRepository.findAll({
                       _id: { $in: expenseMasterIds },
+                      is_active: true,
+                      soft_delete: false,
                   } as any)
                 : Promise.resolve([] as any[]),
         ]);
@@ -510,50 +489,6 @@ export class QuotationService {
         }
     }
 
-    private async replaceExpenses(
-        companyId: string,
-        quotationId: string,
-        expenses?: any[]
-    ): Promise<void> {
-        await this.quotationExpenseRepository.deleteByQuotationId(quotationId);
-        if (!expenses?.length) return;
-        let seq = 0;
-        for (const e of expenses) {
-            seq += 1;
-            await this.quotationExpenseRepository.create({
-                company_id: companyId,
-                quotation_id: quotationId,
-                expense_id: e.expense_id || null,
-                name: e.name,
-                amount: e.amount || '0',
-                is_overridden: !!e.is_overridden,
-                seq,
-            } as any);
-        }
-    }
-
-    private async replaceRebates(
-        companyId: string,
-        quotationId: string,
-        rebates?: any[]
-    ): Promise<void> {
-        await this.quotationRebateRepository.deleteByQuotationId(quotationId);
-        if (!rebates?.length) return;
-        let seq = 0;
-        for (const r of rebates) {
-            seq += 1;
-            await this.quotationRebateRepository.create({
-                company_id: companyId,
-                quotation_id: quotationId,
-                rebate_id: r.rebate_id || null,
-                name: r.name,
-                amount: r.amount || '0',
-                is_overridden: !!r.is_overridden,
-                seq,
-            } as any);
-        }
-    }
-
     // ─── Costing engine ─────────────────────────────────────────────────
 
     /**
@@ -578,17 +513,9 @@ export class QuotationService {
         const header = await this.quotationRepository.findOneById(quotationId);
         if (!header) return;
 
-        const [lines, expenses, rebates] = await Promise.all([
-            this.quotationLineRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-            this.quotationExpenseRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-            this.quotationRebateRepository.findAll({
-                quotation_id: quotationId,
-            } as any),
-        ]);
+        const lines = await this.quotationLineRepository.findAll({
+            quotation_id: quotationId,
+        } as any);
 
         // Resolve states for tax engine (intra-state vs inter-state).
         const customerState = await this.lookupCustomerState(
@@ -657,76 +584,7 @@ export class QuotationService {
             line_margin_total += lineMarginAmt;
         }
 
-        // Derive expense/rebate amounts from master rules when not overridden.
-        // Master-linked, !is_overridden → recompute (flat or % of subtotal).
-        // Else → trust stored amount.
-        const expenseMasterIds = Array.from(
-            new Set(
-                expenses
-                    .filter((e: any) => e.expense_id && !e.is_overridden)
-                    .map((e: any) => e.expense_id?.toString())
-                    .filter((v): v is string => !!v)
-            )
-        );
-        const rebateMasterIds = Array.from(
-            new Set(
-                rebates
-                    .filter((r: any) => r.rebate_id && !r.is_overridden)
-                    .map((r: any) => r.rebate_id?.toString())
-                    .filter((v): v is string => !!v)
-            )
-        );
-        const [expenseMasters, rebateMasters] = await Promise.all([
-            expenseMasterIds.length
-                ? this.expenseRepository.findAll({
-                      _id: { $in: expenseMasterIds },
-                  } as any)
-                : Promise.resolve([] as any[]),
-            rebateMasterIds.length
-                ? this.rebateRepository.findAll({
-                      _id: { $in: rebateMasterIds },
-                  } as any)
-                : Promise.resolve([] as any[]),
-        ]);
-        const expMap = new Map(
-            expenseMasters.map((m: any) => [m._id.toString(), m])
-        );
-        const rebMap = new Map(
-            rebateMasters.map((m: any) => [m._id.toString(), m])
-        );
-
-        let expenses_total = 0;
-        for (const e of expenses) {
-            let amt = num(e.amount);
-            if (e.expense_id && !e.is_overridden) {
-                const master: any = expMap.get(e.expense_id.toString());
-                if (master) {
-                    amt =
-                        master.type === 'percent'
-                            ? (subtotal * num(master.value)) / 100
-                            : num(master.value);
-                    e.amount = String(round2(amt));
-                    await this.quotationExpenseRepository.save(e);
-                }
-            }
-            expenses_total += amt;
-        }
-        let rebates_total = 0;
-        for (const r of rebates) {
-            let amt = num(r.amount);
-            if (r.rebate_id && !r.is_overridden) {
-                const master: any = rebMap.get(r.rebate_id.toString());
-                if (master) {
-                    amt = (subtotal * num(master.pct)) / 100;
-                    r.amount = String(round2(amt));
-                    await this.quotationRebateRepository.save(r);
-                }
-            }
-            rebates_total += amt;
-        }
-
-        // When skip_product_costing is true, ignore the per-product buckets
-        // — user has chosen to apply rebates/expenses only at quote level.
+        // skip_product_costing zeroes the per-line product buckets.
         const skipProduct = !!(header as any).skip_product_costing;
         const effective_product_rebates = skipProduct
             ? 0
@@ -735,27 +593,23 @@ export class QuotationService {
             ? 0
             : product_expenses_total;
 
-        // Margin is now per-line (sum of line.margin_amount above). Header
-        // expenses/rebates pass through to grand_total without margin —
-        // they're shipment-level admin costs, not goods cost.
+        // Margin is per-line (sum of line.margin_amount above).
         const margin_amount = line_margin_total;
 
         const er = num(header.exchange_rate) || 1;
         const grand_total =
             (subtotal +
-                expenses_total +
                 effective_product_expenses -
-                rebates_total -
                 effective_product_rebates +
                 margin_amount +
                 tax_total) *
             er;
 
         header.subtotal = String(round2(subtotal));
-        header.expenses_total = String(round2(expenses_total));
-        header.rebates_total = String(round2(rebates_total));
-        // Store the EFFECTIVE per-product totals (zeroed if skipped) so the
-        // header aggregate matches what was actually used in the math.
+        // Header expense/rebate columns retained on the entity (DB) but no
+        // longer used — write zeros so old readers don't see stale aggregates.
+        (header as any).expenses_total = '0';
+        (header as any).rebates_total = '0';
         (header as any).product_expenses_total = String(
             round2(effective_product_expenses)
         );
@@ -820,11 +674,17 @@ export class QuotationService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, currencies, leads, vendors, expenses, rebates] =
+        const [customers, contacts, currencies, leads, vendors] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
                           _id: { $in: customerIds },
+                      } as any)
+                    : Promise.resolve([] as any[]),
+                customerIds.length
+                    ? this.customerContactRepository.findAll({
+                          customer_id: { $in: customerIds },
+                          soft_delete: false,
                       } as any)
                     : Promise.resolve([] as any[]),
                 currencyIds.length
@@ -842,13 +702,18 @@ export class QuotationService {
                           _id: { $in: vendorIds },
                       } as any)
                     : Promise.resolve([] as any[]),
-                this.quotationExpenseRepository.findAll({
-                    quotation_id: { $in: quotationIds },
-                } as any),
-                this.quotationRebateRepository.findAll({
-                    quotation_id: { $in: quotationIds },
-                } as any),
             ]);
+
+        // Pick the primary contact per customer (or first if no flag set).
+        const primaryContactByCustomer = new Map<string, any>();
+        for (const c of contacts as any[]) {
+            const cid = c.customer_id?.toString();
+            if (!cid) continue;
+            const existing = primaryContactByCustomer.get(cid);
+            if (!existing || (c.is_primary && !existing.is_primary)) {
+                primaryContactByCustomer.set(cid, c);
+            }
+        }
 
         const customerMap = toMap(customers, '_id');
         const currencyMap = toMap(currencies, '_id');
@@ -858,23 +723,39 @@ export class QuotationService {
         const linesByQ = groupBy(allLines, (l: any) =>
             l.quotation_id.toString()
         );
-        const expensesByQ = groupBy(expenses, (e: any) =>
-            e.quotation_id.toString()
-        );
-        const rebatesByQ = groupBy(rebates, (r: any) =>
-            r.quotation_id.toString()
-        );
 
         return rows.map((r) => {
             const cust = customerMap.get(r.customer_id?.toString());
             const cur = currencyMap.get(r.currency_id?.toString());
             const qid = r._id.toString();
+            const primary: any = primaryContactByCustomer.get(
+                r.customer_id?.toString()
+            );
+            // Compose a usable country_code (with formatted) for listing display
+            // — same shape Customer/Vendor listings use.
+            let primaryCC: any = primary?.country_code || null;
+            if (!primaryCC && primary?.phone) {
+                primaryCC = { dial_code: '+91', phone: primary.phone };
+            }
+            if (primaryCC && !primaryCC.formatted) {
+                const dial = primaryCC.dial_code || primaryCC.dialCode || '';
+                const digits = primaryCC.phone || primary?.phone || '';
+                if (dial || digits) {
+                    primaryCC.formatted = dial && digits
+                        ? `${dial} ${digits}`
+                        : dial || digits;
+                }
+            }
             const dto: QuotationGetResponseDto = {
                 _id: qid,
                 voucher_no: r.voucher_no,
                 lead_id: r.lead_id?.toString(),
                 customer_id: r.customer_id?.toString(),
                 customer_name: (cust as any)?.company_name,
+                customer_contact_name: primary?.name,
+                customer_contact_email: primary?.email,
+                customer_contact_phone: primary?.phone,
+                customer_contact_country_code: primaryCC,
                 customer_address_id: r.customer_address_id?.toString(),
                 quotation_date: r.quotation_date,
                 valid_until: r.valid_until,
@@ -888,9 +769,7 @@ export class QuotationService {
                 notes_to_client: r.notes_to_client,
                 internal_notes: r.internal_notes,
                 subtotal: r.subtotal,
-                expenses_total: r.expenses_total,
                 product_expenses_total: (r as any).product_expenses_total,
-                rebates_total: r.rebates_total,
                 product_rebates_total: (r as any).product_rebates_total,
                 skip_product_costing: !!(r as any).skip_product_costing,
                 margin_pct: r.margin_pct,
@@ -933,30 +812,6 @@ export class QuotationService {
                             margin_pct: l.margin_pct,
                             margin_amount: l.margin_amount,
                             seq: l.seq,
-                        })
-                    ),
-                expenses: (expensesByQ.get(qid) || [])
-                    .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
-                    .map(
-                        (e: any): QuotationExpenseResponseDto => ({
-                            _id: e._id?.toString(),
-                            expense_id: e.expense_id?.toString(),
-                            name: e.name,
-                            amount: e.amount,
-                            is_overridden: !!e.is_overridden,
-                            seq: e.seq,
-                        })
-                    ),
-                rebates: (rebatesByQ.get(qid) || [])
-                    .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
-                    .map(
-                        (r2: any): QuotationRebateResponseDto => ({
-                            _id: r2._id?.toString(),
-                            rebate_id: r2.rebate_id?.toString(),
-                            name: r2.name,
-                            amount: r2.amount,
-                            is_overridden: !!r2.is_overridden,
-                            seq: r2.seq,
                         })
                     ),
             };
