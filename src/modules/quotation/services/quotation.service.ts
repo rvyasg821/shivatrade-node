@@ -642,13 +642,9 @@ export class QuotationService {
             // aggregation rule below) so the two paths stay consistent.
             const effLineExp = skipProductForLine ? 0 : lineExpensesAmt;
             const effLineReb = skipProductForLine ? 0 : lineRebatesAmt;
-            // Inherit from header when the line value is null/undefined.
-            // An explicit "0" on the line means zero margin (override).
-            const rawLineMargin = (ln as any).margin_pct;
-            const lineMarginPct =
-                rawLineMargin === null || rawLineMargin === undefined
-                    ? num(header.margin_pct)
-                    : num(rawLineMargin);
+            // Header margin is gone — line value (or auto-filled price-list
+            // value) is authoritative. Empty/null = 0.
+            const lineMarginPct = num((ln as any).margin_pct);
             const lineMarginBase = out.taxable + effLineExp - effLineReb;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));

@@ -511,11 +511,7 @@ export class PfiService {
             // PFI lines don't yet carry per-line product expense/rebate
             // snapshots (a future port from Quotation), so the line margin
             // base is just the taxable goods cost.
-            const rawLineMargin = (ln as any).margin_pct;
-            const lineMarginPct =
-                rawLineMargin === null || rawLineMargin === undefined
-                    ? num(header.margin_pct)
-                    : num(rawLineMargin);
+            const lineMarginPct = num((ln as any).margin_pct);
             const lineMarginAmt = out.taxable * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
             await this.pfiLineRepository.save(ln);
