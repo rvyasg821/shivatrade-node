@@ -90,6 +90,17 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     product_expenses_amount: string;
 
+    /** Per-line margin %. Seeded from header.margin_pct on create; user can
+     *  override per line. Header margin_pct stays as the default-for-new-lines
+     *  seed only — the authoritative margin lives here. */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    margin_pct?: string;
+
+    /** Computed: (taxable + product_expenses_amount − product_rebates_amount)
+     *  × margin_pct/100. Cached so totals don't re-iterate. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    margin_amount: string;
+
     /** Display order in the quotation document. */
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;

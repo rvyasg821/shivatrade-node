@@ -39,6 +39,11 @@ export class PriceListEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
     discount_pct?: string;
 
+    /** Default margin % for this (vendor, product) row. Auto-fills the
+     *  quotation/PFI line on vendor pick. Quotation-line margin overrides. */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+    margin_pct?: string;
+
     /** Vendor lead time in days from PO to ready-to-ship. */
     @Column({ type: 'int', nullable: true })
     lead_time_days?: number;

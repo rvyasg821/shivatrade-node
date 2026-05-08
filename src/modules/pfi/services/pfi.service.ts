@@ -96,11 +96,11 @@ export class PfiService {
                 customer_id: customerId,
                 soft_delete: false,
             } as any);
-            if (!addr)
-                throw new BadRequestException(
-                    'Customer address not found for this customer'
-                );
+            if (!addr) {
+                return { addressMismatched: true } as any;
+            }
         }
+        return undefined as any;
     }
 
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
@@ -122,12 +122,15 @@ export class PfiService {
         data: PfiCreateRequestDto,
         createdBy: string
     ): Promise<PfiDoc> {
-        await this.assertReferences(
+        const refsOut = await this.assertReferences(
             companyId,
             data.customer_id,
             data.currency_id,
             data.customer_address_id
         );
+        if ((refsOut as any)?.addressMismatched) {
+            (data as any).customer_address_id = undefined;
+        }
 
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucher_no = await this.voucherService.getNext(
@@ -158,7 +161,12 @@ export class PfiService {
             version: 1,
         } as any);
 
-        await this.replaceLines(companyId, header._id.toString(), data.lines);
+        await this.replaceLines(
+            companyId,
+            header._id.toString(),
+            data.lines,
+            data.margin_pct || '0'
+        );
         await this.replaceExpenses(
             companyId,
             header._id.toString(),
@@ -186,7 +194,11 @@ export class PfiService {
         const companyId = row.company_id.toString();
 
         // Status lock — only DRAFT is fully editable.
-        const isLocked = row.status !== ENUM_PFI_STATUS.DRAFT;
+        // Same revert-and-edit allowance as Quotation — payload setting
+        // status=DRAFT lifts the lock for this update.
+        const willBeDraft = data.status === ENUM_PFI_STATUS.DRAFT;
+        const isLocked =
+            row.status !== ENUM_PFI_STATUS.DRAFT && !willBeDraft;
         const isStatusOnlyChange = (() => {
             if (!isLocked) return true;
             const allowedKeys = new Set(['status', 'internal_notes']);
@@ -203,12 +215,15 @@ export class PfiService {
             this.assertStatusTransitionAllowed(row.status, data.status);
         }
 
-        await this.assertReferences(
+        const refsOut = await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
             data.currency_id || row.currency_id.toString(),
             data.customer_address_id ?? row.customer_address_id?.toString()
         );
+        if ((refsOut as any)?.addressMismatched) {
+            (data as any).customer_address_id = null;
+        }
 
         const wasApproved = row.status === ENUM_PFI_STATUS.APPROVED;
         const wasSent = row.status === ENUM_PFI_STATUS.SENT;
@@ -218,7 +233,12 @@ export class PfiService {
         await this.pfiRepository.save(row);
 
         if (Array.isArray(lines)) {
-            await this.replaceLines(companyId, row._id.toString(), lines);
+            await this.replaceLines(
+                companyId,
+                row._id.toString(),
+                lines,
+                (data.margin_pct ?? row.margin_pct) || '0'
+            );
         }
         if (Array.isArray(expenses)) {
             await this.replaceExpenses(companyId, row._id.toString(), expenses);
@@ -348,6 +368,7 @@ export class PfiService {
                 unit_price: l.unit_price,
                 discount_pct: l.discount_pct,
                 tax_pct: l.tax_pct,
+                margin_pct: l.margin_pct,
             })),
             expenses: qExpenses.map((e: any) => ({
                 expense_id: e.expense_id?.toString(),
@@ -371,7 +392,8 @@ export class PfiService {
     private async replaceLines(
         companyId: string,
         pfiId: string,
-        lines?: any[]
+        lines?: any[],
+        defaultMarginPct: string = '0'
     ): Promise<void> {
         await this.pfiLineRepository.deleteByPfiId(pfiId);
         if (!lines?.length) return;
@@ -394,6 +416,12 @@ export class PfiService {
                 igst: '0',
                 taxable: '0',
                 line_total: '0',
+                // null = inherit from header.margin_pct at recompute time.
+                margin_pct:
+                    l.margin_pct != null && l.margin_pct !== ''
+                        ? String(l.margin_pct)
+                        : null,
+                margin_amount: '0',
                 seq,
             } as any);
         }
@@ -462,6 +490,7 @@ export class PfiService {
 
         let subtotal = 0;
         let tax_total = 0;
+        let line_margin_total = 0;
 
         for (const ln of lines) {
             const out = computeLineTax({
@@ -478,10 +507,22 @@ export class PfiService {
             ln.sgst = String(out.sgst);
             ln.igst = String(out.igst);
             ln.line_total = String(out.line_total);
+
+            // PFI lines don't yet carry per-line product expense/rebate
+            // snapshots (a future port from Quotation), so the line margin
+            // base is just the taxable goods cost.
+            const rawLineMargin = (ln as any).margin_pct;
+            const lineMarginPct =
+                rawLineMargin === null || rawLineMargin === undefined
+                    ? num(header.margin_pct)
+                    : num(rawLineMargin);
+            const lineMarginAmt = out.taxable * (lineMarginPct / 100);
+            (ln as any).margin_amount = String(round2(lineMarginAmt));
             await this.pfiLineRepository.save(ln);
 
             subtotal += out.taxable;
             tax_total += out.total_tax;
+            line_margin_total += lineMarginAmt;
         }
 
         const expenseMasterIds = unique(
@@ -543,12 +584,16 @@ export class PfiService {
             rebates_total += amt;
         }
 
-        const net_pre_margin = subtotal + expenses_total - rebates_total;
-        const margin_pct = num(header.margin_pct);
-        const margin_amount = net_pre_margin * (margin_pct / 100);
+        // Margin is now per-line (sum of line.margin_amount above).
+        const margin_amount = line_margin_total;
         const er = num(header.exchange_rate) || 1;
         const grand_total =
-            (net_pre_margin + margin_amount + tax_total) * er;
+            (subtotal +
+                expenses_total -
+                rebates_total +
+                margin_amount +
+                tax_total) *
+            er;
 
         header.subtotal = String(round2(subtotal));
         header.expenses_total = String(round2(expenses_total));
@@ -707,6 +752,8 @@ export class PfiService {
                             igst: l.igst,
                             taxable: l.taxable,
                             line_total: l.line_total,
+                            margin_pct: l.margin_pct,
+                            margin_amount: l.margin_amount,
                             seq: l.seq,
                         })
                     ),

@@ -21,6 +21,7 @@ export class PriceListGetResponseDto {
     @ApiProperty({ type: Number, required: false }) moq?: number;
     @ApiProperty({ type: String, required: false }) tax_pct?: string;
     @ApiProperty({ type: String, required: false }) discount_pct?: string;
+    @ApiProperty({ type: String, required: false }) margin_pct?: string;
     @ApiProperty({ type: Number, required: false }) lead_time_days?: number;
     @ApiProperty({ type: String }) effective_date: string;
     /** Explicit quote expiry — null if no explicit expiry was set. */
