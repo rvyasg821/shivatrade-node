@@ -55,6 +55,10 @@ export class CustomerGetResponseDto {
     @ApiProperty({ required: false, type: [CustomerAddressResponseDto] })
     addresses?: CustomerAddressResponseDto[];
 
+    /** Hydrated from the default-or-first address for listing display.
+     *  Computed at mapList time, not stored on the customer entity. */
+    @ApiProperty({ required: false, type: String }) country?: string;
+
     @ApiProperty({ required: false, type: String }) primary_contact_name?: string;
     @ApiProperty({ required: false, type: String }) primary_contact_email?: string;
     @ApiProperty({ required: false, type: String }) primary_contact_phone?: string;
