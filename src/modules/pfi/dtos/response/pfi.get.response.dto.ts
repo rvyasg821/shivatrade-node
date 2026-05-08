@@ -18,6 +18,8 @@ export class PfiLineResponseDto {
     igst?: string;
     taxable?: string;
     line_total?: string;
+    margin_pct?: string;
+    margin_amount?: string;
     seq?: number;
 }
 

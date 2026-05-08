@@ -47,6 +47,10 @@ export class QuotationLineCreateDto {
     @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
     @IsOptional()
     tax_pct?: string;
+
+    @IsNumberString({}, { message: 'margin_pct must be a numeric string' })
+    @IsOptional()
+    margin_pct?: string;
 }
 
 export class QuotationExpenseCreateDto {

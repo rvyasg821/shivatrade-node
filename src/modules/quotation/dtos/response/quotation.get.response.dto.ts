@@ -34,6 +34,8 @@ export class QuotationLineResponseDto {
     }>;
     product_rebates_amount?: string;
     product_expenses_amount?: string;
+    margin_pct?: string;
+    margin_amount?: string;
     seq?: number;
 }
 

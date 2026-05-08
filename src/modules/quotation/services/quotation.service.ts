@@ -103,11 +103,14 @@ export class QuotationService {
                 customer_id: customerId,
                 soft_delete: false,
             } as any);
-            if (!addr)
-                throw new BadRequestException(
-                    'Customer address not found for this customer'
-                );
+            if (!addr) {
+                // Don't hard-fail — common case is the address belongs to a
+                // different customer (e.g. auto-create-from-Lead set a stale
+                // default). Caller should treat as "no address selected".
+                return { addressMismatched: true } as any;
+            }
         }
+        return undefined as any;
     }
 
     // ─── Voucher prefix lookup ──────────────────────────────────────────
@@ -171,13 +174,16 @@ export class QuotationService {
             }
         }
 
-        await this.assertReferences(
+        const refsOut = await this.assertReferences(
             companyId,
             data.customer_id,
             data.currency_id,
             data.lead_id,
             data.customer_address_id
         );
+        if ((refsOut as any)?.addressMismatched) {
+            (data as any).customer_address_id = undefined;
+        }
 
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucher_no = await this.voucherService.getNext(
@@ -207,7 +213,12 @@ export class QuotationService {
             version: 1,
         } as any);
 
-        await this.replaceLines(companyId, header._id.toString(), data.lines);
+        await this.replaceLines(
+            companyId,
+            header._id.toString(),
+            data.lines,
+            data.margin_pct || '0'
+        );
         await this.replaceExpenses(
             companyId,
             header._id.toString(),
@@ -242,7 +253,13 @@ export class QuotationService {
         // ── Status lock ───────────────────────────────────────────────
         // Only DRAFT is fully editable. Other statuses accept ONLY a
         // status transition (and internal_notes), nothing else.
-        const isLocked = row.status !== ENUM_QUOTATION_STATUS.DRAFT;
+        // Exception: if the same payload is reverting to DRAFT, treat the
+        // row as unlocked — the transition matrix below still validates
+        // that the revert is allowed. This lets the FE do one-shot
+        // "revert + edit" instead of two round-trips.
+        const willBeDraft = data.status === ENUM_QUOTATION_STATUS.DRAFT;
+        const isLocked =
+            row.status !== ENUM_QUOTATION_STATUS.DRAFT && !willBeDraft;
         const isStatusOnlyChange = (() => {
             if (!isLocked) return true;
             const allowedKeys = new Set(['status', 'internal_notes']);
@@ -259,13 +276,18 @@ export class QuotationService {
             this.assertStatusTransitionAllowed(row.status, data.status);
         }
 
-        await this.assertReferences(
+        const refsOut = await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
             data.currency_id || row.currency_id.toString(),
             data.lead_id ?? row.lead_id?.toString(),
             data.customer_address_id ?? row.customer_address_id?.toString()
         );
+        if ((refsOut as any)?.addressMismatched) {
+            // Stale/mismatched address — null it on the row so the user can
+            // pick a fresh one without the save being blocked.
+            (data as any).customer_address_id = null;
+        }
 
         const wasApproved = row.status === ENUM_QUOTATION_STATUS.APPROVED;
         const wasSent = row.status === ENUM_QUOTATION_STATUS.SENT;
@@ -281,7 +303,12 @@ export class QuotationService {
         await this.quotationRepository.save(row);
 
         if (Array.isArray(lines)) {
-            await this.replaceLines(companyId, row._id.toString(), lines);
+            await this.replaceLines(
+                companyId,
+                row._id.toString(),
+                lines,
+                (data.margin_pct ?? row.margin_pct) || '0'
+            );
         }
         if (Array.isArray(expenses)) {
             await this.replaceExpenses(companyId, row._id.toString(), expenses);
@@ -368,7 +395,8 @@ export class QuotationService {
     private async replaceLines(
         companyId: string,
         quotationId: string,
-        lines?: any[]
+        lines?: any[],
+        defaultMarginPct: string = '0'
     ): Promise<void> {
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
         if (!lines?.length) return;
@@ -470,6 +498,13 @@ export class QuotationService {
                 product_expenses_snapshot: expensesByProduct.get(pid) || [],
                 product_rebates_amount: '0',
                 product_expenses_amount: '0',
+                // null = inherit from header.margin_pct at recompute time.
+                // Only persist a value when the line was explicitly set (non-empty).
+                margin_pct:
+                    l.margin_pct != null && l.margin_pct !== ''
+                        ? String(l.margin_pct)
+                        : null,
+                margin_amount: '0',
                 seq,
             } as any);
         }
@@ -565,6 +600,8 @@ export class QuotationService {
         let tax_total = 0;
         let product_rebates_total = 0;
         let product_expenses_total = 0;
+        let line_margin_total = 0;
+        const skipProductForLine = !!(header as any).skip_product_costing;
 
         for (const ln of lines) {
             const out = computeLineTax({
@@ -598,12 +635,30 @@ export class QuotationService {
             }
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
             (ln as any).product_expenses_amount = String(round2(lineExpensesAmt));
+
+            // Per-line margin matches the costing-sheet model: applied to the
+            // line's net-of-rebates base. When skip_product_costing is on, the
+            // base ignores the product-derived buckets (same as the header
+            // aggregation rule below) so the two paths stay consistent.
+            const effLineExp = skipProductForLine ? 0 : lineExpensesAmt;
+            const effLineReb = skipProductForLine ? 0 : lineRebatesAmt;
+            // Inherit from header when the line value is null/undefined.
+            // An explicit "0" on the line means zero margin (override).
+            const rawLineMargin = (ln as any).margin_pct;
+            const lineMarginPct =
+                rawLineMargin === null || rawLineMargin === undefined
+                    ? num(header.margin_pct)
+                    : num(rawLineMargin);
+            const lineMarginBase = out.taxable + effLineExp - effLineReb;
+            const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
+            (ln as any).margin_amount = String(round2(lineMarginAmt));
             await this.quotationLineRepository.save(ln);
 
             subtotal += out.taxable;
             tax_total += out.total_tax;
             product_rebates_total += lineRebatesAmt;
             product_expenses_total += lineExpensesAmt;
+            line_margin_total += lineMarginAmt;
         }
 
         // Derive expense/rebate amounts from master rules when not overridden.
@@ -684,19 +739,21 @@ export class QuotationService {
             ? 0
             : product_expenses_total;
 
-        // Net pre-margin includes BOTH manual and product-derived buckets.
-        const net_pre_margin =
-            subtotal +
-            expenses_total +
-            effective_product_expenses -
-            rebates_total -
-            effective_product_rebates;
-        const margin_pct = num(header.margin_pct);
-        const margin_amount = net_pre_margin * (margin_pct / 100);
+        // Margin is now per-line (sum of line.margin_amount above). Header
+        // expenses/rebates pass through to grand_total without margin —
+        // they're shipment-level admin costs, not goods cost.
+        const margin_amount = line_margin_total;
 
         const er = num(header.exchange_rate) || 1;
         const grand_total =
-            (net_pre_margin + margin_amount + tax_total) * er;
+            (subtotal +
+                expenses_total +
+                effective_product_expenses -
+                rebates_total -
+                effective_product_rebates +
+                margin_amount +
+                tax_total) *
+            er;
 
         header.subtotal = String(round2(subtotal));
         header.expenses_total = String(round2(expenses_total));
@@ -877,6 +934,8 @@ export class QuotationService {
                                 l.product_expenses_snapshot || [],
                             product_rebates_amount: l.product_rebates_amount,
                             product_expenses_amount: l.product_expenses_amount,
+                            margin_pct: l.margin_pct,
+                            margin_amount: l.margin_amount,
                             seq: l.seq,
                         })
                     ),

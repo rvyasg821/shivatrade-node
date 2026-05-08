@@ -54,6 +54,14 @@ export class PfiLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     line_total: string;
 
+    /** Per-line margin %. Seeded from header.margin_pct on create or copied
+     *  from source quotation_line on createFromQuotation. */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    margin_pct?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    margin_amount: string;
+
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 }
