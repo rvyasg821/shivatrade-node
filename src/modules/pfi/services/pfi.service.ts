@@ -502,7 +502,6 @@ export class PfiService {
         let line_margin_total = 0;
         let product_rebates_total = 0;
         let product_expenses_total = 0;
-        const skipProductForLine = !!(header as any).skip_product_costing;
 
         for (const ln of lines) {
             const out = computeLineTax({
@@ -537,12 +536,10 @@ export class PfiService {
                 round2(lineExpensesAmt)
             );
 
-            // Margin base mirrors costing-sheet model: taxable + line product
-            // expenses − line product rebates. Skip flag zeroes the buckets.
-            const effLineExp = skipProductForLine ? 0 : lineExpensesAmt;
-            const effLineReb = skipProductForLine ? 0 : lineRebatesAmt;
+            // Margin base: taxable + line product expenses − line product rebates.
             const lineMarginPct = num((ln as any).margin_pct);
-            const lineMarginBase = out.taxable + effLineExp - effLineReb;
+            const lineMarginBase =
+                out.taxable + lineExpensesAmt - lineRebatesAmt;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
             await this.pfiLineRepository.save(ln);
@@ -554,21 +551,12 @@ export class PfiService {
             product_expenses_total += lineExpensesAmt;
         }
 
-        // skip_product_costing zeroes out the per-line product buckets.
-        const skipProduct = !!(header as any).skip_product_costing;
-        const effective_product_rebates = skipProduct
-            ? 0
-            : product_rebates_total;
-        const effective_product_expenses = skipProduct
-            ? 0
-            : product_expenses_total;
-
         const margin_amount = line_margin_total;
         const er = num(header.exchange_rate) || 1;
         const grand_total =
             (subtotal +
-                effective_product_expenses -
-                effective_product_rebates +
+                product_expenses_total -
+                product_rebates_total +
                 margin_amount +
                 tax_total) *
             er;
@@ -579,10 +567,10 @@ export class PfiService {
         (header as any).expenses_total = '0';
         (header as any).rebates_total = '0';
         (header as any).product_expenses_total = String(
-            round2(effective_product_expenses)
+            round2(product_expenses_total)
         );
         (header as any).product_rebates_total = String(
-            round2(effective_product_rebates)
+            round2(product_rebates_total)
         );
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));

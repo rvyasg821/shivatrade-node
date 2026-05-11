@@ -528,7 +528,6 @@ export class QuotationService {
         let product_rebates_total = 0;
         let product_expenses_total = 0;
         let line_margin_total = 0;
-        const skipProductForLine = !!(header as any).skip_product_costing;
 
         for (const ln of lines) {
             const out = computeLineTax({
@@ -563,16 +562,9 @@ export class QuotationService {
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
             (ln as any).product_expenses_amount = String(round2(lineExpensesAmt));
 
-            // Per-line margin matches the costing-sheet model: applied to the
-            // line's net-of-rebates base. When skip_product_costing is on, the
-            // base ignores the product-derived buckets (same as the header
-            // aggregation rule below) so the two paths stay consistent.
-            const effLineExp = skipProductForLine ? 0 : lineExpensesAmt;
-            const effLineReb = skipProductForLine ? 0 : lineRebatesAmt;
-            // Header margin is gone — line value (or auto-filled price-list
-            // value) is authoritative. Empty/null = 0.
+            // Per-line margin: applied to the line's net-of-rebates base.
             const lineMarginPct = num((ln as any).margin_pct);
-            const lineMarginBase = out.taxable + effLineExp - effLineReb;
+            const lineMarginBase = out.taxable + lineExpensesAmt - lineRebatesAmt;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
             await this.quotationLineRepository.save(ln);
@@ -584,23 +576,14 @@ export class QuotationService {
             line_margin_total += lineMarginAmt;
         }
 
-        // skip_product_costing zeroes the per-line product buckets.
-        const skipProduct = !!(header as any).skip_product_costing;
-        const effective_product_rebates = skipProduct
-            ? 0
-            : product_rebates_total;
-        const effective_product_expenses = skipProduct
-            ? 0
-            : product_expenses_total;
-
         // Margin is per-line (sum of line.margin_amount above).
         const margin_amount = line_margin_total;
 
         const er = num(header.exchange_rate) || 1;
         const grand_total =
             (subtotal +
-                effective_product_expenses -
-                effective_product_rebates +
+                product_expenses_total -
+                product_rebates_total +
                 margin_amount +
                 tax_total) *
             er;
@@ -611,10 +594,10 @@ export class QuotationService {
         (header as any).expenses_total = '0';
         (header as any).rebates_total = '0';
         (header as any).product_expenses_total = String(
-            round2(effective_product_expenses)
+            round2(product_expenses_total)
         );
         (header as any).product_rebates_total = String(
-            round2(effective_product_rebates)
+            round2(product_rebates_total)
         );
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));

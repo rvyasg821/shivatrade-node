@@ -229,7 +229,7 @@ export class MigrationFreshInitSeed {
             console.log('✅ Password history created');
 
             console.log('\n🎉 Fresh initialization completed successfully!');
-            console.log('📧 Email: admin@shivatrade.io');
+            console.log('📧 Email: admin@admin.com');
             console.log('🔑 Password: Admin@123');
 
         } catch (err: any) {
