@@ -7,15 +7,22 @@ import {
     Body,
     Param,
     Query,
+    UploadedFile,
+    Res,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { Response, ResponsePaging } from '@common/response/decorators/response.decorator';
 import { IResponse, IResponsePaging } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 
 import { CategoryService } from '../services/category.service';
+import { CategoryImportExportService } from '../services/category.import-export.service';
 import { CategoryRepository } from '../repository/repositories/category.repository';
 import { CategoryCreateRequestDto } from '../dtos/request/category.create.request.dto';
 import { CategoryUpdateRequestDto } from '../dtos/request/category.update.request.dto';
@@ -30,8 +37,101 @@ import { CategoryListResponseDto } from '../dtos/response/category.list.response
 export class CategoryAdminController {
     constructor(
         private readonly categoryService: CategoryService,
-        private readonly categoryRepository: CategoryRepository
+        private readonly categoryRepository: CategoryRepository,
+        private readonly importExportService: CategoryImportExportService
     ) {}
+
+    // ============ IMPORT / EXPORT ============
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for category import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateSampleExcel();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="category-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export categories as Excel' })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportCategories(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="categories-${
+                new Date().toISOString().split('T')[0]
+            }.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import categories from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+
+        const validRows = rows.filter((r) => r.status !== 'error');
+        if (validRows.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, updated: 0, errors: [] },
+            };
+        }
+
+        const result = await this.importExportService.importCategories(
+            validRows,
+            companyId,
+            userId
+        );
+
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.updated} updated`,
+            data: { summary, ...result },
+        };
+    }
 
     @Response('category.create')
     @AuthJwtAccessProtected()
