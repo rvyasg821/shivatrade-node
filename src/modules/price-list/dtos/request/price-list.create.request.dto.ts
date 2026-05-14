@@ -6,7 +6,6 @@ import {
     IsDateString,
     IsNumberString,
     IsInt,
-    IsBoolean,
     Min,
     MaxLength,
 } from 'class-validator';
@@ -56,10 +55,6 @@ export class PriceListCreateRequestDto {
     @IsDateString()
     @IsOptional()
     valid_until?: string;
-
-    @IsBoolean()
-    @IsOptional()
-    is_primary?: boolean;
 
     @IsString()
     @IsOptional()

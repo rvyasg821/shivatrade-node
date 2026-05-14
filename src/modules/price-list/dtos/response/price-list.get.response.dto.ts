@@ -29,7 +29,6 @@ export class PriceListGetResponseDto {
      *  effective_date - 1 day for the same (vendor, product), else null
      *  (still active). Computed at hydration time, not stored. */
     @ApiProperty({ type: String, required: false }) effective_until?: string;
-    @ApiProperty({ type: Boolean, required: false }) is_primary?: boolean;
     @ApiProperty({ type: String, required: false }) notes?: string;
 
     @ApiProperty({ type: Date }) createdAt: Date;

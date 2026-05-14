@@ -71,14 +71,6 @@ export class PriceListService {
             created_by: createdBy,
         } as any);
 
-        if (data.is_primary) {
-            await this.clearOtherPrimaries(
-                companyId,
-                data.product_id,
-                row._id.toString()
-            );
-        }
-
         this.logger.log(
             `Price list entry created: ${row._id} (vendor ${data.vendor_id}, product ${data.product_id})`
         );
@@ -109,33 +101,8 @@ export class PriceListService {
         Object.assign(row, data);
         const updated = await this.priceListRepository.save(row);
 
-        if (data.is_primary === true) {
-            await this.clearOtherPrimaries(
-                companyId,
-                row.product_id.toString(),
-                row._id.toString()
-            );
-        }
-
         this.logger.log(`Price list entry updated: ${row._id}`);
         return updated;
-    }
-
-    /** Un-flag any other primary rows for the same (company, product). */
-    private async clearOtherPrimaries(
-        companyId: string,
-        productId: string,
-        keepRowId: string
-    ): Promise<void> {
-        const rows = await this.priceListRepository.findPrimaryRows(
-            companyId,
-            productId
-        );
-        for (const r of rows) {
-            if (r._id.toString() === keepRowId) continue;
-            r.is_primary = false;
-            await this.priceListRepository.save(r);
-        }
     }
 
     async hardDelete(row: PriceListDoc): Promise<void> {

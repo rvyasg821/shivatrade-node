@@ -93,6 +93,12 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     tax_total: string;
 
+    /** Home-currency (INR) rounding adjustment — the ± difference applied to
+     *  the raw home grand total to reach a whole-rupee figure. GST-compliant
+     *  "Round Off" line. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    round_off: string;
+
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     grand_total: string;
 

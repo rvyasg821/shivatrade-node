@@ -54,49 +54,6 @@ export class PriceListRepository extends DatabaseObjectIdRepositoryBase<PriceLis
     }
 
     /**
-     * Primary vendor row for a product — Costing Sheet / fresh PO defaults.
-     */
-    async findPrimaryForProduct(
-        companyId: string,
-        productId: string,
-        asOfDate?: string
-    ): Promise<PriceListDoc | null> {
-        const today = asOfDate || new Date().toISOString().slice(0, 10);
-        const baseWhere: any = {
-            company_id: companyId,
-            product_id: productId,
-            is_primary: true,
-            effective_date: LessThanOrEqual(today),
-        };
-        const rows = await this._repository.find({
-            where: [
-                { ...baseWhere, valid_until: IsNull() },
-                { ...baseWhere, valid_until: MoreThanOrEqual(today) },
-            ],
-            order: { effective_date: 'DESC', createdAt: 'DESC' },
-            take: 1,
-        });
-        return rows[0] || null;
-    }
-
-    /**
-     * Find primary rows for the given (company, product), regardless of date.
-     * Used by the service to clear other primaries when toggling on.
-     */
-    async findPrimaryRows(
-        companyId: string,
-        productId: string
-    ): Promise<PriceListDoc[]> {
-        return this._repository.find({
-            where: {
-                company_id: companyId,
-                product_id: productId,
-                is_primary: true,
-            } as any,
-        });
-    }
-
-    /**
      * Find the next-effective row after a given (vendor, product, date) — used
      * to derive `effective_until` when no explicit `valid_until` was set.
      */
