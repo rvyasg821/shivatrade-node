@@ -119,6 +119,19 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     parent_version_id?: string;
 
+    // ── Public share link ──
+    /** Unguessable token for the view-only public URL (`/q/:token`). Null
+     *  until the quotation is published (only allowed when sent/approved). */
+    @Index()
+    @Column({ type: 'varchar', length: 64, nullable: true, unique: true })
+    public_token?: string;
+
+    @Column({ type: 'int', nullable: false, default: 0 })
+    public_view_count: number;
+
+    @Column({ type: 'timestamp', nullable: true })
+    public_last_viewed_at?: Date;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

@@ -4,6 +4,7 @@ import {
     BadRequestException,
     NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
 import { QuotationDoc } from '../repository/entities/quotation.entity';
@@ -13,6 +14,7 @@ import {
     QuotationGetResponseDto,
     QuotationLineResponseDto,
 } from '../dtos/response/quotation.get.response.dto';
+import { QuotationPublicResponseDto } from '../dtos/response/quotation.public.response.dto';
 import { ENUM_QUOTATION_STATUS } from '../enums/quotation.enum';
 
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
@@ -28,6 +30,7 @@ import { CompanyAddressRepository } from '@modules/company/repository/repositori
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
+import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
 import { ProductExpenseRepository } from '@modules/product/repository/repositories/product-expense.repository';
 
@@ -60,6 +63,7 @@ export class QuotationService {
         private readonly vendorRepository: VendorRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly rebateRepository: RebateRepository,
+        private readonly productRepository: ProductRepository,
         private readonly productRebateRepository: ProductRebateRepository,
         private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly voucherService: VoucherService
@@ -389,6 +393,68 @@ export class QuotationService {
         this.logger.log(`Quotation soft-deleted: ${row._id}`);
     }
 
+    // ─── Public share link ──────────────────────────────────────────────
+
+    /** Generate (or keep) the public token. Only sent/approved quotations
+     *  can be published — a draft is not final enough to share. */
+    async publish(id: string): Promise<QuotationDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        if (!row.public_token) {
+            row.public_token = randomBytes(24).toString('base64url');
+            await this.quotationRepository.save(row);
+        }
+        return row;
+    }
+
+    /** Issue a fresh token — the old public URL stops working immediately. */
+    async rotateToken(id: string): Promise<QuotationDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        row.public_token = randomBytes(24).toString('base64url');
+        await this.quotationRepository.save(row);
+        return row;
+    }
+
+    /** Revoke the public link entirely. */
+    async unpublish(id: string): Promise<QuotationDoc> {
+        const row = await this.findOneById(id);
+        row.public_token = null as any;
+        await this.quotationRepository.save(row);
+        return row;
+    }
+
+    private assertPublishable(status: ENUM_QUOTATION_STATUS): void {
+        if (
+            status !== ENUM_QUOTATION_STATUS.SENT &&
+            status !== ENUM_QUOTATION_STATUS.APPROVED
+        ) {
+            throw new BadRequestException(
+                'Only sent or approved quotations can be published'
+            );
+        }
+    }
+
+    /** Public view-only fetch by token — no auth. Returns null for an
+     *  unknown token or a quotation that is no longer in a shareable state. */
+    async findByPublicToken(token: string): Promise<QuotationDoc | null> {
+        if (!token) return null;
+        const row = await this.quotationRepository.findOne({
+            public_token: token,
+            soft_delete: false,
+        } as any);
+        if (!row) return null;
+        // Bump view tracking (fire-and-forget — never block the response).
+        row.public_view_count = (row.public_view_count || 0) + 1;
+        row.public_last_viewed_at = new Date();
+        this.quotationRepository
+            .save(row)
+            .catch((err) =>
+                this.logger.warn(`Public view-count update failed: ${err}`)
+            );
+        return row;
+    }
+
     // ─── Replace-on-update for nested arrays ────────────────────────────
 
     private async replaceLines(
@@ -400,84 +466,11 @@ export class QuotationService {
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
         if (!lines?.length) return;
 
-        // Pre-load product master rebate/expense links for ALL products
-        // referenced by these lines, in two queries - avoids N+1.
-        const productIds = Array.from(
-            new Set(
-                lines.map((l) => l.product_id).filter((id): id is string => !!id)
-            )
-        );
-        const [pRebateLinks, pExpenseLinks] = await Promise.all([
-            productIds.length
-                ? this.productRebateRepository.findAll({
-                      product_id: { $in: productIds },
-                  } as any)
-                : Promise.resolve([] as any[]),
-            productIds.length
-                ? this.productExpenseRepository.findAll({
-                      product_id: { $in: productIds },
-                  } as any)
-                : Promise.resolve([] as any[]),
-        ]);
-        const rebateMasterIds = unique(
-            pRebateLinks.map((l: any) => l.rebate_id?.toString())
-        );
-        const expenseMasterIds = unique(
-            pExpenseLinks.map((l: any) => l.expense_id?.toString())
-        );
-        const [rebateMasters, expenseMasters] = await Promise.all([
-            rebateMasterIds.length
-                ? this.rebateRepository.findAll({
-                      _id: { $in: rebateMasterIds },
-                      is_active: true,
-                      soft_delete: false,
-                  } as any)
-                : Promise.resolve([] as any[]),
-            expenseMasterIds.length
-                ? this.expenseRepository.findAll({
-                      _id: { $in: expenseMasterIds },
-                      is_active: true,
-                      soft_delete: false,
-                  } as any)
-                : Promise.resolve([] as any[]),
-        ]);
-        const rebMap = new Map(
-            rebateMasters.map((m: any) => [m._id.toString(), m])
-        );
-        const expMap = new Map(
-            expenseMasters.map((m: any) => [m._id.toString(), m])
-        );
-        const rebatesByProduct = new Map<string, any[]>();
-        for (const l of pRebateLinks as any[]) {
-            const m: any = rebMap.get(l.rebate_id?.toString());
-            if (!m) continue;
-            const pid = l.product_id.toString();
-            const arr = rebatesByProduct.get(pid) || [];
-            arr.push({
-                rebate_id: l.rebate_id.toString(),
-                code: m.code,
-                name: m.name,
-                type: m.type,
-                pct: l.pct != null ? String(l.pct) : String(m.pct),
-            });
-            rebatesByProduct.set(pid, arr);
-        }
-        const expensesByProduct = new Map<string, any[]>();
-        for (const l of pExpenseLinks as any[]) {
-            const m: any = expMap.get(l.expense_id?.toString());
-            if (!m) continue;
-            const pid = l.product_id.toString();
-            const arr = expensesByProduct.get(pid) || [];
-            arr.push({
-                expense_id: l.expense_id.toString(),
-                code: m.code,
-                name: m.name,
-                type: m.type,
-                value: l.value != null ? String(l.value) : String(m.value),
-            });
-            expensesByProduct.set(pid, arr);
-        }
-
+        // The line's rebate/expense snapshots are the source of truth — they
+        // arrive pre-filled from the product master on the FE but are then
+        // user-editable per line (edit pct/value/type, add ad-hoc rows,
+        // delete). Persist exactly what the FE sends; never rebuild from the
+        // product master here (that would silently drop edits + ad-hoc rows).
         let seq = 0;
         for (const l of lines) {
             seq += 1;
@@ -498,8 +491,16 @@ export class QuotationService {
                 igst: '0',
                 taxable: '0',
                 line_total: '0',
-                product_rebates_snapshot: rebatesByProduct.get(pid) || [],
-                product_expenses_snapshot: expensesByProduct.get(pid) || [],
+                product_rebates_snapshot: Array.isArray(
+                    l.product_rebates_snapshot
+                )
+                    ? l.product_rebates_snapshot
+                    : [],
+                product_expenses_snapshot: Array.isArray(
+                    l.product_expenses_snapshot
+                )
+                    ? l.product_expenses_snapshot
+                    : [],
                 product_rebates_amount: '0',
                 product_expenses_amount: '0',
                 // null = inherit from header.margin_pct at recompute time.
@@ -690,8 +691,13 @@ export class QuotationService {
                 .map((l: any) => l.vendor_id?.toString())
                 .filter((v: any): v is string => !!v)
         );
+        const productIds = unique(
+            allLines
+                .map((l: any) => l.product_id?.toString())
+                .filter((v: any): v is string => !!v)
+        );
 
-        const [customers, contacts, leads, vendors] =
+        const [customers, contacts, leads, vendors, products] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
@@ -714,6 +720,11 @@ export class QuotationService {
                           _id: { $in: vendorIds },
                       } as any)
                     : Promise.resolve([] as any[]),
+                productIds.length
+                    ? this.productRepository.findAll({
+                          _id: { $in: productIds },
+                      } as any)
+                    : Promise.resolve([] as any[]),
             ]);
 
         // Pick the primary contact per customer (or first if no flag set).
@@ -730,6 +741,7 @@ export class QuotationService {
         const customerMap = toMap(customers, '_id');
         const leadMap = toMap(leads, '_id');
         const vendorMap = toMap(vendors, '_id');
+        const productMap = toMap(products, '_id');
 
         const linesByQ = groupBy(allLines, (l: any) =>
             l.quotation_id.toString()
@@ -789,6 +801,9 @@ export class QuotationService {
                 status: r.status,
                 version: r.version,
                 parent_version_id: r.parent_version_id?.toString(),
+                public_token: (r as any).public_token || undefined,
+                public_view_count: (r as any).public_view_count || 0,
+                public_last_viewed_at: (r as any).public_last_viewed_at,
                 created_by: r.created_by?.toString(),
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
@@ -798,6 +813,12 @@ export class QuotationService {
                         (l: any): QuotationLineResponseDto => ({
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
+                            product_code: (productMap.get(
+                                l.product_id?.toString()
+                            ) as any)?.code,
+                            product_name: (productMap.get(
+                                l.product_id?.toString()
+                            ) as any)?.name,
                             vendor_id: l.vendor_id?.toString(),
                             vendor_name: (vendorMap.get(
                                 l.vendor_id?.toString()
@@ -832,6 +853,159 @@ export class QuotationService {
     async mapGet(row: QuotationDoc): Promise<QuotationGetResponseDto> {
         const [mapped] = await this.mapList([row]);
         return mapped;
+    }
+
+    /**
+     * Client-facing sanitized projection. Reuses the full hydration from
+     * mapGet, then strips every internal costing field and converts the
+     * per-line figures to the customer's currency (B1). Never exposes
+     * margin / expenses / rebates / internal_notes / exchange rate / INR.
+     */
+    async mapPublic(row: QuotationDoc): Promise<QuotationPublicResponseDto> {
+        const full = await this.mapGet(row);
+        const er = num(full.exchange_rate) || 1;
+
+        // ── Billed From (seller) ──
+        let company_name: string | undefined;
+        let company_email: string | undefined;
+        let company_phone: string | undefined;
+        let company_iec: string | undefined;
+        let company_address: string | undefined;
+        try {
+            const company: any = await this.companyService.findOneById(
+                row.company_id.toString()
+            );
+            company_name = company?.company_name;
+            company_email = company?.email;
+            company_iec = company?.iec;
+            const ccc: any = company?.country_code;
+            // Seller is India-based — if no dial code was stored, default to
+            // +91 so the number never shows as bare digits.
+            company_phone = company?.mobile
+                ? ccc?.formatted ||
+                  `${ccc?.dial_code || '+91'} ${company.mobile}`
+                : undefined;
+
+            const addresses =
+                await this.companyAddressRepository.findByCompanyId(
+                    row.company_id.toString()
+                );
+            const corp =
+                (addresses || []).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a: any) => a.type === 'corporate') ||
+                (addresses || []).find((a: any) => a.is_default) ||
+                (addresses || [])[0];
+            if (corp) {
+                company_address = [
+                    corp.address_line1,
+                    corp.address_line2,
+                    [corp.city, corp.state, corp.postcode]
+                        .filter(Boolean)
+                        .join(', '),
+                    corp.country,
+                ]
+                    .filter(Boolean)
+                    .join('\n');
+            }
+        } catch {
+            // leave seller fields undefined — the header degrades gracefully
+        }
+
+        // Resolve the bill-to address for the document header.
+        let customer_address: string | undefined;
+        if (row.customer_address_id) {
+            try {
+                const addr: any = await this.customerAddressRepository.findOne({
+                    _id: row.customer_address_id.toString(),
+                } as any);
+                if (addr) {
+                    customer_address = [
+                        addr.address_line1,
+                        addr.address_line2,
+                        [addr.city, addr.state, addr.postcode]
+                            .filter(Boolean)
+                            .join(', '),
+                        addr.country,
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                }
+            } catch {
+                customer_address = undefined;
+            }
+        }
+
+        // Contact phone — prefer the rich formatted form, else compose it.
+        const cc: any = full.customer_contact_country_code;
+        const customer_phone =
+            cc?.formatted ||
+            (cc?.dial_code && full.customer_contact_phone
+                ? `${cc.dial_code} ${full.customer_contact_phone}`
+                : full.customer_contact_phone) ||
+            undefined;
+
+        let subtotal = 0;
+        let gst_total = 0;
+        const lines = (full.lines || []).map((l) => {
+            const qty = num(l.qty);
+            // All-in costed line value (INR, ex-GST): taxable + expenses
+            // − rebates + margin. The customer never sees the breakdown,
+            // only this rolled-up rate.
+            const costedInr =
+                num(l.taxable) +
+                num(l.product_expenses_amount) -
+                num(l.product_rebates_amount) +
+                num(l.margin_amount);
+            const lineAmount = round2(costedInr * er);
+            const lineGst = round2(
+                (num(l.cgst) + num(l.sgst) + num(l.igst)) * er
+            );
+            subtotal += lineAmount;
+            gst_total += lineGst;
+            return {
+                product_name: l.product_name,
+                description: l.description,
+                qty: l.qty,
+                unit: l.unit,
+                unit_price:
+                    qty > 0 ? String(round2(lineAmount / qty)) : '0',
+                discount_pct: l.discount_pct,
+                tax_pct: l.tax_pct,
+                gst_amount: String(lineGst),
+                line_total: String(round2(lineAmount + lineGst)),
+            };
+        });
+
+        const today = new Date().toISOString().slice(0, 10);
+        return {
+            voucher_no: full.voucher_no,
+            quotation_date: full.quotation_date,
+            valid_until: full.valid_until,
+            is_expired: !!full.valid_until && full.valid_until < today,
+            status: full.status,
+            currency_code: full.currency_code,
+            currency_symbol: full.currency_symbol,
+            company_name,
+            company_email,
+            company_phone,
+            company_iec,
+            company_address,
+            customer_name: full.customer_name,
+            customer_contact_name: full.customer_contact_name,
+            customer_email: full.customer_contact_email,
+            customer_phone,
+            customer_address,
+            payment_terms: full.payment_terms,
+            delivery_terms: full.delivery_terms,
+            delivery_location: full.delivery_location,
+            notes_to_client: full.notes_to_client,
+            lines,
+            subtotal: String(round2(subtotal)),
+            gst_total: String(round2(gst_total)),
+            grand_total: full.grand_total,
+        };
     }
 }
 
