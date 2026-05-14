@@ -17,12 +17,12 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
-    /** Source Quotation — set when PFI was created via createFromQuotation. */
+    /** Source Quotation - set when PFI was created via createFromQuotation. */
     @Index()
     @Column({ type: 'uuid', nullable: true })
     quotation_id?: string;
 
-    /** Denormalised lead link for filtering — copied from source Quotation. */
+    /** Denormalised lead link for filtering - copied from source Quotation. */
     @Index()
     @Column({ type: 'uuid', nullable: true })
     lead_id?: string;
@@ -41,8 +41,8 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     valid_until?: string;
 
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    currency_id: string;
+    @Column({ type: 'varchar', length: 10, nullable: false })
+    currency_code: string;
 
     @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
     exchange_rate?: string;

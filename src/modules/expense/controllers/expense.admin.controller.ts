@@ -86,7 +86,7 @@ export class ExpenseAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; name: string; code: string; type: string; value: string; base: string }[]>> {
+    ): Promise<IResponse<{ _id: string; name: string; code: string; type: string; value: string }[]>> {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
         const expenses = await this.expenseRepository.findAll(find, {
@@ -99,7 +99,6 @@ export class ExpenseAdminController {
                 code: e.code,
                 type: e.type,
                 value: e.value,
-                base: e.base,
             })),
         };
     }

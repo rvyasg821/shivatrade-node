@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Exclude } from 'class-transformer';
 import {
-    ENUM_EXPENSE_BASE,
     ENUM_EXPENSE_STATUS,
     ENUM_EXPENSE_TYPE,
 } from '@modules/expense/enums/expense.enum';
@@ -15,9 +14,6 @@ export class ExpenseGetResponseDto {
     @ApiProperty({ required: true, type: String }) code: string;
     @ApiProperty({ required: true, enum: ENUM_EXPENSE_TYPE }) type: ENUM_EXPENSE_TYPE;
     @ApiProperty({ required: true, type: String }) value: string;
-    @ApiProperty({ required: true, enum: ENUM_EXPENSE_BASE }) base: ENUM_EXPENSE_BASE;
-
-    @ApiProperty({ required: false, type: String }) description?: string;
 
     @ApiProperty({ required: true, type: Boolean }) is_active: boolean;
     @ApiProperty({ required: true, enum: ENUM_EXPENSE_STATUS })

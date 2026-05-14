@@ -24,16 +24,12 @@ export class PriceListEntity extends DatabaseObjectIdEntityBase {
     currency_id: string;
 
     /** Unit price in `currency_id`. Stored as numeric for precision. */
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false })
     unit_price: string;
 
     /** Minimum order quantity. */
     @Column({ type: 'int', nullable: true, default: 1 })
     moq?: number;
-
-    /** Tax percentage (e.g. GST/VAT) on this price. */
-    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
-    tax_pct?: string;
 
     /** Discount percentage offered by the vendor. */
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })

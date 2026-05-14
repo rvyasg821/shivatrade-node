@@ -14,7 +14,7 @@ export class ProductEntity extends DatabaseObjectIdEntityBase {
 
     @Index()
     @Column({ type: 'varchar', length: 50, nullable: false })
-    code: string; // SKU / Item Code — unique per company (case-insensitive)
+    code: string; // SKU / Item Code - unique per company (case-insensitive)
 
     @Index()
     @Column({ type: 'varchar', length: 200, nullable: false })
@@ -39,12 +39,21 @@ export class ProductEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 50, nullable: true })
     hsn_code?: string; // GST classification
 
+    /** GST percentage tied to the HSN code. Seeds quotation/PFI line tax %. */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+    tax_pct?: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true })
     unit_of_measure?: string;
 
     // ── Pricing ──
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
     selling_price?: string;
+
+    // Default selling margin (%) - seeds Quotation / PFI line margins when
+    // this product is added. Overridable per line.
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+    margin_pct?: string;
 
     @Index()
     @Column({ type: 'uuid', nullable: true })

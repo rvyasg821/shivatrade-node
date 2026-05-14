@@ -12,6 +12,8 @@ import { LeadUpdateRequestDto } from '../dtos/request/lead.update.request.dto';
 import { LeadGetResponseDto } from '../dtos/response/lead.get.response.dto';
 import { LeadListResponseDto } from '../dtos/response/lead.list.response.dto';
 import { ENUM_LEAD_STATUS } from '../enums/lead.enum';
+import { ENUM_LEAD_ACTIVITY_TYPE } from '../enums/lead-activity.enum';
+import { LeadActivityService } from './lead-activity.service';
 import { CustomerService } from '@modules/customer/services/customer.service';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
@@ -37,7 +39,8 @@ export class LeadService {
         private readonly userRepository: UserRepository,
         private readonly productRepository: ProductRepository,
         private readonly categoryRepository: CategoryRepository,
-        private readonly quotationRepository: QuotationRepository
+        private readonly quotationRepository: QuotationRepository,
+        private readonly activityService: LeadActivityService
     ) {}
 
     async create(
@@ -120,10 +123,31 @@ export class LeadService {
 
         const wasWon = lead.status === ENUM_LEAD_STATUS.WON;
         const willBeWon = data.status === ENUM_LEAD_STATUS.WON;
+        const prevStatus = lead.status;
 
         Object.assign(lead, data);
         let updated = await this.leadRepository.save(lead);
         this.logger.log(`Lead updated: ${lead._id}`);
+
+        // Status change → timeline entry. Fire-and-forget; failure here
+        // should not roll back the save itself.
+        if (data.status && data.status !== prevStatus) {
+            this.activityService
+                .addSystem(
+                    companyId,
+                    updated._id.toString(),
+                    ENUM_LEAD_ACTIVITY_TYPE.STATUS_CHANGE,
+                    {
+                        metadata: { from: prevStatus, to: data.status },
+                        createdBy: userId,
+                    }
+                )
+                .catch((err) =>
+                    this.logger.warn(
+                        `Failed to log status_change activity: ${err.message}`
+                    )
+                );
+        }
 
         // Auto-convert when status flips to Won and not already linked.
         if (!wasWon && willBeWon && !updated.converted_customer_id) {
@@ -228,6 +252,21 @@ export class LeadService {
         this.logger.log(
             `Lead ${lead._id} converted to customer ${customerId}`
         );
+        this.activityService
+            .addSystem(
+                companyId,
+                updated._id.toString(),
+                ENUM_LEAD_ACTIVITY_TYPE.CONVERSION,
+                {
+                    metadata: { customer_id: customerId, won: true },
+                    createdBy: userId,
+                }
+            )
+            .catch((err) =>
+                this.logger.warn(
+                    `Failed to log Won conversion activity: ${err.message}`
+                )
+            );
         return { lead: updated, customerId };
     }
 
@@ -301,6 +340,21 @@ export class LeadService {
         if (matched) {
             lead.customer_id = matched;
             await this.leadRepository.save(lead);
+            this.activityService
+                .addSystem(
+                    companyId,
+                    lead._id.toString(),
+                    ENUM_LEAD_ACTIVITY_TYPE.CONVERSION,
+                    {
+                        metadata: { customer_id: matched, reused: true },
+                        createdBy: userId,
+                    }
+                )
+                .catch((err) =>
+                    this.logger.warn(
+                        `Failed to log conversion activity: ${err.message}`
+                    )
+                );
             return matched;
         }
 
@@ -347,6 +401,24 @@ export class LeadService {
         this.logger.log(
             `Lead ${lead._id} linked to new customer ${customer._id} (no status change)`
         );
+        this.activityService
+            .addSystem(
+                companyId,
+                lead._id.toString(),
+                ENUM_LEAD_ACTIVITY_TYPE.CONVERSION,
+                {
+                    metadata: {
+                        customer_id: customer._id.toString(),
+                        reused: false,
+                    },
+                    createdBy: userId,
+                }
+            )
+            .catch((err) =>
+                this.logger.warn(
+                    `Failed to log conversion activity: ${err.message}`
+                )
+            );
         return customer._id.toString();
     }
 
@@ -403,11 +475,7 @@ export class LeadService {
         companyId: string,
         categoryIds: string[] | undefined
     ): Promise<void> {
-        if (!categoryIds || !categoryIds.length) {
-            throw new BadRequestException(
-                'At least one interested category is required'
-            );
-        }
+        if (!categoryIds || !categoryIds.length) return;
         const categories = await this.categoryRepository.findAll({
             _id: { $in: categoryIds },
             company_id: companyId,

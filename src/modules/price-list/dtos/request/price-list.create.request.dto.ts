@@ -36,11 +36,6 @@ export class PriceListCreateRequestDto {
 
     @IsString()
     @IsOptional()
-    @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
-    tax_pct?: string;
-
-    @IsString()
-    @IsOptional()
     @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
     discount_pct?: string;
 

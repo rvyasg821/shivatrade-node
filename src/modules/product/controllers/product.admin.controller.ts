@@ -107,6 +107,8 @@ export class ProductAdminController {
                 unit_of_measure?: string;
                 category_id?: string;
                 selling_price?: string;
+                margin_pct?: string;
+                tax_pct?: string;
                 currency_id?: string;
                 product_rebates?: Array<{
                     rebate_id: string;
@@ -209,6 +211,8 @@ export class ProductAdminController {
                 unit_of_measure: p.unit_of_measure,
                 category_id: p.category_id ? p.category_id.toString() : undefined,
                 selling_price: p.selling_price,
+                margin_pct: p.margin_pct,
+                tax_pct: p.tax_pct,
                 currency_id: p.currency_id ? p.currency_id.toString() : undefined,
                 product_rebates: rebatesByProduct.get(p._id.toString()) || [],
                 product_expenses:

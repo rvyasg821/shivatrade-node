@@ -17,7 +17,7 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
-    /** Source lead — nullable for quotations created without going through Leads. */
+    /** Source lead - nullable for quotations created without going through Leads. */
     @Index()
     @Column({ type: 'uuid', nullable: true })
     lead_id?: string;
@@ -37,10 +37,10 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     valid_until?: string;
 
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    currency_id: string;
+    @Column({ type: 'varchar', length: 10, nullable: false })
+    currency_code: string;
 
-    /** FX rate at the time of quote (snapshot — does not auto-update). */
+    /** FX rate at the time of quote (snapshot - does not auto-update). */
     @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
     exchange_rate?: string;
 
@@ -79,7 +79,7 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     product_rebates_total: string;
 
     /** When true, the recompute zeros out product_rebates_total and
-     *  product_expenses_total — useful when the user wants to apply rebates
+     *  product_expenses_total - useful when the user wants to apply rebates
      *  and expenses ONLY at the quotation level (one-off custom rates) and
      *  skip the per-product master configuration entirely. */
     @Column({ type: 'boolean', nullable: false, default: false })

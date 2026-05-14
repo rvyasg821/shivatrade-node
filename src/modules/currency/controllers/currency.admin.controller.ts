@@ -103,51 +103,70 @@ export class CurrencyAdminController {
     }
 
     /**
-     * Returns the latest exchange rate for a `from → to` currency pair, or
-     * `{ rate: '1', same: true }` when both IDs match. Used by the Quotation /
-     * PFI / PO forms to auto-fill the exchange_rate field on currency pick.
+     * Returns the latest exchange rate for default-currency → `to` (code).
+     * If `to` matches the company's default currency code, returns rate '1'.
      */
     @Response('currency.currentRate')
     @AuthJwtAccessProtected()
     @Get('/exchange-rate/current')
     async currentExchangeRate(
         @AuthJwtPayload('companyId') companyId: string,
-        @Query('from') fromCurrencyId: string,
-        @Query('to') toCurrencyId: string
+        @Query('to') toCurrencyCode: string
     ): Promise<
         IResponse<{
-            from_currency_id?: string;
-            to_currency_id?: string;
+            to_currency_code?: string;
             rate: string;
             effective_date?: string;
             same?: boolean;
         } | null>
     > {
-        if (!fromCurrencyId || !toCurrencyId) return { data: null };
-        if (fromCurrencyId === toCurrencyId) {
+        if (!toCurrencyCode) return { data: null };
+        const toCode = toCurrencyCode.toUpperCase();
+        const def = await this.currencyService.getDefaultCurrency(companyId);
+        if (!def) return { data: null };
+        if (def.code === toCode) {
             return {
-                data: {
-                    from_currency_id: fromCurrencyId,
-                    to_currency_id: toCurrencyId,
-                    rate: '1',
-                    same: true,
-                },
+                data: { to_currency_code: toCode, rate: '1', same: true },
             };
         }
         const row = await this.currencyService.getCurrentRate(
             companyId,
-            fromCurrencyId,
-            toCurrencyId
+            def._id.toString(),
+            toCode
         );
         if (!row) return { data: null };
         return {
             data: {
-                from_currency_id: row.from_currency_id?.toString(),
-                to_currency_id: row.to_currency_id?.toString(),
+                to_currency_code: row.to_currency_code,
                 rate: row.rate,
                 effective_date: row.effective_date,
             },
         };
+    }
+
+    /**
+     * Latest rate per to_currency_code (from default currency) + default
+     * currency itself with rate '1'. Sales-doc currency pickers consume this.
+     */
+    @Response('currency.exchangeRateOptions')
+    @AuthJwtAccessProtected()
+    @Get('/exchange-rate/options')
+    async exchangeRateOptions(
+        @AuthJwtPayload('companyId') companyId: string
+    ): Promise<
+        IResponse<
+            Array<{
+                code: string;
+                name?: string;
+                symbol?: string;
+                rate: string;
+                effective_date?: string;
+                is_default?: boolean;
+            }>
+        >
+    > {
+        const data = await this.currencyService.getExchangeRateOptions(companyId);
+        return { data };
     }
 
     @Response('currency.get')

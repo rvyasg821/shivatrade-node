@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
     IsArray,
     IsBoolean,
@@ -9,6 +9,7 @@ import {
     IsOptional,
     IsString,
     IsUUID,
+    Matches,
     MaxLength,
     ValidateNested,
 } from 'class-validator';
@@ -98,9 +99,13 @@ export class PfiCreateRequestDto {
     @IsOptional()
     valid_until?: string;
 
-    @IsUUID()
+    @IsString()
     @IsNotEmpty()
-    currency_id: string;
+    @Matches(/^[A-Z]{3}$/, { message: 'currency_code must be 3 uppercase letters (e.g. INR)' })
+    @Transform(({ value }) =>
+        typeof value === 'string' ? value.trim().toUpperCase() : value
+    )
+    currency_code: string;
 
     @IsNumberString({}, { message: 'exchange_rate must be a numeric string' })
     @IsOptional()

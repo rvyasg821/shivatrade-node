@@ -5,7 +5,6 @@ import {
     IsEnum,
     IsBoolean,
     IsArray,
-    ArrayMinSize,
     IsEmail,
     IsObject,
     IsNumber,
@@ -31,9 +30,9 @@ export class LeadCreateRequestDto {
     @IsEnum(ENUM_LEAD_SOURCE) @IsOptional() source?: ENUM_LEAD_SOURCE;
 
     @IsArray()
-    @ArrayMinSize(1, { message: 'At least one interested category is required' })
+    @IsOptional()
     @IsUUID('all', { each: true })
-    interested_categories: string[];
+    interested_categories?: string[];
 
     @IsArray() @IsOptional() @IsUUID('all', { each: true })
     interested_products?: string[];

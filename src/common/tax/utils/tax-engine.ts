@@ -1,5 +1,5 @@
 /**
- * Indian GST tax engine — pure utility, no DB or DI.
+ * Indian GST tax engine - pure utility, no DB or DI.
  *
  * Decides intra-state vs. inter-state from customer/company state strings
  * and splits the tax accordingly:
@@ -7,7 +7,7 @@
  *   - Inter-state (different)   → 100% IGST
  *   - Export / LUT / nil-rated  → caller passes `tax_pct: 0`
  *
- * Does NOT determine `tax_pct` itself — caller decides that from the
+ * Does NOT determine `tax_pct` itself - caller decides that from the
  * Product master (HSN-based) or manual entry.
  */
 
@@ -20,9 +20,9 @@ export interface ComputeLineTaxInput {
     discount_pct?: number;
     /** Tax rate as a percentage (e.g. 18 for 18%). 0 for export/LUT. */
     tax_pct: number;
-    /** Customer's billing-address state. Optional — missing → INTER. */
+    /** Customer's billing-address state. Optional - missing → INTER. */
     customer_state?: string;
-    /** Company's registered state. Optional — missing → INTER. */
+    /** Company's registered state. Optional - missing → INTER. */
     company_state?: string;
 }
 
@@ -38,7 +38,7 @@ export interface ComputeLineTaxOutput {
     tax_type: TaxType;
 }
 
-/** Common alias map — handles dirty real-world data so a typo doesn't flip
+/** Common alias map - handles dirty real-world data so a typo doesn't flip
  *  intra-state to inter-state (which would silently overcharge IGST). */
 const STATE_ALIASES: Record<string, string> = {
     orissa: 'odisha',
@@ -56,7 +56,7 @@ function normalizeState(s?: string): string {
 function decideTaxType(customerState?: string, companyState?: string): TaxType {
     const a = normalizeState(customerState);
     const b = normalizeState(companyState);
-    if (!a || !b) return 'INTER'; // safer default — IGST covers cross-state.
+    if (!a || !b) return 'INTER'; // safer default - IGST covers cross-state.
     return a === b ? 'INTRA' : 'INTER';
 }
 

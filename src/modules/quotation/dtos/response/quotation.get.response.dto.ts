@@ -52,7 +52,6 @@ export class QuotationGetResponseDto {
     customer_address_id?: string;
     quotation_date?: string;
     valid_until?: string;
-    currency_id?: string;
     currency_code?: string;
     currency_symbol?: string;
     exchange_rate?: string;

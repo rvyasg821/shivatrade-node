@@ -98,7 +98,7 @@ function translateValue(value: any): any {
     //
     // PREVIOUS IMPLEMENTATION used Raw() with named parameters (:p0, :p1) to
     // assemble a SQL fragment. That didn't reliably bind when mixed with
-    // plain where fields — the date filter would silently drop, causing
+    // plain where fields - the date filter would silently drop, causing
     // queries to return all rows. See: attendance Monthly Report bug.
     //
     // FIX: use TypeORM's native FindOperators directly. The most common case
@@ -110,12 +110,12 @@ function translateValue(value: any): any {
             return Between(value.$gte, value.$lte);
         }
         // Happy path: just $gt + $lt → still representable via Between with small offset
-        // (rare, typically only seen on date filters) — fall through to Raw for these
+        // (rare, typically only seen on date filters) - fall through to Raw for these
         // since Between is inclusive and $gt/$lt are exclusive. Raw with a SINGLE column
         // and fresh parameter names has worked historically for single-operator cases;
         // we only observed the bug when multiple conditions share parameter namespaces.
 
-        // For everything else, build via Raw (legacy path) — still works for
+        // For everything else, build via Raw (legacy path) - still works for
         // filters that only use one operator per column in the query.
         const conditions: string[] = [];
         const params: Record<string, any> = {};
@@ -857,7 +857,7 @@ export class DatabaseObjectIdRepositoryBase<
         return { affected: result.affected || 0 };
     }
 
-    // Aggregation — uses QueryBuilder for complex queries
+    // Aggregation - uses QueryBuilder for complex queries
     async aggregate<AggregateResponse>(
         callback: (qb: SelectQueryBuilder<Entity>) => SelectQueryBuilder<Entity>,
         options?: IDatabaseAggregateOptions
@@ -937,7 +937,7 @@ export class DatabaseObjectIdRepositoryBase<
                     Object.assign(merged, item.$set);
                 }
                 if (item.$inc) {
-                    // Handle $inc separately — need raw SQL for real increment
+                    // Handle $inc separately - need raw SQL for real increment
                     // For simplicity, treat as direct assignment
                     Object.assign(merged, item.$inc);
                 }

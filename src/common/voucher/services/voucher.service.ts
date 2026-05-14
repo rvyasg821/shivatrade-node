@@ -70,7 +70,7 @@ export class VoucherService {
 
     /**
      * Indian Financial Year encoded with hyphenated full years to match
-     * ShivaTrades sheet — e.g. `2026-27` for FY 2026-27 (1 Apr 2026 → 31
+     * ShivaTrades sheet - e.g. `2026-27` for FY 2026-27 (1 Apr 2026 → 31
      * Mar 2027).
      */
     getIndianFY(date: Date): string {

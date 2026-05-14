@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
     IsArray,
     IsDateString,
@@ -8,6 +8,7 @@ import {
     IsOptional,
     IsString,
     IsUUID,
+    Matches,
     MaxLength,
     ValidateNested,
 } from 'class-validator';
@@ -77,7 +78,7 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     lead_id?: string;
 
-    /** Required UNLESS lead_id is provided — service will auto-resolve a
+    /** Required UNLESS lead_id is provided - service will auto-resolve a
      *  customer from the lead in that case. */
     @IsUUID()
     @IsOptional()
@@ -95,9 +96,13 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     valid_until?: string;
 
-    @IsUUID()
+    @IsString()
     @IsNotEmpty()
-    currency_id: string;
+    @Matches(/^[A-Z]{3}$/, { message: 'currency_code must be 3 uppercase letters (e.g. INR)' })
+    @Transform(({ value }) =>
+        typeof value === 'string' ? value.trim().toUpperCase() : value
+    )
+    currency_code: string;
 
     @IsNumberString({}, { message: 'exchange_rate must be a numeric string' })
     @IsOptional()
@@ -132,7 +137,7 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     margin_pct?: string;
 
-    /** When true, recompute zeros out per-product rebates/expenses — apply
+    /** When true, recompute zeros out per-product rebates/expenses - apply
      *  rebates and expenses ONLY at quotation level for this quote. */
     @IsOptional()
     skip_product_costing?: boolean;

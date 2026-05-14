@@ -1,8 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Exclude } from 'class-transformer';
 import {
-    ENUM_REBATE_APPLIES_ON,
     ENUM_REBATE_STATUS,
+    ENUM_REBATE_TYPE,
 } from '@modules/rebate/enums/rebate.enum';
 
 export class RebateGetResponseDto {
@@ -12,12 +12,11 @@ export class RebateGetResponseDto {
 
     @ApiProperty({ required: true, type: String }) name: string;
     @ApiProperty({ required: true, type: String }) code: string;
+
+    @ApiProperty({ required: true, enum: ENUM_REBATE_TYPE })
+    type: ENUM_REBATE_TYPE;
+
     @ApiProperty({ required: true, type: String }) pct: string;
-
-    @ApiProperty({ required: true, enum: ENUM_REBATE_APPLIES_ON })
-    applies_on: ENUM_REBATE_APPLIES_ON;
-
-    @ApiProperty({ required: false, type: String }) description?: string;
 
     @ApiProperty({ required: true, type: Boolean }) is_active: boolean;
     @ApiProperty({ required: true, enum: ENUM_REBATE_STATUS })

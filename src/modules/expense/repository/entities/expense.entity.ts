@@ -1,7 +1,6 @@
 import { DatabaseObjectIdEntityBase } from '@common/database/bases/database.object-id.entity';
 import { Entity, Column, Index } from 'typeorm';
 import {
-    ENUM_EXPENSE_BASE,
     ENUM_EXPENSE_STATUS,
     ENUM_EXPENSE_TYPE,
 } from '@modules/expense/enums/expense.enum';
@@ -32,19 +31,8 @@ export class ExpenseEntity extends DatabaseObjectIdEntityBase {
     })
     type: ENUM_EXPENSE_TYPE;
 
-    @Column({ type: 'numeric', precision: 14, scale: 4, nullable: false })
+    @Column({ type: 'numeric', precision: 14, scale: 2, nullable: false })
     value: string;
-
-    @Column({
-        type: 'varchar',
-        length: 20,
-        nullable: false,
-        default: ENUM_EXPENSE_BASE.VALUE,
-    })
-    base: ENUM_EXPENSE_BASE;
-
-    @Column({ type: 'text', nullable: true })
-    description?: string;
 
     @Index()
     @Column({ type: 'boolean', default: true })

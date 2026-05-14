@@ -21,6 +21,8 @@ import { CustomerContactRepository } from '@modules/customer/repository/reposito
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { LeadService } from '@modules/lead/services/lead.service';
+import { LeadActivityService } from '@modules/lead/services/lead-activity.service';
+import { ENUM_LEAD_ACTIVITY_TYPE } from '@modules/lead/enums/lead-activity.enum';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
@@ -32,6 +34,7 @@ import { ProductExpenseRepository } from '@modules/product/repository/repositori
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -51,6 +54,7 @@ export class QuotationService {
         private readonly currencyRepository: CurrencyRepository,
         private readonly leadRepository: LeadRepository,
         private readonly leadService: LeadService,
+        private readonly leadActivityService: LeadActivityService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly vendorRepository: VendorRepository,
@@ -66,7 +70,7 @@ export class QuotationService {
     private async assertReferences(
         companyId: string,
         customerId: string,
-        currencyId: string,
+        currencyCode: string,
         leadId?: string,
         customerAddressId?: string
     ): Promise<void> {
@@ -77,12 +81,9 @@ export class QuotationService {
         } as any);
         if (!customer) throw new BadRequestException('Customer not found');
 
-        const currency = await this.currencyRepository.findOne({
-            _id: currencyId,
-            company_id: companyId,
-            soft_delete: false,
-        } as any);
-        if (!currency) throw new BadRequestException('Currency not found');
+        if (!currencyCode || !/^[A-Z]{3}$/.test(currencyCode.toUpperCase())) {
+            throw new BadRequestException('Invalid currency_code');
+        }
 
         if (leadId) {
             const lead = await this.leadRepository.findOne({
@@ -100,7 +101,7 @@ export class QuotationService {
                 soft_delete: false,
             } as any);
             if (!addr) {
-                // Don't hard-fail — common case is the address belongs to a
+                // Don't hard-fail - common case is the address belongs to a
                 // different customer (e.g. auto-create-from-Lead set a stale
                 // default). Caller should treat as "no address selected".
                 return { addressMismatched: true } as any;
@@ -131,7 +132,7 @@ export class QuotationService {
         createdBy: string
     ): Promise<QuotationDoc> {
         // Auto-resolve customer when only a lead is provided. Lead carries
-        // company_name, contact, address — enough to materialise a Customer
+        // company_name, contact, address - enough to materialise a Customer
         // record so the Quotation can reference it. Idempotent: if the lead
         // already has customer_id / converted_customer_id, that is reused.
         if (!data.customer_id && data.lead_id) {
@@ -149,7 +150,7 @@ export class QuotationService {
         }
 
         // Auto-fill bill-to address from customer's default if FE didn't
-        // provide one. Common when arriving from a lead — backend just
+        // provide one. Common when arriving from a lead - backend just
         // materialised the customer + address, but the form's payload had
         // no address selected.
         if (!data.customer_address_id) {
@@ -173,7 +174,7 @@ export class QuotationService {
         const refsOut = await this.assertReferences(
             companyId,
             data.customer_id,
-            data.currency_id,
+            data.currency_code,
             data.lead_id,
             data.customer_address_id
         );
@@ -197,7 +198,7 @@ export class QuotationService {
             customer_address_id: data.customer_address_id || null,
             quotation_date: data.quotation_date,
             valid_until: data.valid_until || null,
-            currency_id: data.currency_id,
+            currency_code: data.currency_code,
             exchange_rate: data.exchange_rate || '1',
             payment_terms: data.payment_terms || null,
             delivery_terms: data.delivery_terms || null,
@@ -221,6 +222,29 @@ export class QuotationService {
         this.logger.log(
             `Quotation created: ${header._id} (${voucher_no})`
         );
+
+        // Timeline entry on the source lead, if any.
+        if (data.lead_id) {
+            this.leadActivityService
+                .addSystem(
+                    companyId,
+                    data.lead_id,
+                    ENUM_LEAD_ACTIVITY_TYPE.QUOTATION_CREATED,
+                    {
+                        metadata: {
+                            quotation_id: header._id.toString(),
+                            voucher_no,
+                        },
+                        createdBy,
+                    }
+                )
+                .catch((err) =>
+                    this.logger.warn(
+                        `Failed to log quotation_created activity: ${err.message}`
+                    )
+                );
+        }
+
         return this.quotationRepository.findOneById(header._id.toString());
     }
 
@@ -240,7 +264,7 @@ export class QuotationService {
         // Only DRAFT is fully editable. Other statuses accept ONLY a
         // status transition (and internal_notes), nothing else.
         // Exception: if the same payload is reverting to DRAFT, treat the
-        // row as unlocked — the transition matrix below still validates
+        // row as unlocked - the transition matrix below still validates
         // that the revert is allowed. This lets the FE do one-shot
         // "revert + edit" instead of two round-trips.
         const willBeDraft = data.status === ENUM_QUOTATION_STATUS.DRAFT;
@@ -265,12 +289,12 @@ export class QuotationService {
         const refsOut = await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
-            data.currency_id || row.currency_id.toString(),
+            data.currency_code || row.currency_code,
             data.lead_id ?? row.lead_id?.toString(),
             data.customer_address_id ?? row.customer_address_id?.toString()
         );
         if ((refsOut as any)?.addressMismatched) {
-            // Stale/mismatched address — null it on the row so the user can
+            // Stale/mismatched address - null it on the row so the user can
             // pick a fresh one without the save being blocked.
             (data as any).customer_address_id = null;
         }
@@ -278,7 +302,7 @@ export class QuotationService {
         const wasApproved = row.status === ENUM_QUOTATION_STATUS.APPROVED;
         const wasSent = row.status === ENUM_QUOTATION_STATUS.SENT;
 
-        // Apply scalar updates (skip nested arrays — replaced separately).
+        // Apply scalar updates (skip nested arrays - replaced separately).
         const { lines, ...scalar } = data as any;
         Object.assign(row, scalar);
         await this.quotationRepository.save(row);
@@ -377,7 +401,7 @@ export class QuotationService {
         if (!lines?.length) return;
 
         // Pre-load product master rebate/expense links for ALL products
-        // referenced by these lines, in two queries — avoids N+1.
+        // referenced by these lines, in two queries - avoids N+1.
         const productIds = Array.from(
             new Set(
                 lines.map((l) => l.product_id).filter((id): id is string => !!id)
@@ -590,7 +614,7 @@ export class QuotationService {
 
         header.subtotal = String(round2(subtotal));
         // Header expense/rebate columns retained on the entity (DB) but no
-        // longer used — write zeros so old readers don't see stale aggregates.
+        // longer used - write zeros so old readers don't see stale aggregates.
         (header as any).expenses_total = '0';
         (header as any).rebates_total = '0';
         (header as any).product_expenses_total = String(
@@ -639,7 +663,6 @@ export class QuotationService {
         if (!rows.length) return [];
 
         const customerIds = unique(rows.map((r) => r.customer_id?.toString()));
-        const currencyIds = unique(rows.map((r) => r.currency_id?.toString()));
         const leadIds = unique(
             rows
                 .map((r) => r.lead_id?.toString())
@@ -657,7 +680,7 @@ export class QuotationService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, contacts, currencies, leads, vendors] =
+        const [customers, contacts, leads, vendors] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
@@ -668,11 +691,6 @@ export class QuotationService {
                     ? this.customerContactRepository.findAll({
                           customer_id: { $in: customerIds },
                           soft_delete: false,
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                currencyIds.length
-                    ? this.currencyRepository.findAll({
-                          _id: { $in: currencyIds },
                       } as any)
                     : Promise.resolve([] as any[]),
                 leadIds.length
@@ -699,7 +717,6 @@ export class QuotationService {
         }
 
         const customerMap = toMap(customers, '_id');
-        const currencyMap = toMap(currencies, '_id');
         const leadMap = toMap(leads, '_id');
         const vendorMap = toMap(vendors, '_id');
 
@@ -709,13 +726,12 @@ export class QuotationService {
 
         return rows.map((r) => {
             const cust = customerMap.get(r.customer_id?.toString());
-            const cur = currencyMap.get(r.currency_id?.toString());
             const qid = r._id.toString();
             const primary: any = primaryContactByCustomer.get(
                 r.customer_id?.toString()
             );
             // Compose a usable country_code (with formatted) for listing display
-            // — same shape Customer/Vendor listings use.
+            // - same shape Customer/Vendor listings use.
             let primaryCC: any = primary?.country_code || null;
             if (!primaryCC && primary?.phone) {
                 primaryCC = { dial_code: '+91', phone: primary.phone };
@@ -742,9 +758,8 @@ export class QuotationService {
                 customer_address_id: r.customer_address_id?.toString(),
                 quotation_date: r.quotation_date,
                 valid_until: r.valid_until,
-                currency_id: r.currency_id?.toString(),
-                currency_code: (cur as any)?.code,
-                currency_symbol: (cur as any)?.symbol,
+                currency_code: (r as any).currency_code,
+                currency_symbol: getCurrencySymbol((r as any).currency_code),
                 exchange_rate: r.exchange_rate,
                 payment_terms: r.payment_terms,
                 delivery_terms: r.delivery_terms,

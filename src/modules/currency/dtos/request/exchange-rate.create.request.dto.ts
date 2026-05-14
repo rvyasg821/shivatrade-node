@@ -1,15 +1,20 @@
 import {
     IsNotEmpty,
-    IsUUID,
     IsString,
     IsDateString,
     IsNumberString,
+    Matches,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class ExchangeRateCreateRequestDto {
-    @IsUUID()
+    @IsString()
     @IsNotEmpty()
-    to_currency_id: string;
+    @Matches(/^[A-Z]{3}$/, { message: 'to_currency_code must be 3 uppercase letters (e.g. USD)' })
+    @Transform(({ value }) =>
+        typeof value === 'string' ? value.trim().toUpperCase() : value
+    )
+    to_currency_code: string;
 
     @IsString()
     @IsNotEmpty()

@@ -30,23 +30,22 @@ export class CurrencyExchangeRateRepository extends DatabaseObjectIdRepositoryBa
     }
 
     /**
-     * Most-recent effective rate for the given from→to pair as of `asOfDate`
-     * (defaults to today). Future-dated rates are ignored — they only become
-     * "current" once their `effective_date` has arrived.
+     * Most-recent effective rate for the given from→toCode pair as of `asOfDate`
+     * (defaults to today). Future-dated rates are ignored.
      */
     async findCurrentRate(
         companyId: string,
         fromCurrencyId: string,
-        toCurrencyId: string,
+        toCurrencyCode: string,
         asOfDate?: string
     ): Promise<CurrencyExchangeRateDoc | null> {
         const today =
-            asOfDate || new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+            asOfDate || new Date().toISOString().slice(0, 10);
         const row = await this._repository.findOne({
             where: {
                 company_id: companyId,
                 from_currency_id: fromCurrencyId,
-                to_currency_id: toCurrencyId,
+                to_currency_code: toCurrencyCode,
                 effective_date: LessThanOrEqual(today),
             } as any,
             order: { effective_date: 'DESC', createdAt: 'DESC' },
@@ -54,11 +53,40 @@ export class CurrencyExchangeRateRepository extends DatabaseObjectIdRepositoryBa
         return row || null;
     }
 
+    /**
+     * Latest rate per distinct to_currency_code for the given from currency
+     * (rate options surfaced to Lead / Quotation / PFI / PO pickers).
+     */
+    async findLatestRatePerCode(
+        companyId: string,
+        fromCurrencyId: string,
+        asOfDate?: string
+    ): Promise<CurrencyExchangeRateDoc[]> {
+        const today = asOfDate || new Date().toISOString().slice(0, 10);
+        const rows = await this._repository
+            .createQueryBuilder('r')
+            .where('r.company_id = :companyId', { companyId })
+            .andWhere('r.from_currency_id = :fromCurrencyId', { fromCurrencyId })
+            .andWhere('r.effective_date <= :today', { today })
+            .orderBy('r.effective_date', 'DESC')
+            .addOrderBy('r."createdAt"', 'DESC')
+            .getMany();
+
+        const seen = new Set<string>();
+        const out: CurrencyExchangeRateDoc[] = [];
+        for (const r of rows) {
+            if (seen.has(r.to_currency_code)) continue;
+            seen.add(r.to_currency_code);
+            out.push(r);
+        }
+        return out;
+    }
+
     async deleteByCurrencyId(currencyId: string): Promise<void> {
         await this._repository
             .createQueryBuilder()
             .delete()
-            .where('from_currency_id = :id OR to_currency_id = :id', { id: currencyId })
+            .where('from_currency_id = :id', { id: currencyId })
             .execute();
     }
 }
