@@ -226,30 +226,14 @@ export class CurrencyService {
             def._id.toString()
         );
 
-        const out: Array<{
-            code: string;
-            name?: string;
-            symbol?: string;
-            rate: string;
-            effective_date?: string;
-            is_default?: boolean;
-        }> = [
-            {
-                code: def.code,
-                name: def.name,
-                symbol: def.symbol,
-                rate: '1',
-                is_default: true,
-            },
-        ];
-        for (const r of rates) {
-            out.push({
-                code: r.to_currency_code,
-                rate: r.rate,
-                effective_date: r.effective_date,
-            });
-        }
-        return out;
+        // Export-deal picker: only foreign target currencies (USD/EUR/GBP/AED…),
+        // never the home currency itself. An Indian export quotation is never
+        // priced in INR.
+        return rates.map((r) => ({
+            code: r.to_currency_code,
+            rate: r.rate,
+            effective_date: r.effective_date,
+        }));
     }
 
     // ─── Mappers ────────────────────────────────────────────────────────

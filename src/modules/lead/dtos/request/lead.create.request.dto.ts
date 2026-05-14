@@ -52,7 +52,7 @@ export class LeadCreateRequestDto {
 
     @IsUUID() @IsOptional() assigned_to?: string;
 
-    @IsString() @IsOptional() notes?: string;
+    @IsString() @IsOptional() description?: string;
 
     @IsString() @IsOptional() @MaxLength(200) address_line1?: string;
     @IsString() @IsOptional() @MaxLength(200) address_line2?: string;

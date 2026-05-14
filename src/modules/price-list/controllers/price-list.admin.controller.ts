@@ -109,13 +109,11 @@ export class PriceListAdminController {
             const key = (r as any).vendor_id?.toString();
             if (key && !byVendor.has(key)) byVendor.set(key, r);
         }
-        // Sort: primary first, then unit_price asc.
-        const result = Array.from(byVendor.values()).sort((a, b) => {
-            if (!!(a as any).is_primary !== !!(b as any).is_primary) {
-                return (a as any).is_primary ? -1 : 1;
-            }
-            return Number(a.unit_price || 0) - Number(b.unit_price || 0);
-        });
+        // Sort: cheapest unit_price first.
+        const result = Array.from(byVendor.values()).sort(
+            (a, b) =>
+                Number(a.unit_price || 0) - Number(b.unit_price || 0)
+        );
         return { data: result };
     }
 

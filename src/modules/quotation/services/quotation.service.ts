@@ -457,6 +457,7 @@ export class QuotationService {
                 rebate_id: l.rebate_id.toString(),
                 code: m.code,
                 name: m.name,
+                type: m.type,
                 pct: l.pct != null ? String(l.pct) : String(m.pct),
             });
             rebatesByProduct.set(pid, arr);
@@ -569,10 +570,14 @@ export class QuotationService {
             ln.igst = String(out.igst);
             ln.line_total = String(out.line_total);
 
-            // Per-line product rebates: each entry is (taxable × pct/100).
+            // Per-line product rebates: percent → taxable × pct/100;
+            // fixed → flat pct value applied once per line.
             let lineRebatesAmt = 0;
             for (const r of (ln as any).product_rebates_snapshot || []) {
-                lineRebatesAmt += (out.taxable * num(r.pct)) / 100;
+                lineRebatesAmt +=
+                    r.type === 'fixed'
+                        ? num(r.pct)
+                        : (out.taxable * num(r.pct)) / 100;
             }
             // Per-line product expenses: percent → taxable × value/100;
             // amount → flat value applied once per line.
@@ -604,13 +609,18 @@ export class QuotationService {
         const margin_amount = line_margin_total;
 
         const er = num(header.exchange_rate) || 1;
-        const grand_total =
-            (subtotal +
-                product_expenses_total -
-                product_rebates_total +
-                margin_amount +
-                tax_total) *
-            er;
+        // Home-currency (INR) grand total, rounded to whole rupees. The
+        // round_off line carries the ± adjustment; the customer (foreign)
+        // total derives from the ROUNDED home total so the doc reconciles.
+        const grand_inr_raw =
+            subtotal +
+            product_expenses_total -
+            product_rebates_total +
+            margin_amount +
+            tax_total;
+        const grand_inr = Math.round(grand_inr_raw);
+        const round_off = round2(grand_inr - grand_inr_raw);
+        const grand_total = grand_inr * er;
 
         header.subtotal = String(round2(subtotal));
         // Header expense/rebate columns retained on the entity (DB) but no
@@ -625,6 +635,7 @@ export class QuotationService {
         );
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));
+        (header as any).round_off = String(round_off);
         header.grand_total = String(round2(grand_total));
 
         await this.quotationRepository.save(header);
@@ -773,6 +784,7 @@ export class QuotationService {
                 margin_pct: r.margin_pct,
                 margin_amount: r.margin_amount,
                 tax_total: r.tax_total,
+                round_off: r.round_off,
                 grand_total: r.grand_total,
                 status: r.status,
                 version: r.version,
