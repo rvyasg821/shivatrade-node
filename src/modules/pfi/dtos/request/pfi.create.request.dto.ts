@@ -60,6 +60,7 @@ export class PfiLineCreateDto {
         rebate_id?: string | null;
         code?: string;
         name?: string;
+        type: string;
         pct: string;
     }>;
 

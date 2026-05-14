@@ -14,6 +14,7 @@ import { LeadListResponseDto } from '../dtos/response/lead.list.response.dto';
 import { ENUM_LEAD_STATUS } from '../enums/lead.enum';
 import { ENUM_LEAD_ACTIVITY_TYPE } from '../enums/lead-activity.enum';
 import { LeadActivityService } from './lead-activity.service';
+import { LeadActivityRepository } from '../repository/repositories/lead-activity.repository';
 import { CustomerService } from '@modules/customer/services/customer.service';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
@@ -40,7 +41,8 @@ export class LeadService {
         private readonly productRepository: ProductRepository,
         private readonly categoryRepository: CategoryRepository,
         private readonly quotationRepository: QuotationRepository,
-        private readonly activityService: LeadActivityService
+        private readonly activityService: LeadActivityService,
+        private readonly activityRepository: LeadActivityRepository
     ) {}
 
     async create(
@@ -65,6 +67,20 @@ export class LeadService {
             company_id: companyId,
             created_by: createdBy,
         } as any);
+
+        // Timeline anchor — every lead's activity feed opens with this entry.
+        this.activityService
+            .addSystem(
+                companyId,
+                lead._id.toString(),
+                ENUM_LEAD_ACTIVITY_TYPE.LEAD_CREATED,
+                { createdBy }
+            )
+            .catch((err) =>
+                this.logger.warn(
+                    `Failed to log lead_created activity for ${lead._id}: ${err}`
+                )
+            );
 
         this.logger.log(`Lead created: ${lead._id} for company: ${companyId}`);
         return lead;
@@ -600,6 +616,10 @@ export class LeadService {
             }
         }
 
+        const lastActivityMap = await this.activityRepository.findLastActivityMap(
+            leadIds
+        );
+
         leads.forEach((l, i) => {
             if (l.customer_id) {
                 dtos[i].customer_name = customerMap.get(l.customer_id.toString());
@@ -609,6 +629,8 @@ export class LeadService {
             }
             (dtos[i] as any).quotations_count =
                 quotationCounts.get(l._id.toString()) || 0;
+            (dtos[i] as any).last_activity_at =
+                lastActivityMap.get(l._id.toString()) || null;
         });
         return dtos;
     }

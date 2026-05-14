@@ -114,6 +114,7 @@ export class CurrencyAdminController {
         @Query('to') toCurrencyCode: string
     ): Promise<
         IResponse<{
+            from_currency_code?: string;
             to_currency_code?: string;
             rate: string;
             effective_date?: string;
@@ -126,7 +127,12 @@ export class CurrencyAdminController {
         if (!def) return { data: null };
         if (def.code === toCode) {
             return {
-                data: { to_currency_code: toCode, rate: '1', same: true },
+                data: {
+                    from_currency_code: def.code,
+                    to_currency_code: toCode,
+                    rate: '1',
+                    same: true,
+                },
             };
         }
         const row = await this.currencyService.getCurrentRate(
@@ -137,6 +143,7 @@ export class CurrencyAdminController {
         if (!row) return { data: null };
         return {
             data: {
+                from_currency_code: def.code,
                 to_currency_code: row.to_currency_code,
                 rate: row.rate,
                 effective_date: row.effective_date,

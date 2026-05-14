@@ -97,7 +97,9 @@ export class ProductAdminController {
     @AuthJwtAccessProtected()
     @Get('/dropdown')
     async dropdown(
-        @AuthJwtPayload('companyId') companyId: string
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('search') search?: string,
+        @Query('limit') limit?: string
     ): Promise<
         IResponse<
             Array<{
@@ -114,6 +116,7 @@ export class ProductAdminController {
                     rebate_id: string;
                     code?: string;
                     name?: string;
+                    type: string;
                     pct: string;
                 }>;
                 product_expenses?: Array<{
@@ -128,10 +131,20 @@ export class ProductAdminController {
     > {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
-
-        const products = await this.productRepository.findAll(find, {
-            order: { name: 'asc' as any },
-        });
+        // Optional server-side search (code/name) — powers the line-item
+        // modal's AsyncSelect so the full catalog isn't shipped to the client.
+        if (search) {
+            find.$or = [
+                { code: { $regex: search, $options: 'i' } },
+                { name: { $regex: search, $options: 'i' } },
+            ];
+        }
+        const opts: any = { order: { name: 'asc' as any } };
+        const lim = Number(limit);
+        if (Number.isFinite(lim) && lim > 0) {
+            opts.paging = { limit: lim, offset: 0 };
+        }
+        const products = await this.productRepository.findAll(find, opts);
         const productIds = products.map((p) => p._id.toString());
 
         // Fetch all rebate/expense links + their masters in parallel.
@@ -183,6 +196,7 @@ export class ProductAdminController {
                 rebate_id: l.rebate_id.toString(),
                 code: m.code,
                 name: m.name,
+                type: m.type,
                 pct: l.pct != null ? String(l.pct) : String(m.pct),
             });
         }

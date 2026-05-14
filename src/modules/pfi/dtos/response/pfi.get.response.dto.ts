@@ -65,6 +65,7 @@ export class PfiGetResponseDto {
     margin_pct?: string;
     margin_amount?: string;
     tax_total?: string;
+    round_off?: string;
     grand_total?: string;
 
     status?: ENUM_PFI_STATUS;

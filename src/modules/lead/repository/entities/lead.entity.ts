@@ -92,8 +92,10 @@ export class LeadEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     assigned_to?: string;
 
+    /** Initial brief — product specs, target price, RFQ details. Stable
+     * reference info, distinct from the timeline of activity notes. */
     @Column({ type: 'text', nullable: true })
-    notes?: string;
+    description?: string;
 
     // ── Address ──
     @Column({ type: 'varchar', length: 200, nullable: true })

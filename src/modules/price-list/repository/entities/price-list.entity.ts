@@ -53,12 +53,6 @@ export class PriceListEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'date', nullable: true })
     valid_until?: string;
 
-    /** When true, this row is the default vendor source for the product. At
-     *  most one primary per (company, product) — service enforces this. */
-    @Index()
-    @Column({ type: 'boolean', default: false })
-    is_primary: boolean;
-
     @Column({ type: 'text', nullable: true })
     notes?: string;
 }
