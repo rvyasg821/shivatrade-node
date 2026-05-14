@@ -441,7 +441,6 @@ export class ProductService {
                     code: m.code,
                     name: m.name,
                     type: m.type,
-                    base: m.base,
                     value: l.value != null ? l.value.toString() : m.value.toString(),
                     is_override: l.value != null,
                 };
@@ -520,7 +519,6 @@ export class ProductService {
                 code: m.code,
                 name: m.name,
                 type: m.type,
-                base: m.base,
                 value: l.value != null ? l.value.toString() : m.value.toString(),
                 is_override: l.value != null,
             });

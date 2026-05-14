@@ -18,7 +18,6 @@ export class ProductExpenseLinkResponseDto {
     @ApiProperty({ required: true, type: String }) code: string;
     @ApiProperty({ required: true, type: String }) name: string;
     @ApiProperty({ required: true, type: String }) type: string;
-    @ApiProperty({ required: true, type: String }) base: string;
     /** Effective value: per-product override if present, otherwise master's value. */
     @ApiProperty({ required: true, type: String }) value: string;
     @ApiProperty({ required: false, type: Boolean }) is_override?: boolean;
@@ -62,10 +61,16 @@ export class ProductGetResponseDto {
     hsn_code?: string;
 
     @ApiProperty({ required: false, type: String })
+    tax_pct?: string;
+
+    @ApiProperty({ required: false, type: String })
     unit_of_measure?: string;
 
     @ApiProperty({ required: false, type: String })
     selling_price?: string;
+
+    @ApiProperty({ required: false, type: String })
+    margin_pct?: string;
 
     @ApiProperty({ required: false, type: String })
     currency_id?: string;

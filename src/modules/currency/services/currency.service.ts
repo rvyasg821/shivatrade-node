@@ -111,7 +111,7 @@ export class CurrencyService {
 
     /**
      * Ensures only one currency per company is marked is_default=true.
-     * Single UPDATE query — flips all sibling rows off in one round-trip.
+     * Single UPDATE query - flips all sibling rows off in one round-trip.
      */
     private async unsetOtherDefaults(
         companyId: string,
@@ -152,26 +152,17 @@ export class CurrencyService {
         data: ExchangeRateCreateRequestDto,
         createdBy: string
     ): Promise<CurrencyExchangeRateDoc> {
-        if (data.to_currency_id === fromCurrency._id.toString()) {
+        const toCode = data.to_currency_code.trim().toUpperCase();
+        if (toCode === fromCurrency.code) {
             throw new BadRequestException(
                 'From and To currencies must be different'
             );
         }
 
-        // Ensure target currency exists in the same company.
-        const target = await this.currencyRepository.findOne({
-            _id: data.to_currency_id,
-            company_id: fromCurrency.company_id.toString(),
-            soft_delete: false,
-        });
-        if (!target) {
-            throw new BadRequestException('Target currency not found');
-        }
-
         const rate = await this.rateRepository.create({
             company_id: fromCurrency.company_id.toString(),
             from_currency_id: fromCurrency._id.toString(),
-            to_currency_id: data.to_currency_id,
+            to_currency_code: toCode,
             rate: data.rate,
             effective_date: data.effective_date,
             created_by: createdBy,
@@ -189,14 +180,76 @@ export class CurrencyService {
     async getCurrentRate(
         companyId: string,
         fromCurrencyId: string,
-        toCurrencyId: string
+        toCurrencyCode: string
     ): Promise<CurrencyExchangeRateDoc | null> {
-        if (fromCurrencyId === toCurrencyId) return null;
         return this.rateRepository.findCurrentRate(
             companyId,
             fromCurrencyId,
-            toCurrencyId
+            toCurrencyCode.toUpperCase()
         );
+    }
+
+    /**
+     * Returns the company's default currency row (the one flagged is_default).
+     * Used as the implicit FROM side of every exchange-rate row + as the
+     * fallback option (rate=1) for sales-doc currency pickers.
+     */
+    async getDefaultCurrency(companyId: string): Promise<CurrencyDoc | null> {
+        const rows = await this.currencyRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            is_default: true,
+        } as any);
+        return rows[0] || null;
+    }
+
+    /**
+     * Latest rate per to_currency_code from default-currency for this company,
+     * augmented with the default currency itself (rate='1').
+     * Powers the Lead/Quotation/PFI/PO currency picker.
+     */
+    async getExchangeRateOptions(companyId: string): Promise<
+        Array<{
+            code: string;
+            name?: string;
+            symbol?: string;
+            rate: string;
+            effective_date?: string;
+            is_default?: boolean;
+        }>
+    > {
+        const def = await this.getDefaultCurrency(companyId);
+        if (!def) return [];
+
+        const rates = await this.rateRepository.findLatestRatePerCode(
+            companyId,
+            def._id.toString()
+        );
+
+        const out: Array<{
+            code: string;
+            name?: string;
+            symbol?: string;
+            rate: string;
+            effective_date?: string;
+            is_default?: boolean;
+        }> = [
+            {
+                code: def.code,
+                name: def.name,
+                symbol: def.symbol,
+                rate: '1',
+                is_default: true,
+            },
+        ];
+        for (const r of rates) {
+            out.push({
+                code: r.to_currency_code,
+                rate: r.rate,
+                effective_date: r.effective_date,
+            });
+        }
+        return out;
     }
 
     // ─── Mappers ────────────────────────────────────────────────────────
@@ -212,27 +265,22 @@ export class CurrencyService {
     async mapRates(
         rates: CurrencyExchangeRateDoc[]
     ): Promise<ExchangeRateResponseDto[]> {
-        const ids = Array.from(
-            new Set(
-                rates.flatMap((r) => [
-                    r.from_currency_id.toString(),
-                    r.to_currency_id.toString(),
-                ])
-            )
+        const fromIds = Array.from(
+            new Set(rates.map((r) => r.from_currency_id.toString()))
         );
-        const lookup: Record<string, string> = {};
-        if (ids.length) {
+        const codeByFromId: Record<string, string> = {};
+        if (fromIds.length) {
             const currencies = await this.currencyRepository.findAll({
-                _id: { $in: ids },
+                _id: { $in: fromIds },
                 soft_delete: false,
             } as any);
-            for (const c of currencies) lookup[c._id.toString()] = c.code;
+            for (const c of currencies) codeByFromId[c._id.toString()] = c.code;
         }
 
         return rates.map((r) => {
             const dto = plainToInstance(ExchangeRateResponseDto, r);
-            dto.from_currency_code = lookup[r.from_currency_id.toString()];
-            dto.to_currency_code = lookup[r.to_currency_id.toString()];
+            dto.from_currency_code = codeByFromId[r.from_currency_id.toString()];
+            dto.to_currency_code = r.to_currency_code;
             return dto;
         });
     }

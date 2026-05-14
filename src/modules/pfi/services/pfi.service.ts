@@ -33,6 +33,7 @@ import { LeadService } from '@modules/lead/services/lead.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -67,7 +68,7 @@ export class PfiService {
     private async assertReferences(
         companyId: string,
         customerId: string,
-        currencyId: string,
+        currencyCode: string,
         customerAddressId?: string
     ): Promise<void> {
         const customer = await this.customerRepository.findOne({
@@ -77,12 +78,9 @@ export class PfiService {
         } as any);
         if (!customer) throw new BadRequestException('Customer not found');
 
-        const currency = await this.currencyRepository.findOne({
-            _id: currencyId,
-            company_id: companyId,
-            soft_delete: false,
-        } as any);
-        if (!currency) throw new BadRequestException('Currency not found');
+        if (!currencyCode || !/^[A-Z]{3}$/.test(currencyCode.toUpperCase())) {
+            throw new BadRequestException('Invalid currency_code');
+        }
 
         if (customerAddressId) {
             const addr = await this.customerAddressRepository.findOne({
@@ -119,7 +117,7 @@ export class PfiService {
         const refsOut = await this.assertReferences(
             companyId,
             data.customer_id,
-            data.currency_id,
+            data.currency_code,
             data.customer_address_id
         );
         if ((refsOut as any)?.addressMismatched) {
@@ -143,7 +141,7 @@ export class PfiService {
             customer_address_id: data.customer_address_id || null,
             pfi_date: data.pfi_date,
             valid_until: data.valid_until || null,
-            currency_id: data.currency_id,
+            currency_code: data.currency_code,
             exchange_rate: data.exchange_rate || '1',
             payment_terms: data.payment_terms || null,
             delivery_terms: data.delivery_terms || null,
@@ -178,8 +176,8 @@ export class PfiService {
     async update(row: PfiDoc, data: PfiUpdateRequestDto): Promise<PfiDoc> {
         const companyId = row.company_id.toString();
 
-        // Status lock — only DRAFT is fully editable.
-        // Same revert-and-edit allowance as Quotation — payload setting
+        // Status lock - only DRAFT is fully editable.
+        // Same revert-and-edit allowance as Quotation - payload setting
         // status=DRAFT lifts the lock for this update.
         const willBeDraft = data.status === ENUM_PFI_STATUS.DRAFT;
         const isLocked =
@@ -203,7 +201,7 @@ export class PfiService {
         const refsOut = await this.assertReferences(
             companyId,
             data.customer_id || row.customer_id.toString(),
-            data.currency_id || row.currency_id.toString(),
+            data.currency_code || row.currency_code,
             data.customer_address_id ?? row.customer_address_id?.toString()
         );
         if ((refsOut as any)?.addressMismatched) {
@@ -321,7 +319,7 @@ export class PfiService {
             customer_address_id: q.customer_address_id?.toString(),
             pfi_date: today,
             valid_until: q.valid_until,
-            currency_id: q.currency_id.toString(),
+            currency_code: (q as any).currency_code,
             exchange_rate: q.exchange_rate,
             payment_terms: q.payment_terms,
             delivery_terms: q.delivery_terms,
@@ -563,7 +561,7 @@ export class PfiService {
 
         header.subtotal = String(round2(subtotal));
         // Header expense/rebate aggregates retained on the entity (DB) but
-        // unused — write zeros.
+        // unused - write zeros.
         (header as any).expenses_total = '0';
         (header as any).rebates_total = '0';
         (header as any).product_expenses_total = String(
@@ -610,7 +608,6 @@ export class PfiService {
         if (!rows.length) return [];
 
         const customerIds = unique(rows.map((r) => r.customer_id?.toString()));
-        const currencyIds = unique(rows.map((r) => r.currency_id?.toString()));
         const quotationIds = unique(
             rows
                 .map((r) => r.quotation_id?.toString())
@@ -627,16 +624,11 @@ export class PfiService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, currencies, quotations, vendors] =
+        const [customers, quotations, vendors] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
                           _id: { $in: customerIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                currencyIds.length
-                    ? this.currencyRepository.findAll({
-                          _id: { $in: currencyIds },
                       } as any)
                     : Promise.resolve([] as any[]),
                 quotationIds.length
@@ -652,14 +644,12 @@ export class PfiService {
             ]);
 
         const customerMap = toMap(customers);
-        const currencyMap = toMap(currencies);
         const quotationMap = toMap(quotations);
         const vendorMap = toMap(vendors);
         const linesByP = groupBy(allLines, (l: any) => l.pfi_id.toString());
 
         return rows.map((r) => {
             const cust = customerMap.get(r.customer_id?.toString());
-            const cur = currencyMap.get(r.currency_id?.toString());
             const q = r.quotation_id
                 ? quotationMap.get(r.quotation_id.toString())
                 : null;
@@ -675,9 +665,8 @@ export class PfiService {
                 customer_address_id: r.customer_address_id?.toString(),
                 pfi_date: r.pfi_date,
                 valid_until: r.valid_until,
-                currency_id: r.currency_id?.toString(),
-                currency_code: (cur as any)?.code,
-                currency_symbol: (cur as any)?.symbol,
+                currency_code: (r as any).currency_code,
+                currency_symbol: getCurrencySymbol((r as any).currency_code),
                 exchange_rate: r.exchange_rate,
                 payment_terms: r.payment_terms,
                 delivery_terms: r.delivery_terms,

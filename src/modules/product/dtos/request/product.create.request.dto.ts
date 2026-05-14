@@ -19,7 +19,7 @@ export class ProductRebateLinkDto {
     @IsUUID() rebate_id: string;
 
     @Type(() => Number)
-    @IsNumber({ maxDecimalPlaces: 4 })
+    @IsNumber({ maxDecimalPlaces: 2 })
     @Min(0)
     @IsOptional()
     pct?: number;
@@ -29,7 +29,7 @@ export class ProductExpenseLinkDto {
     @IsUUID() expense_id: string;
 
     @Type(() => Number)
-    @IsNumber({ maxDecimalPlaces: 4 })
+    @IsNumber({ maxDecimalPlaces: 2 })
     @Min(0)
     @IsOptional()
     value?: number;
@@ -49,12 +49,26 @@ export class ProductCreateRequestDto {
     @IsString() @IsOptional() @MaxLength(50) hsn_code?: string;
     @IsString() @IsOptional() @MaxLength(50) unit_of_measure?: string;
 
+    // GST tied to the HSN. Seeds quotation/PFI line tax %.
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 2 })
+    @Min(0)
+    @IsOptional()
+    tax_pct?: number;
+
     // ── Pricing ──
     @Type(() => Number)
-    @IsNumber({ maxDecimalPlaces: 4 })
+    @IsNumber({ maxDecimalPlaces: 2 })
     @Min(0)
     @IsOptional()
     selling_price?: number;
+
+    // Default selling margin %, used as the seed value on Quotation lines.
+    @Type(() => Number)
+    @IsNumber({ maxDecimalPlaces: 2 })
+    @Min(0)
+    @IsOptional()
+    margin_pct?: number;
 
     @IsUUID() @IsOptional() currency_id?: string;
 

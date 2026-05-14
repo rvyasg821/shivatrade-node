@@ -18,7 +18,7 @@ export class ProductRebateEntity extends DatabaseObjectIdEntityBase {
     company_id: string;
 
     /** Per-product override; null = use Rebate master's pct. */
-    @Column({ type: 'numeric', precision: 7, scale: 4, nullable: true })
+    @Column({ type: 'numeric', precision: 7, scale: 2, nullable: true })
     pct?: string;
 }
 

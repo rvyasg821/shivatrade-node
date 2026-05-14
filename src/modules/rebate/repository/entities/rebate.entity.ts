@@ -1,8 +1,8 @@
 import { DatabaseObjectIdEntityBase } from '@common/database/bases/database.object-id.entity';
 import { Entity, Column, Index } from 'typeorm';
 import {
-    ENUM_REBATE_APPLIES_ON,
     ENUM_REBATE_STATUS,
+    ENUM_REBATE_TYPE,
 } from '@modules/rebate/enums/rebate.enum';
 import { REBATE_COLLECTION_NAME } from '../../constants/rebate.entity.constant';
 
@@ -23,19 +23,16 @@ export class RebateEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 30, nullable: false })
     code: string;
 
-    @Column({ type: 'numeric', precision: 7, scale: 4, nullable: false })
-    pct: string;
-
     @Column({
         type: 'varchar',
-        length: 40,
+        length: 20,
         nullable: false,
-        default: ENUM_REBATE_APPLIES_ON.TOTAL_AFTER_EXPENSES,
+        default: ENUM_REBATE_TYPE.PERCENT,
     })
-    applies_on: ENUM_REBATE_APPLIES_ON;
+    type: ENUM_REBATE_TYPE;
 
-    @Column({ type: 'text', nullable: true })
-    description?: string;
+    @Column({ type: 'numeric', precision: 14, scale: 2, nullable: false })
+    pct: string;
 
     @Index()
     @Column({ type: 'boolean', default: true })

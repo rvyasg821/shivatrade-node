@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { LeadRepositoryModule } from './repository/lead.repository.module';
 import { LeadService } from './services/lead.service';
+import { LeadActivityService } from './services/lead-activity.service';
 import { LeadAdminController } from './controllers/lead.admin.controller';
+import { LeadActivityAdminController } from './controllers/lead-activity.admin.controller';
 import { CustomerModule } from '@modules/customer/customer.module';
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
 import { ProductModule } from '@modules/product/product.module';
@@ -18,8 +20,8 @@ import { QuotationRepositoryModule } from '@modules/quotation/repository/quotati
         CategoryModule,
         QuotationRepositoryModule,
     ],
-    providers: [LeadService],
-    exports: [LeadRepositoryModule, LeadService],
-    controllers: [LeadAdminController],
+    providers: [LeadService, LeadActivityService],
+    exports: [LeadRepositoryModule, LeadService, LeadActivityService],
+    controllers: [LeadAdminController, LeadActivityAdminController],
 })
 export class LeadModule {}

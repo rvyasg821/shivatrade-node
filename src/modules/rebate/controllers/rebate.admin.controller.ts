@@ -86,7 +86,7 @@ export class RebateAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; name: string; code: string; pct: string; applies_on: string }[]>> {
+    ): Promise<IResponse<{ _id: string; name: string; code: string; type: string; pct: string }[]>> {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
         const rebates = await this.rebateRepository.findAll(find, {
@@ -97,8 +97,8 @@ export class RebateAdminController {
                 _id: r._id.toString(),
                 name: r.name,
                 code: r.code,
+                type: r.type,
                 pct: r.pct,
-                applies_on: r.applies_on,
             })),
         };
     }

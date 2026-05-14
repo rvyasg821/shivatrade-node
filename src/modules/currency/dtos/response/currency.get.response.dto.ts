@@ -25,8 +25,7 @@ export class ExchangeRateResponseDto {
     @ApiProperty({ required: true, type: String }) _id: string;
     @ApiProperty({ required: true, type: String }) from_currency_id: string;
     @ApiProperty({ required: false, type: String }) from_currency_code?: string;
-    @ApiProperty({ required: true, type: String }) to_currency_id: string;
-    @ApiProperty({ required: false, type: String }) to_currency_code?: string;
+    @ApiProperty({ required: true, type: String }) to_currency_code: string;
     @ApiProperty({ required: true, type: String }) rate: string;
     @ApiProperty({ required: true, type: String }) effective_date: string;
     @ApiProperty({ required: true, type: Date }) createdAt: Date;

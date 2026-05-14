@@ -49,7 +49,6 @@ export class PfiGetResponseDto {
     customer_address_id?: string;
     pfi_date?: string;
     valid_until?: string;
-    currency_id?: string;
     currency_code?: string;
     currency_symbol?: string;
     exchange_rate?: string;

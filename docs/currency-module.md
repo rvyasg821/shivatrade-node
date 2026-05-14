@@ -13,7 +13,7 @@ across the platform.
   **effective date** so the system can pick the right rate for any moment in
   time.
 - Adding a new rate for the same `from → to` pair **does not delete** the old
-  one — old rates are kept as history. The system always uses the most
+  one - old rates are kept as history. The system always uses the most
   recent effective-dated rate for conversions.
 - No third-party FX API. All rates entered manually.
 
@@ -45,7 +45,7 @@ across the platform.
 | `created_by` | uuid | |
 | `createdAt` | timestamp | from base entity |
 
-**No soft delete** — rate history is permanent (per spec).
+**No soft delete** - rate history is permanent (per spec).
 A currency soft-delete **hard-deletes** its rate rows (cascade in service).
 
 ## Module layout
@@ -88,11 +88,11 @@ All under `/api/v1/admin/currency`. JWT required.
 |---|---|---|---|
 | `POST` | `/create` | `{ code, name, symbol?, status? }` | created currency |
 | `GET`  | `/list` | `?status=ACTIVE&_search=&_limit=&_offset=&_order=` | paged list |
-| `GET`  | `/dropdown` | — | `[{ _id, code, name, symbol }]` (active only) |
-| `GET`  | `/get/:id` | — | one currency |
+| `GET`  | `/dropdown` | - | `[{ _id, code, name, symbol }]` (active only) |
+| `GET`  | `/get/:id` | - | one currency |
 | `PUT`  | `/update/:id` | partial of create | updated |
-| `DELETE` | `/delete/:id` | — | soft-deletes + wipes rate history |
-| `GET`  | `/:id/rates` | — | full history for this currency as the `from` side, newest first |
+| `DELETE` | `/delete/:id` | - | soft-deletes + wipes rate history |
+| `GET`  | `/:id/rates` | - | full history for this currency as the `from` side, newest first |
 | `POST` | `/:id/rates` | `{ to_currency_id, rate, effective_date }` | new rate row |
 
 ### Validation rules
@@ -133,7 +133,7 @@ LIMIT 1
 ```
 
 Returns `null` if no rate exists or `from === to`. Future modules
-(quotations, PO, invoices) should call this — never query the table directly.
+(quotations, PO, invoices) should call this - never query the table directly.
 
 If you also want **bidirectional** auto-resolution (USD→INR not found but
 INR→USD exists ⇒ use `1 / rate`) extend the helper. The current spec stores
@@ -179,7 +179,7 @@ Useful starter set for an India-based trading company.
 
 All status = Active.
 
-### Sample rates (illustrative — replace with your real source)
+### Sample rates (illustrative - replace with your real source)
 
 After creating the currencies, open each one in edit mode and add rates.
 
@@ -253,18 +253,18 @@ curl -s -X POST "$API/admin/currency/<USD_ID>/rates" \
 | Add rate referencing unknown / soft-deleted currency | 400 "Target currency not found" |
 | Soft-delete currency that is referenced as `from` or `to` in rates | succeeds, rate rows hard-deleted in cascade |
 | Lookup current rate for `from === to` | helper returns `null` (no row, no implicit `1.0`) |
-| Lookup current rate when no rates exist | helper returns `null` — caller must handle gracefully |
+| Lookup current rate when no rates exist | helper returns `null` - caller must handle gracefully |
 | Update currency code (e.g. typo fix) | allowed if new code is unique; existing rate rows still link by id, unaffected |
 
 ## Where the rate is consumed (future work)
 
 These modules will call `currencyService.getCurrentRate(...)` once they exist:
 
-- Price List — vendor pricing in non-base currency
-- Quotations / PFI — convert vendor prices into customer-currency totals
-- Purchase Orders — record rate snapshot at PO date
-- Invoices — convert + display in customer currency
-- Reports — multi-currency aggregation
+- Price List - vendor pricing in non-base currency
+- Quotations / PFI - convert vendor prices into customer-currency totals
+- Purchase Orders - record rate snapshot at PO date
+- Invoices - convert + display in customer currency
+- Reports - multi-currency aggregation
 
 Each consumer should snapshot the rate it used into its own row at the time
 of creation (e.g. `purchase_orders.exchange_rate_used`) so historical

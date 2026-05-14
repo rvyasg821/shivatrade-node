@@ -13,8 +13,8 @@ export class CurrencyExchangeRateEntity extends DatabaseObjectIdEntityBase {
     from_currency_id: string;
 
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    to_currency_id: string;
+    @Column({ type: 'varchar', length: 10, nullable: false })
+    to_currency_code: string;
 
     /**
      * 1 unit of `from_currency` equals `rate` units of `to_currency`.

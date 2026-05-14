@@ -10,7 +10,6 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
-    ENUM_EXPENSE_BASE,
     ENUM_EXPENSE_STATUS,
     ENUM_EXPENSE_TYPE,
 } from '@modules/expense/enums/expense.enum';
@@ -22,13 +21,9 @@ export class ExpenseCreateRequestDto {
     @IsEnum(ENUM_EXPENSE_TYPE) @IsOptional() type?: ENUM_EXPENSE_TYPE;
 
     @Type(() => Number)
-    @IsNumber({ maxDecimalPlaces: 4 })
+    @IsNumber({ maxDecimalPlaces: 2 })
     @Min(0)
     value: number;
-
-    @IsEnum(ENUM_EXPENSE_BASE) @IsOptional() base?: ENUM_EXPENSE_BASE;
-
-    @IsString() @IsOptional() description?: string;
 
     @IsEnum(ENUM_EXPENSE_STATUS) @IsOptional() status?: ENUM_EXPENSE_STATUS;
     @IsBoolean() @IsOptional() is_active?: boolean;
