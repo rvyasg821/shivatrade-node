@@ -11,12 +11,13 @@ import {
     ENUM_PRODUCT_UOM,
 } from '../enums/product.enum';
 
-const SHEET_NAME = 'Products';
-
-// Column order mirrors the Product Add form, section by section:
-//   Basic → Pricing → Logistics → Descriptions → Rebates → Expenses.
+// Scalar column order mirrors the Product Add form, section by section:
+//   Basic → Pricing → Logistics → Descriptions.
 // `code`, `name` and `category_name` are the only required inputs.
-const EXCEL_HEADERS = [
+// After these come repeated `rebates` columns then repeated `expenses`
+// columns — one master CODE per cell (e.g. DBK). Add as many of each
+// column as a product needs.
+const BASE_HEADERS = [
     // ── Basic ──
     'name',
     'code',
@@ -40,12 +41,15 @@ const EXCEL_HEADERS = [
     'specifications',
     'packaging_details',
     'quality_parameters',
-    // ── Relationship lists (comma-separated "CODE:value") ──
-    'rebates',
-    'expenses',
 ];
 
-const SAMPLE_ROWS = [
+interface SampleRow {
+    [key: string]: any;
+    rebates: string[];
+    expenses: string[];
+}
+
+const SAMPLE_ROWS: SampleRow[] = [
     {
         name: 'Steel Rod 12mm',
         code: 'PRD-001',
@@ -66,8 +70,8 @@ const SAMPLE_ROWS = [
         specifications: 'Grade: Fe500; Length: 12m',
         packaging_details: 'Bundled, 10 rods per bundle',
         quality_parameters: 'IS 1786:2008 compliant',
-        rebates: 'DBK:2.5, RODTEP',
-        expenses: 'PACKING:100, CHA:50',
+        rebates: ['DBK', 'RODTEP'],
+        expenses: ['PACKING', 'CHA'],
     },
     {
         name: 'Packaging Box Large',
@@ -89,10 +93,22 @@ const SAMPLE_ROWS = [
         specifications: 'Size: 60x40x40 cm',
         packaging_details: 'Flat-packed',
         quality_parameters: '5-ply corrugation',
-        rebates: '',
-        expenses: '',
+        rebates: [],
+        expenses: [],
     },
 ];
+
+/**
+ * Build a sheet header row: the scalar columns followed by `count`
+ * repeated `rebates` columns and `count` repeated `expenses` columns.
+ */
+function buildHeaderRow(maxRebates: number, maxExpenses: number): string[] {
+    return [
+        ...BASE_HEADERS,
+        ...Array(maxRebates).fill('rebates'),
+        ...Array(maxExpenses).fill('expenses'),
+    ];
+}
 
 // Canonical UOM lookup — accepts any casing, stores the canonical enum value.
 const UOM_BY_LOWER: Record<string, string> = Object.values(
@@ -133,6 +149,9 @@ export interface ProductImportRow {
     status: 'valid_new' | 'valid_update' | 'error';
     existingId?: string;
     errors: string[];
+    // Non-blocking notices — e.g. an unknown rebate/expense code that was
+    // skipped. The row still imports.
+    warnings: string[];
 }
 
 @Injectable()
@@ -151,9 +170,29 @@ export class ProductImportExportService {
 
     /** Sample Excel — every column, with two filled example rows. */
     generateSampleExcel(): Buffer {
-        return this.fileService.writeExcel([
-            { data: SAMPLE_ROWS, sheetName: SHEET_NAME },
-        ]);
+        const maxRebates = Math.max(
+            1,
+            ...SAMPLE_ROWS.map((r) => r.rebates.length),
+        );
+        const maxExpenses = Math.max(
+            1,
+            ...SAMPLE_ROWS.map((r) => r.expenses.length),
+        );
+        const aoa: any[][] = [buildHeaderRow(maxRebates, maxExpenses)];
+        for (const r of SAMPLE_ROWS) {
+            aoa.push([
+                ...BASE_HEADERS.map((h) => r[h] ?? ''),
+                ...Array.from(
+                    { length: maxRebates },
+                    (_, j) => r.rebates[j] || '',
+                ),
+                ...Array.from(
+                    { length: maxExpenses },
+                    (_, j) => r.expenses[j] || '',
+                ),
+            ]);
+        }
+        return this.fileService.writeExcelFromArray(aoa);
     }
 
     /** Export all of a company's products as an Excel buffer. */
@@ -166,7 +205,7 @@ export class ProductImportExportService {
         const [categories, currencies, hydrated] = await Promise.all([
             this.categoryRepository.findByCompanyId(companyId),
             this.currencyRepository.findByCompanyId(companyId),
-            // Reuse the service's hydration for rebate/expense code + pct/value.
+            // Reuse the service's hydration for rebate/expense codes.
             this.productService.mapListWithRelations(products),
         ]);
         const catNameById = new Map<string, string>(
@@ -177,51 +216,63 @@ export class ProductImportExportService {
         );
 
         // `mapListWithRelations` preserves input order — zip by index.
-        const rows = products.map((p, i) => {
-            const rel: any = hydrated[i] || {};
-            const rebates = (rel.rebates || [])
-                .map((r: any) => `${r.code}:${r.pct}`)
-                .join(', ');
-            const expenses = (rel.expenses || [])
-                .map((e: any) => `${e.code}:${e.value}`)
-                .join(', ');
-            return {
-                name: p.name || '',
-                code: p.code || '',
-                category_name: p.category_id
+        const rebateCodesPerRow = products.map((_, i) =>
+            ((hydrated[i] as any)?.rebates || []).map((r: any) => r.code),
+        );
+        const expenseCodesPerRow = products.map((_, i) =>
+            ((hydrated[i] as any)?.expenses || []).map((e: any) => e.code),
+        );
+        // Always keep at least one rebates + one expenses column so the
+        // structure is visible even when no product has any links.
+        const maxRebates = Math.max(
+            1,
+            ...rebateCodesPerRow.map((a) => a.length),
+        );
+        const maxExpenses = Math.max(
+            1,
+            ...expenseCodesPerRow.map((a) => a.length),
+        );
+
+        const aoa: any[][] = [buildHeaderRow(maxRebates, maxExpenses)];
+        products.forEach((p, i) => {
+            aoa.push([
+                p.name || '',
+                p.code || '',
+                p.category_id
                     ? catNameById.get(p.category_id.toString()) || ''
                     : '',
-                unit_of_measure: p.unit_of_measure || '',
-                status: p.is_active
+                p.unit_of_measure || '',
+                p.is_active
                     ? ENUM_PRODUCT_STATUS.ACTIVE
                     : ENUM_PRODUCT_STATUS.INACTIVE,
-                hsn_code: p.hsn_code || '',
-                tax_pct: p.tax_pct ?? '',
-                selling_price: p.selling_price ?? '',
-                margin_pct: p.margin_pct ?? '',
-                currency_code: p.currency_id
+                p.hsn_code || '',
+                p.tax_pct ?? '',
+                p.selling_price ?? '',
+                p.margin_pct ?? '',
+                p.currency_id
                     ? curCodeById.get(p.currency_id.toString()) || ''
                     : '',
-                part_no: p.part_no || '',
-                pack_size: p.pack_size ?? '',
-                country_of_origin: p.country_of_origin || '',
-                net_weight_per_unit: p.net_weight_per_unit ?? '',
-                gross_weight_per_unit: p.gross_weight_per_unit ?? '',
-                description: p.description || '',
-                specifications: p.specifications || '',
-                packaging_details: p.packaging_details || '',
-                quality_parameters: p.quality_parameters || '',
-                rebates,
-                expenses,
-            };
+                p.part_no || '',
+                p.pack_size ?? '',
+                p.country_of_origin || '',
+                p.net_weight_per_unit ?? '',
+                p.gross_weight_per_unit ?? '',
+                p.description || '',
+                p.specifications || '',
+                p.packaging_details || '',
+                p.quality_parameters || '',
+                ...Array.from(
+                    { length: maxRebates },
+                    (_, j) => rebateCodesPerRow[i][j] || '',
+                ),
+                ...Array.from(
+                    { length: maxExpenses },
+                    (_, j) => expenseCodesPerRow[i][j] || '',
+                ),
+            ]);
         });
 
-        if (rows.length === 0) {
-            return this.fileService.writeExcelFromArray([EXCEL_HEADERS]);
-        }
-        return this.fileService.writeExcel([
-            { data: rows, sheetName: SHEET_NAME },
-        ]);
+        return this.fileService.writeExcelFromArray(aoa);
     }
 
     /**
@@ -255,7 +306,9 @@ export class ProductImportExportService {
             throw new BadRequestException(
                 `Missing required column(s): ${missing.join(
                     ', ',
-                )}. Expected columns: ${EXCEL_HEADERS.join(', ')}.`,
+                )}. Expected columns: ${BASE_HEADERS.join(
+                    ', ',
+                )}, then one or more "rebates" and "expenses" columns.`,
             );
         }
 
@@ -313,12 +366,28 @@ export class ProductImportExportService {
             const raw = rawRows[i];
             const rowNum = i + 2; // 1-indexed + header row
             const errors: string[] = [];
+            const warnings: string[] = [];
 
             const get = (col: string): string => {
                 const key = Object.keys(raw).find(
                     (k) => k.trim().toLowerCase() === col,
                 );
                 return key ? String(raw[key] ?? '').trim() : '';
+            };
+
+            // Repeated columns: xlsx de-dupes duplicate headers as
+            // `rebates`, `rebates_1`, `rebates_2`… — collect every non-empty
+            // cell whose header is `<col>` or `<col>` + a numeric suffix.
+            const getMulti = (col: string): string[] => {
+                const re = new RegExp(`^${col}(_?\\d+)?$`, 'i');
+                const out: string[] = [];
+                for (const k of Object.keys(raw)) {
+                    if (re.test(k.trim())) {
+                        const v = String(raw[k] ?? '').trim();
+                        if (v) out.push(v);
+                    }
+                }
+                return out;
             };
 
             const code = get('code');
@@ -498,70 +567,48 @@ export class ProductImportExportService {
                 );
             }
 
-            // ── Rebates / Expenses (comma-separated "CODE:value") ──
-            // Each entry is a master code with an optional override after ":".
-            // An empty cell clears the product's links on update.
-            const parseLinks = (
-                rawVal: string,
+            // ── Rebates / Expenses (one master CODE per repeated column) ──
+            // Each non-empty `rebates` / `expenses` cell holds a single master
+            // code (e.g. DBK). An unknown or duplicate code is skipped with a
+            // non-blocking warning — only that link is dropped, the row still
+            // imports. An empty set clears the product's links on update.
+            const resolveLinks = (
+                codes: string[],
                 kind: 'rebate' | 'expense',
                 idByCode: Map<string, string>,
-            ): { id: string; num?: number }[] => {
-                if (!rawVal) return [];
+            ): string[] => {
                 const label = kind === 'rebate' ? 'Rebate' : 'Expense';
-                const numLabel =
-                    kind === 'rebate' ? 'percentage' : 'value';
-                const out: { id: string; num?: number }[] = [];
+                const out: string[] = [];
                 const seen = new Set<string>();
-                for (const entry of rawVal
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean)) {
-                    const colonAt = entry.indexOf(':');
-                    const codePart = (
-                        colonAt >= 0 ? entry.slice(0, colonAt) : entry
-                    ).trim();
-                    const numPart =
-                        colonAt >= 0
-                            ? entry.slice(colonAt + 1).trim()
-                            : '';
+                for (const rawCode of codes) {
+                    const codePart = rawCode.trim();
                     if (!codePart) continue;
                     const id = idByCode.get(codePart.toLowerCase());
                     if (!id) {
-                        errors.push(
-                            `${label} "${codePart}" not found for this company`,
+                        warnings.push(
+                            `${label} code "${codePart}" does not exist for this company — skipped`,
                         );
                         continue;
                     }
                     if (seen.has(id)) {
-                        errors.push(
-                            `Duplicate ${kind} "${codePart}" in row`,
+                        warnings.push(
+                            `Duplicate ${kind} "${codePart}" — skipped`,
                         );
                         continue;
                     }
                     seen.add(id);
-                    let numVal: number | undefined;
-                    if (numPart !== '') {
-                        const n = Number(numPart);
-                        if (!Number.isFinite(n) || n < 0) {
-                            errors.push(
-                                `${label} "${codePart}" ${numLabel} must be a number greater than or equal to 0`,
-                            );
-                            continue;
-                        }
-                        numVal = n;
-                    }
-                    out.push({ id, num: numVal });
+                    out.push(id);
                 }
                 return out;
             };
 
-            const rebateLinks = parseLinks(
-                get('rebates'),
+            const rebateIds = resolveLinks(
+                getMulti('rebates'),
                 'rebate',
                 rebateIdByCode,
             );
-            const expenseLinks = parseLinks(
-                get('expenses'),
+            const expenseIds = resolveLinks(
+                getMulti('expenses'),
                 'expense',
                 expenseIdByCode,
             );
@@ -611,18 +658,15 @@ export class ProductImportExportService {
                     net_weight_per_unit: netWeight,
                     gross_weight_per_unit: grossWeight,
                     country_of_origin: countryOfOrigin || undefined,
-                    rebates: rebateLinks.map((l) => ({
-                        rebate_id: l.id,
-                        pct: l.num,
-                    })),
-                    expenses: expenseLinks.map((l) => ({
-                        expense_id: l.id,
-                        value: l.num,
+                    rebates: rebateIds.map((id) => ({ rebate_id: id })),
+                    expenses: expenseIds.map((id) => ({
+                        expense_id: id,
                     })),
                 },
                 status: rowStatus,
                 existingId,
                 errors,
+                warnings,
             });
         }
 
@@ -632,6 +676,7 @@ export class ProductImportExportService {
             valid_update: rows.filter((r) => r.status === 'valid_update')
                 .length,
             errors: rows.filter((r) => r.status === 'error').length,
+            warnings: rows.reduce((n, r) => n + r.warnings.length, 0),
         };
 
         return { summary, rows };
@@ -697,11 +742,14 @@ export class ProductImportExportService {
                     );
                     created++;
                 }
-            } catch (err) {
+            } catch (err: any) {
                 this.logger.error(
-                    `Import row ${row.rowNum} failed: ${err.message}`,
+                    `Import row ${row.rowNum} failed: ${err?.message}`,
                 );
-                errors.push({ row: row.rowNum, message: err.message });
+                errors.push({
+                    row: row.rowNum,
+                    message: err?.message || 'Import failed',
+                });
             }
         }
 
