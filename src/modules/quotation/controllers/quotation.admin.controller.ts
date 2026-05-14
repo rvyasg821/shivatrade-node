@@ -123,4 +123,47 @@ export class QuotationAdminController {
         await this.quotationService.softDelete(row);
         return { data: null };
     }
+
+    // ─── Public share link ──────────────────────────────────────────────
+
+    @Response('quotation.publish')
+    @AuthJwtAccessProtected()
+    @Post('/publish/:id')
+    async publish(
+        @Param('id') id: string
+    ): Promise<IResponse<QuotationGetResponseDto>> {
+        const row = await this.quotationService.publish(id);
+        return { data: await this.quotationService.mapGet(row) };
+    }
+
+    @Response('quotation.rotateToken')
+    @AuthJwtAccessProtected()
+    @Post('/rotate-token/:id')
+    async rotateToken(
+        @Param('id') id: string
+    ): Promise<IResponse<QuotationGetResponseDto>> {
+        const row = await this.quotationService.rotateToken(id);
+        return { data: await this.quotationService.mapGet(row) };
+    }
+
+    @Response('quotation.unpublish')
+    @AuthJwtAccessProtected()
+    @Post('/unpublish/:id')
+    async unpublish(
+        @Param('id') id: string
+    ): Promise<IResponse<QuotationGetResponseDto>> {
+        const row = await this.quotationService.unpublish(id);
+        return { data: await this.quotationService.mapGet(row) };
+    }
+
+    /** Admin-only "preview as client" — the exact sanitized projection the
+     *  public route serves, but works in ANY status (incl. draft) so the
+     *  user can see the client-facing layout before publishing. */
+    @Response('quotation.publicPreview')
+    @AuthJwtAccessProtected()
+    @Get('/public-preview/:id')
+    async publicPreview(@Param('id') id: string): Promise<IResponse<any>> {
+        const row = await this.quotationService.findOneById(id);
+        return { data: await this.quotationService.mapPublic(row) };
+    }
 }

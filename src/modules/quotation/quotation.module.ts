@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { QuotationRepositoryModule } from './repository/quotation.repository.module';
 import { QuotationService } from './services/quotation.service';
 import { QuotationAdminController } from './controllers/quotation.admin.controller';
+import { QuotationPublicController } from './controllers/quotation.public.controller';
 import { CustomerModule } from '@modules/customer/customer.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { ProductModule } from '@modules/product/product.module';
@@ -29,6 +30,6 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
     ],
     providers: [QuotationService],
     exports: [QuotationRepositoryModule, QuotationService],
-    controllers: [QuotationAdminController],
+    controllers: [QuotationAdminController, QuotationPublicController],
 })
 export class QuotationModule {}

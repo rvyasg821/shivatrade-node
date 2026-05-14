@@ -75,6 +75,11 @@ export class QuotationGetResponseDto {
     version?: number;
     parent_version_id?: string;
 
+    // Public share link
+    public_token?: string;
+    public_view_count?: number;
+    public_last_viewed_at?: Date;
+
     created_by?: string;
     createdAt?: Date;
     updatedAt?: Date;
