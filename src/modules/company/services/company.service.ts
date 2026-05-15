@@ -72,6 +72,8 @@ export interface ICompanyCreate {
     lut_no?: string;
     lut_date?: string;
     cin?: string;
+    default_port_of_loading?: string;
+    default_declaration_text?: string;
 }
 
 @Injectable()
@@ -235,6 +237,10 @@ export class CompanyService {
         if (data.lut_no !== undefined) repository.lut_no = data.lut_no;
         if (data.lut_date !== undefined) repository.lut_date = data.lut_date;
         if (data.cin !== undefined) repository.cin = data.cin;
+        if (data.default_port_of_loading !== undefined)
+            repository.default_port_of_loading = data.default_port_of_loading;
+        if (data.default_declaration_text !== undefined)
+            repository.default_declaration_text = data.default_declaration_text;
 
         return this.companyRepository.save(repository, options);
     }

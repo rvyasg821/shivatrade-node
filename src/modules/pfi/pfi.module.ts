@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PfiRepositoryModule } from './repository/pfi.repository.module';
 import { PfiService } from './services/pfi.service';
+import { PfiPdfService } from './services/pfi-pdf.service';
 import { PfiAdminController } from './controllers/pfi.admin.controller';
 import { PfiPublicController } from './controllers/pfi.public.controller';
 import { CustomerModule } from '@modules/customer/customer.module';
@@ -28,8 +29,8 @@ import { LeadModule } from '@modules/lead/lead.module';
         QuotationModule,
         LeadModule,
     ],
-    providers: [PfiService],
-    exports: [PfiRepositoryModule, PfiService],
+    providers: [PfiService, PfiPdfService],
+    exports: [PfiRepositoryModule, PfiService, PfiPdfService],
     controllers: [PfiAdminController, PfiPublicController],
 })
 export class PfiModule {}

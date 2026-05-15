@@ -7,7 +7,9 @@ import {
     Body,
     Param,
     Query,
+    Res,
 } from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import {
     AuthJwtAccessProtected,
@@ -25,6 +27,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { PfiService } from '../services/pfi.service';
+import { PfiPdfService } from '../services/pfi-pdf.service';
 import { PfiRepository } from '../repository/repositories/pfi.repository';
 import { PfiCreateRequestDto } from '../dtos/request/pfi.create.request.dto';
 import { PfiUpdateRequestDto } from '../dtos/request/pfi.update.request.dto';
@@ -35,7 +38,8 @@ import { PfiGetResponseDto } from '../dtos/response/pfi.get.response.dto';
 export class PfiAdminController {
     constructor(
         private readonly pfiService: PfiService,
-        private readonly pfiRepository: PfiRepository
+        private readonly pfiRepository: PfiRepository,
+        private readonly pfiPdfService: PfiPdfService
     ) {}
 
     @Response('pfi.create')
@@ -181,5 +185,26 @@ export class PfiAdminController {
     async publicPreview(@Param('id') id: string): Promise<IResponse<any>> {
         const row = await this.pfiService.findOneById(id);
         return { data: await this.pfiService.mapPublic(row) };
+    }
+
+    /** Admin PDF download — works in any status. Streams the file directly
+     *  (bypasses the standard JSON envelope decorator). */
+    @AuthJwtAccessProtected()
+    @Get('/:id/pdf')
+    async adminPdf(
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const row = await this.pfiService.findOneById(id);
+        const dto = await this.pfiService.mapPublic(row);
+        const buf = await this.pfiPdfService.render(dto);
+        const filename = this.pfiPdfService.buildFilename(dto);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buf.length);
+        res.end(buf);
     }
 }

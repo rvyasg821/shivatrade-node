@@ -30,6 +30,7 @@ import { ExpenseRepository } from '@modules/expense/repository/repositories/expe
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
 import { ProductExpenseRepository } from '@modules/product/repository/repositories/product-expense.repository';
+import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
@@ -64,6 +65,7 @@ export class PfiService {
         private readonly rebateRepository: RebateRepository,
         private readonly productRebateRepository: ProductRebateRepository,
         private readonly productExpenseRepository: ProductExpenseRepository,
+        private readonly productRepository: ProductRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly leadService: LeadService,
@@ -298,8 +300,16 @@ export class PfiService {
                 ENUM_PFI_STATUS.APPROVED,
                 ENUM_PFI_STATUS.REJECTED,
             ],
-            [ENUM_PFI_STATUS.APPROVED]: [ENUM_PFI_STATUS.DRAFT],
+            [ENUM_PFI_STATUS.APPROVED]: [
+                ENUM_PFI_STATUS.DRAFT,
+                // CLOSED is set automatically when a Commercial Invoice is
+                // generated from this PFI. No auto-trigger in v1 — the CI
+                // module wires that when it lands.
+                ENUM_PFI_STATUS.CLOSED,
+            ],
             [ENUM_PFI_STATUS.REJECTED]: [ENUM_PFI_STATUS.DRAFT],
+            // CLOSED is terminal — no further transitions.
+            [ENUM_PFI_STATUS.CLOSED]: [],
         };
         const allowed = map[from] || [];
         if (!allowed.includes(to)) {
@@ -399,6 +409,68 @@ export class PfiService {
             quotation_id: quotationId,
         } as any);
 
+        // ── Company-level export defaults (Phase 6) ──
+        // `default_port_of_loading` / `default_declaration_text` land in
+        // Phase 8 on the company entity; access defensively so this code
+        // works either way.
+        let company: any = null;
+        try {
+            company = await this.companyService.findOneById(companyId);
+        } catch {
+            // company lookup failure shouldn't block PFI creation
+        }
+        const defaultPort: string | undefined =
+            company?.default_port_of_loading || undefined;
+        const defaultDeclaration: string | undefined =
+            company?.default_declaration_text || undefined;
+        const countryOfOrigin: string =
+            (company?.country && String(company.country).trim()) || 'India';
+
+        // ── Bank account: pick the default for the PFI currency ──
+        const currencyCode = (q as any).currency_code;
+        let bankAccountId: string | undefined;
+        try {
+            if (currencyCode) {
+                const currency: any = await this.currencyRepository.findOne({
+                    code: currencyCode,
+                } as any);
+                if (currency?._id) {
+                    const banks = await this.companyBankAccountRepository.findAll(
+                        {
+                            company_id: companyId,
+                            currency_id: currency._id.toString(),
+                            is_active: true,
+                            soft_delete: false,
+                        } as any
+                    );
+                    const def =
+                        (banks || []).find((b: any) => b.is_default) ||
+                        (banks || [])[0];
+                    if (def) bankAccountId = def._id.toString();
+                }
+            }
+        } catch {
+            // leave bankAccountId undefined; user picks one on the form
+        }
+
+        // ── Per-line product master lookup (HS code + per-unit weights) ──
+        const productIds = Array.from(
+            new Set(
+                qLines
+                    .map((l: any) => l.product_id?.toString())
+                    .filter(Boolean)
+            )
+        );
+        const products = productIds.length
+            ? await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)
+            : [];
+        const productById = new Map<string, any>();
+        for (const pr of products as any[]) {
+            productById.set(pr._id.toString(), pr);
+        }
+
         const today = new Date().toISOString().slice(0, 10);
         const payload: PfiCreateRequestDto = {
             quotation_id: quotationId,
@@ -407,7 +479,7 @@ export class PfiService {
             customer_address_id: q.customer_address_id?.toString(),
             pfi_date: today,
             valid_until: q.valid_until,
-            currency_code: (q as any).currency_code,
+            currency_code: currencyCode,
             exchange_rate: q.exchange_rate,
             payment_terms: q.payment_terms,
             delivery_terms: q.delivery_terms,
@@ -417,21 +489,48 @@ export class PfiService {
             margin_pct: q.margin_pct,
             skip_product_costing: !!(q as any).skip_product_costing,
             status: ENUM_PFI_STATUS.DRAFT,
-            lines: qLines.map((l: any) => ({
-                product_id: l.product_id?.toString(),
-                vendor_id: l.vendor_id?.toString(),
-                description: l.description,
-                qty: l.qty,
-                unit: l.unit,
-                unit_price: l.unit_price,
-                discount_pct: l.discount_pct,
-                tax_pct: l.tax_pct,
-                margin_pct: l.margin_pct,
-                // Carry the product rebate/expense snapshots forward so the
-                // PFI uses the SAME rates the source quotation captured.
-                product_rebates_snapshot: l.product_rebates_snapshot,
-                product_expenses_snapshot: l.product_expenses_snapshot,
-            })),
+            // ── Export-document defaults (Phase 6 / §5.4) ──
+            // Shipping fields (port_of_discharge, mode_of_shipment, etc) are
+            // intentionally left blank — user fills these when finalising
+            // the PFI.
+            port_of_loading: defaultPort,
+            country_of_origin: countryOfOrigin,
+            payment_terms_text: '100% advance via T/T',
+            declaration_text: defaultDeclaration,
+            bank_account_id: bankAccountId,
+            lines: qLines.map((l: any) => {
+                const pid = l.product_id?.toString();
+                const prod: any = pid ? productById.get(pid) : undefined;
+                const qty = num(l.qty);
+                const nwpu = num(prod?.net_weight_per_unit);
+                const gwpu = num(prod?.gross_weight_per_unit);
+                return {
+                    product_id: pid,
+                    vendor_id: l.vendor_id?.toString(),
+                    description: l.description,
+                    qty: l.qty,
+                    unit: l.unit,
+                    unit_price: l.unit_price,
+                    discount_pct: l.discount_pct,
+                    tax_pct: l.tax_pct,
+                    margin_pct: l.margin_pct,
+                    // Carry the product rebate/expense snapshots forward so
+                    // the PFI uses the SAME rates the source quotation
+                    // captured.
+                    product_rebates_snapshot: l.product_rebates_snapshot,
+                    product_expenses_snapshot: l.product_expenses_snapshot,
+                    // ── Export-document line auto-fill (Phase 6 / §5.4) ──
+                    hs_code: prod?.hsn_code,
+                    net_weight_kg:
+                        qty > 0 && nwpu > 0
+                            ? String(round2(qty * nwpu))
+                            : undefined,
+                    gross_weight_kg:
+                        qty > 0 && gwpu > 0
+                            ? String(round2(qty * gwpu))
+                            : undefined,
+                };
+            }),
         };
 
         return this.create(companyId, payload, createdBy);
