@@ -2,6 +2,45 @@ import { ApiProperty } from '@nestjs/swagger';
 import { faker } from '@faker-js/faker';
 import { IsOptional, IsString } from 'class-validator';
 import { Transform } from 'class-transformer';
+import {
+    ENUM_COMPANY_ADDRESS_TYPE,
+    ENUM_COMPANY_BANK_ACCOUNT_TYPE,
+} from '@modules/company/enums/company.enum';
+
+export class CompanyAddressResponseDto {
+    @ApiProperty({ required: true, type: String }) _id: string;
+    @ApiProperty({ required: true, enum: ENUM_COMPANY_ADDRESS_TYPE })
+    type: ENUM_COMPANY_ADDRESS_TYPE;
+    @ApiProperty({ required: false, type: String }) label?: string;
+    @ApiProperty({ required: false, type: String }) address_line1?: string;
+    @ApiProperty({ required: false, type: String }) address_line2?: string;
+    @ApiProperty({ required: false, type: String }) city?: string;
+    @ApiProperty({ required: false, type: String }) state?: string;
+    @ApiProperty({ required: false, type: String }) country?: string;
+    @ApiProperty({ required: false, type: String }) postcode?: string;
+    @ApiProperty({ required: false, type: String }) gstin?: string;
+    @ApiProperty({ required: true, type: Boolean }) is_default: boolean;
+}
+
+export class CompanyBankAccountResponseDto {
+    @ApiProperty({ required: true, type: String }) _id: string;
+    @ApiProperty({ required: true, type: String }) bank_name: string;
+    @ApiProperty({ required: false, type: String }) account_holder_name?: string;
+    @ApiProperty({ required: true, type: String }) account_number: string;
+    @ApiProperty({ required: false, type: String }) ifsc?: string;
+    @ApiProperty({ required: false, type: String }) swift_code?: string;
+    @ApiProperty({ required: false, type: String }) iban?: string;
+    @ApiProperty({ required: false, type: String }) ad_code?: string;
+    @ApiProperty({ required: true, type: String }) currency_id: string;
+    @ApiProperty({ required: false, type: String }) currency_code?: string;
+    @ApiProperty({ required: false, type: String }) branch_name?: string;
+    @ApiProperty({ required: false, type: String }) branch_address?: string;
+    @ApiProperty({ required: true, enum: ENUM_COMPANY_BANK_ACCOUNT_TYPE })
+    account_type: ENUM_COMPANY_BANK_ACCOUNT_TYPE;
+    @ApiProperty({ required: true, type: Boolean }) is_default: boolean;
+    @ApiProperty({ required: false, type: String }) notes?: string;
+    @ApiProperty({ required: true, type: Boolean }) is_active: boolean;
+}
 
 export class CompanyGetResponseDto {
     @ApiProperty({
@@ -199,4 +238,17 @@ export class CompanyGetResponseDto {
         description: 'Deletion date (for soft deleted records)'
     })
     deletedAt?: Date;
+
+    // ── India export compliance ──
+    @ApiProperty({ required: false, type: String }) iec?: string;
+    @ApiProperty({ required: false, type: String }) lut_no?: string;
+    @ApiProperty({ required: false, type: String }) lut_date?: string;
+    @ApiProperty({ required: false, type: String }) cin?: string;
+
+    // ── Multi-address & multi-bank ──
+    @ApiProperty({ required: false, type: [CompanyAddressResponseDto] })
+    addresses?: CompanyAddressResponseDto[];
+
+    @ApiProperty({ required: false, type: [CompanyBankAccountResponseDto] })
+    bank_accounts?: CompanyBankAccountResponseDto[];
 }

@@ -43,8 +43,27 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 50, nullable: true })
     tax_number?: string;
 
+    // ── India export compliance ──
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    iec?: string;
+
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    lut_no?: string;
+
+    @Column({ type: 'date', nullable: true })
+    lut_date?: string;
+
+    @Column({ type: 'varchar', length: 21, nullable: true })
+    cin?: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true })
     company_code?: string;
+
+    /** Short uppercase prefix used at the front of every voucher_no
+     *  (e.g. 'STIPL' → STIPL/PI0001/2026-27). If blank, voucher service
+     *  falls back to first 5 chars of company_name. */
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    voucher_prefix?: string;
 
     @Column({ type: 'varchar', length: 50, nullable: true })
     paye_reference?: string;

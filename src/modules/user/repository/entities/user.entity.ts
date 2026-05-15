@@ -197,7 +197,7 @@ export class UserEntity extends DatabaseObjectIdEntityBase {
     // 'hourly' (rate is the source of truth, salary computed) | 'salaried' (salary
     // is the source of truth, rate computed). Drives the UI calculator on the
     // employee edit page so values can't drift due to rounding feedback loops.
-    @Column({ type: 'varchar', length: 20, nullable: true, default: 'hourly' })
+    @Column({ type: 'varchar', length: 20, nullable: true, default: 'salaried' })
     pay_type?: string;
 
     @Column({ type: 'varchar', length: 200, nullable: true })

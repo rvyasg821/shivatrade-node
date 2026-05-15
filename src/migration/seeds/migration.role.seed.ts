@@ -7,6 +7,8 @@ import { COMPANY_DEFAULT_PERMISSIONS } from '@modules/role/constants/company.per
 import { AGENT_DEFAULT_PERMISSIONS } from '@modules/role/constants/agent.permissions';
 import { LOCATION_ADMIN_DEFAULT_PERMISSIONS } from '@modules/role/constants/location-admin.permissions';
 import { EMPLOYEE_DEFAULT_PERMISSIONS } from '@modules/role/constants/employee.permissions';
+import { VENDOR_DEFAULT_PERMISSIONS } from '@modules/role/constants/vendor.permissions';
+import { CUSTOMER_DEFAULT_PERMISSIONS } from '@modules/role/constants/customer.permissions';
 
 @Injectable()
 export class MigrationRoleSeed {
@@ -35,25 +37,12 @@ export class MigrationRoleSeed {
 
         // Create company admin role with limited permissions
         const companyAdminPermissions = COMPANY_DEFAULT_PERMISSIONS; //{ ...defaultPermissions };
-        // Give Company Admin basic permissions but not full admin access
-        // companyAdminPermissions.user = {
-        //     can_all: false,
-        //     can_read: true,
-        //     can_add: true,
-        //     can_update: true,
-        //     can_delete: false
-        // };
-        // companyAdminPermissions.role = {
-        //     can_all: false,
-        //     can_read: true,
-        //     can_add: true,
-        //     can_update: true,
-        //     can_delete: false
-        // };
 
         const AgentPermissions = { ...AGENT_DEFAULT_PERMISSIONS};
         const LocationAdminPermissions = { ...LOCATION_ADMIN_DEFAULT_PERMISSIONS };
         const EmployeePermissions = { ...EMPLOYEE_DEFAULT_PERMISSIONS };
+        const VendorPermissions = { ...VENDOR_DEFAULT_PERMISSIONS };
+        const CustomerPermissions = { ...CUSTOMER_DEFAULT_PERMISSIONS };
 
         const data: RoleCreateDefaultRequestDto[] = [
             {
@@ -125,6 +114,26 @@ export class MigrationRoleSeed {
                 editable_roles: [],
                 access_scope: 'self',
                 category: 'admin', // Agent is system admin only
+            },
+            {
+                name: ENUM_SYSTEM_ROLE.VENDOR,
+                type: ENUM_ROLE_TYPE.SYSTEM,
+                isDefault: true,
+                permissions: VendorPermissions,
+                manageable_roles: [],
+                editable_roles: [],
+                access_scope: 'self',
+                category: 'admin', // Vendor hidden from tenant UI; assigned internally
+            },
+            {
+                name: ENUM_SYSTEM_ROLE.CUSTOMER,
+                type: ENUM_ROLE_TYPE.SYSTEM,
+                isDefault: true,
+                permissions: CustomerPermissions,
+                manageable_roles: [],
+                editable_roles: [],
+                access_scope: 'self',
+                category: 'admin', // Customer hidden from tenant UI; assigned internally
             },
         ];
 

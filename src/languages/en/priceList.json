@@ -1,0 +1,14 @@
+{
+    "list": "Price list retrieved successfully.",
+    "byProduct": "Vendor prices for product retrieved successfully.",
+    "get": "Price list entry fetched successfully.",
+    "create": "Price list entry created successfully.",
+    "update": "Price list entry updated successfully.",
+    "delete": "Price list entry deleted successfully.",
+    "error": {
+        "vendorNotFound": "Vendor not found.",
+        "productNotFound": "Product not found.",
+        "currencyNotFound": "Currency not found.",
+        "notFound": "Sorry, we couldn't find the requested price list entry."
+    }
+}

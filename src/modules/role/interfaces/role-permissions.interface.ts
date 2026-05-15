@@ -48,6 +48,15 @@ export interface ICompanyPermissions {
     tools?: IModulePermissions;
     assessment?: IModulePermissions;
     settings?: IModulePermissions;
+    categories?: IModulePermissions;
+    products?: IModulePermissions;
+    vendors?: IModulePermissions;
+    customers?: IModulePermissions;
+    leads?: IModulePermissions;
+    rebates?: IModulePermissions;
+    expenses?: IModulePermissions;
+    currencies?: IModulePermissions;
+    'price-list'?: IModulePermissions;
     [key: string]: IModulePermissions | Record<string, boolean> | undefined;
 }
 
@@ -86,6 +95,15 @@ export const PermissionModule = {
     DASHBOARD: 'dashboard',
     REPORTS: 'reports',
     ASSESSMENT: 'assessment',
+    CATEGORIES: 'categories',
+    PRODUCTS: 'products',
+    VENDORS: 'vendors',
+    CUSTOMERS: 'customers',
+    LEADS: 'leads',
+    REBATES: 'rebates',
+    EXPENSES: 'expenses',
+    CURRENCIES: 'currencies',
+    PRICE_LIST: 'price-list',
 } as const;
 
 export type PermissionModuleName = typeof PermissionModule[keyof typeof PermissionModule];

@@ -71,7 +71,7 @@ export class SubscriptionCronService implements ICronService {
         this.currencySymbol = CURRENCY_SYMBOLS[currencyCode.toUpperCase()] || '$';
         // Get admin email from environment
         this.adminEmail = process.env.ADMIN_EMAIL || '';
-        this.appName = process.env.APP_NAME || 'PeopleGem';
+        this.appName = process.env.APP_NAME || 'ShivaTrade';
     }
 
     /**
@@ -828,7 +828,7 @@ export class SubscriptionCronService implements ICronService {
                     status: 'Successful',
                     next_date: subscription.next_date,
                     content:
-                        `Thank you for your payment! Your subscription has been successfully renewed and your account remains active. You can view your invoices and manage your billing details by logging into your <a href='${process.env.FRONT_URL || 'http://localhost:3000'}/login' style='color:#008ecc; text-decoration:none; font-weight:600;'>PeopleGem dashboard</a>.`,
+                        `Thank you for your payment! Your subscription has been successfully renewed and your account remains active. You can view your invoices and manage your billing details by logging into your <a href='${process.env.FRONT_URL || 'http://localhost:3000'}/login' style='color:#008ecc; text-decoration:none; font-weight:600;'>ShivaTrade dashboard</a>.`,
                 };
 
                 await this.emailService.sendEmailWithProvider(
@@ -1176,7 +1176,7 @@ export class SubscriptionCronService implements ICronService {
                 currencySymbol: this.currencySymbol,
                 appName: this.appName,
                 logo: process.env.FRONT_LOGO_URL || '',
-                frontUrl: process.env.FRONT_URL || 'https://app.peoplegem.io',
+                frontUrl: process.env.FRONT_URL || 'https://app.shivatrade.com',
             };
 
             await this.emailService.sendEmailWithProvider(
@@ -1225,7 +1225,7 @@ export class SubscriptionCronService implements ICronService {
                 currencySymbol: this.currencySymbol,
                 appName: this.appName,
                 logo: process.env.FRONT_LOGO_URL || '',
-                frontUrl: process.env.FRONT_URL || 'https://app.peoplegem.io',
+                frontUrl: process.env.FRONT_URL || 'https://app.shivatrade.com',
             };
 
             await this.emailService.sendEmailWithProvider(
@@ -1269,7 +1269,7 @@ export class SubscriptionCronService implements ICronService {
                 currencySymbol: this.currencySymbol,
                 appName: this.appName,
                 logo: process.env.FRONT_LOGO_URL || '',
-                frontUrl: process.env.FRONT_URL || 'https://app.peoplegem.io',
+                frontUrl: process.env.FRONT_URL || 'https://app.shivatrade.com',
             };
 
             const subject = paymentResult.success
@@ -1313,7 +1313,7 @@ export class SubscriptionCronService implements ICronService {
                 currencySymbol: this.currencySymbol,
                 appName: this.appName,
                 logo: process.env.FRONT_LOGO_URL || '',
-                frontUrl: process.env.FRONT_URL || 'https://app.peoplegem.io',
+                frontUrl: process.env.FRONT_URL || 'https://app.shivatrade.com',
             };
 
             await this.emailService.sendEmailWithProvider(

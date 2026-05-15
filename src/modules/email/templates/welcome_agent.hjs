@@ -16,7 +16,7 @@
     >
         <div style='padding: 32px 0px; text-align: center;'>
             <img
-                alt='PeopleGem Logo'
+                alt='ShivaTrade Logo'
                 src="{{{logo}}}"
                 style='height: auto; width: auto; max-width: 200px;'
             />
@@ -25,7 +25,7 @@
         <div style='text-align: center; max-width: 400px; margin: 0 auto;'>
             <h3
                 style='font-family: Poppins; font-weight: 700; margin: 0; padding: 10px 0; font-size: 36px;'
-            >Welcome to PeopleGem</h3>
+            >Welcome to ShivaTrade</h3>
         </div>
 
         <div style='text-align: center; max-width: 400px; margin: 0 auto;'>
@@ -44,7 +44,7 @@
             <p
                 style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0 auto; font-weight: 500;'
             >
-                Your account has been successfully created on PeopleGem. Below
+                Your account has been successfully created on ShivaTrade. Below
                 are your account credentials:
             </p>
             <p
@@ -138,7 +138,7 @@
             >
                 <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
                     <img
-                        alt='PeopleGem Logo'
+                        alt='ShivaTrade Logo'
                         src="{{{logo}}}"
                         style='height: auto; width: auto; max-width: 200px;'
                     />

@@ -9,6 +9,8 @@ export enum ENUM_SYSTEM_ROLE {
     COMPANY_ADMIN = 'Company Admin', // Manages entire company + all locations
     LOCATION_ADMIN = 'Location Admin', // Manages specific location(s)
     EMPLOYEE = 'Employee', // Staff member at a location
-    AGENT = 'Agent'  // Sales agent - helps sell subscriptions
+    AGENT = 'Agent', // Sales agent - helps sell subscriptions
+    VENDOR = 'Vendor', // External supplier/vendor - hidden from tenant UI, assigned internally
+    CUSTOMER = 'Customer' // External customer - hidden from tenant UI, assigned internally
 }
 

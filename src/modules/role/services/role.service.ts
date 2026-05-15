@@ -454,7 +454,7 @@ export class RoleService implements IRoleService {
             if (purpose === 'manage') {
                 adminFilters = {
                     ...filters,
-                    name: { $ne: ENUM_SYSTEM_ROLE.SUPER_ADMIN }, // Super Admin cannot see/edit own role
+                    name: { $nin: [ENUM_SYSTEM_ROLE.SUPER_ADMIN, ENUM_SYSTEM_ROLE.VENDOR, ENUM_SYSTEM_ROLE.CUSTOMER] }, // hide own role + Vendor/Customer (internal-only)
                     $or: [
                         { isDefault: true },
                         { category: 'custom', companyId: null },

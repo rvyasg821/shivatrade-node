@@ -43,6 +43,29 @@ import { DashboardModule } from '@modules/dashboard/dashboard.module';
 import { DashboardAdminController } from '@modules/dashboard/controllers/dashboard.admin.controller';
 import { LocationModule } from '@modules/location/location.module';
 import { LocationAdminController } from '@modules/location/controllers/location.admin.controller';
+import { CategoryModule } from '@modules/category/category.module';
+import { CategoryAdminController } from '@modules/category/controllers/category.admin.controller';
+import { ProductModule } from '@modules/product/product.module';
+import { ProductAdminController } from '@modules/product/controllers/product.admin.controller';
+import { VendorModule } from '@modules/vendor/vendor.module';
+import { VendorAdminController } from '@modules/vendor/controllers/vendor.admin.controller';
+import { CustomerModule } from '@modules/customer/customer.module';
+import { CustomerAdminController } from '@modules/customer/controllers/customer.admin.controller';
+import { LeadModule } from '@modules/lead/lead.module';
+import { LeadAdminController } from '@modules/lead/controllers/lead.admin.controller';
+import { RebateModule } from '@modules/rebate/rebate.module';
+import { RebateAdminController } from '@modules/rebate/controllers/rebate.admin.controller';
+import { ExpenseModule } from '@modules/expense/expense.module';
+import { ExpenseAdminController } from '@modules/expense/controllers/expense.admin.controller';
+import { CurrencyModule } from '@modules/currency/currency.module';
+import { CurrencyAdminController } from '@modules/currency/controllers/currency.admin.controller';
+import { PriceListModule } from '@modules/price-list/price-list.module';
+import { PriceListAdminController } from '@modules/price-list/controllers/price-list.admin.controller';
+import { VoucherModule } from '@common/voucher/voucher.module';
+import { QuotationModule } from '@modules/quotation/quotation.module';
+import { QuotationAdminController } from '@modules/quotation/controllers/quotation.admin.controller';
+import { PfiModule } from '@modules/pfi/pfi.module';
+import { PfiAdminController } from '@modules/pfi/controllers/pfi.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
 import { EmployeeAdminController } from '@modules/employee/controllers/employee.admin.controller';
 import { HolidayCalendarModule } from '@modules/holiday-calendar/holiday-calendar.module';
@@ -102,6 +125,33 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         // Location controller
         LocationAdminController,
 
+        // Category controller
+        CategoryAdminController,
+
+        // Product controller
+        ProductAdminController,
+
+        // Vendor controller
+        VendorAdminController,
+
+        // Customer controller
+        CustomerAdminController,
+
+        // Lead controller
+        LeadAdminController,
+
+        // Rebate controller
+        RebateAdminController,
+
+        // Expense controller
+        ExpenseAdminController,
+
+        // Currency controller
+        CurrencyAdminController,
+
+        // Price List controller
+        PriceListAdminController,
+
         // Employee controller
         EmployeeAdminController,
 
@@ -140,6 +190,10 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         // Payroll controller
         PayrollAdminController,
+
+        // Quotation controller
+        QuotationAdminController,
+        PfiAdminController,
     ],
     providers: [],
     exports: [],
@@ -174,6 +228,18 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         AssessmentModule,
         DashboardModule,
         LocationModule,
+        CategoryModule,
+        ProductModule,
+        VendorModule,
+        CustomerModule,
+        LeadModule,
+        RebateModule,
+        ExpenseModule,
+        CurrencyModule,
+        PriceListModule,
+        VoucherModule,
+        QuotationModule,
+        PfiModule,
         EmployeeModule,
         HolidayCalendarModule,
         DocumentModule,

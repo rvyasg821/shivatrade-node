@@ -1,0 +1,17 @@
+{
+    "list": "Customers retrieved successfully.",
+    "get": "Customer details fetched successfully.",
+    "create": "Customer created successfully.",
+    "update": "Customer updated successfully.",
+    "delete": "Customer deleted successfully.",
+    "dropdown": "Customers dropdown loaded.",
+    "error": {
+        "exist": "A customer with this name already exists.",
+        "noContacts": "At least one contact person is required.",
+        "noPrimary": "One contact must be marked as primary.",
+        "multiplePrimary": "Only one contact can be marked as primary.",
+        "duplicateEmail": "Duplicate contact email.",
+        "emailInUse": "Contact email is already in use.",
+        "notFound": "Sorry, we couldn't find the requested customer."
+    }
+}

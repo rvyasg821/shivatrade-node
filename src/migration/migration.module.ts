@@ -37,6 +37,7 @@ import { MigrationSyncCustomRolePermissionsSeed } from '@migration/seeds/migrati
 import { MigrationContractTemplatesSeed } from '@migration/seeds/migration.contract-templates.seed';
 import { MigrationNotificationEventsSeed } from '@migration/seeds/migration.notification-events.seed';
 import { MigrationProductionSeed } from '@migration/seeds/migration.production.seed';
+import { MigrationTradeDataSeed } from '@migration/seeds/migration.trade-data.seed';
 
 // Repository modules (no controllers)
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
@@ -160,6 +161,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         MigrationContractTemplatesSeed,
         MigrationNotificationEventsSeed,
         MigrationProductionSeed,
+        MigrationTradeDataSeed,
 
         // Tools widgets and settings migration
         MigrateToolsWidgetsSettingsCommand,

@@ -1,8 +1,32 @@
 import { ENUM_ROLE_TYPE, ENUM_SYSTEM_ROLE } from '../enums/role.enum';
+import { COMPANY_DEFAULT_PERMISSIONS } from '../constants/company.permissions';
+import { LOCATION_ADMIN_DEFAULT_PERMISSIONS } from '../constants/location-admin.permissions';
+import { EMPLOYEE_DEFAULT_PERMISSIONS } from '../constants/employee.permissions';
+import { AGENT_DEFAULT_PERMISSIONS } from '../constants/agent.permissions';
+import { VENDOR_DEFAULT_PERMISSIONS } from '../constants/vendor.permissions';
+import { CUSTOMER_DEFAULT_PERMISSIONS } from '../constants/customer.permissions';
+import { MODULES_PERMISSIONS } from '../constants/modules.permissions';
+
+/**
+ * Super Admin gets every module permission turned ON, except `location` and
+ * `employee` which are company-level and not platform-level. Mirrors the logic
+ * in `migration.role.seed.ts` so both seeders produce the same JSONB.
+ */
+function buildSuperAdminPermissions(): Record<string, Record<string, boolean>> {
+    const perms: Record<string, Record<string, boolean>> = {};
+    for (const [name, mod] of Object.entries(MODULES_PERMISSIONS.modules)) {
+        if (name === 'location' || name === 'employee') continue;
+        perms[name] = {};
+        for (const op of mod.permissions) perms[name][op] = true;
+    }
+    return perms;
+}
 
 /**
  * Default system-level roles
- * These roles are stored in the central database
+ * These roles are stored in the central database. Each role's permissions
+ * come from a single source-of-truth constant in `../constants/*.permissions.ts`
+ * so that this file and `migration.role.seed.ts` stay in lock-step.
  */
 export const SYSTEM_ROLES = [
     {
@@ -11,17 +35,22 @@ export const SYSTEM_ROLES = [
         type: ENUM_ROLE_TYPE.SYSTEM,
         isDefault: true,
         isActive: true,
-        permissions: {
-            // Super admin has access to everything at platform level
-            company: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-            user: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-            role: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-            subscription: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-            payment: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-            settings: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-            agent: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: true },
-        },
-        level: 1
+        permissions: buildSuperAdminPermissions(),
+        manageable_roles: [
+            ENUM_SYSTEM_ROLE.COMPANY_ADMIN,
+            ENUM_SYSTEM_ROLE.LOCATION_ADMIN,
+            ENUM_SYSTEM_ROLE.EMPLOYEE,
+            ENUM_SYSTEM_ROLE.AGENT,
+        ],
+        editable_roles: [
+            ENUM_SYSTEM_ROLE.COMPANY_ADMIN,
+            ENUM_SYSTEM_ROLE.LOCATION_ADMIN,
+            ENUM_SYSTEM_ROLE.EMPLOYEE,
+            ENUM_SYSTEM_ROLE.AGENT,
+        ],
+        access_scope: 'system',
+        category: 'admin',
+        level: 1,
     },
     {
         name: ENUM_SYSTEM_ROLE.COMPANY_ADMIN,
@@ -29,13 +58,44 @@ export const SYSTEM_ROLES = [
         type: ENUM_ROLE_TYPE.SYSTEM,
         isDefault: true,
         isActive: true,
-        permissions: {
-            // Company admin has access to their company data
-            company: { can_read: true, can_create: false, can_update: true, can_delete: false },
-            subscription: { can_read: true, can_create: false, can_update: true, can_delete: false },
-            payment: { can_read: true, can_create: true, can_update: false, can_delete: false },
-        },
-        level: 2
+        permissions: COMPANY_DEFAULT_PERMISSIONS,
+        manageable_roles: [
+            ENUM_SYSTEM_ROLE.LOCATION_ADMIN,
+            ENUM_SYSTEM_ROLE.EMPLOYEE,
+        ],
+        editable_roles: [
+            ENUM_SYSTEM_ROLE.LOCATION_ADMIN,
+            ENUM_SYSTEM_ROLE.EMPLOYEE,
+        ],
+        access_scope: 'company',
+        category: 'company_default',
+        level: 2,
+    },
+    {
+        name: ENUM_SYSTEM_ROLE.LOCATION_ADMIN,
+        description: 'Manages a specific location and its employees',
+        type: ENUM_ROLE_TYPE.SYSTEM,
+        isDefault: true,
+        isActive: true,
+        permissions: LOCATION_ADMIN_DEFAULT_PERMISSIONS,
+        manageable_roles: [ENUM_SYSTEM_ROLE.EMPLOYEE],
+        editable_roles: [ENUM_SYSTEM_ROLE.EMPLOYEE],
+        access_scope: 'location',
+        category: 'company_default',
+        level: 2,
+    },
+    {
+        name: ENUM_SYSTEM_ROLE.EMPLOYEE,
+        description: 'Staff member at a location',
+        type: ENUM_ROLE_TYPE.SYSTEM,
+        isDefault: true,
+        isActive: true,
+        permissions: EMPLOYEE_DEFAULT_PERMISSIONS,
+        manageable_roles: [],
+        editable_roles: [],
+        access_scope: 'self',
+        category: 'company_default',
+        level: 3,
     },
     {
         name: ENUM_SYSTEM_ROLE.AGENT,
@@ -43,41 +103,72 @@ export const SYSTEM_ROLES = [
         type: ENUM_ROLE_TYPE.SYSTEM,
         isDefault: true,
         isActive: true,
-        permissions: {
-            // Agent can manage companies and subscriptions but not delete
-            company: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: false },
-            subscription: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: false },
-            payment: { can_read: true, can_add: true, can_create: true, can_update: true, can_delete: false },
-            report: { can_read: true, can_add: false, can_create: false, can_update: false, can_delete: false },
-        },
-        level: 3
-    }
+        permissions: AGENT_DEFAULT_PERMISSIONS,
+        manageable_roles: [],
+        editable_roles: [],
+        access_scope: 'self',
+        category: 'admin',
+        level: 3,
+    },
+    {
+        name: ENUM_SYSTEM_ROLE.VENDOR,
+        description: 'External supplier/vendor',
+        type: ENUM_ROLE_TYPE.SYSTEM,
+        isDefault: true,
+        isActive: true,
+        permissions: VENDOR_DEFAULT_PERMISSIONS,
+        manageable_roles: [],
+        editable_roles: [],
+        access_scope: 'self',
+        category: 'admin',
+        level: 4,
+    },
+    {
+        name: ENUM_SYSTEM_ROLE.CUSTOMER,
+        description: 'External customer',
+        type: ENUM_ROLE_TYPE.SYSTEM,
+        isDefault: true,
+        isActive: true,
+        permissions: CUSTOMER_DEFAULT_PERMISSIONS,
+        manageable_roles: [],
+        editable_roles: [],
+        access_scope: 'self',
+        category: 'admin',
+        level: 4,
+    },
 ];
 
 /**
  * Get system role by name
  */
 export function getSystemRoleByName(name: ENUM_SYSTEM_ROLE) {
-    return SYSTEM_ROLES.find(role => role.name === name);
+    return SYSTEM_ROLES.find((role) => role.name === name);
 }
 
-/**
- * Get super admin role
- */
 export function getSuperAdminRole() {
-    return SYSTEM_ROLES.find(role => role.name === ENUM_SYSTEM_ROLE.SUPER_ADMIN);
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.SUPER_ADMIN);
 }
 
-/**
- * Get company admin role
- */
 export function getCompanyAdminRole() {
-    return SYSTEM_ROLES.find(role => role.name === ENUM_SYSTEM_ROLE.COMPANY_ADMIN);
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.COMPANY_ADMIN);
 }
 
-/**
- * Get agent role
- */
+export function getLocationAdminRole() {
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.LOCATION_ADMIN);
+}
+
+export function getEmployeeRole() {
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.EMPLOYEE);
+}
+
 export function getAgentRole() {
-    return SYSTEM_ROLES.find(role => role.name === ENUM_SYSTEM_ROLE.AGENT);
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.AGENT);
+}
+
+export function getVendorRole() {
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.VENDOR);
+}
+
+export function getCustomerRole() {
+    return SYSTEM_ROLES.find((r) => r.name === ENUM_SYSTEM_ROLE.CUSTOMER);
 }

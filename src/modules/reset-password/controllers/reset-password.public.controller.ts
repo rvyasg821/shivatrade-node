@@ -81,6 +81,22 @@ export class ResetPasswordPublicController {
             });
         }
 
+        // Block reset for roles whose login is disabled (Vendor for now).
+        // Same generic NOT_FOUND so the endpoint doesn't leak vendor account
+        // existence.
+        const userWithRole = await this.userService.findOneById(
+            String(user._id),
+            { join: true }
+        );
+        const roleName = (userWithRole as any)?.role?.name || '';
+        if (!this.authService.isLoginAllowedForRole(roleName)) {
+            this.logger.warn(`Reset blocked for role '${roleName}': ${email?.substring(0, 3)}***`);
+            throw new BadRequestException({
+                statusCode: ENUM_USER_STATUS_CODE_ERROR.NOT_FOUND,
+                message: 'user.error.notFound',
+            });
+        }
+
         const userId = String(user._id);
         const userName = (user as any)?.name || (user as any)?.first_name || 'user';
 

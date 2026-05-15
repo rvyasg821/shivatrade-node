@@ -124,7 +124,7 @@ export class NodemailerService {
     private resolveTransport(companySmtpConfig?: CompanySmtpConfig, fromOverride?: string) {
         if (companySmtpConfig && companySmtpConfig.smtp_enabled && companySmtpConfig.smtp_host) {
             const transporter = this.createTransporterFromConfig(companySmtpConfig);
-            const fromName = companySmtpConfig.smtp_from_name || 'PeopleGem';
+            const fromName = companySmtpConfig.smtp_from_name || 'ShivaTrade';
             const fromEmail = companySmtpConfig.smtp_from_email || companySmtpConfig.smtp_username;
             const fromAddress = fromOverride || `${fromName} <${fromEmail}>`;
             return { transporter, fromAddress, isCompanySmtp: true };
@@ -136,7 +136,7 @@ export class NodemailerService {
         }
 
         const transporter = this.createTransporter();
-        const fromName = process.env.SMTP_NAME || 'PeopleGem';
+        const fromName = process.env.SMTP_NAME || 'ShivaTrade';
         const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USERNAME;
         const fromAddress = fromOverride || `${fromName} <${fromEmail}>`;
         return { transporter, fromAddress, isCompanySmtp: false };
@@ -214,9 +214,9 @@ export class NodemailerService {
                 throw new Error(`Template file not found: ${completePath}`);
             }
             const logo = context.logo || process.env.FRONT_LOGO_URL || '';
-            const frontUrl = context.frontUrl || process.env.MAIN_URL || 'https://app.peoplegem.io';
-            const supportEmail = context.supportEmail || process.env.SMTP_SUPPORT_EMAIL || process.env.SMTP_FROM || 'support@peoplegem.io';
-            const homeName = context.homeName || process.env.HOME_NAME || 'PeopleGem';
+            const frontUrl = context.frontUrl || process.env.MAIN_URL || 'https://app.shivatrade.com';
+            const supportEmail = context.supportEmail || process.env.SMTP_SUPPORT_EMAIL || process.env.SMTP_FROM || 'support@shivatrade.com';
+            const homeName = context.homeName || process.env.HOME_NAME || 'ShivaTrade';
             const homeUrl = context.homeUrl || process.env.HOME_URL || frontUrl;
             const contextData = {
                 ...context,
@@ -331,7 +331,7 @@ export class NodemailerService {
               <tr><td style="text-align:center;font-size:11px;color:#9ca3af;">
                 This is an automated notification. Please do not reply to this email.
               </td></tr>
-              ${branding.frontUrl ? `<tr><td style="text-align:center;padding-top:8px;"><a href="${branding.frontUrl}" style="font-size:11px;color:#09418B;text-decoration:none;">Open PeopleGem</a></td></tr>` : ''}
+              ${branding.frontUrl ? `<tr><td style="text-align:center;padding-top:8px;"><a href="${branding.frontUrl}" style="font-size:11px;color:#09418B;text-decoration:none;">Open ShivaTrade</a></td></tr>` : ''}
             </table>
           </td>
         </tr>

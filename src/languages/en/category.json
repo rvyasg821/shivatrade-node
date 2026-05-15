@@ -1,0 +1,15 @@
+{
+    "list": "Categories retrieved successfully.",
+    "get": "Category details fetched successfully.",
+    "create": "Category created successfully.",
+    "update": "Category updated successfully.",
+    "delete": "Category deleted successfully.",
+    "dropdown": "Categories dropdown loaded.",
+    "error": {
+        "exist": "A category with this name already exists.",
+        "parentNotFound": "Parent category not found.",
+        "selfParent": "A category cannot be its own parent.",
+        "hasChildren": "Cannot delete a category that has sub-categories.",
+        "notFound": "Sorry, we couldn't find the requested category."
+    }
+}

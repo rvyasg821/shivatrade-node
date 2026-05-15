@@ -6,6 +6,8 @@ import { COMPANY_DEFAULT_PERMISSIONS } from '@modules/role/constants/company.per
 import { AGENT_DEFAULT_PERMISSIONS } from '@modules/role/constants/agent.permissions';
 import { LOCATION_ADMIN_DEFAULT_PERMISSIONS } from '@modules/role/constants/location-admin.permissions';
 import { EMPLOYEE_DEFAULT_PERMISSIONS } from '@modules/role/constants/employee.permissions';
+import { VENDOR_DEFAULT_PERMISSIONS } from '@modules/role/constants/vendor.permissions';
+import { CUSTOMER_DEFAULT_PERMISSIONS } from '@modules/role/constants/customer.permissions';
 
 @Injectable()
 export class MigrationUpdateRolePermissionsSeed {
@@ -73,6 +75,24 @@ export class MigrationUpdateRolePermissionsSeed {
                 console.log('✅ Agent role updated');
             } else {
                 console.log('⚠️  Agent role not found');
+            }
+
+            // ── Vendor ──
+            const vendorRole = await this.roleService.findOneByName(ENUM_SYSTEM_ROLE.VENDOR);
+            if (vendorRole) {
+                await this.roleService.findByIdAndUpdate(String(vendorRole._id), VENDOR_DEFAULT_PERMISSIONS);
+                console.log('✅ Vendor role updated');
+            } else {
+                console.log('⚠️  Vendor role not found');
+            }
+
+            // ── Customer ──
+            const customerRole = await this.roleService.findOneByName(ENUM_SYSTEM_ROLE.CUSTOMER);
+            if (customerRole) {
+                await this.roleService.findByIdAndUpdate(String(customerRole._id), CUSTOMER_DEFAULT_PERMISSIONS);
+                console.log('✅ Customer role updated');
+            } else {
+                console.log('⚠️  Customer role not found');
             }
 
             console.log('');

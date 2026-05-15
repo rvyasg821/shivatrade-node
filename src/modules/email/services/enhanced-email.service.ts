@@ -327,7 +327,7 @@ export class EnhancedEmailService implements IEmailService {
                 return await this.sendEmailWithProvider(
                     email,
                     name,
-                    `Welcome to PeopleGem`,
+                    `Welcome to ShivaTrade`,
                     'welcome_agent.hjs',
                     templateData,
                     undefined,
@@ -340,7 +340,7 @@ export class EnhancedEmailService implements IEmailService {
                 return await this.sendEmailWithProvider(
                     email,
                     name,
-                    `Welcome to PeopleGem`,
+                    `Welcome to ShivaTrade`,
                     'welcome.hjs',
                     templateData,
                     undefined,
@@ -603,7 +603,7 @@ export class EnhancedEmailService implements IEmailService {
                 return false;
             }
 
-            // Use PeopleGem system logo for subscription emails (not company logo)
+            // Use ShivaTrade system logo for subscription emails (not company logo)
             const logo = this.configService.get<string>('FRONT_LOGO_URL') || `${this.getBackendUrl()}/public/logo.png`;
 
             const templateData = {
@@ -651,7 +651,7 @@ export class EnhancedEmailService implements IEmailService {
                 return false;
             }
 
-            // Use PeopleGem system logo for subscription emails (not company logo)
+            // Use ShivaTrade system logo for subscription emails (not company logo)
             const logo = this.configService.get<string>('FRONT_LOGO_URL') || `${this.getBackendUrl()}/public/logo.png`;
 
             const templateData = {
@@ -699,7 +699,7 @@ export class EnhancedEmailService implements IEmailService {
                 return false;
             }
 
-            // Use PeopleGem system logo for subscription emails (not company logo)
+            // Use ShivaTrade system logo for subscription emails (not company logo)
             const logo = this.configService.get<string>('FRONT_LOGO_URL') || `${this.getBackendUrl()}/public/logo.png`;
 
             const templateData = {
@@ -747,7 +747,7 @@ export class EnhancedEmailService implements IEmailService {
                 return false;
             }
 
-            // Use PeopleGem system logo for subscription emails (not company logo)
+            // Use ShivaTrade system logo for subscription emails (not company logo)
             const logo = this.configService.get<string>('FRONT_LOGO_URL') || `${this.getBackendUrl()}/public/logo.png`;
 
             const templateData = {

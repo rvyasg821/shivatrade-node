@@ -367,6 +367,10 @@ export class CompanyAdminController {
 
         const mapped: CompanyGetResponseDto =
             this.companyService.mapGet(companyWithUser);
+        await this.companyService.hydrateRelationsOnto(
+            String(companyWithUser._id),
+            mapped
+        );
 
         return { data: mapped };
     }
@@ -434,6 +438,10 @@ export class CompanyAdminController {
 
             const mapped: CompanyGetResponseDto =
                 this.companyService.mapGet(company);
+            await this.companyService.hydrateRelationsOnto(
+                String(company._id),
+                mapped
+            );
 
             return { data: mapped };
         } catch (err: unknown) {
@@ -510,8 +518,25 @@ export class CompanyAdminController {
             // Update the company with all provided fields
             const updated = await this.companyService.update(company, body);
 
+            if (body.addresses !== undefined) {
+                await this.companyService.replaceAddresses(
+                    String(updated._id),
+                    body.addresses
+                );
+            }
+            if (body.bank_accounts !== undefined) {
+                await this.companyService.replaceBankAccounts(
+                    String(updated._id),
+                    body.bank_accounts
+                );
+            }
+
             const mapped: CompanyGetResponseDto =
                 this.companyService.mapGet(updated);
+            await this.companyService.hydrateRelationsOnto(
+                String(updated._id),
+                mapped
+            );
 
             return { data: mapped };
         } catch (err: unknown) {
@@ -733,7 +758,7 @@ export class CompanyAdminController {
 
             // 8. Send welcome email
             try {
-                const subject = 'Welcome to PeopleGem — Your account has been created';
+                const subject = 'Welcome to ShivaTrade — Your account has been created';
                 const context = { name: `${fname} ${lname}`.trim(), email: email, password: rawPassword };
                 await this.nodemailerService.sendEmailWithTemplate(email, subject, 'welcome.hjs', context);
                 this.logger.log(`Welcome email sent to: ${email}`);
@@ -765,8 +790,9 @@ export class CompanyAdminController {
         company: CompanyDoc,
         @AuthJwtPayload('user') userId: string,
         @AuthJwtPayload('roleName') roleName: string,
-        @Body()
-        {
+        @Body() body: CompanyUpdateRequestDto
+    ): Promise<IResponse<DatabaseIdResponseDto>> {
+        const {
             company_name,
             contact_name,
             contact_first_name,
@@ -788,8 +814,13 @@ export class CompanyAdminController {
             zipcode,
             status,
             is_subscribe,
-        }: CompanyUpdateRequestDto
-    ): Promise<IResponse<DatabaseIdResponseDto>> {
+            iec,
+            lut_no,
+            lut_date,
+            cin,
+            addresses,
+            bank_accounts,
+        } = body;
         // Check if user has COMPANY_ADMIN role and owns this company
         if (roleName === ENUM_SYSTEM_ROLE.COMPANY_ADMIN) {
             if (String(company.user_id) !== userId) {
@@ -851,7 +882,24 @@ export class CompanyAdminController {
                 country,
                 zipcode,
                 status,
+                iec,
+                lut_no,
+                lut_date,
+                cin,
             });
+
+            if (addresses !== undefined) {
+                await this.companyService.replaceAddresses(
+                    String(updated._id),
+                    addresses
+                );
+            }
+            if (bank_accounts !== undefined) {
+                await this.companyService.replaceBankAccounts(
+                    String(updated._id),
+                    bank_accounts
+                );
+            }
 
             // TODO: Create company-specific activity logging
             // await this.activityService.createByAdmin(

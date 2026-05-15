@@ -23,7 +23,7 @@
     >
         <div style='padding: 32px 0px; text-align: center;'>
             <img
-                alt='PeopleGem Logo'
+                alt='ShivaTrade Logo'
                 src="{{{logo}}}"
                 style='height: auto; width: auto; max-width: 200px;'
             />
@@ -32,7 +32,7 @@
         <div style='text-align: center; max-width: 400px; margin: 0 auto;'>
             <h3
                 style='font-family: Poppins; font-weight: 700; margin: 0; padding: 10px 0; font-size: 32px; color: #333;'
-            >Your PeopleGem Access is Ready!</h3>
+            >Your ShivaTrade Access is Ready!</h3>
         </div>
 
         <div style='text-align: center; max-width: 400px; margin: 0 auto;'>
@@ -52,7 +52,7 @@
                 style='font-size: 14px; font-family: Poppins, sans-serif; margin: 0 auto; font-weight: 400; line-height: 1.6;'
             >
                 Congratulations! Your subscription for <strong>{{companyName}}</strong> has been successfully activated.
-                You now have access to the PeopleGem Appointment Management System.
+                You now have access to the ShivaTrade Appointment Management System.
             </p>
 
             <div class='credentials-box' style='background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 25px auto; max-width: 350px; border: 1px solid #e9ecef;'>
@@ -91,7 +91,7 @@
                     class='login-btn'
                     style='color: #fff; background-color: #008ecc; border-radius: 5px; border: 2px solid #008ecc; text-decoration: none; padding: 12px 35px; display: inline-block;'
                 >
-                    Login to PeopleGem
+                    Login to ShivaTrade
                 </a>
             </p>
         </div>
@@ -140,7 +140,7 @@
             >
                 <a href='{{frontUrl}}' target='_blank' style='text-decoration: none;'>
                     <img
-                        alt='PeopleGem Logo'
+                        alt='ShivaTrade Logo'
                         src="{{{logo}}}"
                         style='height: auto; width: auto; max-width: 200px;'
                     />
