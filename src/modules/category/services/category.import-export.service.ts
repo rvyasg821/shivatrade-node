@@ -124,12 +124,19 @@ export class CategoryImportExportService {
             const rowNum = i + 2; // 1-indexed + header row
             const errors: string[] = [];
 
-            // Case-insensitive column access.
+            // Case-insensitive column access. Strips outer whitespace
+            // (including non-breaking spaces) and collapses internal runs of
+            // whitespace to a single space — Excel cells often arrive with
+            // pasted padding or   from Word that .trim() alone misses.
             const get = (col: string): string => {
                 const key = Object.keys(raw).find(
                     (k) => k.trim().toLowerCase() === col,
                 );
-                return key ? String(raw[key] ?? '').trim() : '';
+                if (!key) return '';
+                return String(raw[key] ?? '')
+                    .replace(/ /g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
             };
 
             const name = get('name');
