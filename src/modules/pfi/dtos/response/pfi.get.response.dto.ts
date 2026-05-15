@@ -36,6 +36,12 @@ export class PfiLineResponseDto {
     margin_pct?: string;
     margin_amount?: string;
     seq?: number;
+
+    // ── Export-document line fields (Phase 2) ──
+    hs_code?: string;
+    net_weight_kg?: string;
+    gross_weight_kg?: string;
+    package_count?: number;
 }
 
 export class PfiGetResponseDto {
@@ -75,6 +81,31 @@ export class PfiGetResponseDto {
     status?: ENUM_PFI_STATUS;
     version?: number;
     parent_version_id?: string;
+
+    // ── Consignee / shipping / packing / commercial (Phase 1) ──
+    consignee_name?: string;
+    consignee_address?: string;
+    port_of_loading?: string;
+    port_of_discharge?: string;
+    final_destination?: string;
+    country_of_origin?: string;
+    country_of_final_destination?: string;
+    mode_of_shipment?: string;
+    container_details?: string;
+    est_shipment_date?: string;
+    est_delivery_date?: string;
+    packing_marks?: string;
+    total_packages?: number;
+    packing_type?: string;
+    gross_weight_kg?: string;
+    net_weight_kg?: string;
+    bank_account_id?: string;
+    payment_terms_text?: string;
+    declaration_text?: string;
+    validity_days?: number;
+    public_token?: string;
+    public_view_count?: number;
+    public_last_viewed_at?: Date;
 
     created_by?: string;
     createdAt?: Date;

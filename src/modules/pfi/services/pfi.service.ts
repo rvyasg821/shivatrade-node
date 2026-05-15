@@ -13,7 +13,10 @@ import {
     PfiGetResponseDto,
     PfiLineResponseDto,
 } from '../dtos/response/pfi.get.response.dto';
+import { PfiPublicResponseDto } from '../dtos/response/pfi.public.response.dto';
 import { ENUM_PFI_STATUS } from '../enums/pfi.enum';
+
+import { randomBytes } from 'crypto';
 
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
@@ -21,6 +24,7 @@ import { CustomerContactRepository } from '@modules/customer/repository/reposito
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
@@ -54,6 +58,7 @@ export class PfiService {
         private readonly currencyRepository: CurrencyRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companyBankAccountRepository: CompanyBankAccountRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly rebateRepository: RebateRepository,
@@ -154,6 +159,26 @@ export class PfiService {
             skip_product_costing: !!data.skip_product_costing,
             status: data.status || ENUM_PFI_STATUS.DRAFT,
             version: 1,
+            // ── Consignee / shipping / packing / commercial (Phase 1) ──
+            consignee_name: data.consignee_name || null,
+            consignee_address: data.consignee_address || null,
+            port_of_loading: data.port_of_loading || null,
+            port_of_discharge: data.port_of_discharge || null,
+            final_destination: data.final_destination || null,
+            country_of_origin: data.country_of_origin || null,
+            country_of_final_destination:
+                data.country_of_final_destination || null,
+            mode_of_shipment: data.mode_of_shipment || null,
+            container_details: data.container_details || null,
+            est_shipment_date: data.est_shipment_date || null,
+            est_delivery_date: data.est_delivery_date || null,
+            packing_marks: data.packing_marks || null,
+            packing_type: data.packing_type || null,
+            bank_account_id: data.bank_account_id || null,
+            payment_terms_text: data.payment_terms_text || null,
+            declaration_text: data.declaration_text || null,
+            validity_days:
+                data.validity_days === undefined ? 30 : data.validity_days,
         } as any);
 
         await this.replaceLines(
@@ -182,13 +207,12 @@ export class PfiService {
         // Same revert-and-edit allowance as Quotation - payload setting
         // status=DRAFT lifts the lock for this update.
         const willBeDraft = data.status === ENUM_PFI_STATUS.DRAFT;
-        const isLocked =
-            row.status !== ENUM_PFI_STATUS.DRAFT && !willBeDraft;
+        const isLocked = row.status !== ENUM_PFI_STATUS.DRAFT && !willBeDraft;
         const isStatusOnlyChange = (() => {
             if (!isLocked) return true;
             const allowedKeys = new Set(['status', 'internal_notes']);
-            return Object.keys(data || {}).every((k) =>
-                allowedKeys.has(k) || (data as any)[k] === undefined
+            return Object.keys(data || {}).every(
+                k => allowedKeys.has(k) || (data as any)[k] === undefined
             );
         })();
         if (isLocked && !isStatusOnlyChange) {
@@ -242,8 +266,7 @@ export class PfiService {
                 !wasApproved &&
                 refreshed.status === ENUM_PFI_STATUS.SENT;
             const becomesApproved =
-                !wasApproved &&
-                refreshed.status === ENUM_PFI_STATUS.APPROVED;
+                !wasApproved && refreshed.status === ENUM_PFI_STATUS.APPROVED;
             if (becomesApproved) {
                 await this.leadService.markWon(
                     refreshed.lead_id.toString(),
@@ -290,6 +313,69 @@ export class PfiService {
         row.soft_delete = true;
         await this.pfiRepository.save(row);
         this.logger.log(`PFI soft-deleted: ${row._id}`);
+    }
+
+    // ─── Public share link ──────────────────────────────────────────────
+
+    /** Generate (or keep) the public token. Only sent/approved PFIs can be
+     *  published — a draft is not final enough to share. */
+    async publish(id: string): Promise<PfiDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        if (!row.public_token) {
+            row.public_token = randomBytes(24).toString('base64url');
+            await this.pfiRepository.save(row);
+        }
+        return row;
+    }
+
+    /** Issue a fresh token — the old public URL stops working immediately. */
+    async rotateToken(id: string): Promise<PfiDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        row.public_token = randomBytes(24).toString('base64url');
+        await this.pfiRepository.save(row);
+        return row;
+    }
+
+    /** Revoke the public link entirely. */
+    async unpublish(id: string): Promise<PfiDoc> {
+        const row = await this.findOneById(id);
+        row.public_token = null as any;
+        await this.pfiRepository.save(row);
+        return row;
+    }
+
+    private assertPublishable(status: ENUM_PFI_STATUS): void {
+        if (
+            status !== ENUM_PFI_STATUS.SENT &&
+            status !== ENUM_PFI_STATUS.APPROVED
+        ) {
+            throw new BadRequestException(
+                'Only sent or approved PFIs can be published'
+            );
+        }
+    }
+
+    /** Public view-only fetch by token — no auth. Returns null for an
+     *  unknown token or a PFI that is no longer in a shareable state. */
+    async findByPublicToken(token: string): Promise<PfiDoc | null> {
+        if (!token) return null;
+        const row = await this.pfiRepository.findOne({
+            public_token: token,
+            soft_delete: false,
+        } as any);
+        if (!row) return null;
+        // Bump view tracking (fire-and-forget — never block the response).
+        (row as any).public_view_count =
+            ((row as any).public_view_count || 0) + 1;
+        (row as any).public_last_viewed_at = new Date();
+        this.pfiRepository
+            .save(row)
+            .catch((err) =>
+                this.logger.warn(`Public view-count update failed: ${err}`)
+            );
+        return row;
     }
 
     /**
@@ -366,9 +452,7 @@ export class PfiService {
         // links for ALL referenced products in two batched queries (no N+1).
         const productIds = Array.from(
             new Set(
-                lines
-                    .map((l) => l.product_id)
-                    .filter((id): id is string => !!id)
+                lines.map(l => l.product_id).filter((id): id is string => !!id)
             )
         );
         const [pRebateLinks, pExpenseLinks] = await Promise.all([
@@ -479,6 +563,20 @@ export class PfiService {
                         : null,
                 margin_amount: '0',
                 seq,
+                // ── Export-document line fields (Phase 2) ──
+                hs_code: l.hs_code || null,
+                net_weight_kg:
+                    l.net_weight_kg != null && l.net_weight_kg !== ''
+                        ? String(l.net_weight_kg)
+                        : '0',
+                gross_weight_kg:
+                    l.gross_weight_kg != null && l.gross_weight_kg !== ''
+                        ? String(l.gross_weight_kg)
+                        : '0',
+                package_count:
+                    l.package_count != null && l.package_count !== ''
+                        ? Number(l.package_count)
+                        : 0,
             } as any);
         }
     }
@@ -503,8 +601,15 @@ export class PfiService {
         let line_margin_total = 0;
         let product_rebates_total = 0;
         let product_expenses_total = 0;
+        let total_packages = 0;
+        let net_weight_kg = 0;
+        let gross_weight_kg = 0;
 
         for (const ln of lines) {
+            total_packages += Number((ln as any).package_count || 0);
+            net_weight_kg += num((ln as any).net_weight_kg);
+            gross_weight_kg += num((ln as any).gross_weight_kg);
+
             const out = computeLineTax({
                 qty: num(ln.qty),
                 unit_price: num(ln.unit_price),
@@ -587,6 +692,11 @@ export class PfiService {
         (header as any).round_off = String(round_off);
         header.grand_total = String(round2(grand_total));
 
+        // ── Auto-summed packing / weight rollups (Phase 2) ──
+        (header as any).total_packages = total_packages;
+        (header as any).net_weight_kg = String(net_weight_kg.toFixed(3));
+        (header as any).gross_weight_kg = String(gross_weight_kg.toFixed(3));
+
         await this.pfiRepository.save(header);
     }
 
@@ -603,14 +713,13 @@ export class PfiService {
     private async lookupCompanyState(
         companyId: string
     ): Promise<string | undefined> {
-        const addresses = await this.companyAddressRepository.findByCompanyId(
-            companyId
-        );
+        const addresses =
+            await this.companyAddressRepository.findByCompanyId(companyId);
         if (!addresses?.length) return undefined;
         const corp =
-            addresses.find((a) => a.type === 'corporate' && a.is_default) ||
-            addresses.find((a) => a.type === 'corporate') ||
-            addresses.find((a) => a.is_default) ||
+            addresses.find(a => a.type === 'corporate' && a.is_default) ||
+            addresses.find(a => a.type === 'corporate') ||
+            addresses.find(a => a.is_default) ||
             addresses[0];
         return corp?.state || undefined;
     }
@@ -620,13 +729,13 @@ export class PfiService {
     async mapList(rows: PfiDoc[]): Promise<PfiGetResponseDto[]> {
         if (!rows.length) return [];
 
-        const customerIds = unique(rows.map((r) => r.customer_id?.toString()));
+        const customerIds = unique(rows.map(r => r.customer_id?.toString()));
         const quotationIds = unique(
             rows
-                .map((r) => r.quotation_id?.toString())
+                .map(r => r.quotation_id?.toString())
                 .filter((v): v is string => !!v)
         );
-        const pfiIds = rows.map((r) => r._id.toString());
+        const pfiIds = rows.map(r => r._id.toString());
 
         const allLines = await this.pfiLineRepository.findAll({
             pfi_id: { $in: pfiIds },
@@ -637,30 +746,29 @@ export class PfiService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, contacts, quotations, vendors] =
-            await Promise.all([
-                customerIds.length
-                    ? this.customerRepository.findAll({
-                          _id: { $in: customerIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                customerIds.length
-                    ? this.customerContactRepository.findAll({
-                          customer_id: { $in: customerIds },
-                          soft_delete: false,
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                quotationIds.length
-                    ? this.quotationRepository.findAll({
-                          _id: { $in: quotationIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                vendorIds.length
-                    ? this.vendorRepository.findAll({
-                          _id: { $in: vendorIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-            ]);
+        const [customers, contacts, quotations, vendors] = await Promise.all([
+            customerIds.length
+                ? this.customerRepository.findAll({
+                      _id: { $in: customerIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            customerIds.length
+                ? this.customerContactRepository.findAll({
+                      customer_id: { $in: customerIds },
+                      soft_delete: false,
+                  } as any)
+                : Promise.resolve([] as any[]),
+            quotationIds.length
+                ? this.quotationRepository.findAll({
+                      _id: { $in: quotationIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            vendorIds.length
+                ? this.vendorRepository.findAll({
+                      _id: { $in: vendorIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
 
         // Pick the primary contact per customer (or first if no flag set).
         const primaryContactByCustomer = new Map<string, any>();
@@ -678,7 +786,7 @@ export class PfiService {
         const vendorMap = toMap(vendors);
         const linesByP = groupBy(allLines, (l: any) => l.pfi_id.toString());
 
-        return rows.map((r) => {
+        return rows.map(r => {
             const cust = customerMap.get(r.customer_id?.toString());
             const q = r.quotation_id
                 ? quotationMap.get(r.quotation_id.toString())
@@ -722,6 +830,31 @@ export class PfiService {
                 status: r.status,
                 version: r.version,
                 parent_version_id: r.parent_version_id?.toString(),
+                // ── Consignee / shipping / packing / commercial (Phase 1) ──
+                consignee_name: (r as any).consignee_name,
+                consignee_address: (r as any).consignee_address,
+                port_of_loading: (r as any).port_of_loading,
+                port_of_discharge: (r as any).port_of_discharge,
+                final_destination: (r as any).final_destination,
+                country_of_origin: (r as any).country_of_origin,
+                country_of_final_destination: (r as any)
+                    .country_of_final_destination,
+                mode_of_shipment: (r as any).mode_of_shipment,
+                container_details: (r as any).container_details,
+                est_shipment_date: (r as any).est_shipment_date,
+                est_delivery_date: (r as any).est_delivery_date,
+                packing_marks: (r as any).packing_marks,
+                total_packages: (r as any).total_packages,
+                packing_type: (r as any).packing_type,
+                gross_weight_kg: (r as any).gross_weight_kg,
+                net_weight_kg: (r as any).net_weight_kg,
+                bank_account_id: (r as any).bank_account_id?.toString(),
+                payment_terms_text: (r as any).payment_terms_text,
+                declaration_text: (r as any).declaration_text,
+                validity_days: (r as any).validity_days,
+                public_token: (r as any).public_token,
+                public_view_count: (r as any).public_view_count,
+                public_last_viewed_at: (r as any).public_last_viewed_at,
                 created_by: r.created_by?.toString(),
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
@@ -732,9 +865,9 @@ export class PfiService {
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
                             vendor_id: l.vendor_id?.toString(),
-                            vendor_name: (vendorMap.get(
-                                l.vendor_id?.toString()
-                            ) as any)?.company_name,
+                            vendor_name: (
+                                vendorMap.get(l.vendor_id?.toString()) as any
+                            )?.company_name,
                             description: l.description,
                             qty: l.qty,
                             unit: l.unit,
@@ -746,13 +879,20 @@ export class PfiService {
                             igst: l.igst,
                             taxable: l.taxable,
                             line_total: l.line_total,
-                            product_rebates_snapshot: l.product_rebates_snapshot,
-                            product_expenses_snapshot: l.product_expenses_snapshot,
+                            product_rebates_snapshot:
+                                l.product_rebates_snapshot,
+                            product_expenses_snapshot:
+                                l.product_expenses_snapshot,
                             product_rebates_amount: l.product_rebates_amount,
                             product_expenses_amount: l.product_expenses_amount,
                             margin_pct: l.margin_pct,
                             margin_amount: l.margin_amount,
                             seq: l.seq,
+                            // ── Export-document line fields (Phase 2) ──
+                            hs_code: l.hs_code,
+                            net_weight_kg: l.net_weight_kg,
+                            gross_weight_kg: l.gross_weight_kg,
+                            package_count: l.package_count,
                         })
                     ),
             };
@@ -763,6 +903,223 @@ export class PfiService {
     async mapGet(row: PfiDoc): Promise<PfiGetResponseDto> {
         const [mapped] = await this.mapList([row]);
         return mapped;
+    }
+
+    /**
+     * Sanitized public projection — what the buyer sees at /p/<token> and
+     * what the PDF renders from. All money values are converted into the
+     * customer currency; costing internals (margin, expenses, rebates,
+     * internal_notes, source IDs) are deliberately omitted.
+     */
+    async mapPublic(row: PfiDoc): Promise<PfiPublicResponseDto> {
+        const full = await this.mapGet(row);
+        const er = num(full.exchange_rate) || 1;
+
+        // ── Seller (us) ──
+        let company_name: string | undefined;
+        let company_email: string | undefined;
+        let company_phone: string | undefined;
+        let company_iec: string | undefined;
+        let company_address: string | undefined;
+        try {
+            const company: any = await this.companyService.findOneById(
+                row.company_id.toString()
+            );
+            company_name = company?.company_name;
+            company_email = company?.email;
+            company_iec = company?.iec;
+            const ccc: any = company?.country_code;
+            company_phone = company?.mobile
+                ? ccc?.formatted ||
+                  `${ccc?.dial_code || '+91'} ${company.mobile}`
+                : undefined;
+
+            const addresses =
+                await this.companyAddressRepository.findByCompanyId(
+                    row.company_id.toString()
+                );
+            const corp =
+                (addresses || []).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a: any) => a.type === 'corporate') ||
+                (addresses || []).find((a: any) => a.is_default) ||
+                (addresses || [])[0];
+            if (corp) {
+                company_address = [
+                    (corp as any).address_line1,
+                    (corp as any).address_line2,
+                    [
+                        (corp as any).city,
+                        (corp as any).state,
+                        (corp as any).postcode,
+                    ]
+                        .filter(Boolean)
+                        .join(', '),
+                    (corp as any).country,
+                ]
+                    .filter(Boolean)
+                    .join('\n');
+            }
+        } catch {
+            // leave seller fields undefined — header degrades gracefully
+        }
+
+        // ── Buyer bill-to address ──
+        let customer_address: string | undefined;
+        if (row.customer_address_id) {
+            try {
+                const addr: any =
+                    await this.customerAddressRepository.findOne({
+                        _id: row.customer_address_id.toString(),
+                    } as any);
+                if (addr) {
+                    customer_address = [
+                        addr.address_line1,
+                        addr.address_line2,
+                        [addr.city, addr.state, addr.postcode]
+                            .filter(Boolean)
+                            .join(', '),
+                        addr.country,
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                }
+            } catch {
+                customer_address = undefined;
+            }
+        }
+
+        const cc: any = full.customer_contact_country_code;
+        const customer_phone =
+            cc?.formatted ||
+            (cc?.dial_code && full.customer_contact_phone
+                ? `${cc.dial_code} ${full.customer_contact_phone}`
+                : full.customer_contact_phone) ||
+            undefined;
+
+        // ── Lines (in customer currency, all-in costed) ──
+        let subtotal = 0;
+        let gst_total = 0;
+        const lines = (full.lines || []).map((l) => {
+            const qty = num(l.qty);
+            const costedInr =
+                num(l.taxable) +
+                num(l.product_expenses_amount) -
+                num(l.product_rebates_amount) +
+                num(l.margin_amount);
+            const lineAmount = round2(costedInr * er);
+            const lineGst = round2(
+                (num(l.cgst) + num(l.sgst) + num(l.igst)) * er
+            );
+            subtotal += lineAmount;
+            gst_total += lineGst;
+            return {
+                product_name: l.product_name,
+                description: l.description,
+                hs_code: l.hs_code,
+                qty: l.qty,
+                unit: l.unit,
+                unit_price:
+                    qty > 0 ? String(round2(lineAmount / qty)) : '0',
+                discount_pct: l.discount_pct,
+                tax_pct: l.tax_pct,
+                gst_amount: String(lineGst),
+                line_total: String(round2(lineAmount + lineGst)),
+                net_weight_kg: l.net_weight_kg,
+                gross_weight_kg: l.gross_weight_kg,
+                package_count: l.package_count,
+            };
+        });
+
+        // ── Bank block (live FK lookup) ──
+        let bank: PfiPublicResponseDto['bank'] | undefined;
+        if (full.bank_account_id) {
+            try {
+                const bk: any =
+                    await this.companyBankAccountRepository.findOne({
+                        _id: full.bank_account_id,
+                        soft_delete: false,
+                    } as any);
+                if (bk) {
+                    let bankCurrencyCode: string | undefined;
+                    try {
+                        const cur: any =
+                            await this.currencyRepository.findOne({
+                                _id: bk.currency_id?.toString(),
+                            } as any);
+                        bankCurrencyCode = cur?.code;
+                    } catch {
+                        // ignore — bank block still renders without it
+                    }
+                    bank = {
+                        beneficiary_name:
+                            bk.account_holder_name || company_name,
+                        bank_name: bk.bank_name,
+                        account_number: bk.account_number,
+                        ifsc: bk.ifsc,
+                        swift_code: bk.swift_code,
+                        iban: bk.iban,
+                        branch_name: bk.branch_name,
+                        branch_address: bk.branch_address,
+                        ad_code: bk.ad_code,
+                        currency_code: bankCurrencyCode,
+                    };
+                }
+            } catch {
+                bank = undefined;
+            }
+        }
+
+        // Consignee falls back to buyer when both fields are blank.
+        const consignee_name = full.consignee_name || full.customer_name;
+        const consignee_address =
+            full.consignee_address || customer_address;
+
+        const today = new Date().toISOString().slice(0, 10);
+        return {
+            voucher_no: full.voucher_no,
+            pfi_date: full.pfi_date,
+            valid_until: full.valid_until,
+            is_expired: !!full.valid_until && full.valid_until < today,
+            status: full.status,
+            currency_code: full.currency_code,
+            currency_symbol: full.currency_symbol,
+            company_name,
+            company_email,
+            company_phone,
+            company_iec,
+            company_address,
+            customer_name: full.customer_name,
+            customer_contact_name: full.customer_contact_name,
+            customer_email: full.customer_contact_email,
+            customer_phone,
+            customer_address,
+            consignee_name,
+            consignee_address,
+            port_of_loading: full.port_of_loading,
+            port_of_discharge: full.port_of_discharge,
+            final_destination: full.final_destination || full.port_of_discharge,
+            country_of_origin: full.country_of_origin,
+            country_of_final_destination: full.country_of_final_destination,
+            mode_of_shipment: full.mode_of_shipment,
+            container_details: full.container_details,
+            est_shipment_date: full.est_shipment_date,
+            est_delivery_date: full.est_delivery_date,
+            packing_marks: full.packing_marks,
+            total_packages: full.total_packages,
+            packing_type: full.packing_type,
+            gross_weight_kg: full.gross_weight_kg,
+            net_weight_kg: full.net_weight_kg,
+            payment_terms_text: full.payment_terms_text,
+            declaration_text: full.declaration_text,
+            notes_to_client: full.notes_to_client,
+            lines,
+            subtotal: String(round2(subtotal)),
+            gst_total: String(round2(gst_total)),
+            grand_total: full.grand_total,
+            bank,
+        };
     }
 }
 

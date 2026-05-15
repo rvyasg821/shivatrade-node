@@ -139,4 +139,47 @@ export class PfiAdminController {
         await this.pfiService.softDelete(row);
         return { data: null };
     }
+
+    // ─── Public share link ──────────────────────────────────────────────
+
+    @Response('pfi.publish')
+    @AuthJwtAccessProtected()
+    @Post('/publish/:id')
+    async publish(
+        @Param('id') id: string
+    ): Promise<IResponse<PfiGetResponseDto>> {
+        const row = await this.pfiService.publish(id);
+        return { data: await this.pfiService.mapGet(row) };
+    }
+
+    @Response('pfi.rotateToken')
+    @AuthJwtAccessProtected()
+    @Post('/rotate-token/:id')
+    async rotateToken(
+        @Param('id') id: string
+    ): Promise<IResponse<PfiGetResponseDto>> {
+        const row = await this.pfiService.rotateToken(id);
+        return { data: await this.pfiService.mapGet(row) };
+    }
+
+    @Response('pfi.unpublish')
+    @AuthJwtAccessProtected()
+    @Post('/unpublish/:id')
+    async unpublish(
+        @Param('id') id: string
+    ): Promise<IResponse<PfiGetResponseDto>> {
+        const row = await this.pfiService.unpublish(id);
+        return { data: await this.pfiService.mapGet(row) };
+    }
+
+    /** Admin-only "preview as client" — the exact sanitized projection the
+     *  public route serves, but works in ANY status (incl. draft) so the
+     *  user can see the client-facing layout before publishing. */
+    @Response('pfi.publicPreview')
+    @AuthJwtAccessProtected()
+    @Get('/public-preview/:id')
+    async publicPreview(@Param('id') id: string): Promise<IResponse<any>> {
+        const row = await this.pfiService.findOneById(id);
+        return { data: await this.pfiService.mapPublic(row) };
+    }
 }
