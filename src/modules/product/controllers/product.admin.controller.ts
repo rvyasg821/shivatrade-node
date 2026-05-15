@@ -296,7 +296,7 @@ export class ProductAdminController {
                 rebate_id: l.rebate_id.toString(),
                 code: m.code,
                 name: m.name,
-                type: m.type,
+                type: l.type != null ? String(l.type) : m.type,
                 pct: l.pct != null ? String(l.pct) : String(m.pct),
             });
         }
@@ -312,7 +312,7 @@ export class ProductAdminController {
                 expense_id: l.expense_id.toString(),
                 code: m.code,
                 name: m.name,
-                type: m.type,
+                type: l.type != null ? String(l.type) : m.type,
                 value: l.value != null ? String(l.value) : String(m.value),
             });
         }
