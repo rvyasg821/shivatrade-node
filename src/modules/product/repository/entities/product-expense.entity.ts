@@ -17,6 +17,10 @@ export class ProductExpenseEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     company_id: string;
 
+    /** Per-product override; null = use Expense master's type. */
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    type?: string;
+
     /** Per-product override; null = use Expense master's value. */
     @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true })
     value?: string;
