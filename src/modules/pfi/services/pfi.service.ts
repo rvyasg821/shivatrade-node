@@ -17,6 +17,7 @@ import { ENUM_PFI_STATUS } from '../enums/pfi.enum';
 
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
+import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
@@ -49,6 +50,7 @@ export class PfiService {
         private readonly pfiLineRepository: PfiLineRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerAddressRepository: CustomerAddressRepository,
+        private readonly customerContactRepository: CustomerContactRepository,
         private readonly currencyRepository: CurrencyRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
@@ -635,11 +637,17 @@ export class PfiService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, quotations, vendors] =
+        const [customers, contacts, quotations, vendors] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
                           _id: { $in: customerIds },
+                      } as any)
+                    : Promise.resolve([] as any[]),
+                customerIds.length
+                    ? this.customerContactRepository.findAll({
+                          customer_id: { $in: customerIds },
+                          soft_delete: false,
                       } as any)
                     : Promise.resolve([] as any[]),
                 quotationIds.length
@@ -654,6 +662,17 @@ export class PfiService {
                     : Promise.resolve([] as any[]),
             ]);
 
+        // Pick the primary contact per customer (or first if no flag set).
+        const primaryContactByCustomer = new Map<string, any>();
+        for (const c of contacts as any[]) {
+            const cid = c.customer_id?.toString();
+            if (!cid) continue;
+            const existing = primaryContactByCustomer.get(cid);
+            if (!existing || (c.is_primary && !existing.is_primary)) {
+                primaryContactByCustomer.set(cid, c);
+            }
+        }
+
         const customerMap = toMap(customers);
         const quotationMap = toMap(quotations);
         const vendorMap = toMap(vendors);
@@ -665,6 +684,9 @@ export class PfiService {
                 ? quotationMap.get(r.quotation_id.toString())
                 : null;
             const pid = r._id.toString();
+            const primary: any = primaryContactByCustomer.get(
+                r.customer_id?.toString()
+            );
             const dto: PfiGetResponseDto = {
                 _id: pid,
                 voucher_no: r.voucher_no,
@@ -673,6 +695,10 @@ export class PfiService {
                 lead_id: r.lead_id?.toString(),
                 customer_id: r.customer_id?.toString(),
                 customer_name: (cust as any)?.company_name,
+                customer_contact_name: primary?.name,
+                customer_contact_email: primary?.email,
+                customer_contact_phone: primary?.phone,
+                customer_contact_country_code: primary?.country_code,
                 customer_address_id: r.customer_address_id?.toString(),
                 pfi_date: r.pfi_date,
                 valid_until: r.valid_until,
