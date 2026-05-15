@@ -7,6 +7,8 @@ export class ProductRebateLinkResponseDto {
     @ApiProperty({ required: true, type: String }) rebate_id: string;
     @ApiProperty({ required: true, type: String }) code: string;
     @ApiProperty({ required: true, type: String }) name: string;
+    /** Effective type: per-product override if present, otherwise master's type. */
+    @ApiProperty({ required: true, type: String }) type: string;
     /** Effective pct: per-product override if present, otherwise master's pct. */
     @ApiProperty({ required: true, type: String }) pct: string;
     @ApiProperty({ required: false, type: Boolean }) is_override?: boolean;

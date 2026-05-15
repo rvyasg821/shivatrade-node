@@ -295,6 +295,7 @@ export class ProductService {
                 product_id: productId,
                 rebate_id: l.rebate_id,
                 company_id: companyId,
+                type: l.type ?? null,
                 pct: l.pct ?? null,
             } as any);
         }
@@ -312,6 +313,7 @@ export class ProductService {
                 product_id: productId,
                 expense_id: l.expense_id,
                 company_id: companyId,
+                type: l.type ?? null,
                 value: l.value ?? null,
             } as any);
         }
@@ -425,8 +427,9 @@ export class ProductService {
                     rebate_id: l.rebate_id.toString(),
                     code: m.code,
                     name: m.name,
+                    type: (l as any).type ?? (m as any).type,
                     pct: l.pct != null ? l.pct.toString() : m.pct.toString(),
-                    is_override: l.pct != null,
+                    is_override: l.pct != null || (l as any).type != null,
                 };
             })
             .filter((x): x is ProductRebateLinkResponseDto => x !== null);
@@ -440,9 +443,9 @@ export class ProductService {
                     expense_id: l.expense_id.toString(),
                     code: m.code,
                     name: m.name,
-                    type: m.type,
+                    type: (l as any).type ?? m.type,
                     value: l.value != null ? l.value.toString() : m.value.toString(),
-                    is_override: l.value != null,
+                    is_override: l.value != null || (l as any).type != null,
                 };
             })
             .filter((x): x is ProductExpenseLinkResponseDto => x !== null);
@@ -503,8 +506,9 @@ export class ProductService {
                 rebate_id: l.rebate_id.toString(),
                 code: m.code,
                 name: m.name,
+                type: (l as any).type ?? (m as any).type,
                 pct: l.pct != null ? l.pct.toString() : m.pct.toString(),
-                is_override: l.pct != null,
+                is_override: l.pct != null || (l as any).type != null,
             });
         }
 
@@ -518,9 +522,9 @@ export class ProductService {
                 expense_id: l.expense_id.toString(),
                 code: m.code,
                 name: m.name,
-                type: m.type,
+                type: (l as any).type ?? m.type,
                 value: l.value != null ? l.value.toString() : m.value.toString(),
-                is_override: l.value != null,
+                is_override: l.value != null || (l as any).type != null,
             });
         }
 

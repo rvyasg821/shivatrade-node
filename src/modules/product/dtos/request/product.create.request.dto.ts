@@ -18,6 +18,8 @@ import { ENUM_PRODUCT_STATUS } from '@modules/product/enums/product.enum';
 export class ProductRebateLinkDto {
     @IsUUID() rebate_id: string;
 
+    @IsString() @IsOptional() type?: string;
+
     @Type(() => Number)
     @IsNumber({ maxDecimalPlaces: 2 })
     @Min(0)
@@ -27,6 +29,8 @@ export class ProductRebateLinkDto {
 
 export class ProductExpenseLinkDto {
     @IsUUID() expense_id: string;
+
+    @IsString() @IsOptional() type?: string;
 
     @Type(() => Number)
     @IsNumber({ maxDecimalPlaces: 2 })
