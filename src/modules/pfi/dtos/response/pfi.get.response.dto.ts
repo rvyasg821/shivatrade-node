@@ -46,6 +46,10 @@ export class PfiGetResponseDto {
     lead_id?: string;
     customer_id?: string;
     customer_name?: string;
+    customer_contact_name?: string;
+    customer_contact_email?: string;
+    customer_contact_phone?: string;
+    customer_contact_country_code?: any;
     customer_address_id?: string;
     pfi_date?: string;
     valid_until?: string;
