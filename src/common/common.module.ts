@@ -23,6 +23,7 @@ import { createKeyv, RedisClientOptions } from '@keyv/redis';
 import { join } from 'path';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { PayPalModule } from '@common/paypal/paypal.module';
+import { PdfModule } from '@common/pdf/pdf.module';
 
 @Module({
     controllers: [],
@@ -112,6 +113,7 @@ import { PayPalModule } from '@common/paypal/paypal.module';
         DatabaseModule.forRoot(),
         PaginationModule.forRoot(),
         PayPalModule,
+        PdfModule,
     ],
 })
 export class CommonModule { }

@@ -4,6 +4,8 @@ import {
     IsBoolean,
     IsDateString,
     IsEnum,
+    IsIn,
+    IsInt,
     IsNotEmpty,
     IsNumberString,
     IsOptional,
@@ -11,6 +13,7 @@ import {
     IsUUID,
     Matches,
     MaxLength,
+    Min,
     ValidateNested,
 } from 'class-validator';
 import { ENUM_PFI_STATUS } from '../../enums/pfi.enum';
@@ -73,6 +76,25 @@ export class PfiLineCreateDto {
         type: string;
         value: string;
     }>;
+
+    // ── Export-document line fields (Phase 2) ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(15)
+    hs_code?: string;
+
+    @IsNumberString({}, { message: 'net_weight_kg must be a numeric string' })
+    @IsOptional()
+    net_weight_kg?: string;
+
+    @IsNumberString({}, { message: 'gross_weight_kg must be a numeric string' })
+    @IsOptional()
+    gross_weight_kg?: string;
+
+    @IsInt()
+    @Min(0)
+    @IsOptional()
+    package_count?: number;
 }
 
 export class PfiCreateRequestDto {
@@ -102,7 +124,9 @@ export class PfiCreateRequestDto {
 
     @IsString()
     @IsNotEmpty()
-    @Matches(/^[A-Z]{3}$/, { message: 'currency_code must be 3 uppercase letters (e.g. INR)' })
+    @Matches(/^[A-Z]{3}$/, {
+        message: 'currency_code must be 3 uppercase letters (e.g. INR)',
+    })
     @Transform(({ value }) =>
         typeof value === 'string' ? value.trim().toUpperCase() : value
     )
@@ -154,4 +178,89 @@ export class PfiCreateRequestDto {
     @Type(() => PfiLineCreateDto)
     @IsOptional()
     lines?: PfiLineCreateDto[];
+
+    // ── Consignee ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    consignee_name?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(2000)
+    consignee_address?: string;
+
+    // ── Shipping ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(150)
+    port_of_loading?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(150)
+    port_of_discharge?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(150)
+    final_destination?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    country_of_origin?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    country_of_final_destination?: string;
+
+    @IsIn(['sea', 'air', 'road'])
+    @IsOptional()
+    mode_of_shipment?: 'sea' | 'air' | 'road';
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    container_details?: string;
+
+    @IsDateString()
+    @IsOptional()
+    est_shipment_date?: string;
+
+    @IsDateString()
+    @IsOptional()
+    est_delivery_date?: string;
+
+    // ── Packing ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    packing_marks?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(50)
+    packing_type?: string;
+
+    // ── Bank + commercial defaults ──
+    @IsUUID()
+    @IsOptional()
+    bank_account_id?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(2000)
+    payment_terms_text?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(4000)
+    declaration_text?: string;
+
+    @IsInt()
+    @Min(0)
+    @IsOptional()
+    validity_days?: number;
 }

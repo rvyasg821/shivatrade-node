@@ -245,6 +245,10 @@ export class CompanyGetResponseDto {
     @ApiProperty({ required: false, type: String }) lut_date?: string;
     @ApiProperty({ required: false, type: String }) cin?: string;
 
+    // ── PFI / export-document defaults ──
+    @ApiProperty({ required: false, type: String }) default_port_of_loading?: string;
+    @ApiProperty({ required: false, type: String }) default_declaration_text?: string;
+
     // ── Multi-address & multi-bank ──
     @ApiProperty({ required: false, type: [CompanyAddressResponseDto] })
     addresses?: CompanyAddressResponseDto[];
