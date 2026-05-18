@@ -52,12 +52,16 @@ export class DashboardCompanyController {
         const today = DateTime.now().setZone(companyTz).toISODate();
         const isLocationAdmin = roleName === ENUM_SYSTEM_ROLE.LOCATION_ADMIN;
 
-        // Get Employee role ID
-        let employeeRoleId: string | null = null;
+        // Allowed roles for the Employee module: legacy Employee system role
+        // + every active custom role for this company. Custom-role users
+        // count toward total-employees too.
+        let allowedRoleIds: string[] = [];
         try {
-            const empRole = await this.roleService.findOneByName(ENUM_SYSTEM_ROLE.EMPLOYEE);
-            if (empRole) employeeRoleId = (empRole as any)._id;
+            allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+                companyId
+            );
         } catch {}
+        const allowedRoleSet = new Set(allowedRoleIds);
 
         // Get employees scoped to role
         let allUsers: any[] = [];
@@ -71,9 +75,9 @@ export class DashboardCompanyController {
             allUsers = await this.userRepository.findAll({ companyId }) as any[];
         }
 
-        // Filter to only Employee role
-        const employees = employeeRoleId
-            ? allUsers.filter((u: any) => u.role === employeeRoleId)
+        // Filter to Employee + custom-role users (anyone in the Employee module)
+        const employees = allowedRoleSet.size > 0
+            ? allUsers.filter((u: any) => allowedRoleSet.has(String(u.role)))
             : allUsers.filter((u: any) => u.employee_code);
 
         const employeeIds = employees.map((e: any) => e._id);
