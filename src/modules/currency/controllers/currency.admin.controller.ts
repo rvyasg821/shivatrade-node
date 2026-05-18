@@ -7,6 +7,7 @@ import {
     Body,
     Param,
     Query,
+    BadRequestException,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
@@ -236,5 +237,37 @@ export class CurrencyAdminController {
         const rate = await this.currencyService.addRate(currency, body, userId);
         const [mapped] = await this.currencyService.mapRates([rate]);
         return { data: mapped };
+    }
+
+    @Response('currency.rateUpdate')
+    @AuthJwtAccessProtected()
+    @Put('/:currencyId/rates/:rateId')
+    async updateRate(
+        @Param('currencyId') currencyId: string,
+        @Param('rateId') rateId: string,
+        @Body() body: { rate?: string | number; effective_date?: string; to_currency_code?: string }
+    ): Promise<IResponse<ExchangeRateResponseDto>> {
+        const rate = await this.currencyService.findRateById(rateId);
+        if (!rate || rate.from_currency_id?.toString() !== currencyId) {
+            throw new BadRequestException('Rate not found for this currency');
+        }
+        const updated = await this.currencyService.updateRate(rate, body);
+        const [mapped] = await this.currencyService.mapRates([updated]);
+        return { data: mapped };
+    }
+
+    @Response('currency.rateDelete')
+    @AuthJwtAccessProtected()
+    @Delete('/:currencyId/rates/:rateId')
+    async deleteRate(
+        @Param('currencyId') currencyId: string,
+        @Param('rateId') rateId: string
+    ): Promise<IResponse<{ _id: string }>> {
+        const rate = await this.currencyService.findRateById(rateId);
+        if (!rate || rate.from_currency_id?.toString() !== currencyId) {
+            throw new BadRequestException('Rate not found for this currency');
+        }
+        await this.currencyService.deleteRate(rate);
+        return { data: { _id: rateId } };
     }
 }

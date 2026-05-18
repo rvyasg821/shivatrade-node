@@ -177,6 +177,34 @@ export class CurrencyService {
         return this.rateRepository.findByFromCurrencyId(currencyId);
     }
 
+    async findRateById(rateId: string): Promise<CurrencyExchangeRateDoc | null> {
+        return this.rateRepository.findOneById(rateId);
+    }
+
+    async updateRate(
+        rate: CurrencyExchangeRateDoc,
+        data: { rate?: string | number; effective_date?: string; to_currency_code?: string }
+    ): Promise<CurrencyExchangeRateDoc> {
+        const update: any = {};
+        if (data.rate !== undefined) update.rate = data.rate;
+        if (data.effective_date !== undefined)
+            update.effective_date = data.effective_date;
+        if (data.to_currency_code !== undefined) {
+            update.to_currency_code = data.to_currency_code
+                .trim()
+                .toUpperCase();
+        }
+        if (Object.keys(update).length === 0) return rate;
+        return this.rateRepository.update(
+            { _id: rate._id.toString() } as any,
+            update
+        );
+    }
+
+    async deleteRate(rate: CurrencyExchangeRateDoc): Promise<void> {
+        await this.rateRepository.delete({ _id: rate._id.toString() } as any);
+    }
+
     async getCurrentRate(
         companyId: string,
         fromCurrencyId: string,
