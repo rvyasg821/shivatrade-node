@@ -12,6 +12,7 @@ export enum ENUM_PRODUCT_UOM {
     KG = 'KG',
     MT = 'MT',
     TONNE = 'Tonne',
+    NOS = 'Nos',
     PIECE = 'Piece',
     PACK = 'Pack',
     BOX = 'Box',
