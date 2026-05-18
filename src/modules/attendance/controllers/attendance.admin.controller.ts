@@ -14,6 +14,7 @@ import { In } from 'typeorm';
 import { DateTime } from 'luxon';
 import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { UserRepository } from '@modules/user/repository/repositories/user.repository';
+import { EmployeeLocationAssignmentRepository } from '@modules/employee/repository/repositories/employee-location-assignment.repository';
 import { LocationService } from '@modules/location/services/location.service';
 import { AttendanceService } from '../services/attendance.service';
 import { AttendanceSettingsService } from '../services/attendance-settings.service';
@@ -35,6 +36,7 @@ export class AttendanceAdminController {
         private readonly settingsService: AttendanceSettingsService,
         private readonly reportService: AttendanceReportService,
         private readonly userRepository: UserRepository,
+        private readonly empLocationRepo: EmployeeLocationAssignmentRepository,
         private readonly locationService: LocationService,
         private readonly importExportService: AttendanceImportExportService,
         private readonly clockService: AttendanceClockService,
@@ -208,8 +210,10 @@ export class AttendanceAdminController {
         }
 
         if (filterLocationId) {
-            const locationUsers = await this.userRepository.findAll({ companyId, location_id: filterLocationId });
-            const userIds = locationUsers.map(u => (u as any)._id);
+            const userIds = await this.findUserIdsAtLocation(
+                companyId,
+                filterLocationId
+            );
             if (!userIds.length) {
                 return { statusCode: 200, message: 'Success', data: [], _metadata: { total: 0, limit: limit ? +limit : 20, offset: offset ? +offset : 0 } };
             }
@@ -407,7 +411,10 @@ export class AttendanceAdminController {
         // If location filter, restrict to users at that location
         let filterUserId = userId;
         if (!filterUserId && filterLocationId) {
-            const locationUsers = await this.userRepository.findAll({ companyId, location_id: filterLocationId });
+            const locationUsers = await this.findUsersAtLocation(
+                companyId,
+                filterLocationId
+            );
             const userIds = locationUsers.map(u => (u as any)._id);
             if (!userIds.length) return { statusCode: 200, message: 'Success', data: [] };
 
@@ -530,7 +537,10 @@ export class AttendanceAdminController {
         // Filter by users at the location (location is on user, not on record)
         let userMap = new Map<string, { name: string; email: string }>();
         if (filterLocationId) {
-            const locationUsers = await this.userRepository.findAll({ companyId, location_id: filterLocationId });
+            const locationUsers = await this.findUsersAtLocation(
+                companyId,
+                filterLocationId
+            );
             const userIds = locationUsers.map(u => (u as any)._id);
             if (!userIds.length) return { statusCode: 200, message: 'Success', data: [] };
             mapped = mapped.filter((r: any) => userIds.includes(r.user_id));
@@ -844,5 +854,54 @@ export class AttendanceAdminController {
             default:
                 throw new BadRequestException('Unknown action');
         }
+    }
+
+    /**
+     * Resolve the full set of users at a given location, considering BOTH
+     * the primary `users.location_id` AND active `employee_location_assignments`
+     * rows. Mirrors the pattern used in `payroll-calculation.service.ts`.
+     */
+    private async findUsersAtLocation(
+        companyId: string,
+        locationId: string
+    ): Promise<any[]> {
+        // Primary location match
+        const primaryUsers = (await this.userRepository.findAll({
+            companyId,
+            location_id: locationId,
+        } as any)) as any[];
+        const seenIds = new Set<string>(
+            primaryUsers.map((u: any) => String(u._id))
+        );
+
+        // Multi-location assignment match — fetch users via id list
+        let extraUsers: any[] = [];
+        try {
+            const assignments = await this.empLocationRepo.findByLocationId(
+                locationId
+            );
+            const extraIds = assignments
+                .map((a: any) => String(a.employee_id))
+                .filter((id: string) => !seenIds.has(id));
+            if (extraIds.length > 0) {
+                extraUsers = (await this.userRepository.findAll({
+                    companyId,
+                    _id: { $in: extraIds },
+                } as any)) as any[];
+            }
+        } catch {
+            // Junction table may not exist yet on older deployments — silent
+        }
+
+        return [...primaryUsers, ...extraUsers];
+    }
+
+    /** Convenience: just the user IDs. */
+    private async findUserIdsAtLocation(
+        companyId: string,
+        locationId: string
+    ): Promise<string[]> {
+        const users = await this.findUsersAtLocation(companyId, locationId);
+        return users.map((u: any) => String(u._id));
     }
 }
