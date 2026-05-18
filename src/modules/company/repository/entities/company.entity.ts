@@ -65,6 +65,16 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: true })
     voucher_prefix?: string;
 
+    /** Default port of loading used as the PFI's `port_of_loading`
+     *  when converting a Quotation. Editable per PFI. */
+    @Column({ type: 'varchar', length: 150, nullable: true })
+    default_port_of_loading?: string;
+
+    /** Default declaration block printed on every PFI / Commercial
+     *  Invoice. Editable per document. */
+    @Column({ type: 'text', nullable: true })
+    default_declaration_text?: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true })
     paye_reference?: string;
 

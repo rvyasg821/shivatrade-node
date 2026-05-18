@@ -329,6 +329,10 @@ export class CompanyUpdateRequestDto {
     @IsOptional() @IsDateString() lut_date?: string;
     @IsOptional() @IsString() @MaxLength(21) cin?: string;
 
+    // ── PFI / export-document defaults ──
+    @IsOptional() @IsString() @MaxLength(150) default_port_of_loading?: string;
+    @IsOptional() @IsString() @MaxLength(4000) default_declaration_text?: string;
+
     // ── Multi-address ──
     @IsOptional()
     @IsArray()

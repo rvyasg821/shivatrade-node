@@ -72,6 +72,8 @@ export interface ICompanyCreate {
     lut_no?: string;
     lut_date?: string;
     cin?: string;
+    default_port_of_loading?: string;
+    default_declaration_text?: string;
 }
 
 @Injectable()
@@ -235,6 +237,10 @@ export class CompanyService {
         if (data.lut_no !== undefined) repository.lut_no = data.lut_no;
         if (data.lut_date !== undefined) repository.lut_date = data.lut_date;
         if (data.cin !== undefined) repository.cin = data.cin;
+        if (data.default_port_of_loading !== undefined)
+            repository.default_port_of_loading = data.default_port_of_loading;
+        if (data.default_declaration_text !== undefined)
+            repository.default_declaration_text = data.default_declaration_text;
 
         return this.companyRepository.save(repository, options);
     }
@@ -768,6 +774,14 @@ export class CompanyService {
                 city: company?.city ?? '',
                 country: company?.country ?? '',
                 zipcode: company?.zipcode ?? '',
+                iec: (company as any)?.iec || undefined,
+                lut_no: (company as any)?.lut_no || undefined,
+                lut_date: (company as any)?.lut_date || undefined,
+                cin: (company as any)?.cin || undefined,
+                default_port_of_loading:
+                    (company as any)?.default_port_of_loading || undefined,
+                default_declaration_text:
+                    (company as any)?.default_declaration_text || undefined,
                 createdAt: company.createdAt,
                 updatedAt: company.updatedAt,
                 deletedAt: company.deletedAt,
@@ -801,6 +815,14 @@ export class CompanyService {
                 currency: company.currency || undefined,
                 tenantId: company.tenantId || undefined,
                 user: undefined,
+                iec: (company as any)?.iec || undefined,
+                lut_no: (company as any)?.lut_no || undefined,
+                lut_date: (company as any)?.lut_date || undefined,
+                cin: (company as any)?.cin || undefined,
+                default_port_of_loading:
+                    (company as any)?.default_port_of_loading || undefined,
+                default_declaration_text:
+                    (company as any)?.default_declaration_text || undefined,
                 createdAt: company.createdAt,
                 updatedAt: company.updatedAt,
                 deletedAt: company.deletedAt,

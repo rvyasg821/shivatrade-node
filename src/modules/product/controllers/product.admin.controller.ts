@@ -7,15 +7,22 @@ import {
     Body,
     Param,
     Query,
+    UploadedFile,
+    Res,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { Response, ResponsePaging } from '@common/response/decorators/response.decorator';
 import { IResponse, IResponsePaging } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 
 import { ProductService } from '../services/product.service';
+import { ProductImportExportService } from '../services/product.import-export.service';
 import { ProductRepository } from '../repository/repositories/product.repository';
 import { ProductRebateRepository } from '../repository/repositories/product-rebate.repository';
 import { ProductExpenseRepository } from '../repository/repositories/product-expense.repository';
@@ -38,8 +45,101 @@ export class ProductAdminController {
         private readonly productRebateRepository: ProductRebateRepository,
         private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly rebateRepository: RebateRepository,
-        private readonly expenseRepository: ExpenseRepository
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly importExportService: ProductImportExportService
     ) {}
+
+    // ============ IMPORT / EXPORT ============
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for product import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateSampleExcel();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="product-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export products as Excel' })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportProducts(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="products-${
+                new Date().toISOString().split('T')[0]
+            }.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import products from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+
+        const validRows = rows.filter((r) => r.status !== 'error');
+        if (validRows.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, updated: 0, errors: [] },
+            };
+        }
+
+        const result = await this.importExportService.importProducts(
+            validRows,
+            companyId,
+            userId
+        );
+
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.updated} updated`,
+            data: { summary, ...result },
+        };
+    }
 
     @Response('product.create')
     @AuthJwtAccessProtected()
@@ -112,6 +212,9 @@ export class ProductAdminController {
                 margin_pct?: string;
                 tax_pct?: string;
                 currency_id?: string;
+                hsn_code?: string;
+                net_weight_per_unit?: string;
+                gross_weight_per_unit?: string;
                 product_rebates?: Array<{
                     rebate_id: string;
                     code?: string;
@@ -196,7 +299,7 @@ export class ProductAdminController {
                 rebate_id: l.rebate_id.toString(),
                 code: m.code,
                 name: m.name,
-                type: m.type,
+                type: l.type != null ? String(l.type) : m.type,
                 pct: l.pct != null ? String(l.pct) : String(m.pct),
             });
         }
@@ -212,7 +315,7 @@ export class ProductAdminController {
                 expense_id: l.expense_id.toString(),
                 code: m.code,
                 name: m.name,
-                type: m.type,
+                type: l.type != null ? String(l.type) : m.type,
                 value: l.value != null ? String(l.value) : String(m.value),
             });
         }
@@ -228,6 +331,16 @@ export class ProductAdminController {
                 margin_pct: p.margin_pct,
                 tax_pct: p.tax_pct,
                 currency_id: p.currency_id ? p.currency_id.toString() : undefined,
+                // Needed by PFI line auto-fill (HS code + per-unit weights).
+                hsn_code: (p as any).hsn_code,
+                net_weight_per_unit:
+                    (p as any).net_weight_per_unit != null
+                        ? String((p as any).net_weight_per_unit)
+                        : undefined,
+                gross_weight_per_unit:
+                    (p as any).gross_weight_per_unit != null
+                        ? String((p as any).gross_weight_per_unit)
+                        : undefined,
                 product_rebates: rebatesByProduct.get(p._id.toString()) || [],
                 product_expenses:
                     expensesByProduct.get(p._id.toString()) || [],
