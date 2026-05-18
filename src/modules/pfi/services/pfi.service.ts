@@ -844,8 +844,18 @@ export class PfiService {
                 .map((l: any) => l.vendor_id?.toString())
                 .filter((v: any): v is string => !!v)
         );
+        const productIdsAll = unique(
+            allLines
+                .map((l: any) => l.product_id?.toString())
+                .filter((v: any): v is string => !!v)
+        );
+        const bankIds = unique(
+            rows
+                .map((r: any) => r.bank_account_id?.toString())
+                .filter((v: any): v is string => !!v)
+        );
 
-        const [customers, contacts, quotations, vendors] = await Promise.all([
+        const [customers, contacts, quotations, vendors, productsAll, bankAccounts] = await Promise.all([
             customerIds.length
                 ? this.customerRepository.findAll({
                       _id: { $in: customerIds },
@@ -867,6 +877,16 @@ export class PfiService {
                       _id: { $in: vendorIds },
                   } as any)
                 : Promise.resolve([] as any[]),
+            productIdsAll.length
+                ? this.productRepository.findAll({
+                      _id: { $in: productIdsAll },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            bankIds.length
+                ? this.companyBankAccountRepository.findAll({
+                      _id: { $in: bankIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
         ]);
 
         // Pick the primary contact per customer (or first if no flag set).
@@ -883,6 +903,8 @@ export class PfiService {
         const customerMap = toMap(customers);
         const quotationMap = toMap(quotations);
         const vendorMap = toMap(vendors);
+        const productMap = toMap(productsAll);
+        const bankMap = toMap(bankAccounts);
         const linesByP = groupBy(allLines, (l: any) => l.pfi_id.toString());
 
         return rows.map(r => {
@@ -948,6 +970,25 @@ export class PfiService {
                 gross_weight_kg: (r as any).gross_weight_kg,
                 net_weight_kg: (r as any).net_weight_kg,
                 bank_account_id: (r as any).bank_account_id?.toString(),
+                bank_account: (() => {
+                    const bk: any = bankMap.get(
+                        (r as any).bank_account_id?.toString()
+                    );
+                    if (!bk) return undefined;
+                    return {
+                        _id: bk._id?.toString(),
+                        bank_name: bk.bank_name,
+                        beneficiary_name: bk.beneficiary_name,
+                        account_number: bk.account_number,
+                        branch_name: bk.branch_name,
+                        branch_address: bk.branch_address,
+                        swift_code: bk.swift_code,
+                        ifsc: bk.ifsc,
+                        iban: bk.iban,
+                        ad_code: bk.ad_code,
+                        currency_code: bk.currency_code,
+                    };
+                })(),
                 payment_terms_text: (r as any).payment_terms_text,
                 declaration_text: (r as any).declaration_text,
                 validity_days: (r as any).validity_days,
@@ -963,6 +1004,12 @@ export class PfiService {
                         (l: any): PfiLineResponseDto => ({
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
+                            product_name: (
+                                productMap.get(l.product_id?.toString()) as any
+                            )?.name,
+                            product_code: (
+                                productMap.get(l.product_id?.toString()) as any
+                            )?.code,
                             vendor_id: l.vendor_id?.toString(),
                             vendor_name: (
                                 vendorMap.get(l.vendor_id?.toString()) as any

@@ -774,6 +774,14 @@ export class CompanyService {
                 city: company?.city ?? '',
                 country: company?.country ?? '',
                 zipcode: company?.zipcode ?? '',
+                iec: (company as any)?.iec || undefined,
+                lut_no: (company as any)?.lut_no || undefined,
+                lut_date: (company as any)?.lut_date || undefined,
+                cin: (company as any)?.cin || undefined,
+                default_port_of_loading:
+                    (company as any)?.default_port_of_loading || undefined,
+                default_declaration_text:
+                    (company as any)?.default_declaration_text || undefined,
                 createdAt: company.createdAt,
                 updatedAt: company.updatedAt,
                 deletedAt: company.deletedAt,
@@ -807,6 +815,14 @@ export class CompanyService {
                 currency: company.currency || undefined,
                 tenantId: company.tenantId || undefined,
                 user: undefined,
+                iec: (company as any)?.iec || undefined,
+                lut_no: (company as any)?.lut_no || undefined,
+                lut_date: (company as any)?.lut_date || undefined,
+                cin: (company as any)?.cin || undefined,
+                default_port_of_loading:
+                    (company as any)?.default_port_of_loading || undefined,
+                default_declaration_text:
+                    (company as any)?.default_declaration_text || undefined,
                 createdAt: company.createdAt,
                 updatedAt: company.updatedAt,
                 deletedAt: company.deletedAt,

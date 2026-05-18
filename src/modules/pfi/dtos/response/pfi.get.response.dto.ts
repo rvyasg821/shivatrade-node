@@ -100,6 +100,19 @@ export class PfiGetResponseDto {
     gross_weight_kg?: string;
     net_weight_kg?: string;
     bank_account_id?: string;
+    bank_account?: {
+        _id?: string;
+        bank_name?: string;
+        beneficiary_name?: string;
+        account_number?: string;
+        branch_name?: string;
+        branch_address?: string;
+        swift_code?: string;
+        ifsc?: string;
+        iban?: string;
+        ad_code?: string;
+        currency_code?: string;
+    };
     payment_terms_text?: string;
     declaration_text?: string;
     validity_days?: number;
