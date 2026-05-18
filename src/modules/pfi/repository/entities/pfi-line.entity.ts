@@ -33,25 +33,67 @@ export class PfiLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     unit_price: string;
 
-    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 5,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
     discount_pct?: string;
 
-    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 5,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
     tax_pct?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
     cgst?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
     sgst?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
     igst?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
     taxable: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
     line_total: string;
 
     /** Snapshot of product master's rebates at line-save time — same
@@ -73,22 +115,75 @@ export class PfiLineEntity extends DatabaseObjectIdEntityBase {
         value: string;
     }>;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
     product_rebates_amount: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
     product_expenses_amount: string;
 
     /** Per-line margin %. Copied from source quotation_line on
      *  createFromQuotation, or auto-filled from price-list on line save. */
-    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 5,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
     margin_pct?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
     margin_amount: string;
 
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
+
+    // ── Export-document line fields (Phase 2) ──
+    /** HS / HSN code — auto-filled from product.hsn_code, overridable. */
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    hs_code?: string;
+
+    /** qty × product.net_weight_per_unit; user may override. */
+    @Column({
+        type: 'numeric',
+        precision: 14,
+        scale: 3,
+        nullable: false,
+        default: 0,
+    })
+    net_weight_kg: string;
+
+    /** qty × product.gross_weight_per_unit; user may override. */
+    @Column({
+        type: 'numeric',
+        precision: 14,
+        scale: 3,
+        nullable: false,
+        default: 0,
+    })
+    gross_weight_kg: string;
+
+    /** Number of packages contributed by this line. */
+    @Column({ type: 'int', nullable: false, default: 0 })
+    package_count: number;
 }
 
 export type PfiLineDoc = PfiLineEntity;

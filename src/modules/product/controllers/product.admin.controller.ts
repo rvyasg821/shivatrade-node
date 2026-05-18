@@ -212,6 +212,9 @@ export class ProductAdminController {
                 margin_pct?: string;
                 tax_pct?: string;
                 currency_id?: string;
+                hsn_code?: string;
+                net_weight_per_unit?: string;
+                gross_weight_per_unit?: string;
                 product_rebates?: Array<{
                     rebate_id: string;
                     code?: string;
@@ -328,6 +331,16 @@ export class ProductAdminController {
                 margin_pct: p.margin_pct,
                 tax_pct: p.tax_pct,
                 currency_id: p.currency_id ? p.currency_id.toString() : undefined,
+                // Needed by PFI line auto-fill (HS code + per-unit weights).
+                hsn_code: (p as any).hsn_code,
+                net_weight_per_unit:
+                    (p as any).net_weight_per_unit != null
+                        ? String((p as any).net_weight_per_unit)
+                        : undefined,
+                gross_weight_per_unit:
+                    (p as any).gross_weight_per_unit != null
+                        ? String((p as any).gross_weight_per_unit)
+                        : undefined,
                 product_rebates: rebatesByProduct.get(p._id.toString()) || [],
                 product_expenses:
                     expensesByProduct.get(p._id.toString()) || [],

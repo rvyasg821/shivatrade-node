@@ -818,6 +818,8 @@ export class CompanyAdminController {
             lut_no,
             lut_date,
             cin,
+            default_port_of_loading,
+            default_declaration_text,
             addresses,
             bank_accounts,
         } = body;
@@ -886,6 +888,8 @@ export class CompanyAdminController {
                 lut_no,
                 lut_date,
                 cin,
+                default_port_of_loading,
+                default_declaration_text,
             });
 
             if (addresses !== undefined) {
