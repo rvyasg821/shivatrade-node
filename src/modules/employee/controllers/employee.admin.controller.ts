@@ -364,9 +364,8 @@ export class EmployeeAdminController {
         // legacy Employee system role (so users created before role became
         // required still appear). Excludes Super Admin / Company Admin /
         // Location Admin / Vendor / Customer / Agent users.
-        const allowedRoleIds = await this.getListableEmployeeRoleIds(
-            companyId,
-            employeeRole._id.toString()
+        const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+            companyId
         );
 
         const find: any = {
@@ -559,15 +558,25 @@ export class EmployeeAdminController {
             }
         }
 
-        // Hydrate role on detail response
+        // Hydrate role on detail response. With join: true, userObj.role may
+        // be either a raw string id or a populated Role doc — handle both.
         if (userObj?.role) {
             try {
-                const r: any = await this.roleService.findOneById(
-                    userObj.role.toString()
-                );
-                if (r) {
-                    userObj.role_id = r._id.toString();
-                    userObj.role_name = r.name;
+                const rawRole: any = userObj.role;
+                let roleId =
+                    typeof rawRole === 'object'
+                        ? String(rawRole._id || rawRole.id || '')
+                        : String(rawRole);
+                if (roleId) {
+                    const r: any = await this.roleService.findOneById(roleId);
+                    if (r) {
+                        userObj.role_id = r._id.toString();
+                        userObj.role_name = r.name;
+                    } else if (typeof rawRole === 'object' && rawRole?._id) {
+                        // Already populated — use it directly as fallback
+                        userObj.role_id = String(rawRole._id);
+                        userObj.role_name = rawRole.name;
+                    }
                 }
             } catch {
                 // role lookup is best-effort; ignore failures
@@ -788,37 +797,6 @@ export class EmployeeAdminController {
     }
 
     /**
-     * Custom role IDs assignable on create/update — every active custom role
-     * belonging to this company. Excludes ALL system roles (Super Admin,
-     * Company Admin, Location Admin, Employee, Vendor, Customer, Agent).
-     */
-    private async getAssignableEmployeeRoleIds(
-        companyId: string
-    ): Promise<string[]> {
-        const customRoles = await this.roleService.findAll({
-            type: ENUM_ROLE_TYPE.CUSTOM,
-            companyId,
-            isActive: true,
-        });
-        return customRoles.map((r: any) => r._id.toString());
-    }
-
-    /**
-     * Listing filter — every role id that should appear in the Employee
-     * module. Includes legacy Employee system role (for users created before
-     * roles became required) plus all custom roles. Excludes other system
-     * roles.
-     */
-    private async getListableEmployeeRoleIds(
-        companyId: string,
-        employeeSystemRoleId?: string
-    ): Promise<string[]> {
-        const assignable = await this.getAssignableEmployeeRoleIds(companyId);
-        if (employeeSystemRoleId) assignable.push(employeeSystemRoleId);
-        return assignable;
-    }
-
-    /**
      * Validates the requested role_id is an assignable custom role for this
      * company. Throws when missing or not allowed.
      */
@@ -829,7 +807,9 @@ export class EmployeeAdminController {
         if (!requestedRoleId) {
             throw new BadRequestException('Role is required for employees');
         }
-        const allowedIds = await this.getAssignableEmployeeRoleIds(companyId);
+        const allowedIds = await this.roleService.getAssignableEmployeeRoleIds(
+            companyId
+        );
         if (!allowedIds.includes(requestedRoleId)) {
             throw new BadRequestException(
                 'Role is not assignable. Pick a custom role created for this company.'
@@ -1129,15 +1109,16 @@ export class EmployeeAdminController {
         // Guard: only allow impersonating users that belong to the Employee
         // module (custom roles + legacy Employee role). Blocks impersonation
         // of Company Admin / Location Admin / Vendor / Customer / Agent.
-        const employeeSystemRole = await this.roleService.findOne({
-            name: ENUM_SYSTEM_ROLE.EMPLOYEE,
-        });
-        if (employeeSystemRole) {
-            const allowedRoleIds = await this.getListableEmployeeRoleIds(
-                companyId,
-                employeeSystemRole._id.toString()
+        {
+            const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+                companyId
             );
-            const targetRoleId = (employee as any).role?.toString();
+            // user.role can be either a string id (raw) or a populated Role
+            // doc (when fetched with join: true). Handle both.
+            const rawRole: any = (employee as any).role;
+            const targetRoleId = rawRole && typeof rawRole === 'object'
+                ? String(rawRole._id || rawRole.id || '')
+                : (rawRole ? String(rawRole) : '');
             if (!targetRoleId || !allowedRoleIds.includes(targetRoleId)) {
                 throw new ForbiddenException({
                     message: 'This user cannot be impersonated from the Employee module',
