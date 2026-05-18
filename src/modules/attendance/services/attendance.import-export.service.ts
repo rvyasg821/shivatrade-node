@@ -4,7 +4,6 @@ import { AttendanceService } from './attendance.service';
 import { UserService } from '@modules/user/services/user.service';
 import { LocationService } from '@modules/location/services/location.service';
 import { RoleService } from '@modules/role/services/role.service';
-import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { ENUM_ATTENDANCE_STATUS } from '../enums/attendance.enum';
 import { DateTime } from 'luxon';
 
@@ -57,9 +56,16 @@ export class AttendanceImportExportService {
 
         const records = await this.attendanceService.findAll(companyId, 10000, 0, find);
 
-        // Build user map (id -> employee_code + name)
-        const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-        const users = await this.userService.findAll({ companyId, role: employeeRole?._id }, {});
+        // Build user map (id -> employee_code + name). Includes legacy
+        // Employee role + every active custom role for this company so
+        // custom-role employees aren't silently excluded from exports.
+        const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+            companyId
+        );
+        const users = await this.userService.findAll(
+            { companyId, role: { $in: allowedRoleIds } },
+            {}
+        );
         const userMap: Record<string, any> = {};
         for (const u of users) {
             userMap[u._id?.toString()] = u;
@@ -130,9 +136,16 @@ export class AttendanceImportExportService {
             return { summary: { total: 0, valid_new: 0, valid_update: 0, errors: 0 }, rows: [] };
         }
 
-        // Build employee lookup (code -> user, email -> user)
-        const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-        const users = await this.userService.findAll({ companyId, role: employeeRole?._id }, {});
+        // Build employee lookup (code -> user, email -> user). Includes
+        // legacy Employee role + every active custom role for this company
+        // so custom-role employee codes are recognised during CSV import.
+        const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+            companyId
+        );
+        const users = await this.userService.findAll(
+            { companyId, role: { $in: allowedRoleIds } },
+            {}
+        );
         const codeMap: Record<string, any> = {};
         const emailMap: Record<string, any> = {};
         for (const u of users) {
