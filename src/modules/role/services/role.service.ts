@@ -124,6 +124,43 @@ export class RoleService implements IRoleService {
         );
     }
 
+    /**
+     * Role IDs that should be visible in the Employee module listings:
+     * legacy Employee system role (for users created before custom roles
+     * became required) + every active custom role belonging to this company.
+     * Excludes Super Admin, Company Admin, Location Admin, Vendor, Customer,
+     * Agent.
+     *
+     * Use this anywhere you currently do `find.role = employeeRole._id`.
+     */
+    async getListableEmployeeRoleIds(companyId: string): Promise<string[]> {
+        const employeeRole = await this.roleRepository.findOne({
+            name: ENUM_SYSTEM_ROLE.EMPLOYEE,
+        });
+        const customRoles = await this.roleRepository.findAll({
+            type: ENUM_ROLE_TYPE.CUSTOM,
+            companyId,
+            isActive: true,
+        });
+        const ids = customRoles.map((r: any) => r._id.toString());
+        if (employeeRole) ids.push(employeeRole._id.toString());
+        return ids;
+    }
+
+    /**
+     * Custom role IDs assignable on Employee create/update. Excludes all
+     * system roles (Employee included — required role must be a real custom
+     * role, not the system fallback).
+     */
+    async getAssignableEmployeeRoleIds(companyId: string): Promise<string[]> {
+        const customRoles = await this.roleRepository.findAll({
+            type: ENUM_ROLE_TYPE.CUSTOM,
+            companyId,
+            isActive: true,
+        });
+        return customRoles.map((r: any) => r._id.toString());
+    }
+
     async findOneActiveById(
         _id: string,
         options?: IDatabaseFindOneOptions

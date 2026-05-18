@@ -27,6 +27,23 @@ export class EmployeeCreateRequestDto {
     location_id: string;
 
     @ApiProperty({
+        required: false,
+        type: [String],
+        description: 'Additional location IDs the employee can work at (excluding primary)',
+    })
+    @IsOptional()
+    additional_location_ids?: string[];
+
+    @ApiProperty({
+        required: true,
+        type: String,
+        description: 'Custom role ID to assign to the employee. Must be a custom role belonging to this company. The Employee system role is no longer assignable.',
+    })
+    @IsString()
+    @IsNotEmpty()
+    role_id: string;
+
+    @ApiProperty({
         required: true,
         type: String,
         maxLength: 100,

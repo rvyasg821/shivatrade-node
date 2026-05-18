@@ -212,9 +212,6 @@ export class AttendanceCronService {
     async markHolidays(): Promise<void> {
         if (!this.shouldRunCron()) return;
         try {
-            const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-            if (!employeeRole) return;
-
             // Get all companies that have attendance settings
             const allSettings = await this.settingsRepository.findAll({}, {}) as any[];
             const companyIds = [...new Set(allSettings.map(s => s.company_id).filter(Boolean))];
@@ -226,9 +223,14 @@ export class AttendanceCronService {
 
                     if (!holidays.length) continue;
 
+                    // Allowed roles for attendance: legacy Employee + custom roles
+                    const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+                        companyId
+                    );
+
                     // Get all employees for this company
                     const employees = await this.userService.findAll(
-                        { companyId, role: employeeRole._id },
+                        { companyId, role: { $in: allowedRoleIds } },
                         {}
                     );
 
@@ -279,9 +281,6 @@ export class AttendanceCronService {
     async markAbsent(): Promise<void> {
         if (!this.shouldRunCron()) return;
         try {
-            const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-            if (!employeeRole) return;
-
             const allSettings = await this.settingsRepository.findAll({}, {}) as any[];
             const companyIds = [...new Set(allSettings.map(s => s.company_id).filter(Boolean))];
 
@@ -293,8 +292,13 @@ export class AttendanceCronService {
                     const dayOfWeek = DateTime.now().weekday;
                     if (dayOfWeek === 6 || dayOfWeek === 7) continue;
 
+                    // Allowed roles: legacy Employee + custom roles
+                    const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+                        companyId
+                    );
+
                     const employees = await this.userService.findAll(
-                        { companyId, role: employeeRole._id },
+                        { companyId, role: { $in: allowedRoleIds } },
                         {}
                     );
 

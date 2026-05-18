@@ -157,15 +157,27 @@ export class UserAdminController {
         if (role && Object.keys(role).length > 0) {
             find['role'] = role['role'];
         } else {
-            // Otherwise, exclude Agent, Employee, Vendor, and Customer roles from the main users list
-            const [agentRole, employeeRole, vendorRole, customerRole] = await Promise.all([
+            // Otherwise, exclude anyone who belongs to a different module from
+            // the main Users list:
+            //   • Agent / Vendor / Customer — system roles managed elsewhere
+            //   • Employee + every custom role — managed in the Employee module
+            const [agentRole, vendorRole, customerRole] = await Promise.all([
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.AGENT }),
-                this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE }),
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.VENDOR }),
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.CUSTOMER }),
             ]);
+            const employeeModuleRoleIds = currentUserCompanyId
+                ? await this.roleService.getListableEmployeeRoleIds(
+                      currentUserCompanyId
+                  )
+                : [];
 
-            const excludeRoleIds = [agentRole?._id, employeeRole?._id, vendorRole?._id, customerRole?._id].filter(Boolean);
+            const excludeRoleIds = [
+                agentRole?._id,
+                vendorRole?._id,
+                customerRole?._id,
+                ...employeeModuleRoleIds,
+            ].filter(Boolean);
             if (excludeRoleIds.length > 0) {
                 find['role'] = { $nin: excludeRoleIds };
             }
@@ -489,8 +501,20 @@ export class UserAdminController {
             if (accessible_locations && Array.isArray(accessible_locations)) {
                 userData.accessible_locations = accessible_locations;
             }
-            // Employee-specific fields: only for Employee role
-            const isEmployeeRole = checkRole?.name === ENUM_SYSTEM_ROLE.EMPLOYEE;
+            // Employee-specific fields: applied for anyone in the Employee
+            // module (legacy Employee role OR any active custom role for this
+            // company). Other system roles (Admin / Agent / Vendor / etc.)
+            // skip these fields.
+            const employeeModuleCheckCompany =
+                userData.companyId || currentUserCompanyId || null;
+            const employeeModuleRoleIds = employeeModuleCheckCompany
+                ? await this.roleService.getListableEmployeeRoleIds(
+                      employeeModuleCheckCompany
+                  )
+                : [];
+            const isEmployeeRole =
+                !!checkRole?._id &&
+                employeeModuleRoleIds.includes(String(checkRole._id));
             if (isEmployeeRole) {
                 if (employee_code) {
                     userData.employee_code = employee_code;
@@ -903,10 +927,23 @@ export class UserAdminController {
             if (location_id !== undefined) userData.location_id = location_id;
             if (accessible_locations !== undefined) userData.accessible_locations = Array.isArray(accessible_locations) ? accessible_locations : [];
 
-            // Employee-specific fields: only for Employee role
-            const isUpdatingEmployeeRole = checkRole
-                ? checkRole.name === ENUM_SYSTEM_ROLE.EMPLOYEE
-                : (user as any).role?.name === ENUM_SYSTEM_ROLE.EMPLOYEE || (user as any).roleName === ENUM_SYSTEM_ROLE.EMPLOYEE;
+            // Employee-specific fields: applied for anyone in the Employee
+            // module (legacy Employee role OR any active custom role for this
+            // company). Uses the role being assigned in this update (or the
+            // user's existing role if role isn't changing).
+            const employeeModuleCheckCompany =
+                (user as any).companyId || currentUserCompanyId || null;
+            const employeeModuleRoleIds = employeeModuleCheckCompany
+                ? await this.roleService.getListableEmployeeRoleIds(
+                      employeeModuleCheckCompany
+                  )
+                : [];
+            const candidateRoleId = checkRole?._id
+                ? String(checkRole._id)
+                : String((user as any).role || '');
+            const isUpdatingEmployeeRole =
+                !!candidateRoleId &&
+                employeeModuleRoleIds.includes(candidateRoleId);
             if (isUpdatingEmployeeRole) {
                 if (employee_code !== undefined) userData.employee_code = employee_code;
                 if (designation !== undefined) userData.designation = designation;

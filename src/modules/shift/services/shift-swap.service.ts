@@ -228,8 +228,12 @@ export class ShiftSwapService {
      */
     async getColleagues(companyId: string, excludeUserId: string): Promise<any[]> {
         const find: any = { companyId };
-        const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-        if (employeeRole?._id) find.role = employeeRole._id;
+        // Include legacy Employee role + every active custom role for this
+        // company. Custom-role colleagues should be selectable as swap targets.
+        const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(
+            companyId
+        );
+        if (allowedRoleIds.length) find.role = { $in: allowedRoleIds };
 
         const users = await this.userRepository.findAll(find, { paging: { limit: 500, offset: 0 } });
 
