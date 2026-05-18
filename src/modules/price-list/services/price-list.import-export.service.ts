@@ -246,12 +246,11 @@ export class PriceListImportExportService {
         }
 
         // Relationship lookups — case-insensitive code → id.
-        const [vendors, products, currencies, existing, vendorCategories] =
+        const [vendors, products, currencies, vendorCategories] =
             await Promise.all([
                 this.vendorRepository.findByCompanyId(companyId),
                 this.productRepository.findByCompanyId(companyId),
                 this.currencyRepository.findByCompanyId(companyId),
-                this.priceListRepository.findAll({ company_id: companyId }),
                 this.vendorCategoryRepository.findAll({
                     company_id: companyId,
                 }),
@@ -297,18 +296,11 @@ export class PriceListImportExportService {
         // Company "home" currency — used when currency_code is blank/unknown.
         const defaultCurrency = currencies.find((c) => c.is_default);
 
-        // A price row is uniquely a (vendor, product, effective_date) tuple.
-        const existingByKey = new Map<string, any>(
-            existing.map((r) => [
-                `${r.vendor_id}|${r.product_id}|${String(
-                    r.effective_date,
-                ).slice(0, 10)}`,
-                r,
-            ]),
-        );
+        // Legacy data is preserved: every imported row creates a new
+        // price-list entry, even if the same vendor + product (+ effective
+        // date) already exists or appears again within the same file.
 
         const today = new Date().toISOString().slice(0, 10);
-        const seenKeys = new Set<string>();
         const rows: PriceListImportRow[] = [];
 
         for (let i = 0; i < rawRows.length; i++) {
@@ -508,25 +500,12 @@ export class PriceListImportExportService {
                 errors.push('Notes must not exceed 2000 characters');
             }
 
-            // ── Duplicate (vendor + product + effective date) within file ──
+            // Every valid row imports as a new entry — duplicates against
+            // existing data or within the file are allowed by design so
+            // legacy price history is preserved.
             let rowStatus: 'valid_new' | 'valid_update' | 'error' =
                 'valid_new';
-            let existingId: string | undefined;
-            if (vendorId && productId) {
-                const key = `${vendorId}|${productId}|${effectiveDate}`;
-                if (seenKeys.has(key)) {
-                    errors.push(
-                        'Duplicate vendor + product + effective date in file',
-                    );
-                }
-                seenKeys.add(key);
-
-                const match = existingByKey.get(key);
-                if (match) {
-                    existingId = match._id.toString();
-                    rowStatus = 'valid_update';
-                }
-            }
+            const existingId: string | undefined = undefined;
             if (errors.length > 0) rowStatus = 'error';
 
             rows.push({
@@ -600,21 +579,12 @@ export class PriceListImportExportService {
                     notes: d.notes,
                 };
 
-                if (row.status === 'valid_update' && row.existingId) {
-                    const existingRow =
-                        await this.priceListService.findOneById(
-                            row.existingId,
-                        );
-                    await this.priceListService.update(existingRow, payload);
-                    updated++;
-                } else {
-                    await this.priceListService.create(
-                        companyId,
-                        payload,
-                        userId,
-                    );
-                    created++;
-                }
+                await this.priceListService.create(
+                    companyId,
+                    payload,
+                    userId,
+                );
+                created++;
             } catch (err: any) {
                 this.logger.error(
                     `Import row ${row.rowNum} failed: ${err?.message}`,
