@@ -30,7 +30,7 @@ import { UserService } from '@modules/user/services/user.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { AuthService } from '@modules/auth/services/auth.service';
 import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
-import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
+import { ENUM_SYSTEM_ROLE, ENUM_ROLE_TYPE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_SIGN_UP_FROM, ENUM_USER_STATUS } from '@modules/user/enums/user.enum';
 import { FaceRecognitionService } from '@modules/attendance/services/face-recognition.service';
 import { FileService } from '@common/file/services/file.service';
@@ -176,7 +176,7 @@ export class EmployeeAdminController {
             throw new BadRequestException('Email already exists. Please use a different email address.');
         }
 
-        // Get Employee role
+        // Get Employee role (default fallback)
         const employeeRole = await this.roleService.findOne({
             name: ENUM_SYSTEM_ROLE.EMPLOYEE,
         });
@@ -184,6 +184,13 @@ export class EmployeeAdminController {
         if (!employeeRole) {
             throw new Error('Employee role not found');
         }
+
+        // Role is required and must be a custom role for this company.
+        // Throws BadRequestException if missing or not assignable.
+        const resolvedRole = await this.resolveEmployeeRole(
+            companyId,
+            (body as any).role_id
+        );
 
         // Use provided password or fall back to default
         const rawPassword = body.password || 'Welcome@123';
@@ -204,9 +211,9 @@ export class EmployeeAdminController {
             mobile: body.mobile,
             country_code: body.country_code,
             gender: userGender,
-            role: employeeRole._id.toString(),
+            role: resolvedRole._id.toString(),
             companyId: companyId,
-            roleLevel: employeeRole.level,
+            roleLevel: resolvedRole.level,
         };
 
         // Create user with Employee role
@@ -280,6 +287,20 @@ export class EmployeeAdminController {
             this.logger.warn(`[Employee Create] Update employee fields failed: ${e?.message}`);
         }
 
+        // Persist additional location assignments (multi-location support)
+        if (Array.isArray((body as any).additional_location_ids)) {
+            try {
+                await this.replaceAdditionalLocations(
+                    String(user._id),
+                    companyId,
+                    (body as any).additional_location_ids,
+                    body.location_id
+                );
+            } catch (e: any) {
+                this.logger.warn(`[Employee Create] Additional locations failed: ${e?.message}`);
+            }
+        }
+
         // Note: shared_users entry no longer needed — login authenticates directly from users table
 
         // Send welcome email (non-blocking)
@@ -339,9 +360,18 @@ export class EmployeeAdminController {
             throw new Error('Employee role not found');
         }
 
+        // Listing role filter: include all custom roles for this company +
+        // legacy Employee system role (so users created before role became
+        // required still appear). Excludes Super Admin / Company Admin /
+        // Location Admin / Vendor / Customer / Agent users.
+        const allowedRoleIds = await this.getListableEmployeeRoleIds(
+            companyId,
+            employeeRole._id.toString()
+        );
+
         const find: any = {
             companyId: companyId,
-            role: employeeRole._id,
+            role: { $in: allowedRoleIds },
         };
 
         // Add status filter if provided
@@ -456,6 +486,23 @@ export class EmployeeAdminController {
             locations.map(loc => [loc._id.toString(), loc])
         );
 
+        // Hydrate role names for the listing (so the FE Role column reads
+        // role_name without an extra round-trip). Loads all roles referenced
+        // by the page's users.
+        const roleIds = [
+            ...new Set(
+                users
+                    .map((u: any) => u.role?.toString?.())
+                    .filter((v): v is string => !!v)
+            ),
+        ];
+        const roleRecords = roleIds.length
+            ? await this.roleService.findAll({ _id: { $in: roleIds } } as any)
+            : [];
+        const roleMap = new Map(
+            roleRecords.map((r: any) => [r._id.toString(), r])
+        );
+
         // Enrich users with location data
         const enrichedUsers = users.map(user => {
             const userObj: any = { ...user };
@@ -466,6 +513,12 @@ export class EmployeeAdminController {
                 if (location) {
                     userObj.location_id = { ...location };
                 }
+            }
+
+            const r = roleMap.get(userObj.role?.toString?.());
+            if (r) {
+                userObj.role_id = r._id.toString();
+                userObj.role_name = (r as any).name;
             }
 
             return userObj;
@@ -506,6 +559,21 @@ export class EmployeeAdminController {
             }
         }
 
+        // Hydrate role on detail response
+        if (userObj?.role) {
+            try {
+                const r: any = await this.roleService.findOneById(
+                    userObj.role.toString()
+                );
+                if (r) {
+                    userObj.role_id = r._id.toString();
+                    userObj.role_name = r.name;
+                }
+            } catch {
+                // role lookup is best-effort; ignore failures
+            }
+        }
+
         // Fetch additional location assignments
         try {
             const assignments = await this.employeeLocationAssignmentRepository.findActiveByEmployeeId(employeeId);
@@ -521,11 +589,14 @@ export class EmployeeAdminController {
                     ...a,
                     location: locationMap.get(a.location_id) || null,
                 }));
+                userObj.additional_location_ids = assignments.map(a => a.location_id);
             } else {
                 userObj.additional_locations = [];
+                userObj.additional_location_ids = [];
             }
         } catch {
             userObj.additional_locations = [];
+            userObj.additional_location_ids = [];
         }
 
         return {
@@ -683,9 +754,127 @@ export class EmployeeAdminController {
         // Update basic fields using service (whitelist path)
         const updated = await this.userService.update(user, updateData);
 
+        // Role re-assignment. Required and must be a custom role for this
+        // company. Throws when missing or invalid.
+        if ((body as any).role_id !== undefined) {
+            const companyId = String(
+                (user as any).company_id || (user as any).companyId || ''
+            );
+            const resolved = await this.resolveEmployeeRole(
+                companyId,
+                (body as any).role_id
+            );
+            user.role = resolved._id.toString();
+            (user as any).roleLevel = resolved.level;
+            await this.userService.update(user, {
+                role: resolved._id.toString(),
+                roleLevel: resolved.level,
+            } as any);
+        }
+
+        // Replace-on-update additional locations (excludes primary location_id).
+        if (Array.isArray((body as any).additional_location_ids)) {
+            await this.replaceAdditionalLocations(
+                String(user._id),
+                String((user as any).company_id || (user as any).companyId || ''),
+                (body as any).additional_location_ids,
+                String(user.location_id || '')
+            );
+        }
+
         return {
             data: updated,
         };
+    }
+
+    /**
+     * Custom role IDs assignable on create/update — every active custom role
+     * belonging to this company. Excludes ALL system roles (Super Admin,
+     * Company Admin, Location Admin, Employee, Vendor, Customer, Agent).
+     */
+    private async getAssignableEmployeeRoleIds(
+        companyId: string
+    ): Promise<string[]> {
+        const customRoles = await this.roleService.findAll({
+            type: ENUM_ROLE_TYPE.CUSTOM,
+            companyId,
+            isActive: true,
+        });
+        return customRoles.map((r: any) => r._id.toString());
+    }
+
+    /**
+     * Listing filter — every role id that should appear in the Employee
+     * module. Includes legacy Employee system role (for users created before
+     * roles became required) plus all custom roles. Excludes other system
+     * roles.
+     */
+    private async getListableEmployeeRoleIds(
+        companyId: string,
+        employeeSystemRoleId?: string
+    ): Promise<string[]> {
+        const assignable = await this.getAssignableEmployeeRoleIds(companyId);
+        if (employeeSystemRoleId) assignable.push(employeeSystemRoleId);
+        return assignable;
+    }
+
+    /**
+     * Validates the requested role_id is an assignable custom role for this
+     * company. Throws when missing or not allowed.
+     */
+    private async resolveEmployeeRole(
+        companyId: string,
+        requestedRoleId: string | undefined
+    ): Promise<any> {
+        if (!requestedRoleId) {
+            throw new BadRequestException('Role is required for employees');
+        }
+        const allowedIds = await this.getAssignableEmployeeRoleIds(companyId);
+        if (!allowedIds.includes(requestedRoleId)) {
+            throw new BadRequestException(
+                'Role is not assignable. Pick a custom role created for this company.'
+            );
+        }
+        const role = await this.roleService.findOneById(requestedRoleId);
+        if (!role) {
+            throw new BadRequestException('Role not found');
+        }
+        return role;
+    }
+
+    /**
+     * Soft-deletes existing employee_location_assignments rows for this employee
+     * and inserts new ones from the incoming list. The employee's primary
+     * `location_id` is excluded from the assignment list (it's stored on the
+     * user row, not the junction). Duplicates and empties are silently dropped.
+     */
+    private async replaceAdditionalLocations(
+        employeeId: string,
+        companyId: string,
+        locationIds: string[],
+        primaryLocationId: string
+    ): Promise<void> {
+        const incoming = Array.from(
+            new Set(
+                (locationIds || [])
+                    .filter((v): v is string => !!v)
+                    .filter((v) => v !== primaryLocationId)
+            )
+        );
+
+        const existing = await this.employeeLocationAssignmentRepository.findByEmployeeId(employeeId);
+        for (const a of existing) {
+            await this.employeeLocationAssignmentRepository.softDelete(a);
+        }
+
+        for (const locationId of incoming) {
+            await this.employeeLocationAssignmentRepository.create({
+                company_id: companyId,
+                employee_id: employeeId,
+                location_id: locationId,
+                is_active: true,
+            } as any);
+        }
     }
 
     /**
@@ -936,6 +1125,25 @@ export class EmployeeAdminController {
         const employee = await this.userService.findOneById(employeeId, { join: true });
         if (!employee) throw new BadRequestException({ message: 'Employee not found' });
         if (employee.companyId !== companyId) throw new ForbiddenException({ message: 'Cannot impersonate employee from another company' });
+
+        // Guard: only allow impersonating users that belong to the Employee
+        // module (custom roles + legacy Employee role). Blocks impersonation
+        // of Company Admin / Location Admin / Vendor / Customer / Agent.
+        const employeeSystemRole = await this.roleService.findOne({
+            name: ENUM_SYSTEM_ROLE.EMPLOYEE,
+        });
+        if (employeeSystemRole) {
+            const allowedRoleIds = await this.getListableEmployeeRoleIds(
+                companyId,
+                employeeSystemRole._id.toString()
+            );
+            const targetRoleId = (employee as any).role?.toString();
+            if (!targetRoleId || !allowedRoleIds.includes(targetRoleId)) {
+                throw new ForbiddenException({
+                    message: 'This user cannot be impersonated from the Employee module',
+                });
+            }
+        }
 
         // Create session
         const session = await this.sessionService.create(request, { user: String(employee._id) });
