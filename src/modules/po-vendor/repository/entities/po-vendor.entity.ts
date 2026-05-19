@@ -67,9 +67,18 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'date', nullable: true })
     eway_bill_date?: string;
 
-    /** Snapshot text — pre-fills from PO header's delivery_address. */
+    /** Snapshot text — pre-fills from PO header's delivery_address.
+     *  Frozen on create; the PDF (when added) prints this directly. */
     @Column({ type: 'text', nullable: false })
     delivery_address: string;
+
+    /** Soft FK → company_addresses._id. Traceability: which company
+     *  address the snapshot was generated from at create time. Null
+     *  when the user provided a manual text override or the parent PO
+     *  itself had no `delivery_address_id`. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    delivery_address_id?: string;
 
     @Column({ type: 'text', nullable: true })
     notes?: string;

@@ -47,10 +47,18 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'date', nullable: true })
     expected_delivery_date?: string;
 
-    /** Forwarder warehouse / port — pre-fills from
-     *  `company.default_po_delivery_address`. */
+    /** Forwarder warehouse / port — frozen snapshot text printed on the
+     *  PO PDF. Inherits from a picked company address (via
+     *  `delivery_address_id`) or from a manual text override. */
     @Column({ type: 'text', nullable: false })
     delivery_address: string;
+
+    /** Soft FK → company_addresses._id. Traceability: which company
+     *  address the snapshot was generated from at create time.
+     *  Null when the user provided a manual text override. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    delivery_address_id?: string;
 
     @Column({ type: 'varchar', length: 100, nullable: true })
     payment_terms?: string;

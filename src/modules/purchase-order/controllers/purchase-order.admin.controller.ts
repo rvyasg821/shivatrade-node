@@ -183,7 +183,11 @@ export class PurchaseOrderAdminController {
             companyId,
             pfiId,
             userId,
-            body.assignments
+            body.assignments,
+            {
+                deliveryAddressId: body.delivery_address_id,
+                deliveryAddressText: body.delivery_address,
+            }
         );
         const mapped = await this.poService.mapList(out.created);
         return { data: { created: mapped, skipped: out.skipped } };
@@ -202,7 +206,11 @@ export class PurchaseOrderAdminController {
             companyId,
             quotationId,
             userId,
-            body.assignments
+            body.assignments,
+            {
+                deliveryAddressId: body.delivery_address_id,
+                deliveryAddressText: body.delivery_address,
+            }
         );
         const mapped = await this.poService.mapList(out.created);
         return { data: { created: mapped, skipped: out.skipped } };
