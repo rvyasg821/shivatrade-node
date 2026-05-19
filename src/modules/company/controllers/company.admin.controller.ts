@@ -543,10 +543,22 @@ export class CompanyAdminController {
             if (err instanceof NotFoundException) {
                 throw err;
             }
+            // Re-throw HTTP exceptions (BadRequest, Forbidden, etc.) as-is so
+            // the client sees the real validation message instead of a
+            // generic 500.
+            if (err && typeof err === 'object' && 'getStatus' in (err as any)) {
+                throw err;
+            }
+
+            const msg = (err as any)?.message || (err as any)?.detail;
+            this.logger?.error?.(
+                `[updateMyCompany] ${msg}`,
+                (err as any)?.stack
+            );
 
             throw new InternalServerErrorException({
                 statusCode: ENUM_APP_STATUS_CODE_ERROR.UNKNOWN,
-                message: 'http.serverError.internalServerError',
+                message: msg || 'http.serverError.internalServerError',
                 _error: err,
             });
         }

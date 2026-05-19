@@ -56,7 +56,10 @@ export class CustomerAddressRequestDto {
     @IsString() @IsOptional() @MaxLength(100) country?: string;
     @IsString() @IsOptional() @MaxLength(20) postcode?: string;
 
-    @IsString() @IsOptional() @MaxLength(15) gstin?: string;
+    // Accepts GSTIN (India, 15 chars) and any foreign equivalent (VAT, TRN,
+    // EU VAT id, etc.). Length raised to 30 to fit prefixed EU VAT numbers
+    // and other international tax identifiers.
+    @IsString() @IsOptional() @MaxLength(30) gstin?: string;
     @IsString() @IsOptional() @MaxLength(20) iec?: string;
 
     @IsBoolean() @IsOptional() is_default?: boolean;
@@ -74,8 +77,11 @@ export class CustomerCreateRequestDto {
     social_media?: CustomerSocialMediaDto;
 
     // ── Tax & Compliance (root level, all optional) ──
-    @IsString() @IsOptional() @MaxLength(15) gstin?: string;
-    @IsString() @IsOptional() @MaxLength(10) pan?: string;
+    // gstin column also accepts VAT / TRN / Tax ID for non-Indian customers.
+    // pan column also accepts Trade License / CR / EIN / company registration
+    // for non-Indian customers — relabelled in UI as "Business Registration #".
+    @IsString() @IsOptional() @MaxLength(30) gstin?: string;
+    @IsString() @IsOptional() @MaxLength(30) pan?: string;
     @IsString() @IsOptional() @MaxLength(20) iec?: string;
 
     @IsEnum(ENUM_CUSTOMER_STATUS) @IsOptional() status?: ENUM_CUSTOMER_STATUS;

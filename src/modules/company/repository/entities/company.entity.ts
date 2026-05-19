@@ -75,6 +75,19 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     default_declaration_text?: string;
 
+    /** Default delivery address printed on every PO (e.g. forwarder warehouse / port).
+     *  Editable per PO. */
+    @Column({ type: 'text', nullable: true })
+    default_po_delivery_address?: string;
+
+    /** Default terms & conditions block printed on every PO PDF. */
+    @Column({ type: 'text', nullable: true })
+    default_po_terms?: string;
+
+    /** Name printed under the authorized-signatory block on PFI / PO PDFs. */
+    @Column({ type: 'varchar', length: 150, nullable: true })
+    authorised_signatory_name?: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true })
     paye_reference?: string;
 

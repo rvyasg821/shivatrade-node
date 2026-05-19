@@ -249,6 +249,11 @@ export class CompanyGetResponseDto {
     @ApiProperty({ required: false, type: String }) default_port_of_loading?: string;
     @ApiProperty({ required: false, type: String }) default_declaration_text?: string;
 
+    // ── PO defaults ──
+    @ApiProperty({ required: false, type: String }) default_po_delivery_address?: string;
+    @ApiProperty({ required: false, type: String }) default_po_terms?: string;
+    @ApiProperty({ required: false, type: String }) authorised_signatory_name?: string;
+
     // ── Multi-address & multi-bank ──
     @ApiProperty({ required: false, type: [CompanyAddressResponseDto] })
     addresses?: CompanyAddressResponseDto[];
