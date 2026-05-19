@@ -11,6 +11,7 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 import { QuotationModule } from '@modules/quotation/quotation.module';
 import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
+import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
 
 @Module({
     imports: [
@@ -23,6 +24,7 @@ import { PriceListModule } from '@modules/price-list/price-list.module';
         QuotationModule,
         PfiModule,
         PriceListModule,
+        PoVendorModule,
     ],
     providers: [PurchaseOrderService, PoPdfService],
     exports: [PurchaseOrderRepositoryModule, PurchaseOrderService, PoPdfService],

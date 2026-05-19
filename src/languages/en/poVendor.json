@@ -1,0 +1,13 @@
+{
+    "list": "PO Vendors retrieved successfully.",
+    "get": "PO Vendor fetched successfully.",
+    "createFromPo": "PO Vendor created from Purchase Order.",
+    "update": "PO Vendor updated successfully.",
+    "dispatch": "PO Vendor marked as dispatched.",
+    "receive": "PO Vendor closed (goods received).",
+    "cancel": "PO Vendor cancelled.",
+    "delete": "PO Vendor deleted successfully.",
+    "error": {
+        "notFound": "Sorry, we couldn't find the requested PO Vendor."
+    }
+}

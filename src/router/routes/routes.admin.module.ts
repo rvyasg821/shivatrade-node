@@ -68,6 +68,8 @@ import { PfiModule } from '@modules/pfi/pfi.module';
 import { PfiAdminController } from '@modules/pfi/controllers/pfi.admin.controller';
 import { PurchaseOrderModule } from '@modules/purchase-order/purchase-order.module';
 import { PurchaseOrderAdminController } from '@modules/purchase-order/controllers/purchase-order.admin.controller';
+import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
+import { PoVendorAdminController } from '@modules/po-vendor/controllers/po-vendor.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
 import { EmployeeAdminController } from '@modules/employee/controllers/employee.admin.controller';
 import { HolidayCalendarModule } from '@modules/holiday-calendar/holiday-calendar.module';
@@ -197,6 +199,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         QuotationAdminController,
         PfiAdminController,
         PurchaseOrderAdminController,
+        PoVendorAdminController,
     ],
     providers: [],
     exports: [],
@@ -244,6 +247,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         QuotationModule,
         PfiModule,
         PurchaseOrderModule,
+        PoVendorModule,
         EmployeeModule,
         HolidayCalendarModule,
         DocumentModule,
