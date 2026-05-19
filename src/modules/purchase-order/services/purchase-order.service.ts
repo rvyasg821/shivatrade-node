@@ -32,6 +32,8 @@ import { PriceListRepository } from '@modules/price-list/repository/repositories
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
+import { formatCompanyAddress } from '@modules/company/utils/format-address';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -113,19 +115,44 @@ export class PurchaseOrderService {
         return def?._id?.toString() || null;
     }
 
+    /**
+     * Resolve the PO delivery address snapshot.
+     * Priority:
+     *  1. `providedText` (raw text override) — used as-is, no id.
+     *  2. `providedAddressId` (company_addresses._id) — load row, format
+     *     via `formatCompanyAddress`, return `{ text, id }`.
+     *  3. Else → throw (caller must provide one or the other).
+     *
+     * Legacy `company.default_po_delivery_address` is intentionally NOT
+     * consulted — that column is being dropped (refactor plan).
+     */
     private async resolveDeliveryAddress(
         companyId: string,
-        provided?: string
-    ): Promise<string> {
-        if (provided && provided.trim()) return provided.trim();
-        try {
-            const company: any = await this.companyService.findOneById(
-                companyId
-            );
-            return (company?.default_po_delivery_address || '').trim();
-        } catch {
-            return '';
+        providedText?: string,
+        providedAddressId?: string
+    ): Promise<{ text: string; id?: string }> {
+        if (providedText && providedText.trim()) {
+            return { text: providedText.trim() };
         }
+        if (providedAddressId) {
+            const addr: any = await this.companyAddressRepository.findOne({
+                _id: providedAddressId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (!addr) {
+                throw new BadRequestException(
+                    `delivery_address_id ${providedAddressId} not found for this company.`
+                );
+            }
+            return {
+                text: formatCompanyAddress(addr),
+                id: providedAddressId,
+            };
+        }
+        throw new BadRequestException(
+            'delivery_address_id is required. Pick a company address (Profile → Addresses) or supply delivery_address text.'
+        );
     }
 
     // ─── CRUD ───────────────────────────────────────────────────────────
@@ -135,6 +162,15 @@ export class PurchaseOrderService {
         data: PurchaseOrderCreateRequestDto,
         createdBy: string
     ): Promise<PurchaseOrderDoc> {
+        // Customer required for ad-hoc POs (those with no source PFI /
+        // Quotation). createFromPfi / createFromQuotation paths inject
+        // customer_id server-side before reaching here.
+        if (!data.pfi_id && !data.quotation_id && !data.customer_id) {
+            throw new BadRequestException(
+                'customer_id is required for ad-hoc Purchase Orders.'
+            );
+        }
+
         const refsOut = await this.assertReferences(
             companyId,
             data.vendor_id,
@@ -148,15 +184,11 @@ export class PurchaseOrderService {
             data.vendor_id,
             data.vendor_address_id
         );
-        const deliveryAddress = await this.resolveDeliveryAddress(
+        const delivery = await this.resolveDeliveryAddress(
             companyId,
-            data.delivery_address
+            data.delivery_address,
+            (data as any).delivery_address_id
         );
-        if (!deliveryAddress) {
-            throw new BadRequestException(
-                'delivery_address is required (set company default_po_delivery_address or provide it on the PO)'
-            );
-        }
 
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucher_no = await this.voucherService.getNext(
@@ -176,7 +208,8 @@ export class PurchaseOrderService {
             pfi_id: data.pfi_id || null,
             po_date: data.po_date,
             expected_delivery_date: data.expected_delivery_date || null,
-            delivery_address: deliveryAddress,
+            delivery_address: delivery.text,
+            delivery_address_id: delivery.id || null,
             payment_terms: data.payment_terms || null,
             delivery_terms: data.delivery_terms || null,
             notes_to_vendor: data.notes_to_vendor || null,
@@ -619,6 +652,8 @@ export class PurchaseOrderService {
             vendor_id: string;
         }>;
         customerId?: string;
+        deliveryAddressId?: string;
+        deliveryAddressText?: string;
     }) {
         const {
             companyId,
@@ -628,6 +663,8 @@ export class PurchaseOrderService {
             sourceLines,
             assignments,
             customerId,
+            deliveryAddressId,
+            deliveryAddressText,
         } = opts;
 
         const assignmentMap = new Map<string, string>();
@@ -711,7 +748,8 @@ export class PurchaseOrderService {
                             sourceType === 'quotation' ? sourceId : undefined,
                         pfi_id: sourceType === 'pfi' ? sourceId : undefined,
                         po_date: today,
-                        delivery_address: '',
+                        delivery_address: deliveryAddressText || undefined,
+                        delivery_address_id: deliveryAddressId || undefined,
                         currency_code: 'INR',
                         exchange_rate: '1',
                         lines: vlines,
@@ -743,7 +781,8 @@ export class PurchaseOrderService {
         companyId: string,
         pfiId: string,
         createdBy: string,
-        assignments: Array<{ source_line_id: string; vendor_id: string }>
+        assignments: Array<{ source_line_id: string; vendor_id: string }>,
+        opts?: { deliveryAddressId?: string; deliveryAddressText?: string }
     ) {
         const pfi = await this.pfiRepository.findOne({
             _id: pfiId,
@@ -764,6 +803,8 @@ export class PurchaseOrderService {
             sourceLines: lines as any[],
             assignments,
             customerId: (pfi as any).customer_id?.toString(),
+            deliveryAddressId: opts?.deliveryAddressId,
+            deliveryAddressText: opts?.deliveryAddressText,
         });
     }
 
@@ -771,7 +812,8 @@ export class PurchaseOrderService {
         companyId: string,
         quotationId: string,
         createdBy: string,
-        assignments: Array<{ source_line_id: string; vendor_id: string }>
+        assignments: Array<{ source_line_id: string; vendor_id: string }>,
+        opts?: { deliveryAddressId?: string; deliveryAddressText?: string }
     ) {
         const q = await this.quotationRepository.findOne({
             _id: quotationId,
@@ -792,6 +834,8 @@ export class PurchaseOrderService {
             sourceLines: lines as any[],
             assignments,
             customerId: (q as any).customer_id?.toString(),
+            deliveryAddressId: opts?.deliveryAddressId,
+            deliveryAddressText: opts?.deliveryAddressText,
         });
     }
 
@@ -950,11 +994,13 @@ export class PurchaseOrderService {
                 po_date: r.po_date,
                 expected_delivery_date: r.expected_delivery_date,
                 delivery_address: r.delivery_address,
+                delivery_address_id: r.delivery_address_id?.toString(),
                 payment_terms: r.payment_terms,
                 delivery_terms: r.delivery_terms,
                 notes_to_vendor: r.notes_to_vendor,
                 internal_notes: r.internal_notes,
                 currency_code: r.currency_code,
+                currency_symbol: getCurrencySymbol(r.currency_code),
                 exchange_rate: r.exchange_rate,
                 subtotal: r.subtotal,
                 cgst_total: r.cgst_total,

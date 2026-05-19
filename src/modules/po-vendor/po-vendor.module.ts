@@ -8,6 +8,7 @@ import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repositor
 import { VendorModule } from '@modules/vendor/vendor.module';
 import { ProductModule } from '@modules/product/product.module';
 import { CompanyModule } from '@modules/company/company.module';
+import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { VoucherModule } from '@common/voucher/voucher.module';
 
 /**
@@ -20,6 +21,7 @@ import { VoucherModule } from '@common/voucher/voucher.module';
         VendorModule,
         ProductModule,
         CompanyModule,
+        CompanyRepositoryModule,
         VoucherModule,
     ],
     providers: [PoVendorService, PoCoverageService],

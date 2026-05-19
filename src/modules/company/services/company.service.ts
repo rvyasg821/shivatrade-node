@@ -74,7 +74,6 @@ export interface ICompanyCreate {
     cin?: string;
     default_port_of_loading?: string;
     default_declaration_text?: string;
-    default_po_delivery_address?: string;
     default_po_terms?: string;
     authorised_signatory_name?: string;
 }
@@ -244,8 +243,6 @@ export class CompanyService {
             repository.default_port_of_loading = data.default_port_of_loading;
         if (data.default_declaration_text !== undefined)
             repository.default_declaration_text = data.default_declaration_text;
-        if (data.default_po_delivery_address !== undefined)
-            repository.default_po_delivery_address = data.default_po_delivery_address;
         if (data.default_po_terms !== undefined)
             repository.default_po_terms = data.default_po_terms;
         if (data.authorised_signatory_name !== undefined)
@@ -791,8 +788,6 @@ export class CompanyService {
                     (company as any)?.default_port_of_loading || undefined,
                 default_declaration_text:
                     (company as any)?.default_declaration_text || undefined,
-                default_po_delivery_address:
-                    (company as any)?.default_po_delivery_address || undefined,
                 default_po_terms:
                     (company as any)?.default_po_terms || undefined,
                 authorised_signatory_name:
@@ -838,8 +833,6 @@ export class CompanyService {
                     (company as any)?.default_port_of_loading || undefined,
                 default_declaration_text:
                     (company as any)?.default_declaration_text || undefined,
-                default_po_delivery_address:
-                    (company as any)?.default_po_delivery_address || undefined,
                 default_po_terms:
                     (company as any)?.default_po_terms || undefined,
                 authorised_signatory_name:

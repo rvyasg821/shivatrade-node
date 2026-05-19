@@ -38,10 +38,19 @@ export class PoVendorLineCreateDto {
  * taken from the source PO server-side — no client input for those.
  */
 export class PoVendorCreateRequestDto {
+    /** Free-text snapshot override. Wins over `delivery_address_id`
+     *  and the inherited PO snapshot when filled. */
     @IsString()
     @IsOptional()
     @MaxLength(2000)
     delivery_address?: string;
+
+    /** Pick a company_addresses._id; server snapshots text. Wins over
+     *  inherited PO snapshot when filled and `delivery_address` text
+     *  is not. */
+    @IsUUID()
+    @IsOptional()
+    delivery_address_id?: string;
 
     @IsString()
     @IsOptional()

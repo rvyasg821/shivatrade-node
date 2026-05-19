@@ -250,7 +250,7 @@ export class CompanyGetResponseDto {
     @ApiProperty({ required: false, type: String }) default_declaration_text?: string;
 
     // ── PO defaults ──
-    @ApiProperty({ required: false, type: String }) default_po_delivery_address?: string;
+    // `default_po_delivery_address` retired — see refactor plan.
     @ApiProperty({ required: false, type: String }) default_po_terms?: string;
     @ApiProperty({ required: false, type: String }) authorised_signatory_name?: string;
 

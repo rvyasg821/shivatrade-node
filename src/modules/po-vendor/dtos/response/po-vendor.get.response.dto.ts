@@ -52,6 +52,7 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: false, type: String }) eway_bill_date?: string;
 
     @ApiProperty({ required: true, type: String }) delivery_address: string;
+    @ApiProperty({ required: false, type: String }) delivery_address_id?: string;
     @ApiProperty({ required: false, type: String }) notes?: string;
     @ApiProperty({ required: false, type: String }) internal_notes?: string;
 
