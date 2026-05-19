@@ -45,8 +45,10 @@ export class CustomerAddressEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 20, nullable: true })
     postcode?: string;
 
-    /** Per-address overrides (e.g. branch GSTIN may differ from HQ). */
-    @Column({ type: 'varchar', length: 15, nullable: true })
+    /** Per-address overrides. Accepts GSTIN (India) OR foreign VAT/TRN/Tax ID
+     *  for overseas branches. Length 30 to accommodate prefixed EU VAT
+     *  numbers and other international tax identifiers. */
+    @Column({ type: 'varchar', length: 30, nullable: true })
     gstin?: string;
 
     @Column({ type: 'varchar', length: 20, nullable: true })
