@@ -97,7 +97,6 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
             <div style="font-weight:600">${esc(l.product_name || '-')}</div>
             ${l.description ? `<div style="color:#666;font-size:10px">${esc(l.description)}</div>` : ''}
           </td>
-          <td>${esc(l.hs_code || '-')}</td>
           <td class="num">${esc(l.qty || '-')}</td>
           <td>${esc(l.unit || '-')}</td>
           <td class="num">${money(p, l.unit_price)}</td>
@@ -358,7 +357,6 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
       <tr>
         <th>#</th>
         <th>Product</th>
-        <th>HS Code</th>
         <th class="num">Qty</th>
         <th>Unit</th>
         <th class="num">Rate</th>
@@ -376,8 +374,6 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
   ${packingBlock}
 
   <div class="totals">
-    <div class="row"><span>Subtotal</span><span>${money(p, p.subtotal)}</span></div>
-    <div class="row"><span>GST</span><span>${money(p, p.gst_total)}</span></div>
     <div class="row grand"><span>Grand Total</span><span>${money(p, p.grand_total)}</span></div>
   </div>
 
