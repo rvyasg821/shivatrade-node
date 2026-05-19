@@ -7,6 +7,7 @@ export enum ENUM_VOUCHER_DOC_TYPE {
     QUOTATION = 'QUOTATION',
     PFI = 'PFI',
     PURCHASE_ORDER = 'PURCHASE_ORDER',
+    PO_VENDOR = 'PO_VENDOR',
 }
 
 export type VoucherFormatStyle = 'glued' | 'separated';
@@ -28,4 +29,5 @@ export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig>
     [ENUM_VOUCHER_DOC_TYPE.QUOTATION]: { token: 'QT', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.PFI]: { token: 'PI', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER]: { token: 'OS', style: 'separated' },
+    [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: { token: 'POV', style: 'glued' },
 };
