@@ -1,0 +1,14 @@
+{
+    "list": "Purchase Orders retrieved successfully.",
+    "get": "Purchase Order fetched successfully.",
+    "create": "Purchase Order created successfully.",
+    "createFromQuotation": "Purchase Orders created from Quotation.",
+    "createFromPfi": "Purchase Orders created from PFI.",
+    "update": "Purchase Order updated successfully.",
+    "delete": "Purchase Order deleted successfully.",
+    "previewFromPfi": "Preview from PFI loaded.",
+    "previewFromQuotation": "Preview from Quotation loaded.",
+    "error": {
+        "notFound": "Sorry, we couldn't find the requested Purchase Order."
+    }
+}

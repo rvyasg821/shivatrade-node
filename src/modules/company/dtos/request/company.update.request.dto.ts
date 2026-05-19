@@ -333,6 +333,11 @@ export class CompanyUpdateRequestDto {
     @IsOptional() @IsString() @MaxLength(150) default_port_of_loading?: string;
     @IsOptional() @IsString() @MaxLength(4000) default_declaration_text?: string;
 
+    // ── PO defaults ──
+    @IsOptional() @IsString() @MaxLength(1000) default_po_delivery_address?: string;
+    @IsOptional() @IsString() @MaxLength(4000) default_po_terms?: string;
+    @IsOptional() @IsString() @MaxLength(150) authorised_signatory_name?: string;
+
     // ── Multi-address ──
     @IsOptional()
     @IsArray()
