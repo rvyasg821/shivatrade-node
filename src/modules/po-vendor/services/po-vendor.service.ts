@@ -25,6 +25,8 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { VendorContactRepository } from '@modules/vendor/repository/repositories/vendor-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CompanyService } from '@modules/company/services/company.service';
+import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { formatCompanyAddress } from '@modules/company/utils/format-address';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -49,6 +51,7 @@ export class PoVendorService {
         private readonly vendorContactRepository: VendorContactRepository,
         private readonly productRepository: ProductRepository,
         private readonly companyService: CompanyService,
+        private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -223,9 +226,34 @@ export class PoVendorService {
             prefix
         );
 
-        const delivery_address =
-            (data.delivery_address || '').trim() ||
-            (po.delivery_address || '').toString();
+        // ── Resolve delivery address (POV plan Addendum 5) ─────────────
+        // Priority:
+        //   1. data.delivery_address (manual text override) — used as-is.
+        //   2. data.delivery_address_id — load row, format, snapshot both.
+        //   3. Inherit from PO (text + id) when neither provided.
+        let delivery_address: string;
+        let delivery_address_id: string | null = null;
+        if (data.delivery_address && data.delivery_address.trim()) {
+            delivery_address = data.delivery_address.trim();
+        } else if ((data as any).delivery_address_id) {
+            const addr: any = await this.companyAddressRepository.findOne({
+                _id: (data as any).delivery_address_id,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (!addr) {
+                throw new BadRequestException(
+                    `delivery_address_id ${(data as any).delivery_address_id} not found for this company.`
+                );
+            }
+            delivery_address = formatCompanyAddress(addr);
+            delivery_address_id = (data as any).delivery_address_id;
+        } else {
+            // Inherit from PO.
+            delivery_address = (po.delivery_address || '').toString();
+            delivery_address_id =
+                po.delivery_address_id?.toString() || null;
+        }
         if (!delivery_address) {
             throw new BadRequestException(
                 'delivery_address is required (PO had no delivery_address and none provided).'
@@ -241,6 +269,7 @@ export class PoVendorService {
             vendor_id: po.vendor_id?.toString(),
             vendor_address_id: po.vendor_address_id?.toString() || null,
             delivery_address,
+            delivery_address_id,
             notes: data.notes || null,
             internal_notes: data.internal_notes || null,
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
@@ -875,6 +904,7 @@ export class PoVendorService {
                 eway_bill_date: r.eway_bill_date || undefined,
 
                 delivery_address: r.delivery_address,
+                delivery_address_id: r.delivery_address_id?.toString(),
                 notes: r.notes || undefined,
                 internal_notes: r.internal_notes || undefined,
 
