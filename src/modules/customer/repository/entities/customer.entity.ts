@@ -31,10 +31,13 @@ export class CustomerEntity extends DatabaseObjectIdEntityBase {
     social_media?: ICustomerSocialMedia;
 
     // ── Tax & Compliance ──
-    @Column({ type: 'varchar', length: 15, nullable: true })
+    // gstin accepts GSTIN (India) OR foreign equivalent (VAT, TRN, EU VAT id).
+    // pan accepts PAN (India) OR foreign Business Registration # (Trade
+    // License, CR, EIN, etc.). Field labels are country-agnostic in the UI.
+    @Column({ type: 'varchar', length: 30, nullable: true })
     gstin?: string;
 
-    @Column({ type: 'varchar', length: 10, nullable: true })
+    @Column({ type: 'varchar', length: 30, nullable: true })
     pan?: string;
 
     @Column({ type: 'varchar', length: 20, nullable: true })
