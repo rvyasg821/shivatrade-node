@@ -10,7 +10,7 @@ import {
     Res,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -33,6 +33,8 @@ import { PurchaseOrderCreateRequestDto } from '../dtos/request/purchase-order.cr
 import { PurchaseOrderUpdateRequestDto } from '../dtos/request/purchase-order.update.request.dto';
 import { PurchaseOrderAutoSplitRequestDto } from '../dtos/request/purchase-order.auto-split.request.dto';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
+import { PoCoverageService } from '@modules/po-vendor/services/po-coverage.service';
+import { PoCoverageResponseDto } from '@modules/po-vendor/dtos/response/po-coverage.response.dto';
 
 @ApiTags('admin.purchase-order')
 @Controller({ version: '1', path: '/admin/purchase-order' })
@@ -40,7 +42,8 @@ export class PurchaseOrderAdminController {
     constructor(
         private readonly poService: PurchaseOrderService,
         private readonly poPdfService: PoPdfService,
-        private readonly poRepository: PurchaseOrderRepository
+        private readonly poRepository: PurchaseOrderRepository,
+        private readonly poCoverageService: PoCoverageService
     ) {}
 
     @Response('purchaseOrder.create')
@@ -57,6 +60,13 @@ export class PurchaseOrderAdminController {
 
     @ResponsePaging('purchaseOrder.list')
     @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'vendor_id', required: false, type: String })
+    @ApiQuery({ name: 'customer_id', required: false, type: String })
+    @ApiQuery({ name: 'quotation_id', required: false, type: String })
+    @ApiQuery({ name: 'pfi_id', required: false, type: String })
+    @ApiQuery({ name: 'status', required: false, type: String })
+    @ApiQuery({ name: 'date_from', required: false, type: String })
+    @ApiQuery({ name: 'date_to', required: false, type: String })
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
@@ -173,7 +183,11 @@ export class PurchaseOrderAdminController {
             companyId,
             pfiId,
             userId,
-            body.assignments
+            body.assignments,
+            {
+                deliveryAddressId: body.delivery_address_id,
+                deliveryAddressText: body.delivery_address,
+            }
         );
         const mapped = await this.poService.mapList(out.created);
         return { data: { created: mapped, skipped: out.skipped } };
@@ -192,7 +206,11 @@ export class PurchaseOrderAdminController {
             companyId,
             quotationId,
             userId,
-            body.assignments
+            body.assignments,
+            {
+                deliveryAddressId: body.delivery_address_id,
+                deliveryAddressText: body.delivery_address,
+            }
         );
         const mapped = await this.poService.mapList(out.created);
         return { data: { created: mapped, skipped: out.skipped } };
@@ -218,5 +236,17 @@ export class PurchaseOrderAdminController {
         );
         res.setHeader('Content-Length', String(buf.length));
         res.end(buf);
+    }
+
+    /** Per-PO coverage roll-up (POV plan §14 — feeds Vendor Tracking tab). */
+    @Response('purchaseOrder.coverage')
+    @AuthJwtAccessProtected()
+    @Get('/:id/coverage')
+    async coverage(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<PoCoverageResponseDto>> {
+        const data = await this.poCoverageService.getCoverage(companyId, id);
+        return { data };
     }
 }

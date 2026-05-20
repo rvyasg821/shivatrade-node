@@ -33,6 +33,8 @@ import { RebateRepository } from '@modules/rebate/repository/repositories/rebate
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
 import { ProductExpenseRepository } from '@modules/product/repository/repositories/product-expense.repository';
+import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -66,6 +68,8 @@ export class QuotationService {
         private readonly productRepository: ProductRepository,
         private readonly productRebateRepository: ProductRebateRepository,
         private readonly productExpenseRepository: ProductExpenseRepository,
+        private readonly pfiRepository: PfiRepository,
+        private readonly poRepository: PurchaseOrderRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -253,7 +257,10 @@ export class QuotationService {
     }
 
     async findOneById(id: string): Promise<QuotationDoc> {
-        const row = await this.quotationRepository.findOneById(id);
+        const row = await this.quotationRepository.findOne({
+            _id: id,
+            soft_delete: false,
+        } as any);
         if (!row) throw new NotFoundException('Quotation not found');
         return row;
     }
@@ -388,6 +395,26 @@ export class QuotationService {
     }
 
     async softDelete(row: QuotationDoc): Promise<void> {
+        // Block delete when any non-soft-deleted PFI or PO references it.
+        const [activePfis, activePos] = await Promise.all([
+            this.pfiRepository.getTotal({
+                quotation_id: row._id.toString(),
+                soft_delete: false,
+            } as any),
+            this.poRepository.getTotal({
+                quotation_id: row._id.toString(),
+                soft_delete: false,
+            } as any),
+        ]);
+        if (activePfis > 0 || activePos > 0) {
+            const parts: string[] = [];
+            if (activePfis > 0) parts.push(`${activePfis} PFI(s)`);
+            if (activePos > 0) parts.push(`${activePos} Purchase Order(s)`);
+            throw new BadRequestException(
+                `Cannot delete Quotation: ${parts.join(' and ')} reference it. Delete those first.`
+            );
+        }
+
         row.soft_delete = true;
         await this.quotationRepository.save(row);
         this.logger.log(`Quotation soft-deleted: ${row._id}`);
@@ -396,7 +423,7 @@ export class QuotationService {
     // ─── Public share link ──────────────────────────────────────────────
 
     /** Generate (or keep) the public token. Only sent/approved quotations
-     *  can be published — a draft is not final enough to share. */
+     *  can be published - a draft is not final enough to share. */
     async publish(id: string): Promise<QuotationDoc> {
         const row = await this.findOneById(id);
         this.assertPublishable(row.status);
@@ -407,7 +434,7 @@ export class QuotationService {
         return row;
     }
 
-    /** Issue a fresh token — the old public URL stops working immediately. */
+    /** Issue a fresh token - the old public URL stops working immediately. */
     async rotateToken(id: string): Promise<QuotationDoc> {
         const row = await this.findOneById(id);
         this.assertPublishable(row.status);
@@ -435,7 +462,7 @@ export class QuotationService {
         }
     }
 
-    /** Public view-only fetch by token — no auth. Returns null for an
+    /** Public view-only fetch by token - no auth. Returns null for an
      *  unknown token or a quotation that is no longer in a shareable state. */
     async findByPublicToken(token: string): Promise<QuotationDoc | null> {
         if (!token) return null;
@@ -444,7 +471,7 @@ export class QuotationService {
             soft_delete: false,
         } as any);
         if (!row) return null;
-        // Bump view tracking (fire-and-forget — never block the response).
+        // Bump view tracking (fire-and-forget - never block the response).
         row.public_view_count = (row.public_view_count || 0) + 1;
         row.public_last_viewed_at = new Date();
         this.quotationRepository
@@ -466,7 +493,7 @@ export class QuotationService {
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
         if (!lines?.length) return;
 
-        // The line's rebate/expense snapshots are the source of truth — they
+        // The line's rebate/expense snapshots are the source of truth - they
         // arrive pre-filled from the product master on the FE but are then
         // user-editable per line (edit pct/value/type, add ad-hoc rows,
         // delete). Persist exactly what the FE sends; never rebuild from the
@@ -556,20 +583,18 @@ export class QuotationService {
         let line_margin_total = 0;
 
         for (const ln of lines) {
-            const out = computeLineTax({
+            // Use the engine only for the intra/inter split; recompute the
+            // tax amount ourselves on Net Total per spec (p.24).
+            const split = computeLineTax({
                 qty: num(ln.qty),
                 unit_price: num(ln.unit_price),
                 discount_pct: num(ln.discount_pct),
-                tax_pct: num(ln.tax_pct),
+                tax_pct: 0,
                 customer_state: customerState,
                 company_state: companyState,
             });
 
-            ln.taxable = String(out.taxable);
-            ln.cgst = String(out.cgst);
-            ln.sgst = String(out.sgst);
-            ln.igst = String(out.igst);
-            ln.line_total = String(out.line_total);
+            ln.taxable = String(split.taxable);
 
             // Per-line product rebates: percent → taxable × pct/100;
             // fixed → flat pct value applied once per line.
@@ -578,7 +603,7 @@ export class QuotationService {
                 lineRebatesAmt +=
                     r.type === 'fixed'
                         ? num(r.pct)
-                        : (out.taxable * num(r.pct)) / 100;
+                        : (split.taxable * num(r.pct)) / 100;
             }
             // Per-line product expenses: percent → taxable × value/100;
             // amount → flat value applied once per line.
@@ -586,7 +611,7 @@ export class QuotationService {
             for (const e of (ln as any).product_expenses_snapshot || []) {
                 lineExpensesAmt +=
                     e.type === 'percent'
-                        ? (out.taxable * num(e.value)) / 100
+                        ? (split.taxable * num(e.value)) / 100
                         : num(e.value);
             }
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
@@ -594,13 +619,34 @@ export class QuotationService {
 
             // Per-line margin: applied to the line's net-of-rebates base.
             const lineMarginPct = num((ln as any).margin_pct);
-            const lineMarginBase = out.taxable + lineExpensesAmt - lineRebatesAmt;
+            const lineMarginBase = split.taxable + lineExpensesAmt - lineRebatesAmt;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
+
+            // Net Total per spec p.24: ((Price + Expenses) − Rebates) + Margin.
+            const lineNetTotal =
+                split.taxable + lineExpensesAmt - lineRebatesAmt + lineMarginAmt;
+            const taxPct = num(ln.tax_pct);
+            const totalTax = round2((lineNetTotal * taxPct) / 100);
+            let cgst = 0,
+                sgst = 0,
+                igst = 0;
+            if (totalTax > 0) {
+                if (split.tax_type === 'INTRA') {
+                    cgst = round2(totalTax / 2);
+                    sgst = round2(totalTax - cgst);
+                } else {
+                    igst = totalTax;
+                }
+            }
+            ln.cgst = String(cgst);
+            ln.sgst = String(sgst);
+            ln.igst = String(igst);
+            ln.line_total = String(round2(lineNetTotal + totalTax));
             await this.quotationLineRepository.save(ln);
 
-            subtotal += out.taxable;
-            tax_total += out.total_tax;
+            subtotal += split.taxable;
+            tax_total += totalTax;
             product_rebates_total += lineRebatesAmt;
             product_expenses_total += lineExpensesAmt;
             line_margin_total += lineMarginAmt;
@@ -879,7 +925,7 @@ export class QuotationService {
             company_email = company?.email;
             company_iec = company?.iec;
             const ccc: any = company?.country_code;
-            // Seller is India-based — if no dial code was stored, default to
+            // Seller is India-based - if no dial code was stored, default to
             // +91 so the number never shows as bare digits.
             company_phone = company?.mobile
                 ? ccc?.formatted ||
@@ -910,7 +956,7 @@ export class QuotationService {
                     .join('\n');
             }
         } catch {
-            // leave seller fields undefined — the header degrades gracefully
+            // leave seller fields undefined - the header degrades gracefully
         }
 
         // Resolve the bill-to address for the document header.
@@ -937,7 +983,7 @@ export class QuotationService {
             }
         }
 
-        // Contact phone — prefer the rich formatted form, else compose it.
+        // Contact phone - prefer the rich formatted form, else compose it.
         const cc: any = full.customer_contact_country_code;
         const customer_phone =
             cc?.formatted ||
@@ -946,35 +992,39 @@ export class QuotationService {
                 : full.customer_contact_phone) ||
             undefined;
 
+        // ── Lines (per spec p.24 costing formula) ─────────────────────────
+        //   Net Total (INR) = (Price + Expenses − Rebates) + Margin
+        //   Net (cust)      = Net Total × Exchange Rate
+        //   GST (cust)      = Net (cust) × tax_pct / 100   ← applied AFTER FX
+        //   Line Total      = Net (cust) + GST (cust)
         let subtotal = 0;
         let gst_total = 0;
+        let grand_total_calc = 0;
         const lines = (full.lines || []).map((l) => {
             const qty = num(l.qty);
-            // All-in costed line value (INR, ex-GST): taxable + expenses
-            // − rebates + margin. The customer never sees the breakdown,
-            // only this rolled-up rate.
-            const costedInr =
+            const netInr =
                 num(l.taxable) +
                 num(l.product_expenses_amount) -
                 num(l.product_rebates_amount) +
                 num(l.margin_amount);
-            const lineAmount = round2(costedInr * er);
-            const lineGst = round2(
-                (num(l.cgst) + num(l.sgst) + num(l.igst)) * er
-            );
-            subtotal += lineAmount;
-            gst_total += lineGst;
+            const netCust = round2(netInr * er);
+            const taxPct = num(l.tax_pct);
+            const gstCust = round2((netCust * taxPct) / 100);
+            const lineTotal = round2(netCust + gstCust);
+            const rate = qty > 0 ? round2(lineTotal / qty) : 0;
+            subtotal += netCust;
+            gst_total += gstCust;
+            grand_total_calc += lineTotal;
             return {
                 product_name: l.product_name,
                 description: l.description,
                 qty: l.qty,
                 unit: l.unit,
-                unit_price:
-                    qty > 0 ? String(round2(lineAmount / qty)) : '0',
+                unit_price: String(rate),
                 discount_pct: l.discount_pct,
                 tax_pct: l.tax_pct,
-                gst_amount: String(lineGst),
-                line_total: String(round2(lineAmount + lineGst)),
+                gst_amount: String(gstCust),
+                line_total: String(lineTotal),
             };
         });
 
@@ -1004,7 +1054,7 @@ export class QuotationService {
             lines,
             subtotal: String(round2(subtotal)),
             gst_total: String(round2(gst_total)),
-            grand_total: full.grand_total,
+            grand_total: String(round2(grand_total_calc)),
         };
     }
 }

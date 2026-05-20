@@ -95,10 +95,17 @@ export class PurchaseOrderCreateRequestDto {
     @IsOptional()
     expected_delivery_date?: string;
 
+    /** Free-text snapshot. Optional — if omitted, server resolves from
+     *  `delivery_address_id` (preferred) or rejects. */
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     @MaxLength(2000)
-    delivery_address: string;
+    delivery_address?: string;
+
+    /** Preferred: pick a company_addresses._id; server snapshots text. */
+    @IsUUID()
+    @IsOptional()
+    delivery_address_id?: string;
 
     @IsString()
     @IsOptional()

@@ -14,6 +14,8 @@ import { CompanyModule } from '@modules/company/company.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { QuotationModule } from '@modules/quotation/quotation.module';
 import { LeadModule } from '@modules/lead/lead.module';
+// Repository-only import (no service-level cycle with PurchaseOrderModule).
+import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 
 @Module({
     imports: [
@@ -28,6 +30,7 @@ import { LeadModule } from '@modules/lead/lead.module';
         CompanyRepositoryModule,
         QuotationModule,
         LeadModule,
+        PurchaseOrderRepositoryModule,
     ],
     providers: [PfiService, PfiPdfService],
     exports: [PfiRepositoryModule, PfiService, PfiPdfService],

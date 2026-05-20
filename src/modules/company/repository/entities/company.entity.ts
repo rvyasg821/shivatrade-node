@@ -75,10 +75,9 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     default_declaration_text?: string;
 
-    /** Default delivery address printed on every PO (e.g. forwarder warehouse / port).
-     *  Editable per PO. */
-    @Column({ type: 'text', nullable: true })
-    default_po_delivery_address?: string;
+    // `default_po_delivery_address` retired — POs now snapshot from
+    // `company_addresses` via `purchase_orders.delivery_address_id`
+    // (PO_DELIVERY_ADDRESS_REFACTOR_PLAN).
 
     /** Default terms & conditions block printed on every PO PDF. */
     @Column({ type: 'text', nullable: true })

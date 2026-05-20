@@ -1,5 +1,5 @@
 export const EMPLOYEE_DEFAULT_PERMISSIONS = {
-    // ── Master Group (no access — employees don't manage other users) ──
+    // * Master Group (no access - employees don't manage other users) *
     user: {
         can_all: false,
         can_read: false,
@@ -33,7 +33,7 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_delete: false,
     },
 
-    // ── Root Group (no access) ──
+    // * Root Group (no access) *
     tools: {
         can_all: false,
         can_read: false,
@@ -83,7 +83,7 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_delete: false,
     },
 
-    // ── Company-level modules (minimal) ──
+    // * Company-level modules (minimal) *
     payment: {
         can_all: false,
         can_read: false,
@@ -117,7 +117,7 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_delete: false,
     },
 
-    // ── HRM Modules (own data only — scoped by backend to self) ──
+    // * HRM Modules (own data only - scoped by backend to self) *
     holiday_calendar: {
         can_all: false,
         can_read: true, // Can view company/location holidays
@@ -175,7 +175,7 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_delete: false,
     },
 
-    // ── Catalogue Modules (no access) ──
+    // * Catalogue Modules (no access) *
     categories: {
         can_all: false,
         can_read: false,
@@ -249,7 +249,7 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_delete: false,
     },
 
-    // ── Sales Group (no access — employees don't manage sales docs) ──
+    // * Sales Group (no access - employees don't manage sales docs) *
     quotations: {
         can_all: false,
         can_read: false,
@@ -272,6 +272,20 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_add: false,
         can_create: false,
         can_update: false,
+        can_delete: false,
+    },
+    "po-vendors": {
+        can_all: false,
+        can_read: false,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
+    tracking: {
+        can_all: false,
+        can_read: false,
+        can_add: false,
         can_delete: false,
     },
 } as const;

@@ -35,6 +35,7 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { LeadService } from '@modules/lead/services/lead.service';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -69,6 +70,7 @@ export class PfiService {
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly leadService: LeadService,
+        private readonly poRepository: PurchaseOrderRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -197,7 +199,10 @@ export class PfiService {
     }
 
     async findOneById(id: string): Promise<PfiDoc> {
-        const row = await this.pfiRepository.findOneById(id);
+        const row = await this.pfiRepository.findOne({
+            _id: id,
+            soft_delete: false,
+        } as any);
         if (!row) throw new NotFoundException('PFI not found');
         return row;
     }
@@ -320,6 +325,17 @@ export class PfiService {
     }
 
     async softDelete(row: PfiDoc): Promise<void> {
+        // Block delete when any non-soft-deleted PO references this PFI.
+        const activePos = await this.poRepository.getTotal({
+            pfi_id: row._id.toString(),
+            soft_delete: false,
+        } as any);
+        if (activePos > 0) {
+            throw new BadRequestException(
+                `Cannot delete PFI: ${activePos} Purchase Order(s) reference it. Delete those first.`
+            );
+        }
+
         row.soft_delete = true;
         await this.pfiRepository.save(row);
         this.logger.log(`PFI soft-deleted: ${row._id}`);
@@ -709,20 +725,18 @@ export class PfiService {
             net_weight_kg += num((ln as any).net_weight_kg);
             gross_weight_kg += num((ln as any).gross_weight_kg);
 
-            const out = computeLineTax({
+            // Use the engine only for the intra/inter split — recompute the
+            // tax amount ourselves on the Net Total per spec (p.24).
+            const split = computeLineTax({
                 qty: num(ln.qty),
                 unit_price: num(ln.unit_price),
                 discount_pct: num(ln.discount_pct),
-                tax_pct: num(ln.tax_pct),
+                tax_pct: 0, // ignore engine's tax math; we apply on Net Total below
                 customer_state: customerState,
                 company_state: companyState,
             });
 
-            ln.taxable = String(out.taxable);
-            ln.cgst = String(out.cgst);
-            ln.sgst = String(out.sgst);
-            ln.igst = String(out.igst);
-            ln.line_total = String(out.line_total);
+            ln.taxable = String(split.taxable);
 
             // Per-line product rebates (percent → taxable × pct/100; fixed →
             // flat pct value) + expenses (flat or pct).
@@ -731,13 +745,13 @@ export class PfiService {
                 lineRebatesAmt +=
                     r.type === 'fixed'
                         ? num(r.pct)
-                        : (out.taxable * num(r.pct)) / 100;
+                        : (split.taxable * num(r.pct)) / 100;
             }
             let lineExpensesAmt = 0;
             for (const e of (ln as any).product_expenses_snapshot || []) {
                 lineExpensesAmt +=
                     e.type === 'percent'
-                        ? (out.taxable * num(e.value)) / 100
+                        ? (split.taxable * num(e.value)) / 100
                         : num(e.value);
             }
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
@@ -748,13 +762,37 @@ export class PfiService {
             // Margin base: taxable + line product expenses − line product rebates.
             const lineMarginPct = num((ln as any).margin_pct);
             const lineMarginBase =
-                out.taxable + lineExpensesAmt - lineRebatesAmt;
+                split.taxable + lineExpensesAmt - lineRebatesAmt;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
+
+            // ── Net Total (INR) per spec p.24:
+            //   ((Price + Expenses) − Rebates) + Margin
+            const lineNetTotal =
+                split.taxable + lineExpensesAmt - lineRebatesAmt + lineMarginAmt;
+            // GST on Net Total (INR base).
+            const taxPct = num(ln.tax_pct);
+            const totalTax = round2((lineNetTotal * taxPct) / 100);
+            // Apply intra/inter split from the engine.
+            let cgst = 0,
+                sgst = 0,
+                igst = 0;
+            if (totalTax > 0) {
+                if (split.tax_type === 'INTRA') {
+                    cgst = round2(totalTax / 2);
+                    sgst = round2(totalTax - cgst);
+                } else {
+                    igst = totalTax;
+                }
+            }
+            ln.cgst = String(cgst);
+            ln.sgst = String(sgst);
+            ln.igst = String(igst);
+            ln.line_total = String(round2(lineNetTotal + totalTax));
             await this.pfiLineRepository.save(ln);
 
-            subtotal += out.taxable;
-            tax_total += out.total_tax;
+            subtotal += split.taxable;
+            tax_total += totalTax;
             line_margin_total += lineMarginAmt;
             product_rebates_total += lineRebatesAmt;
             product_expenses_total += lineExpensesAmt;
@@ -1144,34 +1182,40 @@ export class PfiService {
                 : full.customer_contact_phone) ||
             undefined;
 
-        // ── Lines (in customer currency, all-in costed) ──
+        // ── Lines (per spec p.24 costing formula) ─────────────────────────
+        //   Net Total (INR) = (Price + Expenses − Rebates) + Margin
+        //   Net (cust)      = Net Total × Exchange Rate
+        //   GST (cust)      = Net (cust) × tax_pct / 100   ← applied AFTER FX
+        //   Line Total      = Net (cust) + GST (cust)
         let subtotal = 0;
         let gst_total = 0;
+        let grand_total_calc = 0;
         const lines = (full.lines || []).map((l) => {
             const qty = num(l.qty);
-            const costedInr =
+            const netInr =
                 num(l.taxable) +
                 num(l.product_expenses_amount) -
                 num(l.product_rebates_amount) +
                 num(l.margin_amount);
-            const lineAmount = round2(costedInr * er);
-            const lineGst = round2(
-                (num(l.cgst) + num(l.sgst) + num(l.igst)) * er
-            );
-            subtotal += lineAmount;
-            gst_total += lineGst;
+            const netCust = round2(netInr * er);
+            const taxPct = num(l.tax_pct);
+            const gstCust = round2((netCust * taxPct) / 100);
+            const lineTotal = round2(netCust + gstCust);
+            const rate = qty > 0 ? round2(lineTotal / qty) : 0;
+            subtotal += netCust;
+            gst_total += gstCust;
+            grand_total_calc += lineTotal;
             return {
                 product_name: l.product_name,
                 description: l.description,
                 hs_code: l.hs_code,
                 qty: l.qty,
                 unit: l.unit,
-                unit_price:
-                    qty > 0 ? String(round2(lineAmount / qty)) : '0',
+                unit_price: String(rate),
                 discount_pct: l.discount_pct,
                 tax_pct: l.tax_pct,
-                gst_amount: String(lineGst),
-                line_total: String(round2(lineAmount + lineGst)),
+                gst_amount: String(gstCust),
+                line_total: String(lineTotal),
                 net_weight_kg: l.net_weight_kg,
                 gross_weight_kg: l.gross_weight_kg,
                 package_count: l.package_count,
@@ -1263,7 +1307,7 @@ export class PfiService {
             lines,
             subtotal: String(round2(subtotal)),
             gst_total: String(round2(gst_total)),
-            grand_total: full.grand_total,
+            grand_total: String(round2(grand_total_calc)),
             bank,
         };
     }
