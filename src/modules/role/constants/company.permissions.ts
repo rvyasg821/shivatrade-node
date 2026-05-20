@@ -33,7 +33,7 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_delete: true,
     },
 
-    // ── Root Group (Super Admin only — disabled for Company Admin) ──
+    // ── Root Group (Super Admin only - disabled for Company Admin) ──
     tools: {
         can_all: false,
         can_read: false,
@@ -280,6 +280,12 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_add: true,
         can_create: true,
         can_update: true,
+        can_delete: true,
+    },
+    tracking: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
         can_delete: true,
     },
 } as const;

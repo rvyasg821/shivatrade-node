@@ -35,6 +35,7 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { LeadService } from '@modules/lead/services/lead.service';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -69,6 +70,7 @@ export class PfiService {
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly leadService: LeadService,
+        private readonly poRepository: PurchaseOrderRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -197,7 +199,10 @@ export class PfiService {
     }
 
     async findOneById(id: string): Promise<PfiDoc> {
-        const row = await this.pfiRepository.findOneById(id);
+        const row = await this.pfiRepository.findOne({
+            _id: id,
+            soft_delete: false,
+        } as any);
         if (!row) throw new NotFoundException('PFI not found');
         return row;
     }
@@ -320,6 +325,17 @@ export class PfiService {
     }
 
     async softDelete(row: PfiDoc): Promise<void> {
+        // Block delete when any non-soft-deleted PO references this PFI.
+        const activePos = await this.poRepository.getTotal({
+            pfi_id: row._id.toString(),
+            soft_delete: false,
+        } as any);
+        if (activePos > 0) {
+            throw new BadRequestException(
+                `Cannot delete PFI: ${activePos} Purchase Order(s) reference it. Delete those first.`
+            );
+        }
+
         row.soft_delete = true;
         await this.pfiRepository.save(row);
         this.logger.log(`PFI soft-deleted: ${row._id}`);

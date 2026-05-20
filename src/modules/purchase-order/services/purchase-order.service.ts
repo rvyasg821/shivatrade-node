@@ -28,6 +28,7 @@ import { QuotationLineRepository } from '@modules/quotation/repository/repositor
 import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
 import { PfiLineRepository } from '@modules/pfi/repository/repositories/pfi-line.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
+import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -60,6 +61,7 @@ export class PurchaseOrderService {
         private readonly pfiRepository: PfiRepository,
         private readonly pfiLineRepository: PfiLineRepository,
         private readonly priceListRepository: PriceListRepository,
+        private readonly povRepository: PoVendorRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -118,13 +120,13 @@ export class PurchaseOrderService {
     /**
      * Resolve the PO delivery address snapshot.
      * Priority:
-     *  1. `providedText` (raw text override) — used as-is, no id.
-     *  2. `providedAddressId` (company_addresses._id) — load row, format
+     *  1. `providedText` (raw text override) - used as-is, no id.
+     *  2. `providedAddressId` (company_addresses._id) - load row, format
      *     via `formatCompanyAddress`, return `{ text, id }`.
      *  3. Else → throw (caller must provide one or the other).
      *
      * Legacy `company.default_po_delivery_address` is intentionally NOT
-     * consulted — that column is being dropped (refactor plan).
+     * consulted - that column is being dropped (refactor plan).
      */
     private async resolveDeliveryAddress(
         companyId: string,
@@ -227,7 +229,10 @@ export class PurchaseOrderService {
     }
 
     async findOneById(id: string): Promise<PurchaseOrderDoc> {
-        const row = await this.poRepository.findOneById(id);
+        const row = await this.poRepository.findOne({
+            _id: id,
+            soft_delete: false,
+        } as any);
         if (!row) throw new NotFoundException('Purchase Order not found');
         return row;
     }
@@ -238,7 +243,7 @@ export class PurchaseOrderService {
     ): Promise<PurchaseOrderDoc> {
         const companyId = row.company_id.toString();
 
-        // Edit lock — only DRAFT is fully editable. Setting status=DRAFT in
+        // Edit lock - only DRAFT is fully editable. Setting status=DRAFT in
         // the payload lifts the lock for this update (revert-and-edit).
         const willBeDraft =
             data.status === ENUM_PURCHASE_ORDER_STATUS.DRAFT;
@@ -327,6 +332,19 @@ export class PurchaseOrderService {
     }
 
     async softDelete(row: PurchaseOrderDoc): Promise<void> {
+        // Block delete when any non-soft-deleted POV references this PO.
+        // POV chains carry fulfillment history; orphaning them would leave
+        // POVs pointing at a "ghost" PO in the UI.
+        const activePovs = await this.povRepository.getTotal({
+            purchase_order_id: row._id.toString(),
+            soft_delete: false,
+        } as any);
+        if (activePovs > 0) {
+            throw new BadRequestException(
+                `Cannot delete PO: ${activePovs} PO Vendor record(s) still reference it. Cancel or delete those first.`
+            );
+        }
+
         row.soft_delete = true;
         await this.poRepository.save(row);
         this.logger.log(`PO soft-deleted: ${row._id}`);
@@ -758,7 +776,7 @@ export class PurchaseOrderService {
                 );
                 created.push(po);
             } catch (err: any) {
-                // Don't abort the whole batch on one bad vendor — record
+                // Don't abort the whole batch on one bad vendor - record
                 // the failure so the user can fix it (e.g. set the
                 // company.default_po_delivery_address).
                 skipped.push({
