@@ -1,0 +1,9 @@
+{
+    "list": "Tracking events retrieved successfully.",
+    "listByPov": "Tracking events for POV retrieved successfully.",
+    "create": "Tracking event added.",
+    "delete": "Tracking event retracted.",
+    "error": {
+        "notFound": "Sorry, we couldn't find the requested tracking event."
+    }
+}

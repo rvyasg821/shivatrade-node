@@ -77,7 +77,7 @@ export class PoVendorService {
      * non-cancelled POVs for that line. Cancelled POVs release their
      * reservation back to pending (decision §10).
      *
-     * Pass `excludePoVendorId` when computing pending for an EDIT — the
+     * Pass `excludePoVendorId` when computing pending for an EDIT - the
      * row being edited shouldn't count itself.
      */
     async computePendingByPoLineId(
@@ -130,7 +130,7 @@ export class PoVendorService {
     ): void {
         // draft → dispatched → closed
         // (draft | dispatched) → cancelled
-        // No "Revert to Draft" — qty audit trail is immutable (§19.11).
+        // No "Revert to Draft" - qty audit trail is immutable (§19.11).
         const map: Record<string, ENUM_PO_VENDOR_STATUS[]> = {
             [ENUM_PO_VENDOR_STATUS.DRAFT]: [
                 ENUM_PO_VENDOR_STATUS.DISPATCHED,
@@ -228,8 +228,8 @@ export class PoVendorService {
 
         // ── Resolve delivery address (POV plan Addendum 5) ─────────────
         // Priority:
-        //   1. data.delivery_address (manual text override) — used as-is.
-        //   2. data.delivery_address_id — load row, format, snapshot both.
+        //   1. data.delivery_address (manual text override) - used as-is.
+        //   2. data.delivery_address_id - load row, format, snapshot both.
         //   3. Inherit from PO (text + id) when neither provided.
         let delivery_address: string;
         let delivery_address_id: string | null = null;
@@ -309,7 +309,10 @@ export class PoVendorService {
     // ─── Read ───────────────────────────────────────────────────────────
 
     async findOneById(id: string): Promise<PoVendorDoc> {
-        const row = await this.povRepository.findOneById(id);
+        const row = await this.povRepository.findOne({
+            _id: id,
+            soft_delete: false,
+        } as any);
         if (!row) throw new NotFoundException('POV not found');
         return row;
     }
@@ -422,7 +425,7 @@ export class PoVendorService {
         if (status) row.status = status;
         await this.povRepository.save(row);
 
-        // ── Replace-on-update for lines (DRAFT only — already gated) ────
+        // ── Replace-on-update for lines (DRAFT only - already gated) ────
         if (Array.isArray(lines) && fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT) {
             await this.replaceLinesOnDraft(
                 companyId,
@@ -718,7 +721,7 @@ export class PoVendorService {
                 );
             }
             // No-op if spawn_remainder=true but every line is fully
-            // dispatched (POV plan §10) — silently ignored.
+            // dispatched (POV plan §10) - silently ignored.
         }
 
         const parent = await this.povRepository.findOneById(
