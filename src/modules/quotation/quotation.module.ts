@@ -14,6 +14,10 @@ import { CompanyModule } from '@modules/company/company.module';
 // CompanyModule imports but does not re-export its repository module, so
 // pull it in directly for access to CompanyAddressRepository.
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
+// Repository-only imports for child-doc guards in softDelete (avoids
+// service-level cycles with PfiModule / PurchaseOrderModule).
+import { PfiRepositoryModule } from '@modules/pfi/repository/pfi.repository.module';
+import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 
 @Module({
     imports: [
@@ -27,6 +31,8 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
         RebateModule,
         CompanyModule,
         CompanyRepositoryModule,
+        PfiRepositoryModule,
+        PurchaseOrderRepositoryModule,
     ],
     providers: [QuotationService],
     exports: [QuotationRepositoryModule, QuotationService],
