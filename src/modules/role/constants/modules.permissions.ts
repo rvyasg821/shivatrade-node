@@ -180,6 +180,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
+        "po-vendors": {
+            name: "PO Vendors",
+            description: "Track vendor fulfillment against confirmed Purchase Orders — dispatch, receive, and partial-fulfillment chains.",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
     },
     version: "1.0.0",
     lastUpdated: "2026-05-05"
