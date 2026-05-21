@@ -1,0 +1,18 @@
+{
+    "list": "Leads retrieved successfully.",
+    "get": "Lead details fetched successfully.",
+    "create": "Lead created successfully.",
+    "update": "Lead updated successfully.",
+    "delete": "Lead deleted successfully.",
+    "convert": "Lead converted to customer successfully.",
+    "activity": {
+        "list": "Activity history loaded.",
+        "create": "Note added successfully.",
+        "update": "Note updated successfully.",
+        "delete": "Note deleted successfully."
+    },
+    "error": {
+        "notFound": "Sorry, we couldn't find the requested lead.",
+        "exist": "A lead with these details already exists."
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "list": "Prospects récupérés avec succès.",
+    "get": "Détails du prospect récupérés avec succès.",
+    "create": "Prospect créé avec succès.",
+    "update": "Prospect mis à jour avec succès.",
+    "delete": "Prospect supprimé avec succès.",
+    "convert": "Prospect converti en client avec succès.",
+    "activity": {
+        "list": "Historique d'activité chargé.",
+        "create": "Note ajoutée avec succès.",
+        "update": "Note mise à jour avec succès.",
+        "delete": "Note supprimée avec succès."
+    },
+    "error": {
+        "notFound": "Désolé, le prospect demandé est introuvable.",
+        "exist": "Un prospect avec ces informations existe déjà."
+    }
+}
