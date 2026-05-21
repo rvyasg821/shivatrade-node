@@ -154,19 +154,35 @@ export class PriceListImportExportService {
         private readonly currencyRepository: CurrencyRepository,
     ) {}
 
-    /** Sample Excel — every column, with two filled example rows. */
-    generateSampleExcel(): Buffer {
+    /**
+     * Sample Excel — every column, with two filled example rows. When called
+     * from a vendor-scoped page (vendor detail's Price List tab), `vendorId`
+     * is set so the `vendor_code` column is dropped — the page already knows
+     * the vendor.
+     */
+    generateSampleExcel(vendorId?: string): Buffer {
+        const rows = vendorId
+            ? SAMPLE_ROWS.map(({ vendor_code: _v, ...rest }) => rest)
+            : SAMPLE_ROWS;
         return this.fileService.writeExcel([
-            { data: SAMPLE_ROWS, sheetName: SHEET_NAME },
+            { data: rows, sheetName: SHEET_NAME },
         ]);
     }
 
-    /** Export all of a company's price-list rows as an Excel buffer. */
-    async exportPriceLists(companyId: string): Promise<Buffer> {
-        const priceLists = await this.priceListRepository.findAll(
-            { company_id: companyId },
-            { order: { effective_date: 'desc' as any } },
-        );
+    /**
+     * Export price-list rows as an Excel buffer. When `vendorId` is set the
+     * export is scoped to that vendor and the `vendor_code` column is dropped
+     * (the page already knows the vendor).
+     */
+    async exportPriceLists(
+        companyId: string,
+        vendorId?: string,
+    ): Promise<Buffer> {
+        const filter: any = { company_id: companyId };
+        if (vendorId) filter.vendor_id = vendorId;
+        const priceLists = await this.priceListRepository.findAll(filter, {
+            order: { effective_date: 'desc' as any },
+        });
 
         const [vendors, products, currencies] = await Promise.all([
             this.vendorRepository.findByCompanyId(companyId),
@@ -183,27 +199,38 @@ export class PriceListImportExportService {
             currencies.map((c) => [c._id.toString(), c.code || '']),
         );
 
-        const rows = priceLists.map((r) => ({
-            vendor_code: r.vendor_id
-                ? vendorCodeById.get(r.vendor_id.toString()) || ''
-                : '',
-            product_code: r.product_id
-                ? productCodeById.get(r.product_id.toString()) || ''
-                : '',
-            currency_code: r.currency_id
-                ? currencyCodeById.get(r.currency_id.toString()) || ''
-                : '',
-            unit_price: r.unit_price ?? '',
-            moq: r.moq ?? '',
-            discount_pct: r.discount_pct ?? '',
-            lead_time_days: r.lead_time_days ?? '',
-            effective_date: formatDDMMYY(r.effective_date),
-            valid_until: formatDDMMYY(r.valid_until),
-            notes: r.notes || '',
-        }));
+        const rows = priceLists.map((r) => {
+            const base: any = {
+                product_code: r.product_id
+                    ? productCodeById.get(r.product_id.toString()) || ''
+                    : '',
+                currency_code: r.currency_id
+                    ? currencyCodeById.get(r.currency_id.toString()) || ''
+                    : '',
+                unit_price: r.unit_price ?? '',
+                moq: r.moq ?? '',
+                discount_pct: r.discount_pct ?? '',
+                lead_time_days: r.lead_time_days ?? '',
+                effective_date: formatDDMMYY(r.effective_date),
+                valid_until: formatDDMMYY(r.valid_until),
+                notes: r.notes || '',
+            };
+            if (!vendorId) {
+                base.vendor_code = r.vendor_id
+                    ? vendorCodeById.get(r.vendor_id.toString()) || ''
+                    : '';
+                // Re-order so vendor_code stays first (matches EXCEL_HEADERS).
+                const { vendor_code, ...rest } = base;
+                return { vendor_code, ...rest };
+            }
+            return base;
+        });
 
         if (rows.length === 0) {
-            return this.fileService.writeExcelFromArray([EXCEL_HEADERS]);
+            const headers = vendorId
+                ? EXCEL_HEADERS.filter((h) => h !== 'vendor_code')
+                : EXCEL_HEADERS;
+            return this.fileService.writeExcelFromArray([headers]);
         }
         return this.fileService.writeExcel([
             { data: rows, sheetName: SHEET_NAME },
@@ -217,6 +244,7 @@ export class PriceListImportExportService {
     async parseAndValidate(
         fileBuffer: Buffer,
         companyId: string,
+        scopedVendorId?: string,
     ): Promise<{ summary: any; rows: PriceListImportRow[] }> {
         let sheets;
         try {
@@ -235,7 +263,11 @@ export class PriceListImportExportService {
         const headerKeys = Object.keys(rawRows[0]).map((k) =>
             k.trim().toLowerCase(),
         );
-        const requiredCols = ['vendor_code', 'product_code', 'unit_price'];
+        // vendor_code is required only on the global import — vendor-scoped
+        // imports (vendor detail page) already know the vendor from context.
+        const requiredCols = scopedVendorId
+            ? ['product_code', 'unit_price']
+            : ['vendor_code', 'product_code', 'unit_price'];
         const missing = requiredCols.filter((c) => !headerKeys.includes(c));
         if (missing.length > 0) {
             throw new BadRequestException(
@@ -330,20 +362,32 @@ export class PriceListImportExportService {
                 return key ? raw[key] : undefined;
             };
 
-            const vendorCode = get('vendor_code');
             const productCode = get('product_code');
             const currencyCodeRaw = get('currency_code');
 
-            // ── Vendor (required relationship — skip whole row if unknown) ──
+            // ── Vendor — required relationship; either taken from page
+            // context (vendor detail import) or resolved from the row's
+            // vendor_code (global import). ──
             let vendorId: string | undefined;
-            if (!vendorCode) {
-                errors.push('Vendor code is required');
+            let vendorCode = '';
+            if (scopedVendorId) {
+                vendorId = scopedVendorId;
+                // Surface the code in preview/error messages.
+                const vendorMatch = vendors.find(
+                    (v) => v._id.toString() === scopedVendorId,
+                );
+                vendorCode = vendorMatch?.vendor_code || '';
             } else {
-                vendorId = vendorIdByCode.get(vendorCode.toLowerCase());
-                if (!vendorId) {
-                    errors.push(
-                        `Vendor code "${vendorCode}" does not exist for this company — row skipped`,
-                    );
+                vendorCode = get('vendor_code');
+                if (!vendorCode) {
+                    errors.push('Vendor code is required');
+                } else {
+                    vendorId = vendorIdByCode.get(vendorCode.toLowerCase());
+                    if (!vendorId) {
+                        errors.push(
+                            `Vendor code "${vendorCode}" does not exist for this company — row skipped`,
+                        );
+                    }
                 }
             }
 
