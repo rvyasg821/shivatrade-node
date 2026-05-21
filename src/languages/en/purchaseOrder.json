@@ -8,6 +8,9 @@
     "delete": "Purchase Order deleted successfully.",
     "previewFromPfi": "Preview from PFI loaded.",
     "previewFromQuotation": "Preview from Quotation loaded.",
+    "coverage": "PO coverage loaded.",
+    "pfiCoverage": "PFI coverage loaded.",
+    "quotationCoverage": "Quotation coverage loaded.",
     "error": {
         "notFound": "Sorry, we couldn't find the requested Purchase Order."
     }
