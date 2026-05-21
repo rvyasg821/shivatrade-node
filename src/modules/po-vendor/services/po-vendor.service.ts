@@ -889,7 +889,7 @@ export class PoVendorService {
                 parent_po_vendor_voucher_no: parent?.voucher_no,
 
                 vendor_id: r.vendor_id?.toString(),
-                vendor_name: vendor?.name,
+                vendor_name: (vendor as any)?.company_name,
                 vendor_contact_name: vc?.name,
                 vendor_contact_email: vc?.email,
                 vendor_contact_phone: vc?.phone,
