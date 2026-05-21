@@ -40,6 +40,8 @@ const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
 const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
+const round4 = (n: number): number =>
+    !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 10000) / 10000;
 
 @Injectable()
 export class PurchaseOrderService {
@@ -482,6 +484,195 @@ export class PurchaseOrderService {
     // ─── Auto-split from PFI / Quotation ────────────────────────────────
 
     /**
+     * Per source line (PFI line or Quotation line), compute how much qty
+     * is already booked across non-cancelled, non-soft-deleted POs, plus
+     * the list of those POs. Mirrors POV's getPendingByPoLine pattern.
+     *
+     * Returns Map<source_line_id, { covered_qty, existing_pos[] }>.
+     */
+    private async getSourceLineCoverage(
+        sourceType: 'pfi' | 'quotation',
+        sourceLineIds: string[]
+    ): Promise<
+        Map<
+            string,
+            {
+                covered_qty: number;
+                existing_pos: Array<{
+                    purchase_order_id: string;
+                    voucher_no: string;
+                    status: string;
+                    qty: string;
+                }>;
+            }
+        >
+    > {
+        const out = new Map<
+            string,
+            {
+                covered_qty: number;
+                existing_pos: Array<{
+                    purchase_order_id: string;
+                    voucher_no: string;
+                    status: string;
+                    qty: string;
+                }>;
+            }
+        >();
+        if (!sourceLineIds.length) return out;
+
+        const filterField =
+            sourceType === 'pfi'
+                ? 'source_pfi_line_id'
+                : 'source_quotation_line_id';
+        const poLines = await this.poLineRepository.findAll({
+            [filterField]: { $in: sourceLineIds },
+        } as any);
+        if (!(poLines as any[]).length) return out;
+
+        const poIds = unique(
+            (poLines as any[]).map(l => l.purchase_order_id?.toString())
+        );
+        const pos = poIds.length
+            ? await this.poRepository.findAll({
+                  _id: { $in: poIds },
+                  soft_delete: false,
+              } as any)
+            : [];
+        const poById = toMap(pos as any[]);
+
+        for (const pl of poLines as any[]) {
+            const key = (pl as any)[filterField]?.toString();
+            if (!key) continue;
+            const po: any = poById.get(pl.purchase_order_id?.toString());
+            if (!po) continue; // soft-deleted parent PO — skip
+            if (po.status === ENUM_PURCHASE_ORDER_STATUS.CANCELLED) continue;
+            const cur =
+                out.get(key) || { covered_qty: 0, existing_pos: [] };
+            const qty = num(pl.qty);
+            cur.covered_qty += qty;
+            const existing = cur.existing_pos.find(
+                e => e.purchase_order_id === po._id.toString()
+            );
+            if (existing) {
+                existing.qty = String(round4(num(existing.qty) + qty));
+            } else {
+                cur.existing_pos.push({
+                    purchase_order_id: po._id.toString(),
+                    voucher_no: po.voucher_no,
+                    status: po.status,
+                    qty: String(round4(qty)),
+                });
+            }
+            out.set(key, cur);
+        }
+
+        for (const v of out.values()) {
+            v.covered_qty = round4(v.covered_qty);
+        }
+        return out;
+    }
+
+    /**
+     * Per-PFI / per-Quotation coverage roll-up. Same shape as POV
+     * coverage, adapted: `ordered = source_line.qty`,
+     * `covered = Σ qty across non-cancelled POs referencing that line`.
+     */
+    async getSourceCoverage(
+        companyId: string,
+        sourceType: 'pfi' | 'quotation',
+        sourceId: string
+    ): Promise<any> {
+        let header: any;
+        let sourceLines: any[];
+        if (sourceType === 'pfi') {
+            header = await this.pfiRepository.findOne({
+                _id: sourceId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (!header) throw new NotFoundException('PFI not found');
+            sourceLines = (await this.pfiLineRepository.findAll({
+                pfi_id: sourceId,
+            } as any)) as any[];
+        } else {
+            header = await this.quotationRepository.findOne({
+                _id: sourceId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (!header) throw new NotFoundException('Quotation not found');
+            sourceLines = (await this.quotationLineRepository.findAll({
+                quotation_id: sourceId,
+            } as any)) as any[];
+        }
+
+        const sourceLineIds = sourceLines.map(l => l._id.toString());
+        const coverageMap = await this.getSourceLineCoverage(
+            sourceType,
+            sourceLineIds
+        );
+
+        const productIds = unique(
+            sourceLines
+                .map(l => l.product_id?.toString())
+                .filter((v): v is string => !!v)
+        );
+        const products = productIds.length
+            ? await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)
+            : [];
+        const productMap = toMap(products as any[]);
+
+        let totOrd = 0;
+        let totCov = 0;
+        let totPend = 0;
+        const lines = sourceLines.map(l => {
+            const key = l._id.toString();
+            const c = coverageMap.get(key) || {
+                covered_qty: 0,
+                existing_pos: [],
+            };
+            const ordered = num(l.qty);
+            const covered = c.covered_qty;
+            const pending = round4(ordered - covered);
+            totOrd += ordered;
+            totCov += covered;
+            totPend += pending;
+            const product: any = l.product_id
+                ? productMap.get(l.product_id.toString())
+                : null;
+            return {
+                source_line_id: key,
+                product_id: l.product_id?.toString(),
+                product_name: product?.name,
+                product_code: product?.code,
+                hsn_code: l.hsn_code || product?.hsn_code || undefined,
+                unit: l.unit || product?.unit_of_measure || undefined,
+                ordered: String(round4(ordered)),
+                covered: String(round4(covered)),
+                pending: String(pending),
+                existing_pos: c.existing_pos,
+            };
+        });
+
+        return {
+            source_type: sourceType,
+            source_id: sourceId,
+            source_voucher_no: header.voucher_no,
+            status: header.status,
+            has_pending: totPend > 1e-6,
+            lines,
+            totals: {
+                ordered: String(round4(totOrd)),
+                covered: String(round4(totCov)),
+                pending: String(round4(totPend)),
+            },
+        };
+    }
+
+    /**
      * Build a preview: for each source line, list candidate vendors (active
      * price-list rows for that product) sorted cheapest-first. The first
      * vendor is the "default" assignment. FE renders this for the user to
@@ -608,6 +799,29 @@ export class PurchaseOrderService {
             }))
         );
 
+        const coverageMap = await this.getSourceLineCoverage(
+            'pfi',
+            (lines as any[]).map(l => l._id.toString())
+        );
+        const enriched = previewLines.map((pl: any) => {
+            const ordered = num(pl.qty);
+            const c = coverageMap.get(pl.source_line_id) || {
+                covered_qty: 0,
+                existing_pos: [],
+            };
+            const pending = round4(ordered - c.covered_qty);
+            return {
+                ...pl,
+                ordered_qty: String(round4(ordered)),
+                covered_qty: String(round4(c.covered_qty)),
+                pending_qty: String(pending),
+                fully_covered: pending <= 1e-6,
+                existing_pos: c.existing_pos,
+                // Display qty becomes the still-bookable amount.
+                qty: String(Math.max(0, pending)),
+            };
+        });
+
         return {
             source: {
                 type: 'pfi',
@@ -616,7 +830,7 @@ export class PurchaseOrderService {
                 status: (pfi as any).status,
                 customer_id: (pfi as any).customer_id?.toString(),
             },
-            lines: previewLines,
+            lines: enriched,
         };
     }
 
@@ -642,6 +856,28 @@ export class PurchaseOrderService {
             }))
         );
 
+        const coverageMap = await this.getSourceLineCoverage(
+            'quotation',
+            (lines as any[]).map(l => l._id.toString())
+        );
+        const enriched = previewLines.map((pl: any) => {
+            const ordered = num(pl.qty);
+            const c = coverageMap.get(pl.source_line_id) || {
+                covered_qty: 0,
+                existing_pos: [],
+            };
+            const pending = round4(ordered - c.covered_qty);
+            return {
+                ...pl,
+                ordered_qty: String(round4(ordered)),
+                covered_qty: String(round4(c.covered_qty)),
+                pending_qty: String(pending),
+                fully_covered: pending <= 1e-6,
+                existing_pos: c.existing_pos,
+                qty: String(Math.max(0, pending)),
+            };
+        });
+
         return {
             source: {
                 type: 'quotation',
@@ -650,7 +886,7 @@ export class PurchaseOrderService {
                 status: (q as any).status,
                 customer_id: (q as any).customer_id?.toString(),
             },
-            lines: previewLines,
+            lines: enriched,
         };
     }
 
@@ -692,6 +928,12 @@ export class PurchaseOrderService {
             }
         }
 
+        // Load existing PO coverage to compute pending qty per source line.
+        const coverageMap = await this.getSourceLineCoverage(
+            sourceType,
+            sourceLines.map((l: any) => l._id.toString())
+        );
+
         // Group lines by vendor.
         const linesByVendor = new Map<string, any[]>();
         const skipped: Array<{ source_line_id: string; reason: string }> = [];
@@ -712,6 +954,20 @@ export class PurchaseOrderService {
                 skipped.push({
                     source_line_id: sourceLineId,
                     reason: 'No vendor assigned',
+                });
+                continue;
+            }
+            // Enforce pending: only book the un-POʼd remainder.
+            const cov = coverageMap.get(sourceLineId) || {
+                covered_qty: 0,
+                existing_pos: [],
+            };
+            const ordered = num(l.qty);
+            const pending = round4(ordered - cov.covered_qty);
+            if (pending <= 1e-6) {
+                skipped.push({
+                    source_line_id: sourceLineId,
+                    reason: `Already fully covered by existing PO(s)`,
                 });
                 continue;
             }
@@ -744,7 +1000,7 @@ export class PurchaseOrderService {
                     sourceType === 'pfi' ? sourceLineId : undefined,
                 description: l.description || product?.description || '',
                 hsn_code: product?.hsn_code || '',
-                qty: String(l.qty || '0'),
+                qty: String(pending),
                 unit: l.unit || product?.unit_of_measure || '',
                 unit_price: String(priceRow.unit_price || '0'),
                 discount_pct: '0',

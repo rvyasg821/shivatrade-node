@@ -238,6 +238,38 @@ export class PurchaseOrderAdminController {
         res.end(buf);
     }
 
+    /** Per-PFI coverage roll-up — covered/pending qty per PFI line. */
+    @Response('purchaseOrder.pfiCoverage')
+    @AuthJwtAccessProtected()
+    @Get('/pfi-coverage/:pfiId')
+    async pfiCoverage(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('pfiId') pfiId: string
+    ): Promise<IResponse<any>> {
+        const data = await this.poService.getSourceCoverage(
+            companyId,
+            'pfi',
+            pfiId
+        );
+        return { data };
+    }
+
+    /** Per-Quotation coverage roll-up — covered/pending qty per Quotation line. */
+    @Response('purchaseOrder.quotationCoverage')
+    @AuthJwtAccessProtected()
+    @Get('/quotation-coverage/:quotationId')
+    async quotationCoverage(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('quotationId') quotationId: string
+    ): Promise<IResponse<any>> {
+        const data = await this.poService.getSourceCoverage(
+            companyId,
+            'quotation',
+            quotationId
+        );
+        return { data };
+    }
+
     /** Per-PO coverage roll-up (POV plan §14 — feeds Vendor Tracking tab). */
     @Response('purchaseOrder.coverage')
     @AuthJwtAccessProtected()
