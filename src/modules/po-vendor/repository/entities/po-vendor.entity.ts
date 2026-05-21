@@ -22,7 +22,8 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     purchase_order_id: string;
 
-    /** Set on auto-spawned child POV after partial receipt (POV plan §2). */
+    /** Audit-only link to a prior POV against the same PO. Auto-spawn was
+     *  removed 2026-05-21; this column is no longer auto-set. */
     @Index()
     @Column({ type: 'uuid', nullable: true })
     parent_po_vendor_id?: string;

@@ -8,7 +8,9 @@ import { PO_VENDOR_LINE_COLLECTION_NAME } from '../../constants/po-vendor.entity
  * `short_qty` and `undispatched_qty` are NOT stored; they are derived
  * in the service layer from these three qty columns (POV plan §9):
  *   short_qty        = dispatched_qty − received_qty   (loss, never recovered)
- *   undispatched_qty = ordered_qty    − dispatched_qty (recoverable via child POV)
+ *   undispatched_qty = ordered_qty    − dispatched_qty (recoverable via a new POV
+ *                                                       manually created against
+ *                                                       the parent PO)
  */
 @Entity(PO_VENDOR_LINE_COLLECTION_NAME)
 export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
