@@ -51,8 +51,11 @@ export class PriceListAdminController {
     @AuthJwtAccessProtected()
     @Get('/sample-excel')
     @ApiOperation({ summary: 'Download sample Excel for price-list import' })
-    async downloadSampleExcel(@Res() res: ExpressResponse) {
-        const buffer = this.importExportService.generateSampleExcel();
+    async downloadSampleExcel(
+        @Res() res: ExpressResponse,
+        @Query('vendor_id') vendorId?: string,
+    ) {
+        const buffer = this.importExportService.generateSampleExcel(vendorId);
         res.setHeader(
             'Content-Type',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -69,10 +72,12 @@ export class PriceListAdminController {
     @ApiOperation({ summary: 'Export price-list as Excel' })
     async exportExcel(
         @AuthJwtPayload('companyId') companyId: string,
-        @Res() res: ExpressResponse
+        @Res() res: ExpressResponse,
+        @Query('vendor_id') vendorId?: string,
     ) {
         const buffer = await this.importExportService.exportPriceLists(
-            companyId
+            companyId,
+            vendorId,
         );
         res.setHeader(
             'Content-Type',
@@ -98,14 +103,16 @@ export class PriceListAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @AuthJwtPayload('user') userId: string,
         @UploadedFile() file: IFile,
-        @Query('preview') preview?: string
+        @Query('preview') preview?: string,
+        @Query('vendor_id') vendorId?: string,
     ) {
         if (!file) throw new BadRequestException('No file provided');
 
         const { summary, rows } =
             await this.importExportService.parseAndValidate(
                 file.buffer,
-                companyId
+                companyId,
+                vendorId,
             );
 
         if (preview === 'true') {
