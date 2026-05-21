@@ -615,19 +615,17 @@ export class PoVendorService {
 
     /**
      * Records received quantities and transitions the POV
-     * `dispatched` → `closed`. If `spawn_remainder = true` AND any line
-     * has `undispatched_qty > 0`, also creates a child POV in the same
-     * flow with `parent_po_vendor_id = current` and per-line
-     * `ordered_qty = parent.undispatched_qty`.
-     *
-     * Returns the closed POV (parent). The child POV (if any) is
-     * available as `child` on the returned wrapper.
+     * `dispatched` → `closed`. Follow-up POVs for any remaining qty
+     * are created manually from the parent PO (industry-standard
+     * flat-siblings model — SAP / Tally / Zoho).
      */
     async receive(
         row: PoVendorDoc,
         data: PoVendorReceiveRequestDto,
-        createdBy: string
-    ): Promise<{ parent: PoVendorDoc; child?: PoVendorDoc }> {
+        // createdBy retained for signature compat with controller; unused.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        _createdBy: string
+    ): Promise<{ parent: PoVendorDoc }> {
         if (row.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED) {
             throw new BadRequestException(
                 `Only dispatched POVs can be received (current status: ${row.status}).`
@@ -686,48 +684,10 @@ export class PoVendorService {
         await this.povRepository.save(row);
         this.logger.log(`POV closed (received): ${row._id}`);
 
-        // ── Spawn child POV (if requested AND any line has undispatched) ─
-        let child: PoVendorDoc | undefined;
-        if (data.spawn_remainder) {
-            const childLines: Array<{
-                purchase_order_line_id: string;
-                ordered_qty: string;
-            }> = [];
-            for (const ln of lines as any[]) {
-                const ordered = num(ln.ordered_qty);
-                const dispatched = num(ln.dispatched_qty);
-                const undispatched = round4(ordered - dispatched);
-                if (undispatched > 1e-6) {
-                    childLines.push({
-                        purchase_order_line_id:
-                            ln.purchase_order_line_id?.toString(),
-                        ordered_qty: String(undispatched),
-                    });
-                }
-            }
-            if (childLines.length) {
-                child = await this.createFromPo(
-                    row.company_id.toString(),
-                    row.purchase_order_id.toString(),
-                    {
-                        delivery_address: row.delivery_address,
-                        lines: childLines,
-                    } as any,
-                    createdBy,
-                    { parentPoVendorId: row._id.toString() }
-                );
-                this.logger.log(
-                    `Child POV spawned from ${row._id}: ${child._id}`
-                );
-            }
-            // No-op if spawn_remainder=true but every line is fully
-            // dispatched (POV plan §10) - silently ignored.
-        }
-
         const parent = await this.povRepository.findOneById(
             row._id.toString()
         );
-        return { parent, child };
+        return { parent };
     }
 
     // ─── Action: Cancel (POV plan §15.4) ────────────────────────────────
