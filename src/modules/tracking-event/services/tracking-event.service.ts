@@ -306,7 +306,7 @@ export class TrackingEventService {
                 purchase_order_id: pov?.purchase_order_id?.toString(),
                 purchase_order_voucher_no: po?.voucher_no,
                 vendor_id: pov?.vendor_id?.toString(),
-                vendor_name: vendor?.name,
+                vendor_name: (vendor as any)?.company_name,
                 event_at:
                     r.event_at instanceof Date
                         ? r.event_at.toISOString()
