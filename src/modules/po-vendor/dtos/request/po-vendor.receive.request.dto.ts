@@ -2,7 +2,6 @@ import { Type } from 'class-transformer';
 import {
     ArrayMinSize,
     IsArray,
-    IsBoolean,
     IsDateString,
     IsNotEmpty,
     IsNumberString,
@@ -30,10 +29,9 @@ export class PoVendorReceiveLineDto {
 
 /**
  * Body for `POST /admin/po-vendor/:id/receive` (POV plan §10, §15.3).
- * Transitions POV dispatched → closed. If `spawn_remainder = true` and
- * any line has `undispatched_qty > 0`, backend creates a child POV in
- * the same flow with `parent_po_vendor_id = current` and per-line
- * `ordered_qty = parent.undispatched_qty`.
+ * Transitions POV dispatched → closed. Follow-up POVs for remaining
+ * qty are created manually from the parent PO (industry-standard
+ * flat-siblings model — SAP / Tally / Zoho).
  */
 export class PoVendorReceiveRequestDto {
     @IsDateString()
@@ -49,11 +47,6 @@ export class PoVendorReceiveRequestDto {
     @IsOptional()
     @MaxLength(2000)
     internal_notes?: string;
-
-    /** Explicit user choice — backend never decides on its own (POV plan §10). */
-    @IsBoolean()
-    @IsNotEmpty()
-    spawn_remainder: boolean;
 
     @IsArray()
     @ArrayMinSize(1, { message: 'At least one line is required.' })
