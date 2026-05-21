@@ -152,7 +152,7 @@ export class PoVendorAdminController {
         return { data: await this.povService.mapGet(updated) };
     }
 
-    // ─── Action: Receive (may spawn child POV in same call) ─────────────
+    // ─── Action: Receive ────────────────────────────────────────────────
 
     @Response('poVendor.receive')
     @AuthJwtAccessProtected()
@@ -164,19 +164,13 @@ export class PoVendorAdminController {
     ): Promise<
         IResponse<{
             parent: PoVendorGetResponseDto;
-            child?: PoVendorGetResponseDto;
         }>
     > {
         const row = await this.povService.findOneById(id);
-        const { parent, child } = await this.povService.receive(
-            row,
-            body,
-            userId
-        );
+        const { parent } = await this.povService.receive(row, body, userId);
         return {
             data: {
                 parent: await this.povService.mapGet(parent),
-                child: child ? await this.povService.mapGet(child) : undefined,
             },
         };
     }
