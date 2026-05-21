@@ -152,7 +152,7 @@ export class PoVendorAdminController {
         return { data: await this.povService.mapGet(updated) };
     }
 
-    // ─── Action: Receive (may spawn child POV in same call) ─────────────
+    // ─── Action: Receive ────────────────────────────────────────────────
 
     @Response('poVendor.receive')
     @AuthJwtAccessProtected()
