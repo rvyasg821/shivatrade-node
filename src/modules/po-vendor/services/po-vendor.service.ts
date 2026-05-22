@@ -28,6 +28,8 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
+import { CurrencyService } from '@modules/currency/services/currency.service';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -54,6 +56,7 @@ export class PoVendorService {
         private readonly productRepository: ProductRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly currencyService: CurrencyService,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -165,8 +168,7 @@ export class PoVendorService {
         companyId: string,
         purchaseOrderId: string,
         data: PoVendorCreateRequestDto,
-        createdBy: string,
-        opts?: { parentPoVendorId?: string }
+        createdBy: string
     ): Promise<PoVendorDoc> {
         const po: any = await this.poRepository.findOne({
             _id: purchaseOrderId,
@@ -287,18 +289,27 @@ export class PoVendorService {
             }
         }
 
+        // Snapshot the company's home currency. POV is always in home
+        // currency; storing it lets historical POVs render correctly
+        // even if the company later switches base currency.
+        const homeCurrency = await this.currencyService
+            .getDefaultCurrency(companyId)
+            .catch(() => null);
+        const currency_code = homeCurrency?.code || 'INR';
+
         const header = await this.povRepository.create({
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
             purchase_order_id: purchaseOrderId,
-            parent_po_vendor_id: opts?.parentPoVendorId || null,
             vendor_id: vendorId,
             vendor_address_id: vendorAddressId,
             delivery_address,
             delivery_address_id,
             notes: data.notes || null,
             internal_notes: data.internal_notes || null,
+            currency_code,
+            exchange_rate: '1',
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
         } as any);
 
@@ -762,11 +773,6 @@ export class PoVendorService {
         const povIds = rows.map(r => r._id.toString());
         const poIds = unique(rows.map(r => (r as any).purchase_order_id?.toString()));
         const vendorIds = unique(rows.map(r => (r as any).vendor_id?.toString()));
-        const parentIds = unique(
-            rows
-                .map(r => (r as any).parent_po_vendor_id?.toString())
-                .filter((v): v is string => !!v)
-        );
 
         const allLines = await this.povLineRepository.findAll({
             po_vendor_id: { $in: povIds },
@@ -778,39 +784,32 @@ export class PoVendorService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [vendors, pos, parents, products, vendorContacts] =
-            await Promise.all([
-                vendorIds.length
-                    ? this.vendorRepository.findAll({
-                          _id: { $in: vendorIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                poIds.length
-                    ? this.poRepository.findAll({
-                          _id: { $in: poIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                parentIds.length
-                    ? this.povRepository.findAll({
-                          _id: { $in: parentIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                productIds.length
-                    ? this.productRepository.findAll({
-                          _id: { $in: productIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                vendorIds.length
-                    ? this.vendorContactRepository.findAll({
-                          vendor_id: { $in: vendorIds },
-                          is_primary: true,
-                      } as any)
-                    : Promise.resolve([] as any[]),
-            ]);
+        const [vendors, pos, products, vendorContacts] = await Promise.all([
+            vendorIds.length
+                ? this.vendorRepository.findAll({
+                      _id: { $in: vendorIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            poIds.length
+                ? this.poRepository.findAll({
+                      _id: { $in: poIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            productIds.length
+                ? this.productRepository.findAll({
+                      _id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            vendorIds.length
+                ? this.vendorContactRepository.findAll({
+                      vendor_id: { $in: vendorIds },
+                      is_primary: true,
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
 
         const vendorMap = toMap(vendors as any[]);
         const poMap = toMap(pos as any[]);
-        const parentMap = toMap(parents as any[]);
         const productMap = toMap(products as any[]);
         const vendorPrimaryByVendor = new Map<string, any>();
         for (const c of vendorContacts as any[]) {
@@ -836,9 +835,6 @@ export class PoVendorService {
                 : null;
             const po: any = r.purchase_order_id
                 ? poMap.get(r.purchase_order_id.toString())
-                : null;
-            const parent: any = r.parent_po_vendor_id
-                ? parentMap.get(r.parent_po_vendor_id.toString())
                 : null;
 
             const linesRaw = (linesByPov.get(r._id.toString()) || []).sort(
@@ -879,9 +875,6 @@ export class PoVendorService {
                 purchase_order_id: r.purchase_order_id?.toString(),
                 purchase_order_voucher_no: po?.voucher_no,
 
-                parent_po_vendor_id: r.parent_po_vendor_id?.toString(),
-                parent_po_vendor_voucher_no: parent?.voucher_no,
-
                 vendor_id: r.vendor_id?.toString(),
                 vendor_name: (vendor as any)?.company_name,
                 vendor_contact_name: vc?.name,
@@ -904,6 +897,10 @@ export class PoVendorService {
                 delivery_address_id: r.delivery_address_id?.toString(),
                 notes: r.notes || undefined,
                 internal_notes: r.internal_notes || undefined,
+
+                currency_code: r.currency_code || 'INR',
+                currency_symbol: getCurrencySymbol(r.currency_code || 'INR'),
+                exchange_rate: String(r.exchange_rate ?? '1'),
 
                 status: r.status,
 
