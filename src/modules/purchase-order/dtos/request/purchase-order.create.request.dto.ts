@@ -29,6 +29,15 @@ export class PurchaseOrderLineCreateDto {
     @IsOptional()
     source_pfi_line_id?: string;
 
+    /** Planned vendor for this line. PO is multi-vendor at line level. */
+    @IsUUID()
+    @IsOptional()
+    vendor_id?: string;
+
+    @IsUUID()
+    @IsOptional()
+    vendor_address_id?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(2000)
@@ -67,9 +76,11 @@ export class PurchaseOrderLineCreateDto {
 }
 
 export class PurchaseOrderCreateRequestDto {
+    /** Legacy header-level vendor. Kept optional for back-compat; new POs
+     *  leave this null and store vendor per line instead. */
     @IsUUID()
-    @IsNotEmpty()
-    vendor_id: string;
+    @IsOptional()
+    vendor_id?: string;
 
     @IsUUID()
     @IsOptional()
