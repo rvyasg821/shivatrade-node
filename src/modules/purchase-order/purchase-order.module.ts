@@ -3,6 +3,7 @@ import { PurchaseOrderRepositoryModule } from './repository/purchase-order.repos
 import { PurchaseOrderService } from './services/purchase-order.service';
 import { PoPdfService } from './services/po-pdf.service';
 import { PurchaseOrderAdminController } from './controllers/purchase-order.admin.controller';
+import { PurchaseOrderPublicController } from './controllers/purchase-order.public.controller';
 import { VendorModule } from '@modules/vendor/vendor.module';
 import { ProductModule } from '@modules/product/product.module';
 import { CustomerModule } from '@modules/customer/customer.module';
@@ -28,6 +29,6 @@ import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
     ],
     providers: [PurchaseOrderService, PoPdfService],
     exports: [PurchaseOrderRepositoryModule, PurchaseOrderService, PoPdfService],
-    controllers: [PurchaseOrderAdminController],
+    controllers: [PurchaseOrderAdminController, PurchaseOrderPublicController],
 })
 export class PurchaseOrderModule {}

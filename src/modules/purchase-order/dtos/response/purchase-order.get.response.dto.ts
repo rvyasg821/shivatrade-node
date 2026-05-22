@@ -75,6 +75,11 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ enum: ENUM_PURCHASE_ORDER_STATUS, required: true })
     status: ENUM_PURCHASE_ORDER_STATUS;
 
+    @ApiProperty({ required: false, type: String }) public_token?: string;
+    @ApiProperty({ required: false, type: Number }) public_view_count?: number;
+    @ApiProperty({ required: false, type: Date })
+    public_last_viewed_at?: Date;
+
     @ApiProperty({ required: false, type: String }) created_by?: string;
     @ApiProperty({ required: false, type: Date }) createdAt?: Date;
     @ApiProperty({ required: false, type: Date }) updatedAt?: Date;

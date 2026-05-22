@@ -4,6 +4,7 @@ import {
     BadRequestException,
     NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '../repository/repositories/purchase-order-line.repository';
 import { PurchaseOrderDoc } from '../repository/entities/purchase-order.entity';
@@ -246,6 +247,68 @@ export class PurchaseOrderService {
             soft_delete: false,
         } as any);
         if (!row) throw new NotFoundException('Purchase Order not found');
+        return row;
+    }
+
+    // ─── Public share link ──────────────────────────────────────────────
+
+    /** Generate (or keep) the public token. Only confirmed/in_process/
+     *  completed POs can be published — a draft is not final enough. */
+    async publish(id: string): Promise<PurchaseOrderDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        if (!row.public_token) {
+            row.public_token = randomBytes(24).toString('base64url');
+            await this.poRepository.save(row);
+        }
+        return row;
+    }
+
+    /** Issue a fresh token — the old public URL stops working immediately. */
+    async rotateToken(id: string): Promise<PurchaseOrderDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        row.public_token = randomBytes(24).toString('base64url');
+        await this.poRepository.save(row);
+        return row;
+    }
+
+    /** Revoke the public link entirely. */
+    async unpublish(id: string): Promise<PurchaseOrderDoc> {
+        const row = await this.findOneById(id);
+        row.public_token = null as any;
+        await this.poRepository.save(row);
+        return row;
+    }
+
+    private assertPublishable(status: ENUM_PURCHASE_ORDER_STATUS): void {
+        if (status === ENUM_PURCHASE_ORDER_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only confirmed Purchase Orders can be published'
+            );
+        }
+    }
+
+    /** Public view-only fetch by token — no auth. Returns null for an
+     *  unknown token or a PO that is no longer in a shareable state. */
+    async findByPublicToken(
+        token: string
+    ): Promise<PurchaseOrderDoc | null> {
+        if (!token) return null;
+        const row = await this.poRepository.findOne({
+            public_token: token,
+            soft_delete: false,
+        } as any);
+        if (!row) return null;
+        // Bump view tracking (fire-and-forget — never block the response).
+        (row as any).public_view_count =
+            ((row as any).public_view_count || 0) + 1;
+        (row as any).public_last_viewed_at = new Date();
+        this.poRepository
+            .save(row)
+            .catch((err) =>
+                this.logger.warn(`Public view-count update failed: ${err}`)
+            );
         return row;
     }
 
@@ -1611,6 +1674,9 @@ export class PurchaseOrderService {
                 round_off: r.round_off,
                 grand_total: r.grand_total,
                 status: r.status,
+                public_token: (r as any).public_token || undefined,
+                public_view_count: (r as any).public_view_count || 0,
+                public_last_viewed_at: (r as any).public_last_viewed_at,
                 created_by: r.created_by?.toString(),
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
