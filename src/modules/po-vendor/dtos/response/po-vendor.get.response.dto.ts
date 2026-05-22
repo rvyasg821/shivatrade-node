@@ -30,8 +30,6 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: true, type: String }) purchase_order_id: string;
     @ApiProperty({ required: false, type: String }) purchase_order_voucher_no?: string;
 
-    @ApiProperty({ required: false, type: String }) parent_po_vendor_id?: string;
-    @ApiProperty({ required: false, type: String }) parent_po_vendor_voucher_no?: string;
 
     @ApiProperty({ required: true, type: String }) vendor_id: string;
     @ApiProperty({ required: false, type: String }) vendor_name?: string;
@@ -55,6 +53,10 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: false, type: String }) delivery_address_id?: string;
     @ApiProperty({ required: false, type: String }) notes?: string;
     @ApiProperty({ required: false, type: String }) internal_notes?: string;
+
+    @ApiProperty({ required: true, type: String }) currency_code: string;
+    @ApiProperty({ required: false, type: String }) currency_symbol?: string;
+    @ApiProperty({ required: true, type: String }) exchange_rate: string;
 
     @ApiProperty({ enum: ENUM_PO_VENDOR_STATUS, required: true })
     status: ENUM_PO_VENDOR_STATUS;
