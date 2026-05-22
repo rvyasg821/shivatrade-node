@@ -405,11 +405,10 @@ export class PriceListImportExportService {
             }
 
             // ── Product must belong to the vendor ──
-            // Products are scoped to the vendor's categories (same rule the
-            // Add form applies). A vendor with no categories accepts any
-            // product; otherwise the product's category must match one of
-            // the vendor's — else the row is skipped.
-            if (vendorId && productId) {
+            // Only enforced on the global import. The vendor-scoped import
+            // (vendor detail page) matches purely on product_code — category
+            // membership is not checked.
+            if (!scopedVendorId && vendorId && productId) {
                 const vendorCats = vendorCategorySet.get(vendorId);
                 if (vendorCats && vendorCats.size > 0) {
                     const prodCat = productCategoryById.get(productId);
