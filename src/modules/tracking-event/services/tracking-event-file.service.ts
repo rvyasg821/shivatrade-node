@@ -4,8 +4,8 @@ import * as path from 'path';
 
 /**
  * Saves tracking-event attachments to `public/files/tracking/<filename>`.
- * Mirrors `DocumentFileService` - same on-disk URL convention so the
- * ServeStaticModule (`/assets` → `public/`) serves them automatically.
+ * Returns the relative storage path (no host, no `/assets` prefix); the
+ * frontend joins it with REACT_APP_BACKEND_REST_API_URL_PDF for display.
  */
 @Injectable()
 export class TrackingEventFileService {
@@ -37,6 +37,6 @@ export class TrackingEventFileService {
             .slice(0, 40);
         const unique = `${Date.now()}_${companyId.slice(0, 8)}_${safe}${ext}`;
         await fs.writeFile(path.join(this.uploadDir, unique), buffer);
-        return `/assets/files/tracking/${unique}`;
+        return `files/tracking/${unique}`;
     }
 }

@@ -39,8 +39,9 @@ export class PoVendorTrackingEventEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     notes?: string;
 
-    /** Single optional attachment per event (§9). Stored as the served URL
-     *  e.g. `/assets/files/tracking/<filename>`. */
+    /** Single optional attachment per event (§9). Stored as a relative
+     *  path under the static root e.g. `files/tracking/<filename>`; the
+     *  frontend prepends REACT_APP_BACKEND_REST_API_URL_PDF for display. */
     @Column({ type: 'varchar', length: 500, nullable: true })
     attachment_url?: string;
 
