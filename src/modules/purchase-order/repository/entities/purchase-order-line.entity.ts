@@ -16,6 +16,17 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     product_id: string;
 
+    /** Planned vendor for this line. PO is per-customer; vendor lives on
+     *  the line (industry-standard multi-vendor PO model — Tally / Zoho).
+     *  POVs draw from PO lines whose vendor_id matches. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    vendor_id?: string;
+
+    /** Vendor's bill-from address for this line (auto-pick default). */
+    @Column({ type: 'uuid', nullable: true })
+    vendor_address_id?: string;
+
     /** Traceability back to source Quotation line (if PO created from Q). */
     @Column({ type: 'uuid', nullable: true })
     source_quotation_line_id?: string;

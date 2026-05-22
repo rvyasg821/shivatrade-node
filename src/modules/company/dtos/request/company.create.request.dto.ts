@@ -9,6 +9,7 @@ import {
     ValidateIf,
     IsUrl,
     IsEmail,
+    Matches,
 } from 'class-validator';
 import { IsCustomEmail } from '@common/request/validations/request.custom-email.validation';
 import { Transform } from 'class-transformer';
@@ -187,6 +188,12 @@ export class CompanyCreateRequestDto {
     @IsOptional() @IsString() currency?: string;
     @IsOptional() @IsString() license_number?: string;
     @IsOptional() @IsString() tax_number?: string;
+    @IsOptional()
+    @IsString()
+    @Matches(/^[A-Z]{5}[0-9]{4}[A-Z]$/, {
+        message: 'pan must match the format AAAAA0000A (10 chars)',
+    })
+    pan?: string;
     @IsOptional() @IsString() company_code?: string;
     @IsOptional() @IsString() paye_reference?: string;
     @IsOptional() @IsString() contact_middle_name?: string;
