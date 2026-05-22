@@ -128,7 +128,8 @@ export class PoCoverageService {
             totDis = 0,
             totRec = 0,
             totLost = 0,
-            totPend = 0;
+            totPend = 0,
+            totUncov = 0;
 
         for (const pol of poLines as any[]) {
             const k = pol._id.toString();
@@ -140,7 +141,13 @@ export class PoCoverageService {
                     lost: 0,
                 };
             const ordered = num(pol.qty);
-            const pending = round4(ordered - a.covered);
+            // "Pending" is what the vendor still owes us — outstanding
+            // procurement qty. Lost is permanently accounted for, so it
+            // counts as closed even though never received.
+            const pending = round4(ordered - a.received - a.lost);
+            // "Uncovered" is the planning gap — qty with no POV yet. Used
+            // internally to gate the "Create POV" button; not displayed.
+            const uncovered = round4(ordered - a.covered);
             const product = pol.product_id
                 ? productMap.get(pol.product_id.toString())
                 : null;
@@ -166,6 +173,7 @@ export class PoCoverageService {
             totRec += a.received;
             totLost += a.lost;
             totPend += pending;
+            totUncov += uncovered;
         }
 
         totals.ordered = String(round4(totOrd));
@@ -179,7 +187,11 @@ export class PoCoverageService {
             purchase_order_id: purchaseOrderId,
             purchase_order_voucher_no: po.voucher_no,
             status: po.status,
-            has_pending: totPend > 1e-6,
+            // `has_pending` gates the "Create POV" button — it must reflect
+            // *uncovered* qty (no POV yet), not unreceived qty. A line that
+            // is fully covered by an in-progress POV should NOT re-open the
+            // button.
+            has_pending: totUncov > 1e-6,
             lines,
             totals,
         };
