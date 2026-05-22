@@ -34,10 +34,22 @@ export class PoVendorLineCreateDto {
 
 /**
  * Body for `POST /admin/po-vendor/from-po/:poId` (POV plan §10).
- * Vendor, vendor_address, and product/HSN/unit/price snapshots are all
- * taken from the source PO server-side — no client input for those.
+ * As of 2026-05-21 the PO no longer carries a header-level vendor;
+ * vendor lives on the PO line. The client now passes `vendor_id`
+ * explicitly so the POV knows which vendor it's procuring from.
+ * Vendor address auto-resolves to the vendor's default if not provided.
  */
 export class PoVendorCreateRequestDto {
+    /** Vendor for this POV. Required — POs are multi-vendor at line level. */
+    @IsUUID()
+    @IsNotEmpty()
+    vendor_id: string;
+
+    /** Optional vendor address; defaults to the vendor's default bill-from. */
+    @IsUUID()
+    @IsOptional()
+    vendor_address_id?: string;
+
     /** Free-text snapshot override. Wins over `delivery_address_id`
      *  and the inherited PO snapshot when filled. */
     @IsString()

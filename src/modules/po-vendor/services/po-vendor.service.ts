@@ -22,6 +22,7 @@ import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repo
 import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import { ENUM_PURCHASE_ORDER_STATUS } from '@modules/purchase-order/enums/purchase-order.enum';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
+import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { VendorContactRepository } from '@modules/vendor/repository/repositories/vendor-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CompanyService } from '@modules/company/services/company.service';
@@ -48,6 +49,7 @@ export class PoVendorService {
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly vendorRepository: VendorRepository,
+        private readonly vendorAddressRepository: VendorAddressRepository,
         private readonly vendorContactRepository: VendorContactRepository,
         private readonly productRepository: ProductRepository,
         private readonly companyService: CompanyService,
@@ -260,14 +262,39 @@ export class PoVendorService {
             );
         }
 
+        // Vendor comes from the request body (PO is multi-vendor at line
+        // level; header-level vendor_id was deprecated 2026-05-21).
+        const vendorId = (data as any).vendor_id;
+        if (!vendorId) {
+            throw new BadRequestException('vendor_id is required.');
+        }
+        let vendorAddressId =
+            (data as any).vendor_address_id ||
+            po.vendor_address_id?.toString() ||
+            null;
+        // If still null, try the vendor's default bill-from address.
+        if (!vendorAddressId) {
+            try {
+                const defaultAddr: any =
+                    await this.vendorAddressRepository.findOne({
+                        vendor_id: vendorId,
+                        is_default: true,
+                        soft_delete: false,
+                    } as any);
+                if (defaultAddr) vendorAddressId = defaultAddr._id?.toString();
+            } catch {
+                // non-fatal — leave null
+            }
+        }
+
         const header = await this.povRepository.create({
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
             purchase_order_id: purchaseOrderId,
             parent_po_vendor_id: opts?.parentPoVendorId || null,
-            vendor_id: po.vendor_id?.toString(),
-            vendor_address_id: po.vendor_address_id?.toString() || null,
+            vendor_id: vendorId,
+            vendor_address_id: vendorAddressId,
             delivery_address,
             delivery_address_id,
             notes: data.notes || null,

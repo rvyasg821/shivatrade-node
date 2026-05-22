@@ -29,6 +29,7 @@ import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.reposito
 import { PfiLineRepository } from '@modules/pfi/repository/repositories/pfi-line.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -64,6 +65,7 @@ export class PurchaseOrderService {
         private readonly pfiLineRepository: PfiLineRepository,
         private readonly priceListRepository: PriceListRepository,
         private readonly povRepository: PoVendorRepository,
+        private readonly povService: PoVendorService,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -71,9 +73,13 @@ export class PurchaseOrderService {
 
     private async assertReferences(
         companyId: string,
-        vendorId: string,
+        vendorId?: string,
         vendorAddressId?: string
     ): Promise<{ addressMismatched?: boolean } | void> {
+        // PO is multi-vendor at line level (2026-05-21); header vendor is
+        // optional. Skip vendor validation when not provided.
+        if (!vendorId) return undefined;
+
         const vendor = await this.vendorRepository.findOne({
             _id: vendorId,
             company_id: companyId,
@@ -105,10 +111,11 @@ export class PurchaseOrderService {
     }
 
     private async resolveVendorAddressId(
-        vendorId: string,
+        vendorId: string | undefined,
         provided?: string
     ): Promise<string | null> {
         if (provided) return provided;
+        if (!vendorId) return null;
         const addresses = await this.vendorAddressRepository.findAll({
             vendor_id: vendorId,
             soft_delete: false,
@@ -271,7 +278,7 @@ export class PurchaseOrderService {
 
         const refsOut = await this.assertReferences(
             companyId,
-            data.vendor_id || row.vendor_id.toString(),
+            data.vendor_id || row.vendor_id?.toString(),
             data.vendor_address_id ?? row.vendor_address_id?.toString()
         );
         if ((refsOut as any)?.addressMismatched) {
@@ -369,6 +376,8 @@ export class PurchaseOrderService {
                 company_id: companyId,
                 purchase_order_id: poId,
                 product_id: l.product_id,
+                vendor_id: l.vendor_id || null,
+                vendor_address_id: l.vendor_address_id || null,
                 source_quotation_line_id: l.source_quotation_line_id || null,
                 source_pfi_line_id: l.source_pfi_line_id || null,
                 description: l.description || null,
@@ -1058,28 +1067,253 @@ export class PurchaseOrderService {
         assignments: Array<{ source_line_id: string; vendor_id: string }>,
         opts?: { deliveryAddressId?: string; deliveryAddressText?: string }
     ) {
-        const pfi = await this.pfiRepository.findOne({
-            _id: pfiId,
-            company_id: companyId,
-            soft_delete: false,
-        } as any);
-        if (!pfi) throw new NotFoundException('Source PFI not found');
-
-        const lines = await this.pfiLineRepository.findAll({
-            pfi_id: pfiId,
-        } as any);
-
-        return this.createPosFromAssignments({
+        return this.createPoAndPovsFromSource({
             companyId,
             createdBy,
             sourceType: 'pfi',
             sourceId: pfiId,
-            sourceLines: lines as any[],
             assignments,
-            customerId: (pfi as any).customer_id?.toString(),
             deliveryAddressId: opts?.deliveryAddressId,
             deliveryAddressText: opts?.deliveryAddressText,
         });
+    }
+
+    /**
+     * Atomic-ish single-PO + N-POVs flow from a PFI or Quotation
+     * (per 2026-05-21 model change). All validation happens up-front;
+     * if any POV creation fails after the PO is committed, the PO is
+     * soft-deleted and the original error is re-thrown.
+     */
+    private async createPoAndPovsFromSource(opts: {
+        companyId: string;
+        createdBy: string;
+        sourceType: 'pfi' | 'quotation';
+        sourceId: string;
+        assignments: Array<{ source_line_id: string; vendor_id: string }>;
+        deliveryAddressId?: string;
+        deliveryAddressText?: string;
+    }) {
+        const {
+            companyId,
+            createdBy,
+            sourceType,
+            sourceId,
+            assignments,
+            deliveryAddressId,
+            deliveryAddressText,
+        } = opts;
+
+        // ── Load source doc ──
+        const source =
+            sourceType === 'pfi'
+                ? await this.pfiRepository.findOne({
+                      _id: sourceId,
+                      company_id: companyId,
+                      soft_delete: false,
+                  } as any)
+                : await this.quotationRepository.findOne({
+                      _id: sourceId,
+                      company_id: companyId,
+                      soft_delete: false,
+                  } as any);
+        if (!source) {
+            throw new NotFoundException(
+                `Source ${sourceType.toUpperCase()} not found`
+            );
+        }
+
+        // ── One-PFI / one-Quotation → one-PO uniqueness ──
+        const existing = await this.poRepository.findAll({
+            company_id: companyId,
+            ...(sourceType === 'pfi'
+                ? { pfi_id: sourceId }
+                : { quotation_id: sourceId }),
+            soft_delete: false,
+        } as any);
+        const activeExisting = (existing as any[]).filter(
+            p => p.status !== ENUM_PURCHASE_ORDER_STATUS.CANCELLED
+        );
+        if (activeExisting.length) {
+            throw new BadRequestException(
+                `A PO already exists for this ${sourceType.toUpperCase()} (${
+                    (activeExisting[0] as any).voucher_no
+                }). Cancel it before regenerating.`
+            );
+        }
+
+        // ── Load source lines ──
+        const sourceLines: any[] =
+            sourceType === 'pfi'
+                ? ((await this.pfiLineRepository.findAll({
+                      pfi_id: sourceId,
+                  } as any)) as any[])
+                : ((await this.quotationLineRepository.findAll({
+                      quotation_id: sourceId,
+                  } as any)) as any[]);
+        const sourceLineById = new Map<string, any>();
+        for (const l of sourceLines) sourceLineById.set(l._id.toString(), l);
+
+        // ── Filter assignments to ones with a vendor ──
+        const validAssignments = (assignments || []).filter(
+            a => a?.source_line_id && a?.vendor_id
+        );
+        if (!validAssignments.length) {
+            throw new BadRequestException(
+                'At least one line must be assigned to a vendor.'
+            );
+        }
+
+        // ── Validate every assignment + look up prices up-front ──
+        const productIds = unique(
+            sourceLines.map(l => l.product_id?.toString())
+        );
+        const products = productIds.length
+            ? await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)
+            : [];
+        const productMap = toMap(products as any[]);
+
+        type Resolved = {
+            sourceLineId: string;
+            vendorId: string;
+            sourceLine: any;
+            product: any;
+            unitPrice: string;
+        };
+        const resolved: Resolved[] = [];
+        for (const a of validAssignments) {
+            const sourceLine = sourceLineById.get(a.source_line_id);
+            if (!sourceLine) {
+                throw new BadRequestException(
+                    `Source line ${a.source_line_id} does not belong to this ${sourceType.toUpperCase()}.`
+                );
+            }
+            const pid = sourceLine.product_id?.toString();
+            const product: any = productMap.get(pid);
+            let priceRow: any = null;
+            try {
+                priceRow = await this.priceListRepository.findCurrentPrice(
+                    companyId,
+                    a.vendor_id,
+                    pid
+                );
+            } catch {
+                priceRow = null;
+            }
+            if (!priceRow) {
+                throw new BadRequestException(
+                    `No active price for vendor on product "${
+                        product?.name || pid
+                    }". Add it to the vendor price list and try again.`
+                );
+            }
+            resolved.push({
+                sourceLineId: a.source_line_id,
+                vendorId: a.vendor_id,
+                sourceLine,
+                product,
+                unitPrice: String(priceRow.unit_price || '0'),
+            });
+        }
+
+        // ── Build PO lines (one per resolved assignment) ──
+        const poLinePayload = resolved.map(r => ({
+            product_id: r.sourceLine.product_id?.toString(),
+            vendor_id: r.vendorId,
+            source_quotation_line_id:
+                sourceType === 'quotation' ? r.sourceLineId : undefined,
+            source_pfi_line_id:
+                sourceType === 'pfi' ? r.sourceLineId : undefined,
+            description:
+                r.sourceLine.description || r.product?.description || '',
+            hsn_code: r.product?.hsn_code || '',
+            qty: String(r.sourceLine.qty || '0'),
+            unit: r.sourceLine.unit || r.product?.unit_of_measure || '',
+            unit_price: r.unitPrice,
+            discount_pct: '0',
+            tax_pct: String(r.product?.tax_pct ?? '0'),
+        }));
+
+        // ── Create PO (status = confirmed so POVs can be created against it) ──
+        const today = new Date().toISOString().slice(0, 10);
+        const po = await this.create(
+            companyId,
+            {
+                customer_id: (source as any).customer_id?.toString(),
+                quotation_id:
+                    sourceType === 'quotation' ? sourceId : undefined,
+                pfi_id: sourceType === 'pfi' ? sourceId : undefined,
+                po_date: today,
+                delivery_address: deliveryAddressText || undefined,
+                delivery_address_id: deliveryAddressId || undefined,
+                currency_code: 'INR',
+                exchange_rate: '1',
+                status: ENUM_PURCHASE_ORDER_STATUS.CONFIRMED,
+                lines: poLinePayload,
+            } as any,
+            createdBy
+        );
+
+        // ── Reload PO lines so we have their generated _ids ──
+        const persistedLines = await this.poLineRepository.findAll({
+            purchase_order_id: po._id.toString(),
+        } as any);
+
+        // ── Group lines by vendor for POV spawn ──
+        const linesByVendor = new Map<string, any[]>();
+        for (const pl of persistedLines as any[]) {
+            const vid = pl.vendor_id?.toString();
+            if (!vid) continue;
+            const arr = linesByVendor.get(vid) || [];
+            arr.push(pl);
+            linesByVendor.set(vid, arr);
+        }
+
+        // ── Spawn POVs (draft) ──
+        const createdPovs: any[] = [];
+        try {
+            for (const [vendorId, vlines] of linesByVendor) {
+                const povBody: any = {
+                    vendor_id: vendorId,
+                    delivery_address: po.delivery_address || undefined,
+                    delivery_address_id: po.delivery_address_id || undefined,
+                    lines: vlines.map(vl => ({
+                        purchase_order_line_id: vl._id.toString(),
+                        ordered_qty: String(vl.qty || '0'),
+                    })),
+                };
+                const pov = await this.povService.createFromPo(
+                    companyId,
+                    po._id.toString(),
+                    povBody,
+                    createdBy
+                );
+                createdPovs.push(pov);
+            }
+        } catch (err: any) {
+            // Roll back: soft-delete the PO + lines + any POVs already created.
+            try {
+                for (const pov of createdPovs) {
+                    await this.povRepository.save({
+                        ...(pov as any),
+                        soft_delete: true,
+                    } as any);
+                }
+            } catch {
+                /* best-effort */
+            }
+            try {
+                await this.softDelete(po);
+            } catch {
+                /* best-effort */
+            }
+            throw new BadRequestException(
+                `PO creation rolled back: ${err?.message || 'POV creation failed'}`
+            );
+        }
+
+        return { purchase_order: po, po_vendors: createdPovs };
     }
 
     async createFromQuotation(
@@ -1089,25 +1323,12 @@ export class PurchaseOrderService {
         assignments: Array<{ source_line_id: string; vendor_id: string }>,
         opts?: { deliveryAddressId?: string; deliveryAddressText?: string }
     ) {
-        const q = await this.quotationRepository.findOne({
-            _id: quotationId,
-            company_id: companyId,
-            soft_delete: false,
-        } as any);
-        if (!q) throw new NotFoundException('Source Quotation not found');
-
-        const lines = await this.quotationLineRepository.findAll({
-            quotation_id: quotationId,
-        } as any);
-
-        return this.createPosFromAssignments({
+        return this.createPoAndPovsFromSource({
             companyId,
             createdBy,
             sourceType: 'quotation',
             sourceId: quotationId,
-            sourceLines: lines as any[],
             assignments,
-            customerId: (q as any).customer_id?.toString(),
             deliveryAddressId: opts?.deliveryAddressId,
             deliveryAddressText: opts?.deliveryAddressText,
         });
@@ -1120,7 +1341,9 @@ export class PurchaseOrderService {
     ): Promise<PurchaseOrderGetResponseDto[]> {
         if (!rows.length) return [];
 
-        const vendorIds = unique(rows.map(r => r.vendor_id?.toString()));
+        // Header vendor_id is legacy now; line-level vendor_id is canonical.
+        // Collect both so the vendor lookup picks up every reference.
+        const headerVendorIds = unique(rows.map(r => r.vendor_id?.toString()));
         const customerIds = unique(
             rows
                 .map(r => r.customer_id?.toString())
@@ -1146,6 +1369,12 @@ export class PurchaseOrderService {
                 .map((l: any) => l.product_id?.toString())
                 .filter((v: any): v is string => !!v)
         );
+        const lineVendorIds = unique(
+            allLines
+                .map((l: any) => l.vendor_id?.toString())
+                .filter((v: any): v is string => !!v)
+        );
+        const vendorIds = unique([...headerVendorIds, ...lineVendorIds]);
 
         const [
             vendors,
@@ -1299,6 +1528,12 @@ export class PurchaseOrderService {
                             product_code: (
                                 productMap.get(l.product_id?.toString()) as any
                             )?.code,
+                            vendor_id: l.vendor_id?.toString(),
+                            vendor_name: l.vendor_id
+                                ? (vendorMap.get(
+                                      l.vendor_id?.toString()
+                                  ) as any)?.company_name
+                                : undefined,
                             source_quotation_line_id:
                                 l.source_quotation_line_id?.toString(),
                             source_pfi_line_id:

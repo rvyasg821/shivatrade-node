@@ -17,12 +17,14 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
+    /** Legacy header-level vendor. PO is multi-vendor at line level
+     *  (2026-05-21); new POs leave this null and store `vendor_id`
+     *  per line on `purchase_order_lines` instead. */
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    vendor_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    vendor_id?: string;
 
-    /** Snapshot of vendor address used at PO time — defaults to vendor's
-     *  `is_default = true` address. */
+    /** Legacy header-level vendor address. Same status as `vendor_id`. */
     @Column({ type: 'uuid', nullable: true })
     vendor_address_id?: string;
 

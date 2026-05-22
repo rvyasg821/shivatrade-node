@@ -43,6 +43,10 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 50, nullable: true })
     tax_number?: string;
 
+    /** Permanent Account Number — one per Indian legal entity (10-char `AAAAA0000A`). */
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    pan?: string;
+
     // ── India export compliance ──
     @Column({ type: 'varchar', length: 20, nullable: true })
     iec?: string;

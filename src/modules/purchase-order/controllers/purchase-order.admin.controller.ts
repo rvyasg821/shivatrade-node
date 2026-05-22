@@ -189,8 +189,13 @@ export class PurchaseOrderAdminController {
                 deliveryAddressText: body.delivery_address,
             }
         );
-        const mapped = await this.poService.mapList(out.created);
-        return { data: { created: mapped, skipped: out.skipped } };
+        const purchaseOrder = await this.poService.mapGet(out.purchase_order);
+        return {
+            data: {
+                purchase_order: purchaseOrder,
+                po_vendors: out.po_vendors,
+            },
+        };
     }
 
     @Response('purchaseOrder.createFromQuotation')
@@ -212,8 +217,13 @@ export class PurchaseOrderAdminController {
                 deliveryAddressText: body.delivery_address,
             }
         );
-        const mapped = await this.poService.mapList(out.created);
-        return { data: { created: mapped, skipped: out.skipped } };
+        const purchaseOrder = await this.poService.mapGet(out.purchase_order);
+        return {
+            data: {
+                purchase_order: purchaseOrder,
+                po_vendors: out.po_vendors,
+            },
+        };
     }
 
     /** Admin PDF download — streams the file directly (bypasses the standard
