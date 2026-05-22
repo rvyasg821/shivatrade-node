@@ -33,6 +33,10 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     customer_id?: string;
 
+    /** Bill-to address snapshot (mirrors PFI). */
+    @Column({ type: 'uuid', nullable: true })
+    customer_address_id?: string;
+
     /** Source Quotation - set when PO was created via createFromQuotation. */
     @Index()
     @Column({ type: 'uuid', nullable: true })
