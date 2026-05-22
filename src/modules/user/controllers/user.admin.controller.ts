@@ -137,6 +137,7 @@ export class UserAdminController {
         @AuthJwtPayload('roleLevel') currentUserLevel: number,
         @AuthJwtPayload('companyId') currentUserCompanyId: string,
         @AuthJwtPayload('locationId') locationIdFromToken: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
         @Query('location_id') locationId?: string
     ): Promise<IResponsePaging<UserListResponseDto>> {
         const find: Record<string, any> = {
@@ -157,26 +158,20 @@ export class UserAdminController {
         if (role && Object.keys(role).length > 0) {
             find['role'] = role['role'];
         } else {
-            // Otherwise, exclude anyone who belongs to a different module from
-            // the main Users list:
-            //   • Agent / Vendor / Customer — system roles managed elsewhere
-            //   • Employee + every custom role — managed in the Employee module
+            // Otherwise, exclude only the truly external system roles —
+            // Agent / Vendor / Customer — which are managed in their own
+            // modules. Employee + custom roles stay visible in /apps/users
+            // so admins get a unified view of every tenant user.
             const [agentRole, vendorRole, customerRole] = await Promise.all([
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.AGENT }),
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.VENDOR }),
                 this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.CUSTOMER }),
             ]);
-            const employeeModuleRoleIds = currentUserCompanyId
-                ? await this.roleService.getListableEmployeeRoleIds(
-                      currentUserCompanyId
-                  )
-                : [];
 
             const excludeRoleIds = [
                 agentRole?._id,
                 vendorRole?._id,
                 customerRole?._id,
-                ...employeeModuleRoleIds,
             ].filter(Boolean);
             if (excludeRoleIds.length > 0) {
                 find['role'] = { $nin: excludeRoleIds };
@@ -199,11 +194,28 @@ export class UserAdminController {
             roleName === ENUM_SYSTEM_ROLE.LOCATION_ADMIN &&
             currentUserCompanyId
         ) {
-            // Location Admin sees only users from their company AND their location
+            // Location Admin sees users across every location they're
+            // assigned to (mirrors the Employees listing). Combines the
+            // JWT `assignedLocations[]` with the primary `locationId` so
+            // multi-location admins don't lose visibility.
             find.companyId = currentUserCompanyId;
-            // Force location filter from JWT (cannot be overridden by frontend)
-            if (locationIdFromToken) {
-                find.location_id = locationIdFromToken;
+            const validLocations = Array.from(
+                new Set(
+                    [
+                        ...(assignedLocations || []),
+                        ...(locationIdFromToken ? [locationIdFromToken] : []),
+                    ].filter(Boolean)
+                )
+            );
+            // Frontend may narrow to one of the assigned locations via
+            // ?location_id=. Anything outside the JWT-permitted set is
+            // ignored (cannot escape scope).
+            if (locationId && validLocations.includes(locationId)) {
+                find.location_id = locationId;
+            } else if (validLocations.length === 1) {
+                find.location_id = validLocations[0];
+            } else if (validLocations.length > 1) {
+                find.location_id = { $in: validLocations };
             }
             console.log('🔍 Location Admin user filter:', JSON.stringify(find));
         }
