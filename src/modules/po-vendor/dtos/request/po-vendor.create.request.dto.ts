@@ -26,6 +26,14 @@ export class PoVendorLineCreateDto {
     @IsNotEmpty()
     ordered_qty: string;
 
+    /** Optional override for POV-side (vendor / INR) unit price. When
+     *  omitted the POV line inherits unit_price from the PO line, which
+     *  is correct only when PO is in INR. PFI→PO uses customer currency
+     *  on the PO, so the vendor's INR price must be passed explicitly. */
+    @IsNumberString({}, { message: 'unit_price must be a numeric string' })
+    @IsOptional()
+    unit_price?: string;
+
     @IsInt()
     @Min(0)
     @IsOptional()
