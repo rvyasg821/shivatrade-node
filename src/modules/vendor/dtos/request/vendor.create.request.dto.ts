@@ -144,9 +144,9 @@ export class VendorCreateRequestDto {
     social_media?: VendorSocialMediaDto;
 
     @IsArray()
-    @ArrayMinSize(1)
+    @IsOptional()
     @IsUUID('4', { each: true })
-    category_ids: string[];
+    category_ids?: string[];
 
     // ── Tax & Compliance (all optional) ──
     @IsString() @IsOptional() @MaxLength(15) gstin?: string;
