@@ -22,12 +22,6 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     purchase_order_id: string;
 
-    /** Audit-only link to a prior POV against the same PO. Auto-spawn was
-     *  removed 2026-05-21; this column is no longer auto-set. */
-    @Index()
-    @Column({ type: 'uuid', nullable: true })
-    parent_po_vendor_id?: string;
-
     /** Snapshot of vendor at POV creation — inherited from PO header. */
     @Index()
     @Column({ type: 'uuid', nullable: false })
@@ -87,6 +81,26 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     /** Hidden from any vendor-facing view (POV has no PDF in v1 — internal only). */
     @Column({ type: 'text', nullable: true })
     internal_notes?: string;
+
+    /** Snapshot of the company's home currency at create time. POV is
+     *  always in home currency, but snapshotting it means historical
+     *  POVs render in the currency they were priced in even if the
+     *  company later switches home currency. */
+    @Index()
+    @Column({ type: 'varchar', length: 10, nullable: false, default: 'INR' })
+    currency_code: string;
+
+    /** Rate vs. the company's *current* base — `1` when the snapshot
+     *  currency equals the live home currency. Useful for normalising
+     *  historical POVs in cross-period reports. */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 6,
+        nullable: false,
+        default: 1,
+    })
+    exchange_rate: string;
 
     @Index()
     @Column({
