@@ -16,6 +16,13 @@ import { DocumentModule } from '@modules/document/document.module';
 import { ContractModule } from '@modules/contract/contract.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { ShiftModule } from '@modules/shift/shift.module';
+import { LeadRepositoryModule } from '@modules/lead/repository/lead.repository.module';
+import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
+import { PfiRepositoryModule } from '@modules/pfi/repository/pfi.repository.module';
+import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
+import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
+import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
+import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 
 @Module({
     imports: [
@@ -34,6 +41,13 @@ import { ShiftModule } from '@modules/shift/shift.module';
         forwardRef(() => ContractModule),
         CompanySettingsModule,
         ShiftModule,
+        LeadRepositoryModule,
+        QuotationRepositoryModule,
+        PfiRepositoryModule,
+        PurchaseOrderRepositoryModule,
+        PoVendorRepositoryModule,
+        TrackingEventRepositoryModule,
+        VendorRepositoryModule,
     ],
     controllers: [DashboardAdminController, DashboardCompanyController],
     providers: [],

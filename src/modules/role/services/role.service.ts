@@ -126,25 +126,42 @@ export class RoleService implements IRoleService {
 
     /**
      * Role IDs that should be visible in the Employee module listings:
-     * legacy Employee system role (for users created before custom roles
-     * became required) + every active custom role belonging to this company.
-     * Excludes Super Admin, Company Admin, Location Admin, Vendor, Customer,
-     * Agent.
+     * every active role owned by this company, PLUS the legacy Employee
+     * system role (for users created before custom roles became required).
      *
-     * Use this anywhere you currently do `find.role = employeeRole._id`.
+     * Excludes the three admin roles by name — Super Admin / Admin,
+     * Company Admin, Location Admin — regardless of `type`, so an
+     * employee created against any non-admin role appears in the list.
      */
     async getListableEmployeeRoleIds(companyId: string): Promise<string[]> {
+        const EXCLUDED_NAMES = new Set<string>([
+            ENUM_SYSTEM_ROLE.SUPER_ADMIN, // "Admin" (platform owner)
+            'Super Admin',               // display alias sometimes saved
+            ENUM_SYSTEM_ROLE.COMPANY_ADMIN,
+            ENUM_SYSTEM_ROLE.LOCATION_ADMIN,
+        ]);
+
+        // Company-scoped roles (custom + anything else the tenant created).
+        const companyRoles = companyId
+            ? await this.roleRepository.findAll({
+                  companyId,
+                  isActive: true,
+              } as any)
+            : [];
+
+        // Legacy Employee system role (companyId null) — keep for
+        // back-compat with users created before custom roles became required.
         const employeeRole = await this.roleRepository.findOne({
             name: ENUM_SYSTEM_ROLE.EMPLOYEE,
         });
-        const customRoles = await this.roleRepository.findAll({
-            type: ENUM_ROLE_TYPE.CUSTOM,
-            companyId,
-            isActive: true,
-        });
-        const ids = customRoles.map((r: any) => r._id.toString());
-        if (employeeRole) ids.push(employeeRole._id.toString());
-        return ids;
+
+        const ids = (companyRoles as any[])
+            .filter(r => !EXCLUDED_NAMES.has(r.name))
+            .map(r => r._id.toString());
+        if (employeeRole && !EXCLUDED_NAMES.has(employeeRole.name)) {
+            ids.push(employeeRole._id.toString());
+        }
+        return Array.from(new Set(ids));
     }
 
     /**
@@ -398,7 +415,18 @@ export class RoleService implements IRoleService {
                 existingRole.type = type;
                 existingRole.isDefault = isDefault ?? existingRole.isDefault;
 
-                await this.roleRepository.save(existingRole);
+                // Refresh level from the canonical map and cascade to all
+                // users assigned to this role so `users.roleLevel` stays in
+                // sync (the /users list hierarchy filter depends on this).
+                const expectedLevel = await this.getNextRoleLevel(name);
+                if (existingRole.level !== expectedLevel) {
+                    await this.updateRoleLevel(
+                        existingRole._id.toString(),
+                        expectedLevel
+                    );
+                } else {
+                    await this.roleRepository.save(existingRole);
+                }
                 console.log(`   ✅ Updated existing role: ${name}`);
                 continue;
             }
@@ -790,7 +818,9 @@ export class RoleService implements IRoleService {
      * SuperAdmin = 1, CompanyAdmin = 2, others start from 3
      */
     async getNextRoleLevel(roleName?: string): Promise<number> {
-        // Fixed levels for system roles
+        // Fixed levels for system roles (used by seed + on-the-fly creation).
+        // The hierarchy: 1 = platform owner, 2 = company-wide admin / agent,
+        // 3 = location-scoped admin + plain employee, 4+ = tenant custom roles.
         if (roleName === ENUM_SYSTEM_ROLE.SUPER_ADMIN) {
             return 1;
         }
@@ -799,6 +829,12 @@ export class RoleService implements IRoleService {
         }
         if (roleName === ENUM_SYSTEM_ROLE.AGENT) {
             return 2;
+        }
+        if (roleName === ENUM_SYSTEM_ROLE.LOCATION_ADMIN) {
+            return 3;
+        }
+        if (roleName === ENUM_SYSTEM_ROLE.EMPLOYEE) {
+            return 3;
         }
 
         // For custom roles, find the highest level and add 1
@@ -811,11 +847,11 @@ export class RoleService implements IRoleService {
         );
 
         if (highestLevelRole.length === 0) {
-            return 3; // Start from 3 if no roles exist
+            return 4; // Start from 4 if no roles exist (above system roles)
         }
 
         const maxLevel = highestLevelRole[0].level;
-        return Math.max(maxLevel + 1, 3); // Ensure minimum level is 3 for custom roles
+        return Math.max(maxLevel + 1, 4); // Custom roles sit at 4+
     }
 
     /**
