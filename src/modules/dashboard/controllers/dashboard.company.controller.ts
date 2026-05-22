@@ -14,6 +14,13 @@ import { LeaveTypeService } from '@modules/leave/services/leave-type.service';
 import { ShiftTemplateService } from '@modules/shift/services/shift-template.service';
 import { ContractTemplateService } from '@modules/contract/services/contract-template.service';
 import { SubscriptionService } from '@modules/subscription/services/subscription.service';
+import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
+import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
+import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { DateTime } from 'luxon';
 
 @ApiTags('dashboard.company')
@@ -31,6 +38,13 @@ export class DashboardCompanyController {
         private readonly shiftTemplateService: ShiftTemplateService,
         private readonly contractTemplateService: ContractTemplateService,
         private readonly subscriptionService: SubscriptionService,
+        private readonly leadRepository: LeadRepository,
+        private readonly quotationRepository: QuotationRepository,
+        private readonly pfiRepository: PfiRepository,
+        private readonly poRepository: PurchaseOrderRepository,
+        private readonly povRepository: PoVendorRepository,
+        private readonly trackingEventRepository: PoVendorTrackingEventRepository,
+        private readonly vendorRepository: VendorRepository,
     ) {}
 
     @AuthJwtAccessProtected()
@@ -267,4 +281,274 @@ export class DashboardCompanyController {
         return { statusCode: 500, message: err?.message || 'Failed to load dashboard stats', data: null };
       }
     }
+
+    /**
+     * Sales / Purchase / Operations rollup for the dashboard.
+     * Date window is controlled by `?period=today|week|month|year` (default = month).
+     * Each section is computed independently so a partial failure on one
+     * doesn't take the whole payload down. FE gates per-card visibility
+     * using the user's module permissions.
+     */
+    @AuthJwtAccessProtected()
+    @HttpCode(HttpStatus.OK)
+    @Get('/operations-stats')
+    async operationsStats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('locationId') jwtLocationId: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @Query('period') period?: string,
+    ) {
+        // ── Resolve company timezone + date window ──
+        let companyTz = 'UTC';
+        try {
+            const comp = await this.companyService.findOneById(companyId);
+            if (comp?.timezone) companyTz = comp.timezone;
+        } catch {}
+
+        const now = DateTime.now().setZone(companyTz);
+        const p = (period || 'month').toLowerCase();
+        let fromIso: string;
+        const toIso = now.toISO();
+        if (p === 'today') fromIso = now.startOf('day').toISO();
+        else if (p === 'week') fromIso = now.startOf('week').toISO();
+        else if (p === 'year') fromIso = now.startOf('year').toISO();
+        else fromIso = now.startOf('month').toISO();
+
+        const isLocationAdmin = roleName === ENUM_SYSTEM_ROLE.LOCATION_ADMIN;
+        const scopedLocations = isLocationAdmin
+            ? Array.from(
+                  new Set(
+                      [
+                          ...(assignedLocations || []),
+                          ...(jwtLocationId ? [jwtLocationId] : []),
+                      ].filter(Boolean)
+                  )
+              )
+            : [];
+
+        const num = (v: any) =>
+            v === null || v === undefined || v === '' ? 0 : Number(v);
+
+        // ── Sales (company-wide; not location-scoped) ──
+        const sales = await (async () => {
+            try {
+                const [leads, quotations, pfis] = await Promise.all([
+                    this.leadRepository.findAll({
+                        company_id: companyId,
+                        soft_delete: false,
+                    } as any),
+                    this.quotationRepository.findAll({
+                        company_id: companyId,
+                        soft_delete: false,
+                    } as any),
+                    this.pfiRepository.findAll({
+                        company_id: companyId,
+                        soft_delete: false,
+                    } as any),
+                ]);
+
+                const activeLeads = (leads as any[]).filter(
+                    l => l.status !== 'lost' && l.status !== 'won'
+                ).length;
+                const openQuotations = (quotations as any[]).filter(
+                    q => q.status === 'draft' || q.status === 'sent'
+                ).length;
+                const approvedPfis = (pfis as any[]).filter(
+                    p => p.status === 'approved'
+                ).length;
+
+                // Pipeline value = sum of open quotation grand_totals in
+                // home currency (multiply by snapshotted exchange_rate).
+                const pipelineValue = (quotations as any[])
+                    .filter(q => q.status === 'draft' || q.status === 'sent')
+                    .reduce(
+                        (s, q) =>
+                            s + num(q.grand_total) * (num(q.exchange_rate) || 1),
+                        0
+                    );
+
+                return {
+                    activeLeads,
+                    openQuotations,
+                    approvedPfis,
+                    pipelineValue: Math.round(pipelineValue * 100) / 100,
+                };
+            } catch (e: any) {
+                console.error('[OperationsStats:sales]', e?.message);
+                return null;
+            }
+        })();
+
+        // ── Purchase ──
+        const purchase = await (async () => {
+            try {
+                const [pos, povs, vendors] = await Promise.all([
+                    this.poRepository.findAll({
+                        company_id: companyId,
+                        soft_delete: false,
+                    } as any),
+                    this.povRepository.findAll({
+                        company_id: companyId,
+                        soft_delete: false,
+                    } as any),
+                    this.vendorRepository.findAll({
+                        company_id: companyId,
+                        soft_delete: false,
+                    } as any),
+                ]);
+
+                const posByStatus = countBy(pos as any[], 'status');
+                const povsByStatus = countBy(povs as any[], 'status');
+                const poGrandTotal = (pos as any[]).reduce(
+                    (s, p) =>
+                        s + num(p.grand_total) * (num(p.exchange_rate) || 1),
+                    0
+                );
+
+                // Top vendors by POV count within the period.
+                const fromMs = new Date(fromIso).getTime();
+                const periodPovs = (povs as any[]).filter(
+                    v => v.createdAt && new Date(v.createdAt).getTime() >= fromMs
+                );
+                const vendorAgg = new Map<
+                    string,
+                    { count: number; total: number }
+                >();
+                for (const v of periodPovs) {
+                    const vid = v.vendor_id?.toString();
+                    if (!vid) continue;
+                    const cur = vendorAgg.get(vid) || { count: 0, total: 0 };
+                    cur.count += 1;
+                    // POV doesn't carry grand_total directly; use line sum if present.
+                    const lineSum = Array.isArray(v.lines)
+                        ? v.lines.reduce(
+                              (s: number, l: any) => s + num(l.line_total),
+                              0
+                          )
+                        : 0;
+                    cur.total += lineSum;
+                    vendorAgg.set(vid, cur);
+                }
+                const vendorMap = new Map(
+                    (vendors as any[]).map(v => [
+                        v._id.toString(),
+                        v.company_name || v.vendor_code || '-',
+                    ])
+                );
+                const topVendorsThisMonth = Array.from(vendorAgg.entries())
+                    .map(([vid, agg]) => ({
+                        vendor_id: vid,
+                        vendor_name: vendorMap.get(vid) || vid.slice(0, 8),
+                        povCount: agg.count,
+                        totalValue: Math.round(agg.total * 100) / 100,
+                    }))
+                    .sort((a, b) => b.povCount - a.povCount)
+                    .slice(0, 5);
+
+                return {
+                    posByStatus,
+                    povsByStatus,
+                    poGrandTotal: Math.round(poGrandTotal * 100) / 100,
+                    topVendorsThisMonth,
+                };
+            } catch (e: any) {
+                console.error('[OperationsStats:purchase]', e?.message);
+                return null;
+            }
+        })();
+
+        // ── Operations (POV + tracking; location-scoped for Location Admin) ──
+        const operations = await (async () => {
+            try {
+                const baseFind: any = {
+                    company_id: companyId,
+                    soft_delete: false,
+                };
+                if (isLocationAdmin && scopedLocations.length) {
+                    baseFind.delivery_address_id = { $in: scopedLocations };
+                }
+                const povs = await this.povRepository.findAll(baseFind);
+                const todayStart = now.startOf('day').toISO();
+                const todayStartMs = new Date(todayStart).getTime();
+
+                const povsAwaitingReceipt = (povs as any[]).filter(
+                    v => v.status === 'dispatched'
+                ).length;
+                const overdueArrivals = (povs as any[]).filter(v => {
+                    if (v.status !== 'dispatched' && v.status !== 'draft')
+                        return false;
+                    if (!v.expected_arrival_date) return false;
+                    return (
+                        new Date(v.expected_arrival_date).getTime() <
+                        todayStartMs
+                    );
+                }).length;
+
+                const povIds = (povs as any[]).map(v => v._id.toString());
+                let trackingEventsToday = 0;
+                let recentTrackingEvents: any[] = [];
+                if (povIds.length) {
+                    const allEvents =
+                        await this.trackingEventRepository.findAll({
+                            po_vendor_id: { $in: povIds },
+                            soft_delete: false,
+                        } as any);
+                    trackingEventsToday = (allEvents as any[]).filter(e => {
+                        const ts = e.event_at
+                            ? new Date(e.event_at).getTime()
+                            : 0;
+                        return ts >= todayStartMs;
+                    }).length;
+                    recentTrackingEvents = (allEvents as any[])
+                        .sort(
+                            (a, b) =>
+                                new Date(b.event_at || 0).getTime() -
+                                new Date(a.event_at || 0).getTime()
+                        )
+                        .slice(0, 5)
+                        .map(e => ({
+                            _id: e._id,
+                            po_vendor_id: e.po_vendor_id,
+                            event_at: e.event_at,
+                            event_type: e.event_type,
+                            location: e.location,
+                            notes: e.notes,
+                        }));
+                }
+
+                return {
+                    trackingEventsToday,
+                    povsAwaitingReceipt,
+                    overdueArrivals,
+                    recentTrackingEvents,
+                };
+            } catch (e: any) {
+                console.error('[OperationsStats:ops]', e?.message);
+                return null;
+            }
+        })();
+
+        return {
+            statusCode: 200,
+            message: 'Success',
+            data: {
+                period: p,
+                from: fromIso,
+                to: toIso,
+                sales,
+                purchase,
+                operations,
+            },
+        };
+    }
+}
+
+function countBy(rows: any[], key: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const r of rows) {
+        const k = (r?.[key] ?? 'unknown').toString();
+        out[k] = (out[k] || 0) + 1;
+    }
+    return out;
 }
