@@ -532,6 +532,26 @@ export class PurchaseOrderService {
 
     // ─── Costing engine ─────────────────────────────────────────────────
 
+    /**
+     * PO recompute — mirrors PFI / Quotation costing per plan p.14:
+     *   Per line:
+     *     taxable        = qty × unit_price × (1 − disc/100)
+     *     line_expenses  = Σ snapshot (percent → taxable × v/100; fixed → v)
+     *     line_rebates   = Σ snapshot (percent → taxable × p/100; fixed → p)
+     *     line_margin    = (taxable + line_expenses − line_rebates) × margin_pct/100
+     *     line_net       = taxable + line_expenses − line_rebates + line_margin
+     *     line_tax       = line_net × tax_pct/100               (split CGST/SGST or IGST)
+     *     line_total     = line_net + line_tax                  (stored on line)
+     *   Header:
+     *     grand_inr      = round(Σ taxable + Σ expenses − Σ rebates + Σ margin + Σ tax)
+     *     round_off      = grand_inr − raw
+     *     grand_total    = grand_inr × exchange_rate            (stored in customer ccy)
+     *
+     * The snapshots (product_rebates / product_expenses / margin_pct) are not
+     * stored on PO lines — they live on the originating PFI / Quotation line
+     * and are fetched via source_pfi_line_id / source_quotation_line_id so
+     * the source remains the single source of truth.
+     */
     private async recompute(poId: string, companyId: string): Promise<void> {
         const header = await this.poRepository.findOneById(poId);
         if (!header) return;
@@ -545,38 +565,133 @@ export class PurchaseOrderService {
         );
         const companyState = await this.lookupCompanyState(companyId);
 
+        // Load source PFI / Quotation lines so we can pull snapshots
+        // (rebates / expenses / margin_pct) — PO lines don't store these.
+        const pfiLineIds: string[] = Array.from(
+            new Set(
+                lines
+                    .map((l: any) => l.source_pfi_line_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const quotationLineIds: string[] = Array.from(
+            new Set(
+                lines
+                    .map((l: any) => l.source_quotation_line_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const [pfiSourceLines, quotationSourceLines] = await Promise.all([
+            pfiLineIds.length
+                ? this.pfiLineRepository.findAll({
+                      _id: { $in: pfiLineIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            quotationLineIds.length
+                ? this.quotationLineRepository.findAll({
+                      _id: { $in: quotationLineIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const sourceById = new Map<string, any>();
+        for (const sl of pfiSourceLines as any[])
+            sourceById.set(sl._id.toString(), sl);
+        for (const sl of quotationSourceLines as any[])
+            sourceById.set(sl._id.toString(), sl);
+
         let subtotal = 0;
         let cgst_total = 0;
         let sgst_total = 0;
         let igst_total = 0;
+        let tax_total = 0;
+        let product_rebates_total = 0;
+        let product_expenses_total = 0;
+        let line_margin_total = 0;
 
         for (const ln of lines) {
-            const out = computeLineTax({
+            // Source line for snapshots; null → treat as no rebates/expenses/margin.
+            const srcId =
+                (ln as any).source_pfi_line_id?.toString() ||
+                (ln as any).source_quotation_line_id?.toString();
+            const src: any = srcId ? sourceById.get(srcId) : null;
+
+            // Use engine only for the intra/inter split; recompute tax on Net.
+            const split = computeLineTax({
                 qty: num(ln.qty),
                 unit_price: num(ln.unit_price),
                 discount_pct: num(ln.discount_pct),
-                tax_pct: num(ln.tax_pct),
+                tax_pct: 0,
                 customer_state: vendorState,
                 company_state: companyState,
             });
 
-            ln.taxable = String(out.taxable);
-            ln.cgst = String(out.cgst);
-            ln.sgst = String(out.sgst);
-            ln.igst = String(out.igst);
-            ln.line_total = String(out.line_total);
+            let lineRebatesAmt = 0;
+            for (const r of src?.product_rebates_snapshot || []) {
+                lineRebatesAmt +=
+                    r.type === 'fixed'
+                        ? num(r.pct)
+                        : (split.taxable * num(r.pct)) / 100;
+            }
+            let lineExpensesAmt = 0;
+            for (const e of src?.product_expenses_snapshot || []) {
+                lineExpensesAmt +=
+                    e.type === 'percent'
+                        ? (split.taxable * num(e.value)) / 100
+                        : num(e.value);
+            }
+
+            const lineMarginPct = num(src?.margin_pct);
+            const lineMarginBase =
+                split.taxable + lineExpensesAmt - lineRebatesAmt;
+            const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
+
+            const lineNet =
+                split.taxable +
+                lineExpensesAmt -
+                lineRebatesAmt +
+                lineMarginAmt;
+            const taxPct = num(ln.tax_pct);
+            const totalTax = round2((lineNet * taxPct) / 100);
+
+            let cgst = 0,
+                sgst = 0,
+                igst = 0;
+            if (totalTax > 0) {
+                if (split.tax_type === 'INTRA') {
+                    cgst = round2(totalTax / 2);
+                    sgst = round2(totalTax - cgst);
+                } else {
+                    igst = totalTax;
+                }
+            }
+
+            ln.taxable = String(round2(split.taxable));
+            ln.cgst = String(cgst);
+            ln.sgst = String(sgst);
+            ln.igst = String(igst);
+            ln.line_total = String(round2(lineNet + totalTax));
             await this.poLineRepository.save(ln);
 
-            subtotal += out.taxable;
-            cgst_total += out.cgst;
-            sgst_total += out.sgst;
-            igst_total += out.igst;
+            subtotal += split.taxable;
+            cgst_total += cgst;
+            sgst_total += sgst;
+            igst_total += igst;
+            tax_total += totalTax;
+            product_rebates_total += lineRebatesAmt;
+            product_expenses_total += lineExpensesAmt;
+            line_margin_total += lineMarginAmt;
         }
 
-        const tax_total = cgst_total + sgst_total + igst_total;
-        const grand_raw = subtotal + tax_total;
-        const grand = Math.round(grand_raw);
-        const round_off = round2(grand - grand_raw);
+        const er = num(header.exchange_rate) || 1;
+        const grand_inr_raw =
+            subtotal +
+            product_expenses_total -
+            product_rebates_total +
+            line_margin_total +
+            tax_total;
+        const grand_inr = Math.round(grand_inr_raw);
+        const round_off = round2(grand_inr - grand_inr_raw);
+        const grand_total = grand_inr * er;
 
         header.subtotal = String(round2(subtotal));
         header.cgst_total = String(round2(cgst_total));
@@ -584,7 +699,7 @@ export class PurchaseOrderService {
         header.igst_total = String(round2(igst_total));
         header.tax_total = String(round2(tax_total));
         header.round_off = String(round_off);
-        header.grand_total = String(round2(grand));
+        header.grand_total = String(round2(grand_total));
 
         await this.poRepository.save(header);
     }
