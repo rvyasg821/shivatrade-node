@@ -56,10 +56,20 @@ export class LocationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 50, nullable: true })
     mobile?: string;
 
+    /** Stores the full phone-input metadata so the formatted display
+     *  string (`internationalNumber` / `nationalNumber`) can be rendered
+     *  without re-parsing `mobile`. */
     @Column({ type: 'jsonb', nullable: true, default: null })
     country_code?: {
-        code: string;  // "GB"
-        dialCode: string; // "+44"
+        code?: string;
+        countryCode?: string;
+        dialCode?: string;
+        name?: string;
+        number?: string;
+        nationalNumber?: string;
+        internationalNumber?: string;
+        country_flag?: string;
+        format?: string;
     };
 
     @Column({ type: 'varchar', length: 50, nullable: true })

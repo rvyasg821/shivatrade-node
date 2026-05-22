@@ -37,6 +37,8 @@ import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
+import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
+import { formatLocationAddress } from '@modules/location/utils/format-address';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 const num = (v: any): number =>
@@ -61,6 +63,7 @@ export class PurchaseOrderService {
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly locationRepository: LocationRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly pfiRepository: PfiRepository,
@@ -149,23 +152,37 @@ export class PurchaseOrderService {
             return { text: providedText.trim() };
         }
         if (providedAddressId) {
+            // Ship-to is now sourced from `locations` (2026-05-22).
+            // Fallback to legacy `company_addresses` lookup for existing
+            // rows whose id still points there.
+            const loc: any = await this.locationRepository.findOne({
+                _id: providedAddressId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (loc) {
+                return {
+                    text: formatLocationAddress(loc),
+                    id: providedAddressId,
+                };
+            }
             const addr: any = await this.companyAddressRepository.findOne({
                 _id: providedAddressId,
                 company_id: companyId,
                 soft_delete: false,
             } as any);
-            if (!addr) {
-                throw new BadRequestException(
-                    `delivery_address_id ${providedAddressId} not found for this company.`
-                );
+            if (addr) {
+                return {
+                    text: formatCompanyAddress(addr),
+                    id: providedAddressId,
+                };
             }
-            return {
-                text: formatCompanyAddress(addr),
-                id: providedAddressId,
-            };
+            throw new BadRequestException(
+                `delivery_address_id ${providedAddressId} not found in locations or company addresses.`
+            );
         }
         throw new BadRequestException(
-            'delivery_address_id is required. Pick a company address (Profile → Addresses) or supply delivery_address text.'
+            'delivery_address_id is required. Pick a location or supply delivery_address text.'
         );
     }
 

@@ -9,6 +9,7 @@ import { ProductModule } from '@modules/product/product.module';
 import { CustomerModule } from '@modules/customer/customer.module';
 import { CompanyModule } from '@modules/company/company.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
+import { LocationRepositoryModule } from '@modules/location/repository/location.repository.module';
 import { QuotationModule } from '@modules/quotation/quotation.module';
 import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
@@ -22,6 +23,7 @@ import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
         CustomerModule,
         CompanyModule,
         CompanyRepositoryModule,
+        LocationRepositoryModule,
         QuotationModule,
         PfiModule,
         PriceListModule,
