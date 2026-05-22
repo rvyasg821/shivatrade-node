@@ -125,6 +125,13 @@ export class CompanyGetResponseDto {
     })
     tax_number?: string;
 
+    @ApiProperty({
+        example: 'AAAAA0000A',
+        required: false,
+        description: 'Permanent Account Number (Indian Income Tax)',
+    })
+    pan?: string;
+
     @ApiProperty({ required: false, description: 'Company code' })
     company_code?: string;
 

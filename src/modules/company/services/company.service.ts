@@ -51,6 +51,7 @@ export interface ICompanyCreate {
     company_code?: string;
     license_number?: string;
     tax_number?: string;
+    pan?: string;
     paye_reference?: string;
     pension_provider?: string;
     is_sponsor_licence?: boolean;
@@ -157,6 +158,7 @@ export class CompanyService {
         create.company_code = data.company_code;
         create.license_number = data.license_number;
         create.tax_number = data.tax_number;
+        create.pan = data.pan;
         create.paye_reference = data.paye_reference;
         create.pension_provider = data.pension_provider;
         create.is_sponsor_licence = data.is_sponsor_licence || false;
@@ -210,6 +212,7 @@ export class CompanyService {
         if (data.company_code !== undefined) repository.company_code = data.company_code;
         if (data.license_number !== undefined) repository.license_number = data.license_number;
         if (data.tax_number !== undefined) repository.tax_number = data.tax_number;
+        if (data.pan !== undefined) repository.pan = data.pan;
         if (data.paye_reference !== undefined) repository.paye_reference = data.paye_reference;
         if (data.pension_provider !== undefined) repository.pension_provider = data.pension_provider;
         if (data.is_sponsor_licence !== undefined) repository.is_sponsor_licence = data.is_sponsor_licence;
@@ -766,6 +769,7 @@ export class CompanyService {
                 company_code: company.company_code || undefined,
                 license_number: company.license_number || undefined,
                 tax_number: company.tax_number || undefined,
+                pan: company.pan || undefined,
                 paye_reference: company.paye_reference || undefined,
                 pension_provider: company.pension_provider || undefined,
                 is_sponsor_licence: company.is_sponsor_licence || false,
@@ -817,6 +821,7 @@ export class CompanyService {
                 company_code: company.company_code || undefined,
                 license_number: company.license_number || undefined,
                 tax_number: company.tax_number || undefined,
+                pan: company.pan || undefined,
                 paye_reference: company.paye_reference || undefined,
                 pension_provider: company.pension_provider || undefined,
                 is_sponsor_licence: company.is_sponsor_licence || false,

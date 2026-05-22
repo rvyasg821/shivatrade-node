@@ -14,6 +14,7 @@ import {
     IsUUID,
     IsDateString,
     ValidateNested,
+    Matches,
 } from 'class-validator';
 import { IsCustomEmail } from '@common/request/validations/request.custom-email.validation';
 import { Transform, Type } from 'class-transformer';
@@ -199,6 +200,22 @@ export class CompanyUpdateRequestDto {
     @MaxLength(50)
     @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
     tax_number?: string;
+
+    @ApiProperty({
+        example: 'AAAAA0000A',
+        required: false,
+        maxLength: 10,
+        description: 'Permanent Account Number (Indian Income Tax)',
+    })
+    @IsOptional()
+    @IsString()
+    @Matches(/^[A-Z]{5}[0-9]{4}[A-Z]$/, {
+        message: 'pan must match the format AAAAA0000A (10 chars)',
+    })
+    @Transform(({ value }) =>
+        value === '' ? undefined : value?.trim().toUpperCase()
+    )
+    pan?: string;
 
     @ApiProperty({
         example: 'US',
