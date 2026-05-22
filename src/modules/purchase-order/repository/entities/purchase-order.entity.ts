@@ -170,6 +170,17 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     })
     status: ENUM_PURCHASE_ORDER_STATUS;
 
+    // ── Public link ──
+    @Index({ unique: true })
+    @Column({ type: 'varchar', length: 64, nullable: true })
+    public_token?: string;
+
+    @Column({ type: 'int', nullable: false, default: 0 })
+    public_view_count: number;
+
+    @Column({ type: 'timestamptz', nullable: true })
+    public_last_viewed_at?: Date;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

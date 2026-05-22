@@ -42,6 +42,11 @@ export class PoVendorUpdateRequestDto {
     @MaxLength(2000)
     delivery_address?: string;
 
+    /** Location id (or legacy company_address id) to re-snapshot from. */
+    @IsUUID()
+    @IsOptional()
+    delivery_address_id?: string;
+
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => PoVendorLineUpdateDto)

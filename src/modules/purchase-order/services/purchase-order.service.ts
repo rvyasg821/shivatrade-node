@@ -4,6 +4,7 @@ import {
     BadRequestException,
     NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '../repository/repositories/purchase-order-line.repository';
 import { PurchaseOrderDoc } from '../repository/entities/purchase-order.entity';
@@ -36,6 +37,8 @@ import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
+import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
+import { formatLocationAddress } from '@modules/location/utils/format-address';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 const num = (v: any): number =>
@@ -60,6 +63,7 @@ export class PurchaseOrderService {
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly locationRepository: LocationRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly pfiRepository: PfiRepository,
@@ -148,23 +152,37 @@ export class PurchaseOrderService {
             return { text: providedText.trim() };
         }
         if (providedAddressId) {
+            // Ship-to is now sourced from `locations` (2026-05-22).
+            // Fallback to legacy `company_addresses` lookup for existing
+            // rows whose id still points there.
+            const loc: any = await this.locationRepository.findOne({
+                _id: providedAddressId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (loc) {
+                return {
+                    text: formatLocationAddress(loc),
+                    id: providedAddressId,
+                };
+            }
             const addr: any = await this.companyAddressRepository.findOne({
                 _id: providedAddressId,
                 company_id: companyId,
                 soft_delete: false,
             } as any);
-            if (!addr) {
-                throw new BadRequestException(
-                    `delivery_address_id ${providedAddressId} not found for this company.`
-                );
+            if (addr) {
+                return {
+                    text: formatCompanyAddress(addr),
+                    id: providedAddressId,
+                };
             }
-            return {
-                text: formatCompanyAddress(addr),
-                id: providedAddressId,
-            };
+            throw new BadRequestException(
+                `delivery_address_id ${providedAddressId} not found in locations or company addresses.`
+            );
         }
         throw new BadRequestException(
-            'delivery_address_id is required. Pick a company address (Profile → Addresses) or supply delivery_address text.'
+            'delivery_address_id is required. Pick a location or supply delivery_address text.'
         );
     }
 
@@ -246,6 +264,68 @@ export class PurchaseOrderService {
             soft_delete: false,
         } as any);
         if (!row) throw new NotFoundException('Purchase Order not found');
+        return row;
+    }
+
+    // ─── Public share link ──────────────────────────────────────────────
+
+    /** Generate (or keep) the public token. Only confirmed/in_process/
+     *  completed POs can be published — a draft is not final enough. */
+    async publish(id: string): Promise<PurchaseOrderDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        if (!row.public_token) {
+            row.public_token = randomBytes(24).toString('base64url');
+            await this.poRepository.save(row);
+        }
+        return row;
+    }
+
+    /** Issue a fresh token — the old public URL stops working immediately. */
+    async rotateToken(id: string): Promise<PurchaseOrderDoc> {
+        const row = await this.findOneById(id);
+        this.assertPublishable(row.status);
+        row.public_token = randomBytes(24).toString('base64url');
+        await this.poRepository.save(row);
+        return row;
+    }
+
+    /** Revoke the public link entirely. */
+    async unpublish(id: string): Promise<PurchaseOrderDoc> {
+        const row = await this.findOneById(id);
+        row.public_token = null as any;
+        await this.poRepository.save(row);
+        return row;
+    }
+
+    private assertPublishable(status: ENUM_PURCHASE_ORDER_STATUS): void {
+        if (status === ENUM_PURCHASE_ORDER_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only confirmed Purchase Orders can be published'
+            );
+        }
+    }
+
+    /** Public view-only fetch by token — no auth. Returns null for an
+     *  unknown token or a PO that is no longer in a shareable state. */
+    async findByPublicToken(
+        token: string
+    ): Promise<PurchaseOrderDoc | null> {
+        if (!token) return null;
+        const row = await this.poRepository.findOne({
+            public_token: token,
+            soft_delete: false,
+        } as any);
+        if (!row) return null;
+        // Bump view tracking (fire-and-forget — never block the response).
+        (row as any).public_view_count =
+            ((row as any).public_view_count || 0) + 1;
+        (row as any).public_last_viewed_at = new Date();
+        this.poRepository
+            .save(row)
+            .catch((err) =>
+                this.logger.warn(`Public view-count update failed: ${err}`)
+            );
         return row;
     }
 
@@ -1611,6 +1691,9 @@ export class PurchaseOrderService {
                 round_off: r.round_off,
                 grand_total: r.grand_total,
                 status: r.status,
+                public_token: (r as any).public_token || undefined,
+                public_view_count: (r as any).public_view_count || 0,
+                public_last_viewed_at: (r as any).public_last_viewed_at,
                 created_by: r.created_by?.toString(),
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
