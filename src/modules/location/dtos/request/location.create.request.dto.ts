@@ -98,8 +98,17 @@ export class LocationCreateRequestDto {
     @IsObject()
     @IsOptional()
     country_code?: {
-        code: string;
-        dialCode: string;
+        code?: string;
+        countryCode?: string;
+        dialCode?: string;
+        name?: string;
+        number?: string;
+        /** Human-readable national form, e.g. "7123 456789". */
+        nationalNumber?: string;
+        /** Human-readable international form, e.g. "+44 7123 456789". */
+        internationalNumber?: string;
+        country_flag?: string;
+        format?: string;
     };
 
     @IsString()

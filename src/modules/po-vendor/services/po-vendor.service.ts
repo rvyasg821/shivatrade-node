@@ -28,6 +28,8 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
+import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
+import { formatLocationAddress } from '@modules/location/utils/format-address';
 import { CurrencyService } from '@modules/currency/services/currency.service';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
@@ -56,6 +58,7 @@ export class PoVendorService {
         private readonly productRepository: ProductRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly locationRepository: LocationRepository,
         private readonly currencyService: CurrencyService,
         private readonly voucherService: VoucherService
     ) {}
@@ -239,19 +242,39 @@ export class PoVendorService {
         let delivery_address_id: string | null = null;
         if (data.delivery_address && data.delivery_address.trim()) {
             delivery_address = data.delivery_address.trim();
+            // Preserve the source FK when caller passes both text + id
+            // (inheritance path from createPoAndPovsFromSource).
+            if ((data as any).delivery_address_id) {
+                delivery_address_id = (
+                    data as any
+                ).delivery_address_id.toString();
+            }
         } else if ((data as any).delivery_address_id) {
-            const addr: any = await this.companyAddressRepository.findOne({
-                _id: (data as any).delivery_address_id,
+            // Ship-to is now sourced from `locations`. Legacy
+            // `company_addresses` lookup retained as fallback.
+            const locId = (data as any).delivery_address_id;
+            const loc: any = await this.locationRepository.findOne({
+                _id: locId,
                 company_id: companyId,
                 soft_delete: false,
             } as any);
-            if (!addr) {
-                throw new BadRequestException(
-                    `delivery_address_id ${(data as any).delivery_address_id} not found for this company.`
-                );
+            if (loc) {
+                delivery_address = formatLocationAddress(loc);
+                delivery_address_id = locId;
+            } else {
+                const addr: any = await this.companyAddressRepository.findOne({
+                    _id: locId,
+                    company_id: companyId,
+                    soft_delete: false,
+                } as any);
+                if (!addr) {
+                    throw new BadRequestException(
+                        `delivery_address_id ${locId} not found in locations or company addresses.`
+                    );
+                }
+                delivery_address = formatCompanyAddress(addr);
+                delivery_address_id = locId;
             }
-            delivery_address = formatCompanyAddress(addr);
-            delivery_address_id = (data as any).delivery_address_id;
         } else {
             // Inherit from PO.
             delivery_address = (po.delivery_address || '').toString();
@@ -414,6 +437,7 @@ export class PoVendorService {
         // ── Edit lock per status (POV plan §11) ─────────────────────────
         const draftEditable = new Set([
             'delivery_address',
+            'delivery_address_id',
             'lines',
             'expected_arrival_date',
             'transporter_name',
@@ -462,6 +486,35 @@ export class PoVendorService {
         // ── Status transition (if any) ──────────────────────────────────
         if (data.status && data.status !== fromStatus) {
             this.assertStatusTransitionAllowed(fromStatus, data.status);
+        }
+
+        // ── Re-snapshot delivery address if a new id was picked (draft) ──
+        if (
+            (data as any).delivery_address_id &&
+            fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT
+        ) {
+            const locId = (data as any).delivery_address_id;
+            const loc: any = await this.locationRepository.findOne({
+                _id: locId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (loc) {
+                (data as any).delivery_address = formatLocationAddress(loc);
+                (data as any).delivery_address_id = locId;
+            } else {
+                const addr: any = await this.companyAddressRepository.findOne({
+                    _id: locId,
+                    company_id: companyId,
+                    soft_delete: false,
+                } as any);
+                if (!addr) {
+                    throw new BadRequestException(
+                        `delivery_address_id ${locId} not found in locations or company addresses.`
+                    );
+                }
+                (data as any).delivery_address = formatCompanyAddress(addr);
+            }
         }
 
         // ── Apply scalar changes ────────────────────────────────────────
