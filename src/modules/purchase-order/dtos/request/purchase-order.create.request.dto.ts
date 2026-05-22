@@ -17,6 +17,11 @@ import {
 import { ENUM_PURCHASE_ORDER_STATUS } from '../../enums/purchase-order.enum';
 
 export class PurchaseOrderLineCreateDto {
+    /** Present on update to keep the line's UUID stable. Omitted for new lines. */
+    @IsUUID()
+    @IsOptional()
+    _id?: string;
+
     @IsUUID()
     @IsNotEmpty()
     product_id: string;
@@ -89,6 +94,10 @@ export class PurchaseOrderCreateRequestDto {
     @IsUUID()
     @IsOptional()
     customer_id?: string;
+
+    @IsUUID()
+    @IsOptional()
+    customer_address_id?: string;
 
     @IsUUID()
     @IsOptional()

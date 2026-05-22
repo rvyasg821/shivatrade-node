@@ -38,6 +38,7 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: false, type: String }) vendor_address_id?: string;
 
     @ApiProperty({ required: false, type: String }) customer_id?: string;
+    @ApiProperty({ required: false, type: String }) customer_address_id?: string;
     @ApiProperty({ required: false, type: String }) customer_name?: string;
     @ApiProperty({ required: false, type: String }) customer_contact_name?: string;
     @ApiProperty({ required: false, type: String }) customer_contact_email?: string;

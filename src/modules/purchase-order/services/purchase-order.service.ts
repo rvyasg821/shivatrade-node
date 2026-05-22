@@ -29,6 +29,7 @@ import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.reposito
 import { PfiLineRepository } from '@modules/pfi/repository/repositories/pfi-line.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
@@ -65,6 +66,7 @@ export class PurchaseOrderService {
         private readonly pfiLineRepository: PfiLineRepository,
         private readonly priceListRepository: PriceListRepository,
         private readonly povRepository: PoVendorRepository,
+        private readonly povLineRepository: PoVendorLineRepository,
         private readonly povService: PoVendorService,
         private readonly voucherService: VoucherService
     ) {}
@@ -215,6 +217,7 @@ export class PurchaseOrderService {
             vendor_id: data.vendor_id,
             vendor_address_id: vendorAddressId,
             customer_id: data.customer_id || null,
+            customer_address_id: (data as any).customer_address_id || null,
             quotation_id: data.quotation_id || null,
             pfi_id: data.pfi_id || null,
             po_date: data.po_date,
@@ -361,18 +364,59 @@ export class PurchaseOrderService {
 
     // ─── Replace-on-update for nested lines ─────────────────────────────
 
+    /**
+     * ID-stable upsert. Existing lines are updated in place so their
+     * `_id` is preserved — POV lines reference PO lines via
+     * `purchase_order_line_id`, and rotating that UUID orphans them.
+     * Lines removed from the payload are hard-deleted only if no POV
+     * line references them; otherwise the whole update is rejected.
+     */
     private async replaceLines(
         companyId: string,
         poId: string,
         lines?: any[]
     ): Promise<void> {
-        await this.poLineRepository.deleteByPurchaseOrderId(poId);
+        const existing = await this.poLineRepository.findAll({
+            purchase_order_id: poId,
+        } as any);
+        const existingById = new Map<string, any>();
+        for (const e of existing as any[])
+            existingById.set(e._id.toString(), e);
+
+        const incomingIds = new Set<string>(
+            (lines || [])
+                .map(l => (l._id ? String(l._id) : null))
+                .filter((v): v is string => !!v)
+        );
+
+        // Reject removal of any PO line still referenced by a POV line.
+        const toRemove = (existing as any[]).filter(
+            e => !incomingIds.has(e._id.toString())
+        );
+        if (toRemove.length) {
+            const referenced = await this.povLineRepository.findAll({
+                purchase_order_line_id: {
+                    $in: toRemove.map(e => e._id.toString()),
+                },
+            } as any);
+            if (referenced.length) {
+                throw new BadRequestException(
+                    'Cannot remove PO line(s) that are already linked to a POV. Cancel the POV first or keep the line.'
+                );
+            }
+            for (const e of toRemove) {
+                await this.poLineRepository.delete({
+                    _id: e._id.toString(),
+                } as any);
+            }
+        }
+
         if (!lines?.length) return;
 
         let seq = 0;
         for (const l of lines) {
             seq += 1;
-            await this.poLineRepository.create({
+            const payload: any = {
                 company_id: companyId,
                 purchase_order_id: poId,
                 product_id: l.product_id,
@@ -393,7 +437,16 @@ export class PurchaseOrderService {
                 taxable: '0',
                 line_total: '0',
                 seq: l.seq != null && l.seq !== '' ? Number(l.seq) : seq,
-            } as any);
+            };
+
+            const existingId = l._id ? String(l._id) : null;
+            const row = existingId ? existingById.get(existingId) : null;
+            if (row) {
+                Object.assign(row, payload);
+                await this.poLineRepository.save(row);
+            } else {
+                await this.poLineRepository.create(payload);
+            }
         }
     }
 
@@ -1179,7 +1232,8 @@ export class PurchaseOrderService {
             vendorId: string;
             sourceLine: any;
             product: any;
-            unitPrice: string;
+            /** Vendor's INR price — used on the POV line (procurement side). */
+            vendorUnitPrice: string;
         };
         const resolved: Resolved[] = [];
         for (const a of validAssignments) {
@@ -1213,11 +1267,14 @@ export class PurchaseOrderService {
                 vendorId: a.vendor_id,
                 sourceLine,
                 product,
-                unitPrice: String(priceRow.unit_price || '0'),
+                vendorUnitPrice: String(priceRow.unit_price || '0'),
             });
         }
 
-        // ── Build PO lines (one per resolved assignment) ──
+        // ── Build PO lines — PO mirrors the customer-facing PFI/Quotation.
+        // unit_price, tax_pct, discount_pct all come from the source line
+        // (in customer currency). The vendor's INR price travels separately
+        // and lands on the POV line only.
         const poLinePayload = resolved.map(r => ({
             product_id: r.sourceLine.product_id?.toString(),
             vendor_id: r.vendorId,
@@ -1230,25 +1287,40 @@ export class PurchaseOrderService {
             hsn_code: r.product?.hsn_code || '',
             qty: String(r.sourceLine.qty || '0'),
             unit: r.sourceLine.unit || r.product?.unit_of_measure || '',
-            unit_price: r.unitPrice,
-            discount_pct: '0',
-            tax_pct: String(r.product?.tax_pct ?? '0'),
+            unit_price: String(r.sourceLine.unit_price || '0'),
+            discount_pct: String(r.sourceLine.discount_pct ?? '0'),
+            tax_pct: String(
+                r.sourceLine.tax_pct ?? r.product?.tax_pct ?? '0'
+            ),
         }));
 
         // ── Create PO (status = confirmed so POVs can be created against it) ──
+        // PO mirrors the customer-facing PFI/Quotation header — currency,
+        // payment + delivery terms, bill-to address, expected delivery,
+        // and internal notes all inherit from the source.
         const today = new Date().toISOString().slice(0, 10);
+        const src: any = source as any;
         const po = await this.create(
             companyId,
             {
-                customer_id: (source as any).customer_id?.toString(),
+                customer_id: src.customer_id?.toString(),
+                customer_address_id:
+                    src.customer_address_id?.toString() || undefined,
                 quotation_id:
                     sourceType === 'quotation' ? sourceId : undefined,
                 pfi_id: sourceType === 'pfi' ? sourceId : undefined,
                 po_date: today,
+                expected_delivery_date:
+                    sourceType === 'pfi'
+                        ? src.est_delivery_date || undefined
+                        : undefined,
+                payment_terms: src.payment_terms || undefined,
+                delivery_terms: src.delivery_terms || undefined,
+                internal_notes: src.internal_notes || undefined,
                 delivery_address: deliveryAddressText || undefined,
                 delivery_address_id: deliveryAddressId || undefined,
-                currency_code: 'INR',
-                exchange_rate: '1',
+                currency_code: src.currency_code || 'INR',
+                exchange_rate: src.exchange_rate || '1',
                 status: ENUM_PURCHASE_ORDER_STATUS.CONFIRMED,
                 lines: poLinePayload,
             } as any,
@@ -1271,6 +1343,29 @@ export class PurchaseOrderService {
         }
 
         // ── Spawn POVs (draft) ──
+        // Vendor INR price travels separately and lands on the POV line.
+        // Key by (sourcePfiLineId|sourceQuotationLineId) + vendorId to
+        // find the matching resolved entry for each persisted PO line.
+        const vendorPriceByPoLine = new Map<string, string>();
+        for (const pl of persistedLines as any[]) {
+            const srcLineId = (
+                pl.source_pfi_line_id ||
+                pl.source_quotation_line_id ||
+                ''
+            ).toString();
+            const r = resolved.find(
+                x =>
+                    x.sourceLineId === srcLineId &&
+                    x.vendorId === pl.vendor_id?.toString()
+            );
+            if (r) {
+                vendorPriceByPoLine.set(
+                    pl._id.toString(),
+                    r.vendorUnitPrice
+                );
+            }
+        }
+
         const createdPovs: any[] = [];
         try {
             for (const [vendorId, vlines] of linesByVendor) {
@@ -1281,6 +1376,9 @@ export class PurchaseOrderService {
                     lines: vlines.map(vl => ({
                         purchase_order_line_id: vl._id.toString(),
                         ordered_qty: String(vl.qty || '0'),
+                        unit_price:
+                            vendorPriceByPoLine.get(vl._id.toString()) ||
+                            String(vl.unit_price || '0'),
                     })),
                 };
                 const pov = await this.povService.createFromPo(

@@ -308,7 +308,14 @@ export class PoVendorService {
             seq += 1;
             const poLine = poLineById.get(ln.purchase_order_line_id);
             const ordered = num(ln.ordered_qty);
-            const unitPrice = num(poLine.unit_price);
+            // Caller may override unit_price (e.g. PFI→PO flow passes the
+            // vendor's INR price because the PO holds customer-currency
+            // pricing). Fall back to the PO line snapshot otherwise.
+            const unitPriceStr =
+                (ln as any).unit_price != null && (ln as any).unit_price !== ''
+                    ? String((ln as any).unit_price)
+                    : String(poLine.unit_price || '0');
+            const unitPrice = num(unitPriceStr);
             await this.povLineRepository.create({
                 company_id: companyId,
                 po_vendor_id: header._id.toString(),
@@ -318,7 +325,7 @@ export class PoVendorService {
                 hsn_code: poLine.hsn_code || null,
                 unit: poLine.unit || null,
                 tax_pct: String(poLine.tax_pct || '0'),
-                unit_price: String(poLine.unit_price || '0'),
+                unit_price: unitPriceStr,
                 ordered_qty: String(ordered),
                 dispatched_qty: '0',
                 received_qty: '0',
