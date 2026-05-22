@@ -651,9 +651,9 @@ export class VendorService {
         companyId: string,
         categoryIds: string[]
     ): Promise<void> {
-        if (!categoryIds || categoryIds.length === 0) {
-            throw new BadRequestException('At least one category is required');
-        }
+        // Categories are optional on a vendor — an empty / missing list is
+        // allowed. Only validate the IDs that are actually supplied.
+        if (!categoryIds || categoryIds.length === 0) return;
         const unique = Array.from(new Set(categoryIds));
         const found = await this.categoryRepository.findAll({
             _id: { $in: unique },
