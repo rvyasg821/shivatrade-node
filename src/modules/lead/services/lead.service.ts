@@ -200,15 +200,44 @@ export class LeadService {
     ): Promise<{ lead: LeadDoc; customerId: string }> {
         const companyId = lead.company_id.toString();
 
-        if (lead.converted_customer_id) {
+        // Verify a customer id actually resolves to a non-deleted customer
+        // row. Stale ids (left over from earlier failed / partial
+        // conversions or hand-cleared data) must NOT short-circuit the
+        // flow — fall through to email match / create instead.
+        const customerExists = async (
+            id?: string | null
+        ): Promise<boolean> => {
+            if (!id) return false;
+            try {
+                const c: any = await this.customerRepository.findOneById(
+                    id.toString()
+                );
+                return !!c && !c.soft_delete;
+            } catch {
+                return false;
+            }
+        };
+
+        if (
+            lead.converted_customer_id &&
+            (await customerExists(lead.converted_customer_id.toString()))
+        ) {
             return {
                 lead,
                 customerId: lead.converted_customer_id.toString(),
             };
         }
+        // Stale converted_customer_id — clear so we don't keep returning a
+        // dangling pointer if the create below also fails.
+        if (lead.converted_customer_id) {
+            lead.converted_customer_id = null as any;
+        }
 
         let customerId: string | undefined;
-        if (lead.customer_id) {
+        if (
+            lead.customer_id &&
+            (await customerExists(lead.customer_id.toString()))
+        ) {
             customerId = lead.customer_id.toString();
         } else {
             const matched = await this.findCustomerByEmail(
