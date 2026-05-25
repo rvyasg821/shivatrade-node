@@ -45,6 +45,7 @@ export class CustomerGetResponseDto {
     @ApiProperty({ required: false, type: String }) gstin?: string;
     @ApiProperty({ required: false, type: String }) pan?: string;
     @ApiProperty({ required: false, type: String }) iec?: string;
+    @ApiProperty({ required: false, type: String }) currency?: string;
 
     @ApiProperty({ required: true, type: Boolean }) is_active: boolean;
     @ApiProperty({ required: true, enum: ENUM_CUSTOMER_STATUS }) status: ENUM_CUSTOMER_STATUS;

@@ -84,6 +84,9 @@ export class CustomerCreateRequestDto {
     @IsString() @IsOptional() @MaxLength(30) pan?: string;
     @IsString() @IsOptional() @MaxLength(20) iec?: string;
 
+    /** Default currency (ISO code) for this customer. */
+    @IsString() @IsOptional() @MaxLength(10) currency?: string;
+
     @IsEnum(ENUM_CUSTOMER_STATUS) @IsOptional() status?: ENUM_CUSTOMER_STATUS;
 
     @IsBoolean() @IsOptional() is_active?: boolean;
