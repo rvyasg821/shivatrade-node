@@ -420,6 +420,228 @@ export class PoVendorService {
         return this.povRepository.findOneById(header._id.toString());
     }
 
+    // ─── Recover from PO (multi-vendor batch — PFI→PO-style flow) ──────
+    //
+    // When a POV is cancelled, its PO lines go back to uncovered.
+    // `recoverPreviewByPoId` returns those lines + a default suggested
+    // vendor (the PO line's current `vendor_id`) + a list of all active
+    // company vendors so the operator can switch per line.
+    //
+    // `recoverFromPo` accepts a flat list of {po_line_id, vendor_id}
+    // assignments, groups by vendor_id, and spawns one POV per vendor in
+    // one logical call. If the operator picks a different vendor than the
+    // line's current `vendor_id`, the PO line is reassigned (po_line.vendor_id
+    // updated).
+
+    async recoverPreviewByPoId(
+        companyId: string,
+        purchaseOrderId: string
+    ): Promise<any> {
+        const po: any = await this.poRepository.findOne({
+            _id: purchaseOrderId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!po) throw new NotFoundException('PO not found');
+
+        const poLines = await this.poLineRepository.findAll({
+            purchase_order_id: purchaseOrderId,
+        } as any);
+
+        const pending = await this.computePendingByPoLineId(purchaseOrderId);
+
+        // Vendor + product hydration for snapshot fields on the response.
+        const vendorIds = unique(
+            (poLines as any[]).map((l: any) => l.vendor_id?.toString())
+        );
+        const productIds = unique(
+            (poLines as any[]).map((l: any) => l.product_id?.toString())
+        );
+        const [lineVendors, products, allActiveVendors] = await Promise.all([
+            vendorIds.length
+                ? this.vendorRepository.findAll({
+                      _id: { $in: vendorIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            productIds.length
+                ? this.productRepository.findAll({
+                      _id: { $in: productIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            this.vendorRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+                is_active: true,
+            } as any),
+        ]);
+        const lineVendorMap = new Map<string, any>();
+        for (const v of lineVendors as any[]) {
+            lineVendorMap.set(v._id.toString(), v);
+        }
+        const productMap = new Map<string, any>();
+        for (const p of products as any[]) {
+            productMap.set(p._id.toString(), p);
+        }
+
+        const lines = (poLines as any[]).map((l: any) => {
+            const k = l._id.toString();
+            const orderedQty = num(l.qty);
+            const pendingQty = pending.get(k) || 0;
+            const vendor: any = l.vendor_id
+                ? lineVendorMap.get(l.vendor_id.toString())
+                : null;
+            const product: any = l.product_id
+                ? productMap.get(l.product_id.toString())
+                : null;
+            return {
+                purchase_order_line_id: k,
+                product_id: l.product_id?.toString(),
+                product_name: product?.name,
+                product_code: product?.code,
+                hsn_code: l.hsn_code || product?.hsn_code || undefined,
+                unit: l.unit || product?.unit_of_measure || undefined,
+                ordered_qty: String(round4(orderedQty)),
+                pending_qty: String(round4(pendingQty)),
+                fully_covered: pendingQty <= 1e-6,
+                current_vendor_id: l.vendor_id?.toString(),
+                current_vendor_name: vendor?.company_name,
+            };
+        });
+
+        const active_vendors = (allActiveVendors as any[])
+            .map((v: any) => ({
+                vendor_id: v._id.toString(),
+                vendor_name: v.company_name,
+            }))
+            .sort((a, b) => a.vendor_name.localeCompare(b.vendor_name));
+
+        return {
+            purchase_order_id: po._id.toString(),
+            purchase_order_voucher_no: po.voucher_no,
+            status: po.status,
+            lines,
+            active_vendors,
+        };
+    }
+
+    async recoverFromPo(
+        companyId: string,
+        purchaseOrderId: string,
+        data: {
+            assignments: Array<{
+                purchase_order_line_id: string;
+                vendor_id: string;
+            }>;
+            delivery_address_id?: string;
+            delivery_address?: string;
+            notes?: string;
+            internal_notes?: string;
+        },
+        createdBy: string
+    ): Promise<{ created: PoVendorDoc[] }> {
+        if (!data.assignments?.length) {
+            throw new BadRequestException(
+                'At least one line assignment is required.'
+            );
+        }
+
+        // Group assignments by vendor_id.
+        const byVendor = new Map<string, string[]>();
+        const seenLines = new Set<string>();
+        for (const a of data.assignments) {
+            if (!a.purchase_order_line_id || !a.vendor_id) {
+                throw new BadRequestException(
+                    'Each assignment requires purchase_order_line_id + vendor_id.'
+                );
+            }
+            if (seenLines.has(a.purchase_order_line_id)) {
+                throw new BadRequestException(
+                    `Duplicate assignment for PO line ${a.purchase_order_line_id}.`
+                );
+            }
+            seenLines.add(a.purchase_order_line_id);
+            const arr = byVendor.get(a.vendor_id) || [];
+            arr.push(a.purchase_order_line_id);
+            byVendor.set(a.vendor_id, arr);
+        }
+
+        // Load PO lines once so we can re-assign vendor_id where needed.
+        const poLineIds = Array.from(seenLines);
+        const poLines = await this.poLineRepository.findAll({
+            _id: { $in: poLineIds },
+            purchase_order_id: purchaseOrderId,
+        } as any);
+        if ((poLines as any[]).length !== poLineIds.length) {
+            throw new BadRequestException(
+                'One or more assignment lines do not belong to this PO.'
+            );
+        }
+        const poLineById = new Map<string, any>();
+        for (const l of poLines as any[]) {
+            poLineById.set(l._id.toString(), l);
+        }
+
+        // Compute pending qty per PO line ONCE upfront. Use this as the
+        // POV ordered_qty (not pl.qty) so partially-covered lines work
+        // correctly. Also lets us reject 0-qty assignments early — a fully
+        // covered line can't be recovered.
+        const pending = await this.computePendingByPoLineId(purchaseOrderId);
+        const zeroLines: string[] = [];
+        for (const a of data.assignments) {
+            const p = pending.get(a.purchase_order_line_id) || 0;
+            if (p <= 1e-6) {
+                zeroLines.push(a.purchase_order_line_id);
+            }
+        }
+        if (zeroLines.length > 0) {
+            throw new BadRequestException(
+                `Cannot create POV with 0 qty — these PO lines have no pending qty: ${zeroLines.join(', ')}.`
+            );
+        }
+
+        // Re-assign po_line.vendor_id where the operator changed it.
+        for (const a of data.assignments) {
+            const pl = poLineById.get(a.purchase_order_line_id);
+            if (!pl) continue;
+            if (pl.vendor_id?.toString() !== a.vendor_id) {
+                pl.vendor_id = a.vendor_id;
+                await this.poLineRepository.save(pl);
+            }
+        }
+
+        // For each vendor group, spawn one POV via the existing createFromPo
+        // path (re-uses voucher numbering, snapshot logic, system events).
+        const created: PoVendorDoc[] = [];
+        for (const [vendorId, lineIds] of byVendor.entries()) {
+            const linesPayload = lineIds.map(lid => ({
+                purchase_order_line_id: lid,
+                ordered_qty: String(
+                    round4(pending.get(lid) || 0)
+                ),
+            }));
+            const body: any = {
+                vendor_id: vendorId,
+                lines: linesPayload,
+                notes: data.notes,
+                internal_notes: data.internal_notes,
+                delivery_address: data.delivery_address,
+                delivery_address_id: data.delivery_address_id,
+            };
+            const row = await this.createFromPo(
+                companyId,
+                purchaseOrderId,
+                body,
+                createdBy
+            );
+            created.push(row);
+        }
+
+        this.logger.log(
+            `Recovered ${created.length} POV(s) for PO ${purchaseOrderId}`
+        );
+        return { created };
+    }
+
     // ─── Read ───────────────────────────────────────────────────────────
 
     async findOneById(id: string): Promise<PoVendorDoc> {
