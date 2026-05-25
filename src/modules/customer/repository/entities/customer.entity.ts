@@ -43,6 +43,11 @@ export class CustomerEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 20, nullable: true })
     iec?: string;
 
+    /** Default currency (ISO code) used when this customer is selected on
+     *  a quotation / PFI / PO. Optional — falls back to company default. */
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    currency?: string;
+
     @Index()
     @Column({ type: 'boolean', default: true })
     is_active: boolean;

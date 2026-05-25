@@ -247,6 +247,16 @@ export class LeadService {
             if (matched) customerId = matched;
         }
 
+        // Fallback: company_name match (case-insensitive). Avoids the
+        // duplicate-name BadRequestException from customerService.create.
+        if (!customerId) {
+            const byName = await this.findCustomerByCompanyName(
+                companyId,
+                lead.company_name
+            );
+            if (byName) customerId = byName;
+        }
+
         if (!customerId) {
             const hasAddress =
                 !!(
@@ -261,6 +271,9 @@ export class LeadService {
                 companyId,
                 {
                     company_name: lead.company_name,
+                    // Carry the lead's preferred currency forward so the new
+                    // customer defaults to it on quotation / PFI / PO.
+                    currency: lead.currency || undefined,
                     contacts: [
                         {
                             name: lead.contact_name,
@@ -371,11 +384,41 @@ export class LeadService {
         if (!lead) throw new NotFoundException('Lead not found');
         const companyId = lead.company_id.toString();
 
-        if (lead.converted_customer_id) {
+        // Verify a stamped customer id still resolves to a live customer
+        // row. Stale ids (left over from an earlier failed flow or a
+        // cleared customer) must NOT short-circuit — fall through to
+        // email match / create instead.
+        const customerExists = async (
+            id?: string | null
+        ): Promise<boolean> => {
+            if (!id) return false;
+            try {
+                const c: any = await this.customerRepository.findOneById(
+                    id.toString()
+                );
+                return !!c && !c.soft_delete;
+            } catch {
+                return false;
+            }
+        };
+
+        if (
+            lead.converted_customer_id &&
+            (await customerExists(lead.converted_customer_id.toString()))
+        ) {
             return lead.converted_customer_id.toString();
         }
-        if (lead.customer_id) {
+        if (lead.converted_customer_id) {
+            lead.converted_customer_id = null as any;
+        }
+        if (
+            lead.customer_id &&
+            (await customerExists(lead.customer_id.toString()))
+        ) {
             return lead.customer_id.toString();
+        }
+        if (lead.customer_id) {
+            lead.customer_id = null as any;
         }
 
         const matched = await this.findCustomerByEmail(
@@ -403,6 +446,20 @@ export class LeadService {
             return matched;
         }
 
+        // Fallback: match by company_name (case-insensitive). Avoids the
+        // "Customer already exists" error when the lead's contact email
+        // differs from the customer's stored primary email but the
+        // company name is the same.
+        const byName = await this.findCustomerByCompanyName(
+            companyId,
+            lead.company_name
+        );
+        if (byName) {
+            lead.customer_id = byName;
+            await this.leadRepository.save(lead);
+            return byName;
+        }
+
         const hasAddress = !!(
             lead.address_line1 ||
             lead.address_line2 ||
@@ -415,6 +472,9 @@ export class LeadService {
             companyId,
             {
                 company_name: lead.company_name,
+                // Carry the lead's preferred currency forward so the new
+                // customer defaults to it on quotation / PFI / PO.
+                currency: lead.currency || undefined,
                 contacts: [
                     {
                         name: lead.contact_name,
@@ -516,6 +576,28 @@ export class LeadService {
         return customer._id.toString();
     }
 
+    /**
+     * Look up an existing (non-deleted) customer in the same company by
+     * company_name (case-insensitive). Used as a fallback when the lead's
+     * contact email doesn't match any contact but a customer with the
+     * same company name already exists — prevents the duplicate-name
+     * BadRequestException from customerService.create.
+     */
+    private async findCustomerByCompanyName(
+        companyId: string,
+        companyName?: string
+    ): Promise<string | undefined> {
+        const name = (companyName || '').trim();
+        if (!name) return undefined;
+        const customer: any = await this.customerRepository.findOne({
+            company_id: companyId,
+            company_name: ILike(name),
+            soft_delete: false,
+        } as any);
+        if (!customer) return undefined;
+        return customer._id.toString();
+    }
+
     private async assertCategoriesInCompany(
         companyId: string,
         categoryIds: string[] | undefined
@@ -577,6 +659,10 @@ export class LeadService {
     }
 
     async mapGetWithRelations(lead: LeadDoc): Promise<LeadGetResponseDto> {
+        // Drop stale customer pointers so FE prefills (quotation/PFI wizards)
+        // don't try to GET a customer that no longer exists. Persists the
+        // cleanup so subsequent reads are quick.
+        await this.scrubStaleCustomerRefs(lead);
         const dto = plainToInstance(LeadGetResponseDto, lead);
         await this.attachRelationsToOne(dto, lead);
         const count = await this.quotationRepository.getTotal({
@@ -585,6 +671,47 @@ export class LeadService {
         } as any);
         (dto as any).quotations_count = count;
         return dto;
+    }
+
+    /** Clears `customer_id` / `converted_customer_id` on the lead when the
+     *  pointed-at customer row no longer exists (or is soft-deleted).
+     *  Saves the lead only if something actually changed. */
+    private async scrubStaleCustomerRefs(lead: LeadDoc): Promise<void> {
+        const customerExists = async (
+            id?: string | null
+        ): Promise<boolean> => {
+            if (!id) return false;
+            try {
+                const c: any = await this.customerRepository.findOneById(
+                    id.toString()
+                );
+                return !!c && !c.soft_delete;
+            } catch {
+                return false;
+            }
+        };
+        let dirty = false;
+        if (
+            lead.converted_customer_id &&
+            !(await customerExists(lead.converted_customer_id.toString()))
+        ) {
+            (lead as any).converted_customer_id = null;
+            dirty = true;
+        }
+        if (
+            lead.customer_id &&
+            !(await customerExists(lead.customer_id.toString()))
+        ) {
+            (lead as any).customer_id = null;
+            dirty = true;
+        }
+        if (dirty) {
+            try {
+                await this.leadRepository.save(lead);
+            } catch {
+                /* best effort — don't break the read on save failure */
+            }
+        }
     }
 
     async mapListWithRelations(
