@@ -36,6 +36,9 @@ import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 
+import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
+import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
+
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
 const round4 = (n: number): number =>
@@ -60,8 +63,44 @@ export class PoVendorService {
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly locationRepository: LocationRepository,
         private readonly currencyService: CurrencyService,
-        private readonly voucherService: VoucherService
+        private readonly voucherService: VoucherService,
+        private readonly trackingEventRepository: PoVendorTrackingEventRepository
     ) {}
+
+    /**
+     * Append an auto-generated lifecycle event to a POV's tracking timeline.
+     * Failures are logged but never rethrown — tracking is observability,
+     * not part of the transactional invariant of the action that triggered
+     * it (we don't want a logging glitch to fail a real POV dispatch).
+     */
+    private async emitSystemEvent(
+        companyId: string,
+        povId: string,
+        eventType: ENUM_TRACKING_EVENT_TYPE,
+        userId: string,
+        notes?: string,
+        location?: string
+    ): Promise<void> {
+        try {
+            await this.trackingEventRepository.create({
+                company_id: companyId,
+                po_vendor_id: povId,
+                event_at: new Date(),
+                event_type: eventType,
+                location: location || null,
+                notes: notes || null,
+                is_post_closure: false,
+                is_system: true,
+                created_by: userId,
+            } as any);
+        } catch (err) {
+            this.logger.warn(
+                `emitSystemEvent(${eventType}) failed for POV ${povId}: ${
+                    (err as any)?.message || err
+                }`
+            );
+        }
+    }
 
     // ─── Voucher prefix ─────────────────────────────────────────────────
 
@@ -371,6 +410,13 @@ export class PoVendorService {
         this.logger.log(
             `POV created: ${header._id} (${voucher_no}) against PO ${po.voucher_no}`
         );
+        await this.emitSystemEvent(
+            companyId,
+            header._id.toString(),
+            ENUM_TRACKING_EVENT_TYPE.POV_CREATED,
+            createdBy,
+            `Created from PO ${po.voucher_no}`
+        );
         return this.povRepository.findOneById(header._id.toString());
     }
 
@@ -429,10 +475,15 @@ export class PoVendorService {
 
     async update(
         row: PoVendorDoc,
-        data: PoVendorUpdateRequestDto
+        data: PoVendorUpdateRequestDto,
+        userId?: string
     ): Promise<PoVendorDoc> {
         const companyId = row.company_id.toString();
         const fromStatus = row.status;
+        const deliveryChanged =
+            (data as any).delivery_address_id !== undefined ||
+            (data as any).delivery_address !== undefined;
+        const linesChanged = Array.isArray((data as any).lines);
 
         // ── Edit lock per status (POV plan §11) ─────────────────────────
         const draftEditable = new Set([
@@ -529,11 +580,24 @@ export class PoVendorService {
                 companyId,
                 row._id.toString(),
                 row.purchase_order_id.toString(),
+                (row as any).vendor_id?.toString(),
                 lines
             );
         }
 
         this.logger.log(`POV updated: ${row._id}`);
+        if ((deliveryChanged || linesChanged) && userId) {
+            const summaryBits: string[] = [];
+            if (deliveryChanged) summaryBits.push('delivery address');
+            if (linesChanged) summaryBits.push('lines');
+            await this.emitSystemEvent(
+                companyId,
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+                userId,
+                `Updated: ${summaryBits.join(', ')}`
+            );
+        }
         return this.povRepository.findOneById(row._id.toString());
     }
 
@@ -541,6 +605,7 @@ export class PoVendorService {
         companyId: string,
         povId: string,
         purchaseOrderId: string,
+        povVendorId: string | undefined,
         lines: any[]
     ): Promise<void> {
         // Recompute pending excluding this POV (so editing its own qty
@@ -567,6 +632,15 @@ export class PoVendorService {
             if (!poLine) {
                 throw new BadRequestException(
                     `PO line ${ln.purchase_order_line_id} does not belong to this PO.`
+                );
+            }
+            if (
+                povVendorId &&
+                poLine.vendor_id &&
+                poLine.vendor_id.toString() !== povVendorId
+            ) {
+                throw new BadRequestException(
+                    `PO line ${ln.purchase_order_line_id} belongs to a different vendor and cannot be added to this POV.`
                 );
             }
             const req = num(ln.ordered_qty);
@@ -633,7 +707,8 @@ export class PoVendorService {
      */
     async dispatch(
         row: PoVendorDoc,
-        data: PoVendorDispatchRequestDto
+        data: PoVendorDispatchRequestDto,
+        userId?: string
     ): Promise<PoVendorDoc> {
         if (row.status !== ENUM_PO_VENDOR_STATUS.DRAFT) {
             throw new BadRequestException(
@@ -706,6 +781,23 @@ export class PoVendorService {
 
         await this.povRepository.save(row);
         this.logger.log(`POV dispatched: ${row._id}`);
+        if (userId) {
+            const transportBits: string[] = [];
+            if (data.lr_no) transportBits.push(`LR# ${data.lr_no}`);
+            if (data.vehicle_no) transportBits.push(data.vehicle_no);
+            if (data.transporter_name)
+                transportBits.push(data.transporter_name);
+            const summary =
+                `Dispatched on ${data.dispatch_date}` +
+                (transportBits.length ? ` · ${transportBits.join(' · ')}` : '');
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_DISPATCHED,
+                userId,
+                summary
+            );
+        }
         return this.povRepository.findOneById(row._id.toString());
     }
 
@@ -720,9 +812,7 @@ export class PoVendorService {
     async receive(
         row: PoVendorDoc,
         data: PoVendorReceiveRequestDto,
-        // createdBy retained for signature compat with controller; unused.
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        _createdBy: string
+        userId: string
     ): Promise<{ parent: PoVendorDoc }> {
         if (row.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED) {
             throw new BadRequestException(
@@ -782,6 +872,16 @@ export class PoVendorService {
         await this.povRepository.save(row);
         this.logger.log(`POV closed (received): ${row._id}`);
 
+        if (userId) {
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_RECEIVED,
+                userId,
+                `Received on ${data.actual_arrival_date}`
+            );
+        }
+
         const parent = await this.povRepository.findOneById(
             row._id.toString()
         );
@@ -798,7 +898,8 @@ export class PoVendorService {
      */
     async cancel(
         row: PoVendorDoc,
-        reason?: string
+        reason?: string,
+        userId?: string
     ): Promise<PoVendorDoc> {
         if (
             row.status !== ENUM_PO_VENDOR_STATUS.DRAFT &&
@@ -815,6 +916,15 @@ export class PoVendorService {
         }
         await this.povRepository.save(row);
         this.logger.log(`POV cancelled: ${row._id}`);
+        if (userId) {
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_CANCELLED,
+                userId,
+                reason ? `Cancelled: ${reason}` : 'Cancelled'
+            );
+        }
         return this.povRepository.findOneById(row._id.toString());
     }
 

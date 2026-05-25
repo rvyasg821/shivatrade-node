@@ -12,6 +12,7 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 import { LocationRepositoryModule } from '@modules/location/repository/location.repository.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { VoucherModule } from '@common/voucher/voucher.module';
+import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
 
 /**
  * POV (PO Vendor) module — Phase 5: admin controller wired in.
@@ -27,6 +28,7 @@ import { VoucherModule } from '@common/voucher/voucher.module';
         LocationRepositoryModule,
         CurrencyModule,
         VoucherModule,
+        TrackingEventRepositoryModule,
     ],
     providers: [PoVendorService, PoCoverageService],
     exports: [PoVendorRepositoryModule, PoVendorService, PoCoverageService],

@@ -9,7 +9,10 @@ import { PoVendorTrackingEventRepository } from '../repository/repositories/po-v
 import { PoVendorTrackingEventDoc } from '../repository/entities/po-vendor-tracking-event.entity';
 import { TrackingEventCreateRequestDto } from '../dtos/request/tracking-event.create.request.dto';
 import { TrackingEventGetResponseDto } from '../dtos/response/tracking-event.get.response.dto';
-import { ENUM_TRACKING_EVENT_TYPE } from '../enums/tracking-event.enum';
+import {
+    ENUM_TRACKING_EVENT_TYPE,
+    SYSTEM_TRACKING_EVENT_TYPES,
+} from '../enums/tracking-event.enum';
 
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
@@ -34,6 +37,11 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
     [ENUM_TRACKING_EVENT_TYPE.DELAY_REPORTED]: 'Delay Reported',
     [ENUM_TRACKING_EVENT_TYPE.DAMAGE_REPORTED]: 'Damage Reported',
     [ENUM_TRACKING_EVENT_TYPE.OTHER]: 'Other',
+    [ENUM_TRACKING_EVENT_TYPE.POV_CREATED]: 'POV Created',
+    [ENUM_TRACKING_EVENT_TYPE.POV_DISPATCHED]: 'POV Dispatched',
+    [ENUM_TRACKING_EVENT_TYPE.POV_RECEIVED]: 'POV Received',
+    [ENUM_TRACKING_EVENT_TYPE.POV_CANCELLED]: 'POV Cancelled',
+    [ENUM_TRACKING_EVENT_TYPE.POV_UPDATED]: 'POV Updated',
 };
 
 @Injectable()
@@ -85,6 +93,12 @@ export class TrackingEventService {
         ) {
             throw new BadRequestException(
                 'event_type_other is required when event_type = other.'
+            );
+        }
+
+        if (SYSTEM_TRACKING_EVENT_TYPES.includes(data.event_type)) {
+            throw new BadRequestException(
+                'System lifecycle event types are emitted automatically and cannot be created manually.'
             );
         }
 
@@ -220,6 +234,11 @@ export class TrackingEventService {
             company_id: companyId,
         } as any);
         if (!row) throw new NotFoundException('Tracking event not found');
+        if (row.is_system) {
+            throw new BadRequestException(
+                'System lifecycle events cannot be retracted.'
+            );
+        }
         if (row.soft_delete) {
             // Already retracted — return as-is. Don't overwrite the
             // original deleter / reason (would destroy the audit trail).
@@ -319,6 +338,7 @@ export class TrackingEventService {
                 notes: r.notes || undefined,
                 attachment_url: r.attachment_url || undefined,
                 is_post_closure: !!r.is_post_closure,
+                is_system: !!r.is_system,
                 created_by: r.created_by?.toString(),
                 created_by_name: r.created_by
                     ? userNameMap.get(r.created_by.toString())

@@ -130,11 +130,12 @@ export class PoVendorAdminController {
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
+        @AuthJwtPayload('user') userId: string,
         @Param('id') id: string,
         @Body() body: PoVendorUpdateRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
         const row = await this.povService.findOneById(id);
-        const updated = await this.povService.update(row, body);
+        const updated = await this.povService.update(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
     }
 
@@ -144,11 +145,12 @@ export class PoVendorAdminController {
     @AuthJwtAccessProtected()
     @Post('/:id/dispatch')
     async dispatch(
+        @AuthJwtPayload('user') userId: string,
         @Param('id') id: string,
         @Body() body: PoVendorDispatchRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
         const row = await this.povService.findOneById(id);
-        const updated = await this.povService.dispatch(row, body);
+        const updated = await this.povService.dispatch(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
     }
 
@@ -181,11 +183,12 @@ export class PoVendorAdminController {
     @AuthJwtAccessProtected()
     @Post('/:id/cancel')
     async cancel(
+        @AuthJwtPayload('user') userId: string,
         @Param('id') id: string,
         @Body() body: PoVendorCancelRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
         const row = await this.povService.findOneById(id);
-        const updated = await this.povService.cancel(row, body?.reason);
+        const updated = await this.povService.cancel(row, body?.reason, userId);
         return { data: await this.povService.mapGet(updated) };
     }
 

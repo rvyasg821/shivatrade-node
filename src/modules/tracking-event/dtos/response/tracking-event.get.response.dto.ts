@@ -25,6 +25,10 @@ export class TrackingEventGetResponseDto {
     @ApiProperty({ required: false, type: String }) attachment_url?: string;
 
     @ApiProperty({ required: true, type: Boolean }) is_post_closure: boolean;
+    /** True for auto-generated lifecycle events (POV created/dispatched/
+     *  received/cancelled/updated). FE shows a "system" badge and hides
+     *  the retract icon on these rows. */
+    @ApiProperty({ required: true, type: Boolean }) is_system: boolean;
 
     @ApiProperty({ required: true, type: String }) created_by: string;
     @ApiProperty({ required: false, type: String }) created_by_name?: string;
