@@ -596,8 +596,10 @@ export class QuotationService {
 
             ln.taxable = String(split.taxable);
 
-            // Per-line product rebates: percent → taxable × pct/100;
-            // fixed → flat pct value applied once per line.
+            // Sequential costing per spec:
+            //   Taxable → − Rebates → + Expenses → + Margin → + GST
+            // Each % step applies to the running balance from the previous
+            // step, NOT to the gross Taxable.
             let lineRebatesAmt = 0;
             for (const r of (ln as any).product_rebates_snapshot || []) {
                 lineRebatesAmt +=
@@ -605,27 +607,26 @@ export class QuotationService {
                         ? num(r.pct)
                         : (split.taxable * num(r.pct)) / 100;
             }
-            // Per-line product expenses: percent → taxable × value/100;
-            // amount → flat value applied once per line.
+            const afterRebates = split.taxable - lineRebatesAmt;
+            // Expense % applies on the post-rebate balance.
             let lineExpensesAmt = 0;
             for (const e of (ln as any).product_expenses_snapshot || []) {
                 lineExpensesAmt +=
                     e.type === 'percent'
-                        ? (split.taxable * num(e.value)) / 100
+                        ? (afterRebates * num(e.value)) / 100
                         : num(e.value);
             }
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
             (ln as any).product_expenses_amount = String(round2(lineExpensesAmt));
 
-            // Per-line margin: applied to the line's net-of-rebates base.
+            // Margin % applies on the post-expense balance.
+            const afterExpenses = afterRebates + lineExpensesAmt;
             const lineMarginPct = num((ln as any).margin_pct);
-            const lineMarginBase = split.taxable + lineExpensesAmt - lineRebatesAmt;
-            const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
+            const lineMarginAmt = afterExpenses * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
 
-            // Net Total per spec p.24: ((Price + Expenses) − Rebates) + Margin.
-            const lineNetTotal =
-                split.taxable + lineExpensesAmt - lineRebatesAmt + lineMarginAmt;
+            // GST applies on the post-margin balance.
+            const lineNetTotal = afterExpenses + lineMarginAmt;
             const taxPct = num(ln.tax_pct);
             const totalTax = round2((lineNetTotal * taxPct) / 100);
             let cgst = 0,
