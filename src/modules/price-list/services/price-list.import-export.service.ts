@@ -404,21 +404,9 @@ export class PriceListImportExportService {
                 }
             }
 
-            // ── Product must belong to the vendor ──
-            // Only enforced on the global import. The vendor-scoped import
-            // (vendor detail page) matches purely on product_code — category
-            // membership is not checked.
-            if (!scopedVendorId && vendorId && productId) {
-                const vendorCats = vendorCategorySet.get(vendorId);
-                if (vendorCats && vendorCats.size > 0) {
-                    const prodCat = productCategoryById.get(productId);
-                    if (!prodCat || !vendorCats.has(prodCat)) {
-                        errors.push(
-                            `Product "${productCode}" is not available for vendor "${vendorCode}" — it is not in the vendor's categories — row skipped`,
-                        );
-                    }
-                }
-            }
+            // Category membership is no longer enforced — both the global
+            // and vendor-scoped imports accept any (vendor, product) pair
+            // that exists for this company.
 
             // ── Currency — blank or unknown falls back to the default ──
             let currencyId: string | undefined;
