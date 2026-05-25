@@ -42,7 +42,7 @@ export class PurchaseOrderPublicController {
                 'This Purchase Order is no longer available'
             );
         }
-        return { data: await this.poService.mapGet(row) };
+        return { data: await this.poService.mapPublicPreview(row) };
     }
 
     /** Public PDF download — valid while a shareable token exists and the

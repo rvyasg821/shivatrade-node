@@ -6,6 +6,7 @@ import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
+import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
 
 /**
@@ -31,7 +32,8 @@ export class PoPdfService {
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly vendorRepository: VendorRepository,
-        private readonly vendorAddressRepository: VendorAddressRepository
+        private readonly vendorAddressRepository: VendorAddressRepository,
+        private readonly customerAddressRepository: CustomerAddressRepository
     ) {}
 
     async render(
@@ -191,6 +193,42 @@ export class PoPdfService {
             });
         }
 
+        // Customer (Buyer on the PDF): address comes from
+        // customer_address_id if present, otherwise the default/first
+        // address on the customer record.
+        let customerAddress: string | undefined;
+        if (po.customer_id) {
+            try {
+                const addr = po.customer_address_id
+                    ? await this.customerAddressRepository.findOne({
+                          _id: po.customer_address_id,
+                      } as any)
+                    : null;
+                const fallbacks = !addr
+                    ? await this.customerAddressRepository.findAll({
+                          customer_id: po.customer_id,
+                          soft_delete: false,
+                      } as any)
+                    : [];
+                const a: any =
+                    addr ||
+                    (fallbacks || []).find((x: any) => x.is_default) ||
+                    (fallbacks || [])[0];
+                if (a) {
+                    customerAddress = joinAddress({
+                        address_line1: a.address_line1,
+                        address_line2: a.address_line2,
+                        city: a.city,
+                        state: a.state,
+                        postcode: a.postcode,
+                        country: a.country,
+                    });
+                }
+            } catch {
+                // ignore — graceful degrade to name-only block
+            }
+        }
+
         // Grand total in INR: sum of line totals (they are stored in INR);
         // grand_total on the entity is in customer currency, so derive an
         // INR figure for the vendor-facing PDF.
@@ -212,6 +250,13 @@ export class PoPdfService {
                 signatory: company?.authorised_signatory_name || '',
             },
             vendors,
+            customer: {
+                name: po.customer_name || '',
+                contact_name: po.customer_contact_name || '',
+                email: po.customer_contact_email || '',
+                phone: po.customer_contact_phone || '',
+                address: customerAddress,
+            },
             inrTotal: linesInrTotal,
         };
     }
@@ -238,6 +283,13 @@ interface PoPdfContext {
         signatory?: string;
     };
     vendors: VendorBlock[];
+    customer: {
+        name: string;
+        contact_name?: string;
+        email?: string;
+        phone?: string;
+        address?: string;
+    };
     inrTotal: number;
 }
 
@@ -311,7 +363,7 @@ function buildFooterTemplate(ctx: PoPdfContext): string {
 }
 
 function buildPoHtml(ctx: PoPdfContext): string {
-    const { po, company, vendors, inrTotal } = ctx;
+    const { po, company, vendors, customer, inrTotal } = ctx;
     const lines = po.lines || [];
     // PO line totals are stored in INR; convert to the PO's customer
     // currency so the vendor sees USD/EUR/etc. like the PFI PDF.
@@ -526,14 +578,22 @@ function buildPoHtml(ctx: PoPdfContext): string {
     </div>
   </div>
 
-  <div class="party-grid" style="grid-template-columns: 1fr 1fr">
+  <div class="party-grid">
     <div>
-      <div class="label">Buyer</div>
+      <div class="label">Seller</div>
       <div class="party-name">${esc(company.name || '-')}</div>
       ${company.address ? `<div class="party-line" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
       ${company.phone ? `<div class="party-line">${esc(company.phone)}</div>` : ''}
       ${company.email ? `<div class="party-line">${esc(company.email)}</div>` : ''}
       ${company.gstin ? `<div class="party-line muted">GSTIN: ${esc(company.gstin)}</div>` : ''}
+    </div>
+    <div>
+      <div class="label">Buyer</div>
+      <div class="party-name">${esc(customer.name || '-')}</div>
+      ${customer.contact_name ? `<div class="party-line">${esc(customer.contact_name)}</div>` : ''}
+      ${customer.address ? `<div class="party-line" style="white-space:pre-line">${esc(customer.address)}</div>` : ''}
+      ${customer.phone ? `<div class="party-line">${esc(customer.phone)}</div>` : ''}
+      ${customer.email ? `<div class="party-line">${esc(customer.email)}</div>` : ''}
     </div>
     <div>
       <div class="label">PO Details</div>

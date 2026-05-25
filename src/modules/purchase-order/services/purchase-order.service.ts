@@ -22,6 +22,7 @@ import { VendorContactRepository } from '@modules/vendor/repository/repositories
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
+import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
@@ -61,6 +62,7 @@ export class PurchaseOrderService {
         private readonly productRepository: ProductRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerContactRepository: CustomerContactRepository,
+        private readonly customerAddressRepository: CustomerAddressRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly locationRepository: LocationRepository,
@@ -1748,6 +1750,41 @@ export class PurchaseOrderService {
             l.purchase_order_id.toString()
         );
 
+        // Source PFI / Quotation lines hold the rebate / expense / margin
+        // snapshots — PO lines don't store them. Fetch in one shot so the
+        // line DTOs can expose them for the FE form.
+        const sourcePfiLineIds: string[] = Array.from(
+            new Set(
+                (allLines as any[])
+                    .map((l: any) => l.source_pfi_line_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const sourceQuotationLineIds: string[] = Array.from(
+            new Set(
+                (allLines as any[])
+                    .map((l: any) => l.source_quotation_line_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const [sourcePfiLines, sourceQuotationLines] = await Promise.all([
+            sourcePfiLineIds.length
+                ? this.pfiLineRepository.findAll({
+                      _id: { $in: sourcePfiLineIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            sourceQuotationLineIds.length
+                ? this.quotationLineRepository.findAll({
+                      _id: { $in: sourceQuotationLineIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const sourceLineById = new Map<string, any>();
+        for (const sl of sourcePfiLines as any[])
+            sourceLineById.set(sl._id.toString(), sl);
+        for (const sl of sourceQuotationLines as any[])
+            sourceLineById.set(sl._id.toString(), sl);
+
         return rows.map(r => {
             const pid = r._id.toString();
             const vendor: any = vendorMap.get(r.vendor_id?.toString());
@@ -1814,8 +1851,14 @@ export class PurchaseOrderService {
                 updatedAt: r.updatedAt,
                 lines: (linesByPo.get(pid) || [])
                     .sort((a: any, b: any) => (a.seq || 0) - (b.seq || 0))
-                    .map(
-                        (l: any): PurchaseOrderLineResponseDto => ({
+                    .map((l: any): PurchaseOrderLineResponseDto => {
+                        const srcId =
+                            l.source_pfi_line_id?.toString() ||
+                            l.source_quotation_line_id?.toString();
+                        const src: any = srcId
+                            ? sourceLineById.get(srcId)
+                            : null;
+                        return {
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
                             product_name: (
@@ -1847,8 +1890,28 @@ export class PurchaseOrderService {
                             taxable: l.taxable,
                             line_total: l.line_total,
                             seq: l.seq,
-                        })
-                    ),
+                            margin_pct:
+                                src?.margin_pct != null
+                                    ? String(src.margin_pct)
+                                    : '0',
+                            product_rebates_snapshot:
+                                src?.product_rebates_snapshot || [],
+                            product_expenses_snapshot:
+                                src?.product_expenses_snapshot || [],
+                            product_rebates_amount:
+                                src?.product_rebates_amount != null
+                                    ? String(src.product_rebates_amount)
+                                    : '0',
+                            product_expenses_amount:
+                                src?.product_expenses_amount != null
+                                    ? String(src.product_expenses_amount)
+                                    : '0',
+                            margin_amount:
+                                src?.margin_amount != null
+                                    ? String(src.margin_amount)
+                                    : '0',
+                        };
+                    }),
             };
         });
     }
@@ -1858,6 +1921,102 @@ export class PurchaseOrderService {
     ): Promise<PurchaseOrderGetResponseDto> {
         const [mapped] = await this.mapList([row]);
         return mapped;
+    }
+
+    /**
+     * Enriches `mapGet` with seller (company) and buyer (customer) party
+     * blocks so the customer-facing preview / public token view can render
+     * Seller / Buyer the same way the PFI public preview does.
+     */
+    async mapPublicPreview(row: PurchaseOrderDoc): Promise<any> {
+        const base: any = await this.mapGet(row);
+
+        const joinAddr = (a: any) =>
+            [
+                a?.address_line1,
+                a?.address_line2,
+                [a?.city, a?.state, a?.postcode].filter(Boolean).join(', '),
+                a?.country,
+            ]
+                .filter(Boolean)
+                .join('\n') || undefined;
+
+        // ── Seller (company) ──
+        let company_name: string | undefined;
+        let company_email: string | undefined;
+        let company_phone: string | undefined;
+        let company_address: string | undefined;
+        let company_gstin: string | undefined;
+        try {
+            const company: any = await this.companyService.findOneById(
+                row.company_id.toString()
+            );
+            company_name = company?.company_name;
+            company_email = company?.email;
+            const ccc: any = company?.country_code;
+            company_phone = company?.mobile
+                ? ccc?.formatted ||
+                  `${ccc?.dial_code || '+91'} ${company.mobile}`
+                : undefined;
+            const addresses =
+                await this.companyAddressRepository.findByCompanyId(
+                    row.company_id.toString()
+                );
+            const corp =
+                (addresses || []).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a: any) => a.type === 'corporate') ||
+                (addresses || []).find((a: any) => a.is_default) ||
+                (addresses || [])[0];
+            if (corp) {
+                company_address = joinAddr(corp);
+                company_gstin = (corp as any).gstin || undefined;
+            }
+            if (!company_gstin && company?.tax_number) {
+                company_gstin = company.tax_number;
+            }
+        } catch {
+            // graceful
+        }
+
+        // ── Buyer (customer) address ──
+        let customer_address: string | undefined;
+        const customerAddressId = (row as any).customer_address_id?.toString();
+        if (customerAddressId) {
+            try {
+                const a: any = await this.customerAddressRepository.findOne({
+                    _id: customerAddressId,
+                } as any);
+                if (a) customer_address = joinAddr(a);
+            } catch {
+                /* ignore */
+            }
+        }
+        if (!customer_address && (row as any).customer_id) {
+            try {
+                const list = await this.customerAddressRepository.findAll({
+                    customer_id: (row as any).customer_id.toString(),
+                    soft_delete: false,
+                } as any);
+                const a: any =
+                    (list || []).find((x: any) => x.is_default) ||
+                    (list || [])[0];
+                if (a) customer_address = joinAddr(a);
+            } catch {
+                /* ignore */
+            }
+        }
+
+        return {
+            ...base,
+            company_name,
+            company_email,
+            company_phone,
+            company_address,
+            company_gstin,
+            customer_address,
+        };
     }
 }
 
