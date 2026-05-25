@@ -51,6 +51,13 @@ export class PoVendorTrackingEventEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'boolean', default: false })
     is_post_closure: boolean;
 
+    /** True for auto-generated lifecycle events (pov_created, pov_dispatched,
+     *  pov_received, pov_cancelled, pov_updated). UI badges these as "system"
+     *  and hides the retract icon — users cannot delete system events. */
+    @Index()
+    @Column({ type: 'boolean', default: false })
+    is_system: boolean;
+
     /** Ops user who logged the event. */
     @Index()
     @Column({ type: 'uuid', nullable: false })
