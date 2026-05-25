@@ -1,12 +1,26 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { Injectable } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
 import { PfiPublicResponseDto } from '../dtos/response/pfi.public.response.dto';
 
+// Embed the ShivaTrade logo once at module load. Puppeteer renders the
+// HTML in a fresh chrome context so external file:// URLs are flaky —
+// a data URI is the most reliable transport.
+const LOGO_DATA_URI: string = (() => {
+    try {
+        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
+        const buf = fs.readFileSync(p);
+        return `data:image/png;base64,${buf.toString('base64')}`;
+    } catch {
+        return '';
+    }
+})();
+
 /**
- * Build the HTML for a PFI PDF from its sanitized public DTO and hand it
- * to the generic PdfService. The HTML mirrors the public web view's
- * structure but is fully self-contained (inline styles) so Puppeteer can
- * render it without external assets.
+ * Renders the PFI PDF using the same neutral / professional layout as the
+ * public web preview (white doc on light-grey background, hairline
+ * borders, 3-column party grid, only Grand Total in totals).
  */
 @Injectable()
 export class PfiPdfService {
@@ -17,10 +31,10 @@ export class PfiPdfService {
         return this.pdfService.generateFromHtml(html, {
             format: 'A4',
             margin: {
-                top: '22mm',
-                right: '15mm',
-                bottom: '20mm',
-                left: '15mm',
+                top: '18mm',
+                right: '12mm',
+                bottom: '18mm',
+                left: '12mm',
             },
             displayHeaderFooter: true,
             headerTemplate: buildHeaderTemplate(p),
@@ -28,7 +42,6 @@ export class PfiPdfService {
         });
     }
 
-    /** Derive the download filename from the voucher number (slashes → hyphens). */
     buildFilename(p: PfiPublicResponseDto): string {
         const safe = (p.voucher_no || 'PFI')
             .replace(/[\\/]+/g, '-')
@@ -37,7 +50,7 @@ export class PfiPdfService {
     }
 }
 
-// ─── HTML builders ──────────────────────────────────────────────────────
+// ─── helpers ────────────────────────────────────────────────────────────
 
 const esc = (v: any): string =>
     v == null
@@ -63,26 +76,30 @@ const sym = (p: PfiPublicResponseDto): string =>
 const money = (p: PfiPublicResponseDto, v: any): string =>
     `${esc(sym(p))}${fmt(v)}`;
 
+const dateOnly = (v?: string | null): string =>
+    v ? esc(String(v).slice(0, 10)) : '';
+
 function buildHeaderTemplate(p: PfiPublicResponseDto): string {
-    // Puppeteer headerTemplate is rendered in its own little iframe per page —
-    // styles must be inline. Keep it minimal: company name + voucher.
     return `
-    <div style="font-size:9px;width:100%;padding:0 15mm;color:#444;
-                border-bottom:1px solid #ccc;display:flex;
-                justify-content:space-between;align-items:center;">
+    <div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;
+                display:flex;justify-content:space-between;align-items:center;">
       <span>${esc(p.company_name || '')}</span>
-      <span><strong>PROFORMA INVOICE</strong> &middot; ${esc(p.voucher_no || '')}</span>
+      <span><strong style="color:#1f2937">PROFORMA INVOICE</strong> · ${esc(p.voucher_no || '')}</span>
     </div>`;
 }
 
 function buildFooterTemplate(p: PfiPublicResponseDto): string {
     return `
-    <div style="font-size:8px;width:100%;padding:0 15mm;color:#555;
-                border-top:1px solid #ccc;display:flex;
-                justify-content:space-between;align-items:center;">
+    <div style="font-size:8px;width:100%;padding:0 12mm;color:#6b7280;
+                display:flex;justify-content:space-between;align-items:center;">
       <span>${esc(p.voucher_no || '')}</span>
-      <span class="pageNumber"></span>/<span class="totalPages"></span>
+      <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
     </div>`;
+}
+
+function kv(label: string, value: any, full = false): string {
+    if (value == null || value === '') return '';
+    return `<div${full ? ' class="kv-full"' : ''}><span class="k">${esc(label)}:</span> <span class="v">${esc(value)}</span></div>`;
 }
 
 function buildPfiHtml(p: PfiPublicResponseDto): string {
@@ -92,10 +109,10 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
               .map(
                   (l, i) => `
         <tr>
-          <td>${i + 1}</td>
+          <td class="muted">${i + 1}</td>
           <td>
-            <div style="font-weight:600">${esc(l.product_name || '-')}</div>
-            ${l.description ? `<div style="color:#666;font-size:10px">${esc(l.description)}</div>` : ''}
+            <div class="fw">${esc(l.product_name || '-')}</div>
+            ${l.description ? `<div class="muted sm" style="white-space:pre-line">${esc(l.description)}</div>` : ''}
           </td>
           <td class="num">${esc(l.qty || '-')}</td>
           <td>${esc(l.unit || '-')}</td>
@@ -103,50 +120,56 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
           <td class="num">${fmt(l.net_weight_kg || 0)}</td>
           <td class="num">${fmt(l.gross_weight_kg || 0)}</td>
           <td class="num">${esc(String(l.package_count ?? 0))}</td>
-          <td class="num" style="font-weight:600">${money(p, l.line_total)}</td>
+          <td class="num fw">${money(p, l.line_total)}</td>
         </tr>`
               )
               .join('')
-        : `<tr><td colspan="10" style="text-align:center;color:#999;padding:14px">No line items.</td></tr>`;
+        : `<tr><td colspan="9" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
 
-    const shippingBlock =
-        p.port_of_loading || p.port_of_discharge || p.mode_of_shipment
-            ? `
-      <div class="block">
-        <div class="block-title">Shipping</div>
-        <div class="grid">
-          ${kv('Port of Loading', p.port_of_loading)}
-          ${kv('Port of Discharge', p.port_of_discharge)}
-          ${kv('Final Destination', p.final_destination)}
-          ${kv('Mode', p.mode_of_shipment)}
-          ${kv('Country of Origin', p.country_of_origin)}
-          ${kv('Country of Destination', p.country_of_final_destination)}
-          ${kv('Container', p.container_details)}
-          ${kv('Est. Shipment', (p.est_shipment_date || '').slice(0, 10))}
-          ${kv('Est. Delivery', (p.est_delivery_date || '').slice(0, 10))}
-        </div>
+    const shippingRows: Array<[string, any]> = [
+        ['Port of Loading', p.port_of_loading],
+        ['Port of Discharge', p.port_of_discharge],
+        ['Final Destination', p.final_destination],
+        ['Mode', p.mode_of_shipment],
+        ['Country of Origin', p.country_of_origin],
+        ['Country of Destination', p.country_of_final_destination],
+        ['Container', p.container_details],
+        ['Est. Shipment', dateOnly(p.est_shipment_date as any)],
+        ['Est. Delivery', dateOnly(p.est_delivery_date as any)],
+    ].filter((r) => !!r[1]) as Array<[string, any]>;
+
+    const shippingBlock = shippingRows.length
+        ? `
+      <div class="section">
+        <div class="label">Shipping</div>
+        <div class="kv-grid">${shippingRows.map(([k, v]) => kv(k, v)).join('')}</div>
       </div>`
-            : '';
+        : '';
 
-    const packingBlock =
-        (p.total_packages || 0) > 0 || p.gross_weight_kg || p.packing_marks
-            ? `
-      <div class="block">
-        <div class="block-title">Packing</div>
-        <div class="grid">
+    const hasPacking =
+        (p.total_packages || 0) > 0 ||
+        !!p.net_weight_kg ||
+        !!p.gross_weight_kg ||
+        !!p.packing_marks;
+
+    const packingBlock = hasPacking
+        ? `
+      <div class="section">
+        <div class="label">Packing</div>
+        <div class="kv-grid">
           ${kv('Total Packages', `${p.total_packages || 0}${p.packing_type ? ` × ${esc(p.packing_type)}` : ''}`)}
-          ${kv('Net Weight', `${fmt(p.net_weight_kg || 0)} kg`)}
-          ${kv('Gross Weight', `${fmt(p.gross_weight_kg || 0)} kg`)}
+          ${kv('Net Wt', `${fmt(p.net_weight_kg || 0)} kg`)}
+          ${kv('Gross Wt', `${fmt(p.gross_weight_kg || 0)} kg`)}
           ${kv('Marks', p.packing_marks)}
         </div>
       </div>`
-            : '';
+        : '';
 
     const bankBlock = p.bank
         ? `
-      <div class="block">
-        <div class="block-title">Beneficiary Bank Details</div>
-        <div class="grid">
+      <div class="section">
+        <div class="label">Beneficiary Bank Details</div>
+        <div class="kv-grid">
           ${kv('Beneficiary', p.bank.beneficiary_name)}
           ${kv('Bank', p.bank.bank_name)}
           ${kv('Account No.', p.bank.account_number)}
@@ -159,7 +182,7 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
               p.bank.branch_name
                   ? kv(
                         'Branch',
-                        `${esc(p.bank.branch_name)}${p.bank.branch_address ? ', ' + esc(p.bank.branch_address) : ''}`,
+                        `${p.bank.branch_name}${p.bank.branch_address ? ', ' + p.bank.branch_address : ''}`,
                         true
                     )
                   : ''
@@ -168,13 +191,26 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
       </div>`
         : '';
 
+    const norm = (s?: string | null) =>
+        (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const sameAsBuyer =
+        !!(p.consignee_name || p.consignee_address) &&
+        norm(p.consignee_name) === norm(p.customer_name) &&
+        norm(p.consignee_address) === norm(p.customer_address);
+
     const consigneeBlock =
         p.consignee_name || p.consignee_address
-            ? `
-      <div class="party">
-        <div class="party-label">Consignee</div>
+            ? sameAsBuyer
+                ? `
+      <div class="section">
+        <div class="label">Consignee</div>
+        <div class="party-line muted"><em>Same as Buyer</em></div>
+      </div>`
+                : `
+      <div class="section">
+        <div class="label">Consignee</div>
         <div class="party-name">${esc(p.consignee_name || '-')}</div>
-        ${p.consignee_address ? `<div class="party-addr">${esc(p.consignee_address).replace(/\n/g, '<br/>')}</div>` : ''}
+        ${p.consignee_address ? `<div class="party-line" style="white-space:pre-line">${esc(p.consignee_address)}</div>` : ''}
       </div>`
             : '';
 
@@ -187,223 +223,250 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    font-size: 11px;
-    color: #222;
+    font-size: 10.5px;
+    color: #1f2937;
     margin: 0;
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
-  h1, h2, h3, h4 { margin: 0; }
-  .title-row {
+  .doc { width: 100%; }
+  .qd-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    border-bottom: 2px solid #333;
-    padding-bottom: 8px;
-    margin-bottom: 10px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 14px;
+    margin-bottom: 18px;
   }
-  .title-row .doc-title {
-    text-align: right;
-  }
-  .title-row .doc-title h2 {
-    font-size: 18px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .parties {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 12px;
-  }
-  .party { flex: 1; }
-  .party-label { color: #777; font-size: 10px; text-transform: uppercase; }
-  .party-name { font-weight: 600; font-size: 12px; }
-  .party-addr { color: #555; font-size: 10px; white-space: pre-line; }
-  .meta {
-    text-align: right;
-    font-size: 10px;
-    color: #555;
-  }
-  .block {
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 8px 10px;
-    margin-bottom: 10px;
-    background: #fafafa;
-  }
-  .block-title {
-    font-size: 10px;
+  .qd-title {
+    font-size: 16px;
     font-weight: 600;
+    letter-spacing: 2px;
+    margin: 0;
+    color: #1f2937;
     text-transform: uppercase;
-    color: #555;
-    margin-bottom: 4px;
   }
-  .grid {
+  .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
+  .status-badge {
+    display: inline-block;
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #e5e7eb;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: capitalize;
+    letter-spacing: 0.2px;
+    margin-top: 5px;
+  }
+  .company-name { font-weight: 600; color: #1f2937; font-size: 11.5px; margin-top: 4px; }
+  .party-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 4px 12px;
-    font-size: 10.5px;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 22px;
+    margin-bottom: 18px;
   }
-  .grid .kv-full { grid-column: 1 / -1; }
-  .grid .k { color: #777; }
-  table.lines {
+  .label {
+    text-transform: uppercase;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 8.5px;
+    letter-spacing: 0.6px;
+    margin-bottom: 5px;
+  }
+  .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
+  .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
+  .muted, .party-muted { color: #6b7280; }
+  .sm { font-size: 9.5px; }
+  .fw { font-weight: 600; color: #1f2937; }
+  table.items {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 12px;
+    margin: 6px 0 0;
   }
-  table.lines th {
-    background: #eee;
-    border: 1px solid #ccc;
-    padding: 5px 6px;
-    font-size: 10.5px;
+  table.items thead th {
+    background: #f9fafb;
+    color: #4b5563;
+    font-weight: 600;
+    font-size: 8.5px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    border-top: 1px solid #e5e7eb;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 7px;
     text-align: left;
   }
-  table.lines td {
-    border: 1px solid #ddd;
-    padding: 5px 6px;
-    font-size: 10.5px;
+  table.items td {
+    border-bottom: 1px solid #f1f2f4;
+    padding: 8px 7px;
+    font-size: 10px;
     vertical-align: top;
     page-break-inside: avoid;
   }
-  table.lines td.num, table.lines th.num { text-align: right; }
+  table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
+  table.items th.num, table.items td.num { text-align: right; }
   .totals {
-    width: 50%;
+    width: 280px;
     margin-left: auto;
-    margin-bottom: 12px;
-    font-size: 11px;
+    margin-top: 14px;
+    margin-bottom: 4px;
   }
-  .totals .row {
+  .totals .row-grand {
     display: flex;
     justify-content: space-between;
-    padding: 2px 0;
-  }
-  .totals .row.grand {
-    border-top: 2px solid #333;
-    padding-top: 6px;
-    margin-top: 4px;
+    padding: 10px 0 4px;
+    border-top: 2px solid #1f2937;
     font-weight: 700;
-    font-size: 13px;
+    font-size: 12px;
+    color: #1f2937;
   }
-  .declaration, .notes {
-    border-top: 1px solid #ddd;
-    padding-top: 6px;
-    margin-top: 8px;
-    font-size: 10.5px;
+  .section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #e5e7eb;
+  }
+  .section .body {
+    font-size: 10px;
+    color: #4b5563;
+    line-height: 1.55;
     white-space: pre-line;
   }
-  .declaration .lbl, .notes .lbl {
-    color: #777;
-    text-transform: uppercase;
-    font-size: 9.5px;
-    margin-bottom: 2px;
+  .kv-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px 22px;
+    font-size: 9.8px;
+    color: #4b5563;
   }
+  .kv-grid .kv-full { grid-column: 1 / -1; }
+  .kv-grid .k { color: #6b7280; }
+  .kv-grid .v { color: #1f2937; font-weight: 600; }
   .signature {
-    margin-top: 30px;
+    margin-top: 26px;
     display: flex;
     justify-content: flex-end;
-    font-size: 10.5px;
+    font-size: 9.5px;
   }
   .signature .box {
-    width: 220px;
-    border-top: 1px solid #333;
+    width: 200px;
+    border-top: 1px solid #9ca3af;
     padding-top: 4px;
     text-align: center;
-    color: #555;
+    color: #6b7280;
+  }
+  .footer-note {
+    margin-top: 22px;
+    padding-top: 10px;
+    border-top: 1px solid #e5e7eb;
+    text-align: center;
+    color: #6b7280;
+    font-size: 9px;
   }
 </style>
 </head>
 <body>
+<div class="doc">
 
-  <div class="title-row">
+  <div class="qd-header">
     <div>
-      <h3>${esc(p.company_name || '')}</h3>
-      ${p.company_address ? `<div style="font-size:10px;color:#555;white-space:pre-line">${esc(p.company_address)}</div>` : ''}
-      <div style="font-size:10px;color:#555">
-        ${p.company_phone ? esc(p.company_phone) + ' &middot; ' : ''}${esc(p.company_email || '')}
-        ${p.company_iec ? ' &middot; IEC: ' + esc(p.company_iec) : ''}
+      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:34px;margin-bottom:8px;display:block" />` : ''}
+      <div class="company-name">${esc(p.company_name || '-')}</div>
+      ${p.company_address ? `<div class="party-line muted" style="white-space:pre-line">${esc(p.company_address)}</div>` : ''}
+      <div class="party-line muted">
+        ${p.company_phone ? esc(p.company_phone) + ' · ' : ''}${esc(p.company_email || '')}
+        ${p.company_iec ? ' · IEC: ' + esc(p.company_iec) : ''}
       </div>
     </div>
-    <div class="doc-title">
-      <h2>Proforma Invoice</h2>
-      <div style="font-weight:600">${esc(p.voucher_no || '')}</div>
-      <div class="meta">
-        Date: ${esc((p.pfi_date || '').slice(0, 10) || '-')}<br/>
-        ${p.valid_until ? `Valid Until: ${esc(p.valid_until.slice(0, 10))}<br/>` : ''}
-        Currency: ${esc(p.currency_code || '-')}
-      </div>
+    <div style="text-align:right">
+      <div class="qd-title">Proforma Invoice</div>
+      <div class="voucher">#${esc(p.voucher_no || '-')}</div>
+      ${p.status ? `<span class="status-badge">${esc(p.status)}</span>` : ''}
     </div>
   </div>
 
-  <div class="parties">
-    <div class="party">
-      <div class="party-label">Exporter</div>
+  <div class="party-grid">
+    <div>
+      <div class="label">Exporter</div>
       <div class="party-name">${esc(p.company_name || '-')}</div>
-      ${p.company_address ? `<div class="party-addr">${esc(p.company_address)}</div>` : ''}
+      ${p.company_address ? `<div class="party-line" style="white-space:pre-line">${esc(p.company_address)}</div>` : ''}
+      ${p.company_phone ? `<div class="party-line">${esc(p.company_phone)}</div>` : ''}
+      ${p.company_email ? `<div class="party-line">${esc(p.company_email)}</div>` : ''}
+      ${p.company_iec ? `<div class="party-line muted">IEC: ${esc(p.company_iec)}</div>` : ''}
     </div>
-    <div class="party">
-      <div class="party-label">Buyer</div>
+    <div>
+      <div class="label">Buyer</div>
       <div class="party-name">${esc(p.customer_name || '-')}</div>
-      ${p.customer_contact_name ? `<div style="font-size:10px">${esc(p.customer_contact_name)}</div>` : ''}
-      ${p.customer_address ? `<div class="party-addr">${esc(p.customer_address)}</div>` : ''}
-      ${p.customer_phone ? `<div style="font-size:10px">${esc(p.customer_phone)}</div>` : ''}
-      ${p.customer_email ? `<div style="font-size:10px">${esc(p.customer_email)}</div>` : ''}
+      ${p.customer_contact_name ? `<div class="party-line">${esc(p.customer_contact_name)}</div>` : ''}
+      ${p.customer_address ? `<div class="party-line" style="white-space:pre-line">${esc(p.customer_address)}</div>` : ''}
+      ${p.customer_phone ? `<div class="party-line">${esc(p.customer_phone)}</div>` : ''}
+      ${p.customer_email ? `<div class="party-line">${esc(p.customer_email)}</div>` : ''}
     </div>
-    ${consigneeBlock}
+    <div>
+      <div class="label">PFI Details</div>
+      <div class="party-line"><span class="muted">Date: </span><span class="fw">${dateOnly(p.pfi_date as any) || '-'}</span></div>
+      ${p.valid_until ? `<div class="party-line"><span class="muted">Valid Until: </span><span class="fw">${dateOnly(p.valid_until as any)}</span></div>` : ''}
+      <div class="party-line"><span class="muted">Currency: </span><span class="fw">${esc(sym(p))} ${esc(p.currency_code || '-')}</span></div>
+    </div>
   </div>
+
+  ${consigneeBlock}
 
   ${shippingBlock}
 
-  <table class="lines">
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Product</th>
-        <th class="num">Qty</th>
-        <th>Unit</th>
-        <th class="num">Rate</th>
-        <th class="num">Net Wt</th>
-        <th class="num">Gross Wt</th>
-        <th class="num">Pkgs</th>
-        <th class="num">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${linesRows}
-    </tbody>
-  </table>
+  <div class="section" style="border-top:none;padding-top:0;margin-top:18px">
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="width:24px">#</th>
+          <th>Product / Description</th>
+          <th class="num" style="width:50px">Qty</th>
+          <th style="width:42px">Unit</th>
+          <th class="num" style="width:72px">Rate</th>
+          <th class="num" style="width:60px">Net Wt</th>
+          <th class="num" style="width:65px">Gross Wt</th>
+          <th class="num" style="width:46px">Pkgs</th>
+          <th class="num" style="width:80px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${linesRows}</tbody>
+    </table>
+  </div>
 
   ${packingBlock}
 
   <div class="totals">
-    <div class="row grand"><span>Grand Total</span><span>${money(p, p.grand_total)}</span></div>
+    <div class="row-grand">
+      <span>Grand Total</span>
+      <span>${money(p, p.grand_total)}</span>
+    </div>
   </div>
 
   ${bankBlock}
 
   ${
       p.payment_terms_text
-          ? `<div class="declaration"><div class="lbl">Payment Terms</div>${esc(p.payment_terms_text)}</div>`
+          ? `<div class="section"><div class="label">Payment Terms</div><div class="body">${esc(p.payment_terms_text)}</div></div>`
           : ''
   }
   ${
       p.declaration_text
-          ? `<div class="declaration"><div class="lbl">Declaration</div>${esc(p.declaration_text)}</div>`
+          ? `<div class="section"><div class="label">Declaration</div><div class="body">${esc(p.declaration_text)}</div></div>`
           : ''
   }
   ${
       p.notes_to_client
-          ? `<div class="notes"><div class="lbl">Notes</div>${esc(p.notes_to_client)}</div>`
+          ? `<div class="section"><div class="label">Notes</div><div class="body">${esc(p.notes_to_client)}</div></div>`
           : ''
   }
 
   <div class="signature">
-    <div class="box">For ${esc(p.company_name || '')}<br/><span style="color:#999">Authorised Signatory</span></div>
+    <div class="box">For ${esc(p.company_name || '')}<br/><span style="color:#9ca3af">Authorised Signatory</span></div>
   </div>
 
+
+</div>
 </body>
 </html>`;
-}
-
-function kv(label: string, value: any, full = false): string {
-    if (value == null || value === '') return '';
-    return `<div${full ? ' class="kv-full"' : ''}><span class="k">${esc(label)}:</span> ${esc(value)}</div>`;
 }
