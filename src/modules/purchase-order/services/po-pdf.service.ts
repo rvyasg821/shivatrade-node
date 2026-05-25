@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { Injectable } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
 import { CompanyService } from '@modules/company/services/company.service';
@@ -7,10 +9,21 @@ import { VendorAddressRepository } from '@modules/vendor/repository/repositories
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
 
 /**
- * Generates the vendor-facing PO PDF.
- * Mirrors the PFI PDF pattern: this thin wrapper assembles a self-contained
- * HTML document and hands it to the generic Puppeteer-based `PdfService`.
+ * Renders the PO PDF using the same neutral / professional layout as the
+ * PFI PDF (white doc, hairline borders, 3-column party grid, only Grand
+ * Total in totals). PO is a vendor-facing document — line and total
+ * amounts are shown in INR since the line_total is stored in INR.
  */
+const LOGO_DATA_URI: string = (() => {
+    try {
+        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
+        const buf = fs.readFileSync(p);
+        return `data:image/png;base64,${buf.toString('base64')}`;
+    } catch {
+        return '';
+    }
+})();
+
 @Injectable()
 export class PoPdfService {
     constructor(
@@ -30,10 +43,10 @@ export class PoPdfService {
         return this.pdfService.generateFromHtml(html, {
             format: 'A4',
             margin: {
-                top: '22mm',
-                right: '15mm',
-                bottom: '20mm',
-                left: '15mm',
+                top: '18mm',
+                right: '12mm',
+                bottom: '18mm',
+                left: '12mm',
             },
             displayHeaderFooter: true,
             headerTemplate: buildHeaderTemplate(ctx),
@@ -41,7 +54,6 @@ export class PoPdfService {
         });
     }
 
-    /** STIPL/OS0001/2026-27 → STIPL-OS0001-2026-27.pdf */
     buildFilename(po: PurchaseOrderGetResponseDto): string {
         const safe = (po.voucher_no || 'PO')
             .replace(/[\\/]+/g, '-')
@@ -100,9 +112,48 @@ export class PoPdfService {
             companyGstin = company.tax_number;
         }
 
-        let vendorAddress: string | undefined;
-        let vendorGstin: string | undefined;
-        if (po.vendor_id) {
+        // PO is multi-vendor at line level. Build the unique vendor list,
+        // hydrating addresses where possible.
+        const seen = new Set<string>();
+        const vendors: VendorBlock[] = [];
+        for (const ln of po.lines || []) {
+            const vid: string | undefined = (ln as any).vendor_id;
+            if (!vid || seen.has(vid)) continue;
+            seen.add(vid);
+            let addressStr: string | undefined;
+            let gstin: string | undefined;
+            try {
+                const list = await this.vendorAddressRepository.findAll({
+                    vendor_id: vid,
+                    soft_delete: false,
+                } as any);
+                const a: any =
+                    (list || []).find((x: any) => x.is_default) ||
+                    (list || [])[0];
+                if (a) {
+                    addressStr = joinAddress({
+                        address_line1: a.address_line1,
+                        address_line2: a.address_line2,
+                        city: a.city,
+                        state: a.state,
+                        postcode: a.postcode,
+                        country: a.country,
+                    });
+                    gstin = a.gstin || undefined;
+                }
+            } catch {
+                // ignore — degrade gracefully
+            }
+            vendors.push({
+                name: (ln as any).vendor_name || vid,
+                address: addressStr,
+                gstin,
+            });
+        }
+        // Legacy fallback to the header vendor if no line-level vendors.
+        if (vendors.length === 0 && po.vendor_id) {
+            let addressStr: string | undefined;
+            let gstin: string | undefined;
             try {
                 const addr = po.vendor_address_id
                     ? await this.vendorAddressRepository.findOne({
@@ -120,7 +171,7 @@ export class PoPdfService {
                     (fallbacks || []).find((x: any) => x.is_default) ||
                     (fallbacks || [])[0];
                 if (a) {
-                    vendorAddress = joinAddress({
+                    addressStr = joinAddress({
                         address_line1: a.address_line1,
                         address_line2: a.address_line2,
                         city: a.city,
@@ -128,16 +179,25 @@ export class PoPdfService {
                         postcode: a.postcode,
                         country: a.country,
                     });
-                    vendorGstin = a.gstin || undefined;
+                    gstin = a.gstin || undefined;
                 }
             } catch {
                 // ignore
             }
+            vendors.push({
+                name: po.vendor_name || '-',
+                address: addressStr,
+                gstin,
+            });
         }
 
-        const intraState =
-            Number(po.cgst_total || 0) + Number(po.sgst_total || 0) > 0 &&
-            Number(po.igst_total || 0) === 0;
+        // Grand total in INR: sum of line totals (they are stored in INR);
+        // grand_total on the entity is in customer currency, so derive an
+        // INR figure for the vendor-facing PDF.
+        const linesInrTotal = (po.lines || []).reduce(
+            (s, l) => s + (Number((l as any).line_total) || 0),
+            0
+        );
 
         return {
             po,
@@ -151,20 +211,19 @@ export class PoPdfService {
                 terms: company?.default_po_terms || '',
                 signatory: company?.authorised_signatory_name || '',
             },
-            vendor: {
-                name: po.vendor_name || '',
-                gstin: vendorGstin,
-                address: vendorAddress,
-                contact_name: po.vendor_contact_name,
-                email: po.vendor_contact_email,
-                phone: po.vendor_contact_phone,
-            },
-            intraState,
+            vendors,
+            inrTotal: linesInrTotal,
         };
     }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
+
+interface VendorBlock {
+    name: string;
+    gstin?: string;
+    address?: string;
+}
 
 interface PoPdfContext {
     po: PurchaseOrderGetResponseDto;
@@ -178,18 +237,11 @@ interface PoPdfContext {
         terms?: string;
         signatory?: string;
     };
-    vendor: {
-        name: string;
-        gstin?: string;
-        address?: string;
-        contact_name?: string;
-        email?: string;
-        phone?: string;
-    };
-    intraState: boolean;
+    vendors: VendorBlock[];
+    inrTotal: number;
 }
 
-// ─── HTML builders ──────────────────────────────────────────────────────
+// ─── helpers ────────────────────────────────────────────────────────────
 
 const esc = (v: any): string =>
     v == null
@@ -211,6 +263,13 @@ const fmt = (v: any): string => {
 
 const money = (v: any): string => `₹${fmt(v)}`;
 
+// Currency-aware money formatter — used for amounts that have already
+// been converted into the PO's customer currency.
+const ccyMoney = (sym: string, v: any): string => `${sym}${fmt(v)}`;
+
+const dateOnly = (v?: string | null): string =>
+    v ? esc(String(v).slice(0, 10)) : '';
+
 function joinAddress(a: {
     address_line1?: string;
     address_line2?: string;
@@ -228,122 +287,77 @@ function joinAddress(a: {
     return parts.length ? parts.join('\n') : undefined;
 }
 
-// Indian numbering: lakh / crore, integer rupees only (paise rounded).
-function rupeesInWords(amount: number): string {
-    const n = Math.round(Number(amount) || 0);
-    if (n === 0) return 'Rupees Zero Only';
-    const a = [
-        '',
-        'One',
-        'Two',
-        'Three',
-        'Four',
-        'Five',
-        'Six',
-        'Seven',
-        'Eight',
-        'Nine',
-        'Ten',
-        'Eleven',
-        'Twelve',
-        'Thirteen',
-        'Fourteen',
-        'Fifteen',
-        'Sixteen',
-        'Seventeen',
-        'Eighteen',
-        'Nineteen',
-    ];
-    const b = [
-        '',
-        '',
-        'Twenty',
-        'Thirty',
-        'Forty',
-        'Fifty',
-        'Sixty',
-        'Seventy',
-        'Eighty',
-        'Ninety',
-    ];
-    const twoDigits = (num: number): string => {
-        if (num < 20) return a[num];
-        return `${b[Math.floor(num / 10)]}${num % 10 ? ' ' + a[num % 10] : ''}`;
-    };
-    const threeDigits = (num: number): string => {
-        const h = Math.floor(num / 100);
-        const r = num % 100;
-        return `${h ? a[h] + ' Hundred' + (r ? ' ' : '') : ''}${
-            r ? twoDigits(r) : ''
-        }`;
-    };
-    let num = n;
-    const parts: string[] = [];
-    const crore = Math.floor(num / 10000000);
-    num %= 10000000;
-    const lakh = Math.floor(num / 100000);
-    num %= 100000;
-    const thousand = Math.floor(num / 1000);
-    num %= 1000;
-    const hundred = num;
-    if (crore) parts.push(`${threeDigits(crore)} Crore`);
-    if (lakh) parts.push(`${twoDigits(lakh)} Lakh`);
-    if (thousand) parts.push(`${twoDigits(thousand)} Thousand`);
-    if (hundred) parts.push(threeDigits(hundred));
-    return `Rupees ${parts.join(' ').trim()} Only`;
+function kv(label: string, value: any, full = false): string {
+    if (value == null || value === '') return '';
+    return `<div${full ? ' class="kv-full"' : ''}><span class="k">${esc(label)}:</span> <span class="v">${esc(value)}</span></div>`;
 }
 
 function buildHeaderTemplate(ctx: PoPdfContext): string {
     return `
-    <div style="font-size:9px;width:100%;padding:0 15mm;color:#444;
-                border-bottom:1px solid #ccc;display:flex;
-                justify-content:space-between;align-items:center;">
+    <div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;
+                display:flex;justify-content:space-between;align-items:center;">
       <span>${esc(ctx.company.name)}</span>
-      <span><strong>PURCHASE ORDER</strong> &middot; ${esc(ctx.po.voucher_no || '')}</span>
+      <span><strong style="color:#1f2937">PURCHASE ORDER</strong> · ${esc(ctx.po.voucher_no || '')}</span>
     </div>`;
 }
 
 function buildFooterTemplate(ctx: PoPdfContext): string {
     return `
-    <div style="font-size:8px;width:100%;padding:0 15mm;color:#555;
-                border-top:1px solid #ccc;display:flex;
-                justify-content:space-between;align-items:center;">
+    <div style="font-size:8px;width:100%;padding:0 12mm;color:#6b7280;
+                display:flex;justify-content:space-between;align-items:center;">
       <span>${esc(ctx.po.voucher_no || '')}</span>
-      <span class="pageNumber"></span>/<span class="totalPages"></span>
+      <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
     </div>`;
 }
 
 function buildPoHtml(ctx: PoPdfContext): string {
-    const { po, company, vendor, intraState } = ctx;
+    const { po, company, vendors, inrTotal } = ctx;
     const lines = po.lines || [];
+    // PO line totals are stored in INR; convert to the PO's customer
+    // currency so the vendor sees USD/EUR/etc. like the PFI PDF.
+    const sym = po.currency_symbol || po.currency_code || '₹';
+    const rate = Number(po.exchange_rate) || 1;
+    const grandTotalCcy = inrTotal * rate;
 
     const linesRows = lines.length
         ? lines
-              .map(
-                  (l, i) => `
+              .map((l, i) => {
+                  const qty = Number(l.qty) || 0;
+                  const lineTotalInr = Number(l.line_total) || 0;
+                  const lineTotalCcy = lineTotalInr * rate;
+                  // Effective per-unit price = full line_total / qty (bakes
+                  // in expense/rebate/margin/GST), matching the PFI table.
+                  const effRate =
+                      qty > 0
+                          ? lineTotalCcy / qty
+                          : (Number(l.unit_price) || 0) * rate;
+                  return `
         <tr>
-          <td>${i + 1}</td>
+          <td class="muted">${i + 1}</td>
           <td>
-            <div style="font-weight:600">${esc(l.product_name || '-')}</div>
-            ${l.description ? `<div style="color:#666;font-size:10px">${esc(l.description)}</div>` : ''}
+            <div class="fw">${esc(l.product_name || '-')}</div>
           </td>
-          <td>${esc(l.hsn_code || '-')}</td>
-          <td class="num">${esc(l.qty || '-')}</td>
+          <td class="num">${l.qty ? fmt(l.qty) : '-'}</td>
           <td>${esc(l.unit || '-')}</td>
-          <td class="num">${money(l.unit_price)}</td>
-          <td class="num">${esc(l.tax_pct || '0')}%</td>
-          <td class="num" style="font-weight:600">${money(l.line_total)}</td>
-        </tr>`
+          <td class="num">${ccyMoney(sym, effRate)}</td>
+          <td class="num fw">${ccyMoney(sym, lineTotalCcy)}</td>
+        </tr>`;
+              })
+              .join('')
+        : `<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
+
+    const vendorBlocks = vendors.length
+        ? vendors
+              .map(
+                  (v) => `
+        <div class="vendor-card">
+          <div class="party-name">${esc(v.name)}</div>
+          ${v.address ? `<div class="party-line" style="white-space:pre-line">${esc(v.address)}</div>` : ''}
+          ${v.gstin ? `<div class="party-line muted">GSTIN: ${esc(v.gstin)}</div>` : ''}
+        </div>`
               )
               .join('')
-        : `<tr><td colspan="8" style="text-align:center;color:#999;padding:14px">No line items.</td></tr>`;
-
-    const taxRows = intraState
-        ? `
-            <div class="row"><span>CGST</span><span>${money(po.cgst_total)}</span></div>
-            <div class="row"><span>SGST</span><span>${money(po.sgst_total)}</span></div>`
-        : `
-            <div class="row"><span>IGST</span><span>${money(po.igst_total)}</span></div>`;
+        : `<div class="party-line muted">-</div>`;
 
     return `<!DOCTYPE html>
 <html>
@@ -354,248 +368,233 @@ function buildPoHtml(ctx: PoPdfContext): string {
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    font-size: 11px;
-    color: #222;
+    font-size: 10.5px;
+    color: #1f2937;
     margin: 0;
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
-  h1, h2, h3, h4 { margin: 0; }
-  .title-row {
+  .doc { width: 100%; }
+  .qd-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    border-bottom: 2px solid #333;
-    padding-bottom: 8px;
-    margin-bottom: 10px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 14px;
+    margin-bottom: 18px;
   }
-  .title-row .doc-title { text-align: right; }
-  .title-row .doc-title h2 {
-    font-size: 18px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .parties {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 12px;
-  }
-  .party { flex: 1; }
-  .party-label { color: #777; font-size: 10px; text-transform: uppercase; }
-  .party-name { font-weight: 600; font-size: 12px; }
-  .party-addr { color: #555; font-size: 10px; white-space: pre-line; }
-  .meta { text-align: right; font-size: 10px; color: #555; }
-  .block {
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 8px 10px;
-    margin-bottom: 10px;
-    background: #fafafa;
-  }
-  .block-title {
-    font-size: 10px;
+  .qd-title {
+    font-size: 16px;
     font-weight: 600;
+    letter-spacing: 2px;
+    margin: 0;
+    color: #1f2937;
     text-transform: uppercase;
-    color: #555;
-    margin-bottom: 4px;
   }
-  .grid {
+  .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
+  .status-badge {
+    display: inline-block;
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #e5e7eb;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: capitalize;
+    letter-spacing: 0.2px;
+    margin-top: 5px;
+  }
+  .company-name { font-weight: 600; color: #1f2937; font-size: 11.5px; margin-top: 4px; }
+  .party-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 4px 12px;
-    font-size: 10.5px;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 22px;
+    margin-bottom: 18px;
   }
-  .grid .k { color: #777; }
-  table.lines {
+  .label {
+    text-transform: uppercase;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 8.5px;
+    letter-spacing: 0.6px;
+    margin-bottom: 5px;
+  }
+  .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
+  .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
+  .muted, .party-muted { color: #6b7280; }
+  .sm { font-size: 9.5px; }
+  .fw { font-weight: 600; color: #1f2937; }
+  .vendor-card { margin-bottom: 8px; }
+  .vendor-card:last-child { margin-bottom: 0; }
+  table.items {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 12px;
+    margin: 6px 0 0;
   }
-  table.lines th {
-    background: #eee;
-    border: 1px solid #ccc;
-    padding: 5px 6px;
-    font-size: 10.5px;
+  table.items thead th {
+    background: #f9fafb;
+    color: #4b5563;
+    font-weight: 600;
+    font-size: 8.5px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    border-top: 1px solid #e5e7eb;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 7px;
     text-align: left;
   }
-  table.lines td {
-    border: 1px solid #ddd;
-    padding: 5px 6px;
-    font-size: 10.5px;
+  table.items td {
+    border-bottom: 1px solid #f1f2f4;
+    padding: 8px 7px;
+    font-size: 10px;
     vertical-align: top;
     page-break-inside: avoid;
   }
-  table.lines td.num, table.lines th.num { text-align: right; }
+  table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
+  table.items th.num, table.items td.num { text-align: right; }
   .totals {
-    width: 45%;
+    width: 280px;
     margin-left: auto;
-    margin-bottom: 12px;
-    font-size: 11px;
+    margin-top: 14px;
+    margin-bottom: 4px;
   }
-  .totals .row {
+  .totals .row-grand {
     display: flex;
     justify-content: space-between;
-    padding: 2px 0;
-  }
-  .totals .row.grand {
-    border-top: 2px solid #333;
-    padding-top: 6px;
-    margin-top: 4px;
+    padding: 10px 0 4px;
+    border-top: 2px solid #1f2937;
     font-weight: 700;
-    font-size: 13px;
+    font-size: 12px;
+    color: #1f2937;
   }
-  .words {
-    border: 1px dashed #999;
-    padding: 6px 10px;
-    margin-bottom: 12px;
-    font-size: 10.5px;
-    background: #fcfcfc;
+  .section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #e5e7eb;
   }
-  .words .lbl {
-    color: #777; font-size: 9.5px;
-    text-transform: uppercase;
-  }
-  .declaration, .notes {
-    border-top: 1px solid #ddd;
-    padding-top: 6px;
-    margin-top: 8px;
-    font-size: 10.5px;
+  .section .body {
+    font-size: 10px;
+    color: #4b5563;
+    line-height: 1.55;
     white-space: pre-line;
   }
-  .declaration .lbl, .notes .lbl {
-    color: #777;
-    text-transform: uppercase;
-    font-size: 9.5px;
-    margin-bottom: 2px;
+  .kv-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px 22px;
+    font-size: 9.8px;
+    color: #4b5563;
   }
+  .kv-grid .kv-full { grid-column: 1 / -1; }
+  .kv-grid .k { color: #6b7280; }
+  .kv-grid .v { color: #1f2937; font-weight: 600; }
   .signature {
-    margin-top: 30px;
+    margin-top: 26px;
     display: flex;
     justify-content: flex-end;
-    font-size: 10.5px;
+    font-size: 9.5px;
   }
   .signature .box {
-    width: 240px;
-    border-top: 1px solid #333;
+    width: 200px;
+    border-top: 1px solid #9ca3af;
     padding-top: 4px;
     text-align: center;
-    color: #555;
-  }
-  .signature .box .signatory {
-    color: #222;
-    font-weight: 600;
-    margin-bottom: 2px;
+    color: #6b7280;
   }
 </style>
 </head>
 <body>
+<div class="doc">
 
-  <div class="title-row">
+  <div class="qd-header">
     <div>
-      <h3>${esc(company.name || '')}</h3>
-      ${company.address ? `<div style="font-size:10px;color:#555;white-space:pre-line">${esc(company.address)}</div>` : ''}
-      <div style="font-size:10px;color:#555">
-        ${company.phone ? esc(company.phone) + ' &middot; ' : ''}${esc(company.email || '')}
-        ${company.gstin ? ' &middot; GSTIN: ' + esc(company.gstin) : ''}
-        ${company.iec ? ' &middot; IEC: ' + esc(company.iec) : ''}
+      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:34px;margin-bottom:8px;display:block" />` : ''}
+      <div class="company-name">${esc(company.name || '-')}</div>
+      ${company.address ? `<div class="party-line muted" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
+      <div class="party-line muted">
+        ${company.phone ? esc(company.phone) + ' · ' : ''}${esc(company.email || '')}
+        ${company.gstin ? ' · GSTIN: ' + esc(company.gstin) : ''}
+        ${company.iec ? ' · IEC: ' + esc(company.iec) : ''}
       </div>
     </div>
-    <div class="doc-title">
-      <h2>Purchase Order</h2>
-      <div style="font-weight:600">${esc(po.voucher_no || '')}</div>
-      <div class="meta">
-        Date: ${esc((po.po_date || '').slice(0, 10) || '-')}<br/>
-        ${po.expected_delivery_date ? `Expected: ${esc(po.expected_delivery_date.slice(0, 10))}<br/>` : ''}
-        Currency: ${esc(po.currency_code || 'INR')}
-      </div>
+    <div style="text-align:right">
+      <div class="qd-title">Purchase Order</div>
+      <div class="voucher">#${esc(po.voucher_no || '-')}</div>
+      ${po.status ? `<span class="status-badge">${esc(po.status)}</span>` : ''}
     </div>
   </div>
 
-  <div class="parties">
-    <div class="party">
-      <div class="party-label">Vendor (Bill From)</div>
-      <div class="party-name">${esc(vendor.name || '-')}</div>
-      ${vendor.contact_name ? `<div style="font-size:10px">${esc(vendor.contact_name)}</div>` : ''}
-      ${vendor.address ? `<div class="party-addr">${esc(vendor.address)}</div>` : ''}
-      ${vendor.email ? `<div style="font-size:10px">${esc(vendor.email)}</div>` : ''}
-      ${vendor.phone ? `<div style="font-size:10px">${esc(vendor.phone)}</div>` : ''}
-      ${vendor.gstin ? `<div style="font-size:10px"><strong>GSTIN:</strong> ${esc(vendor.gstin)}</div>` : ''}
+  <div class="party-grid" style="grid-template-columns: 1fr 1fr">
+    <div>
+      <div class="label">Buyer</div>
+      <div class="party-name">${esc(company.name || '-')}</div>
+      ${company.address ? `<div class="party-line" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
+      ${company.phone ? `<div class="party-line">${esc(company.phone)}</div>` : ''}
+      ${company.email ? `<div class="party-line">${esc(company.email)}</div>` : ''}
+      ${company.gstin ? `<div class="party-line muted">GSTIN: ${esc(company.gstin)}</div>` : ''}
     </div>
-    <div class="party">
-      <div class="party-label">Deliver To</div>
-      <div class="party-addr" style="font-weight:500;color:#222">${esc(po.delivery_address || '-')}</div>
-    </div>
-  </div>
-
-  <div class="block">
-    <div class="block-title">Terms</div>
-    <div class="grid">
-      ${kv('Payment Terms', po.payment_terms)}
-      ${kv('Delivery Terms', po.delivery_terms)}
-      ${kv('Expected Delivery', (po.expected_delivery_date || '').slice(0, 10))}
-      ${kv('PO Date', (po.po_date || '').slice(0, 10))}
+    <div>
+      <div class="label">PO Details</div>
+      <div class="party-line"><span class="muted">PO Date: </span><span class="fw">${dateOnly(po.po_date) || '-'}</span></div>
+      ${po.expected_delivery_date ? `<div class="party-line"><span class="muted">Expected: </span><span class="fw">${dateOnly(po.expected_delivery_date)}</span></div>` : ''}
+      ${po.payment_terms ? `<div class="party-line"><span class="muted">Payment: </span><span class="fw">${esc(po.payment_terms)}</span></div>` : ''}
+      ${po.delivery_terms ? `<div class="party-line"><span class="muted">Delivery: </span><span class="fw">${esc(po.delivery_terms)}</span></div>` : ''}
+      <div class="party-line"><span class="muted">Currency: </span><span class="fw">${esc(sym)} ${esc(po.currency_code || '-')}</span></div>
     </div>
   </div>
 
-  <table class="lines">
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Description</th>
-        <th>HSN</th>
-        <th class="num">Qty</th>
-        <th>Unit</th>
-        <th class="num">Rate</th>
-        <th class="num">GST%</th>
-        <th class="num">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${linesRows}
-    </tbody>
-  </table>
+  ${
+      po.delivery_address
+          ? `<div class="section"><div class="label">Deliver To</div><div class="body">${esc(po.delivery_address)}</div></div>`
+          : ''
+  }
+
+  <div class="section" style="border-top:none;padding-top:0;margin-top:18px">
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="width:24px">#</th>
+          <th>Product</th>
+          <th class="num" style="width:60px">Qty</th>
+          <th style="width:50px">Unit</th>
+          <th class="num" style="width:90px">Rate</th>
+          <th class="num" style="width:110px">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${linesRows}</tbody>
+    </table>
+  </div>
 
   <div class="totals">
-    <div class="row"><span>Subtotal</span><span>${money(po.subtotal)}</span></div>
-    ${taxRows}
-    <div class="row"><span>Round-off</span><span>${money(po.round_off)}</span></div>
-    <div class="row grand"><span>Grand Total</span><span>${money(po.grand_total)}</span></div>
-  </div>
-
-  <div class="words">
-    <div class="lbl">Amount in Words</div>
-    ${esc(rupeesInWords(Number(po.grand_total || 0)))}
+    <div class="row-grand">
+      <span>Grand Total</span>
+      <span>${ccyMoney(sym, grandTotalCcy)}</span>
+    </div>
   </div>
 
   ${
       po.notes_to_vendor
-          ? `<div class="notes"><div class="lbl">Notes</div>${esc(po.notes_to_vendor)}</div>`
+          ? `<div class="section"><div class="label">Notes to Vendor</div><div class="body">${esc(po.notes_to_vendor)}</div></div>`
           : ''
   }
-
   ${
       company.terms
-          ? `<div class="declaration"><div class="lbl">Terms &amp; Conditions</div>${esc(company.terms)}</div>`
+          ? `<div class="section"><div class="label">Terms &amp; Conditions</div><div class="body">${esc(company.terms)}</div></div>`
           : ''
   }
 
   <div class="signature">
     <div class="box">
-      For <strong>${esc(company.name || '')}</strong>
-      <div style="height:36px"></div>
-      ${
-          company.signatory
-              ? `<div class="signatory">${esc(company.signatory)}</div>`
-              : ''
-      }
-      <span style="color:#999">Authorised Signatory</span>
+      For ${esc(company.name || '')}
+      <div style="height:30px"></div>
+      ${company.signatory ? `<div class="fw" style="color:#1f2937;margin-bottom:2px">${esc(company.signatory)}</div>` : ''}
+      <span style="color:#9ca3af">Authorised Signatory</span>
     </div>
   </div>
 
+</div>
 </body>
 </html>`;
-}
-
-function kv(label: string, value: any): string {
-    if (value == null || value === '') return '';
-    return `<div><span class="k">${esc(label)}:</span> ${esc(value)}</div>`;
 }
