@@ -31,7 +31,9 @@ import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.reque
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
 import { PoVendorReceiveRequestDto } from '../dtos/request/po-vendor.receive.request.dto';
 import { PoVendorCancelRequestDto } from '../dtos/request/po-vendor.cancel.request.dto';
+import { PoVendorRecoverRequestDto } from '../dtos/request/po-vendor.recover.request.dto';
 import { PoVendorGetResponseDto } from '../dtos/response/po-vendor.get.response.dto';
+import { PoVendorRecoverPreviewResponseDto } from '../dtos/response/po-vendor.recover-preview.response.dto';
 
 @ApiTags('admin.po-vendor')
 @Controller({ version: '1', path: '/admin/po-vendor' })
@@ -40,6 +42,47 @@ export class PoVendorAdminController {
         private readonly povService: PoVendorService,
         private readonly povRepository: PoVendorRepository
     ) {}
+
+    // ─── Recover (multi-vendor batch) ───────────────────────────────────
+    //
+    // Surfaces only when has_pending=true on PO Coverage (e.g. after POV
+    // cancel). Mirrors the PFI→PO modal: per-line vendor pick, default to
+    // line's current vendor_id, submit creates N POVs grouped by vendor.
+
+    @Response('poVendor.recoverPreview')
+    @AuthJwtAccessProtected()
+    @Get('/recover-preview/:poId')
+    async recoverPreview(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('poId') poId: string
+    ): Promise<IResponse<PoVendorRecoverPreviewResponseDto>> {
+        const data = await this.povService.recoverPreviewByPoId(
+            companyId,
+            poId
+        );
+        return { data };
+    }
+
+    @Response('poVendor.recover')
+    @AuthJwtAccessProtected()
+    @Post('/recover/:poId')
+    async recover(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Param('poId') poId: string,
+        @Body() body: PoVendorRecoverRequestDto
+    ): Promise<IResponse<{ created: PoVendorGetResponseDto[] }>> {
+        const { created } = await this.povService.recoverFromPo(
+            companyId,
+            poId,
+            body,
+            userId
+        );
+        const mapped = await Promise.all(
+            created.map(r => this.povService.mapGet(r))
+        );
+        return { data: { created: mapped } };
+    }
 
     // ─── Create from PO ─────────────────────────────────────────────────
 
