@@ -7,7 +7,9 @@ import {
     Body,
     Param,
     Query,
+    Res,
 } from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import {
     AuthJwtAccessProtected,
@@ -25,6 +27,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { PoVendorService } from '../services/po-vendor.service';
+import { PoVendorPdfService } from '../services/po-vendor-pdf.service';
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
@@ -40,7 +43,8 @@ import { PoVendorRecoverPreviewResponseDto } from '../dtos/response/po-vendor.re
 export class PoVendorAdminController {
     constructor(
         private readonly povService: PoVendorService,
-        private readonly povRepository: PoVendorRepository
+        private readonly povRepository: PoVendorRepository,
+        private readonly povPdfService: PoVendorPdfService
     ) {}
 
     // ─── Recover (multi-vendor batch) ───────────────────────────────────
@@ -165,6 +169,28 @@ export class PoVendorAdminController {
     ): Promise<IResponse<PoVendorGetResponseDto>> {
         const row = await this.povService.findOneById(id);
         return { data: await this.povService.mapGet(row) };
+    }
+
+    // ─── PDF download (dispatch advice) ─────────────────────────────────
+
+    @AuthJwtAccessProtected()
+    @Get('/:id/pdf')
+    async pdf(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const row = await this.povService.findOneById(id);
+        const dto = await this.povService.mapGet(row);
+        const buf = await this.povPdfService.render(dto, companyId);
+        const filename = this.povPdfService.buildFilename(dto);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buf.length));
+        res.end(buf);
     }
 
     // ─── Update (status-locked field edits + status transitions) ────────
