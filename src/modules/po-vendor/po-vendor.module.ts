@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PoVendorRepositoryModule } from './repository/po-vendor.repository.module';
 import { PoVendorService } from './services/po-vendor.service';
 import { PoCoverageService } from './services/po-coverage.service';
+import { PoVendorPdfService } from './services/po-vendor-pdf.service';
 import { PoVendorAdminController } from './controllers/po-vendor.admin.controller';
 
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
@@ -30,8 +31,13 @@ import { TrackingEventRepositoryModule } from '@modules/tracking-event/repositor
         VoucherModule,
         TrackingEventRepositoryModule,
     ],
-    providers: [PoVendorService, PoCoverageService],
-    exports: [PoVendorRepositoryModule, PoVendorService, PoCoverageService],
+    providers: [PoVendorService, PoCoverageService, PoVendorPdfService],
+    exports: [
+        PoVendorRepositoryModule,
+        PoVendorService,
+        PoCoverageService,
+        PoVendorPdfService,
+    ],
     controllers: [PoVendorAdminController],
 })
 export class PoVendorModule {}
