@@ -154,6 +154,7 @@ export class PoCoverageService {
 
             lines.push({
                 purchase_order_line_id: k,
+                vendor_id: pol.vendor_id?.toString(),
                 product_id: pol.product_id?.toString(),
                 product_name: (product as any)?.name,
                 product_code: (product as any)?.code,

@@ -2,6 +2,8 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class PoCoverageLineDto {
     @ApiProperty({ required: true, type: String }) purchase_order_line_id: string;
+    /** Vendor that owns this PO line. POVs may only reference lines of their own vendor. */
+    @ApiProperty({ required: false, type: String }) vendor_id?: string;
     @ApiProperty({ required: true, type: String }) product_id: string;
     @ApiProperty({ required: false, type: String }) product_name?: string;
     @ApiProperty({ required: false, type: String }) product_code?: string;
