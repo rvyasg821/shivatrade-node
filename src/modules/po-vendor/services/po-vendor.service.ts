@@ -529,6 +529,7 @@ export class PoVendorService {
                 companyId,
                 row._id.toString(),
                 row.purchase_order_id.toString(),
+                (row as any).vendor_id?.toString(),
                 lines
             );
         }
@@ -541,6 +542,7 @@ export class PoVendorService {
         companyId: string,
         povId: string,
         purchaseOrderId: string,
+        povVendorId: string | undefined,
         lines: any[]
     ): Promise<void> {
         // Recompute pending excluding this POV (so editing its own qty
@@ -567,6 +569,15 @@ export class PoVendorService {
             if (!poLine) {
                 throw new BadRequestException(
                     `PO line ${ln.purchase_order_line_id} does not belong to this PO.`
+                );
+            }
+            if (
+                povVendorId &&
+                poLine.vendor_id &&
+                poLine.vendor_id.toString() !== povVendorId
+            ) {
+                throw new BadRequestException(
+                    `PO line ${ln.purchase_order_line_id} belongs to a different vendor and cannot be added to this POV.`
                 );
             }
             const req = num(ln.ordered_qty);
