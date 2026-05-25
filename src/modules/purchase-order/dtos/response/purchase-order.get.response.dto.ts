@@ -23,6 +23,14 @@ export class PurchaseOrderLineResponseDto {
     @ApiProperty({ required: true, type: String }) taxable: string;
     @ApiProperty({ required: true, type: String }) line_total: string;
     @ApiProperty({ required: true, type: Number }) seq: number;
+    @ApiProperty({ required: false, type: String }) margin_pct?: string;
+    @ApiProperty({ required: false, type: Object })
+    product_rebates_snapshot?: any[];
+    @ApiProperty({ required: false, type: Object })
+    product_expenses_snapshot?: any[];
+    @ApiProperty({ required: false, type: String }) product_rebates_amount?: string;
+    @ApiProperty({ required: false, type: String }) product_expenses_amount?: string;
+    @ApiProperty({ required: false, type: String }) margin_amount?: string;
 }
 
 export class PurchaseOrderGetResponseDto {

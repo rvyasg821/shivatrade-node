@@ -259,7 +259,7 @@ export class PurchaseOrderAdminController {
         @Param('id') id: string
     ): Promise<IResponse<any>> {
         const row = await this.poService.findOneById(id);
-        return { data: await this.poService.mapGet(row) };
+        return { data: await this.poService.mapPublicPreview(row) };
     }
 
     // ─── Public share link ──────────────────────────────────────────────
