@@ -78,7 +78,8 @@ export class PurchaseOrderAdminController {
         @Query('pfi_id') pfiId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
-        @Query('date_to') dateTo?: string
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<PurchaseOrderGetResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
         if (vendorId) find.vendor_id = vendorId;
@@ -94,10 +95,15 @@ export class PurchaseOrderAdminController {
             find.po_date = { $lte: dateTo };
         }
 
-        if (_search) {
+        // PaginationSearchPipe doesn't populate `_search` without an
+        // `availableSearch` option — fall back to the raw `search` query.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { voucher_no: { $regex: _search, $options: 'i' } },
-                { notes_to_vendor: { $regex: _search, $options: 'i' } },
+                { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { notes_to_vendor: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

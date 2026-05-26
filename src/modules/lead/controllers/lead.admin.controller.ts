@@ -60,7 +60,8 @@ export class LeadAdminController {
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('source') source?: string,
-        @Query('assigned_to') assignedTo?: string
+        @Query('assigned_to') assignedTo?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<LeadListResponseDto>> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
@@ -68,13 +69,16 @@ export class LeadAdminController {
         if (source) find.source = source;
         if (assignedTo) find.assigned_to = assignedTo;
 
-        if (_search) {
+        // PaginationSearchPipe doesn't populate `_search` without an
+        // `availableSearch` option — fall back to the raw `search` query.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { company_name: { $regex: _search, $options: 'i' } },
-                { contact_name: { $regex: _search, $options: 'i' } },
-                { contact_email: { $regex: _search, $options: 'i' } },
-                { city: { $regex: _search, $options: 'i' } },
-                { country: { $regex: _search, $options: 'i' } },
+                { company_name: { $regex: searchTerm, $options: 'i' } },
+                { contact_name: { $regex: searchTerm, $options: 'i' } },
+                { contact_email: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 
