@@ -87,6 +87,10 @@ export class PfiGetResponseDto {
     consignee_address?: string;
     port_of_loading?: string;
     port_of_discharge?: string;
+    port_of_loading_id?: string;
+    port_of_loading_snapshot?: any;
+    port_of_discharge_id?: string;
+    port_of_discharge_snapshot?: any;
     final_destination?: string;
     country_of_origin?: string;
     country_of_final_destination?: string;
