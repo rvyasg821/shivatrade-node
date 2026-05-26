@@ -120,11 +120,16 @@ export class PoVendorService {
 
     /**
      * Returns a Map<po_line_id, pending_qty> for the given PO. Pending is
-     * the PO line's ordered_qty minus the sum of `ordered_qty` across all
-     * non-cancelled POVs for that line. Cancelled POVs release their
-     * reservation back to pending (decision §10).
+     * the PO line's ordered_qty minus the qty each non-cancelled POV still
+     * holds against that line:
+     *  - DRAFT POVs hold their full `ordered_qty` (planned, not yet shipped)
+     *  - DISPATCHED POVs hold `dispatched_qty` (under-dispatch returns
+     *    to pending so a follow-up POV can cover what the vendor didn't ship)
+     *  - CLOSED POVs hold `received_qty` (short receipts return to pending
+     *    so a follow-up POV can cover damage / loss)
+     *  - CANCELLED POVs hold 0 (decision §10).
      *
-     * Pass `excludePoVendorId` when computing pending for an EDIT - the
+     * Pass `excludePoVendorId` when computing pending for an EDIT — the
      * row being edited shouldn't count itself.
      */
     async computePendingByPoLineId(
@@ -140,20 +145,23 @@ export class PoVendorService {
             pending.set(l._id.toString(), num(l.qty));
         }
 
-        // Subtract every non-cancelled POV line's ordered_qty for this PO.
         const povs = await this.povRepository.findAll({
             purchase_order_id: purchaseOrderId,
             soft_delete: false,
         } as any);
 
-        const activePovIds = (povs as any[])
+        const activePovs = (povs as any[])
             .filter(p => p.status !== ENUM_PO_VENDOR_STATUS.CANCELLED)
             .filter(p =>
                 excludePoVendorId
                     ? p._id.toString() !== excludePoVendorId
                     : true
-            )
-            .map(p => p._id.toString());
+            );
+        const povStatusById = new Map<string, string>();
+        for (const p of activePovs) {
+            povStatusById.set(p._id.toString(), p.status);
+        }
+        const activePovIds = activePovs.map(p => p._id.toString());
 
         if (activePovIds.length) {
             const povLines = await this.povLineRepository.findAll({
@@ -162,7 +170,18 @@ export class PoVendorService {
             for (const pl of povLines as any[]) {
                 const k = pl.purchase_order_line_id?.toString();
                 if (!k) continue;
-                pending.set(k, (pending.get(k) || 0) - num(pl.ordered_qty));
+                const status = povStatusById.get(
+                    pl.po_vendor_id?.toString()
+                );
+                let consumed = 0;
+                if (status === ENUM_PO_VENDOR_STATUS.CLOSED) {
+                    consumed = num(pl.received_qty);
+                } else if (status === ENUM_PO_VENDOR_STATUS.DISPATCHED) {
+                    consumed = num(pl.dispatched_qty);
+                } else {
+                    consumed = num(pl.ordered_qty);
+                }
+                pending.set(k, (pending.get(k) || 0) - consumed);
             }
         }
 
@@ -976,10 +995,20 @@ export class PoVendorService {
             }
         }
 
-        // Apply: write dispatched_qty for each line.
+        // Apply: write dispatched_qty for each line. Track shortfall
+        // (ordered − dispatched) to surface in the system event.
+        let totalShort = 0;
+        let shortLineCount = 0;
         for (const dl of data.lines) {
             const ln = lineById.get(dl._id);
-            ln.dispatched_qty = String(round4(num(dl.dispatched_qty)));
+            const dispatched = round4(num(dl.dispatched_qty));
+            const ordered = round4(num(ln.ordered_qty));
+            const short = round4(ordered - dispatched);
+            if (short > 1e-6) {
+                totalShort += short;
+                shortLineCount += 1;
+            }
+            ln.dispatched_qty = String(dispatched);
             await this.povLineRepository.save(ln);
         }
 
@@ -1009,15 +1038,22 @@ export class PoVendorService {
             if (data.vehicle_no) transportBits.push(data.vehicle_no);
             if (data.transporter_name)
                 transportBits.push(data.transporter_name);
-            const summary =
-                `Dispatched on ${data.dispatch_date}` +
-                (transportBits.length ? ` · ${transportBits.join(' · ')}` : '');
+            const parts: string[] = [`Dispatched on ${data.dispatch_date}`];
+            if (transportBits.length) parts.push(transportBits.join(' · '));
+            if (totalShort > 0) {
+                parts.push(
+                    `Under-dispatched by ${round4(totalShort)} across ${shortLineCount} line(s) — returned to PO pending for re-procurement.`
+                );
+                if (data.short_reason) {
+                    parts.push(`Reason: ${data.short_reason}`);
+                }
+            }
             await this.emitSystemEvent(
                 row.company_id.toString(),
                 row._id.toString(),
                 ENUM_TRACKING_EVENT_TYPE.POV_DISPATCHED,
                 userId,
-                summary
+                parts.join(' · ')
             );
         }
         return this.povRepository.findOneById(row._id.toString());
@@ -1078,10 +1114,20 @@ export class PoVendorService {
             }
         }
 
-        // Apply: write received_qty for each line.
+        // Apply: write received_qty for each line. Track shortfall to
+        // include in the system tracking event body.
+        let totalShort = 0;
+        let shortLineCount = 0;
         for (const rl of data.lines) {
             const ln = lineById.get(rl._id);
-            ln.received_qty = String(round4(num(rl.received_qty)));
+            const received = round4(num(rl.received_qty));
+            const dispatched = round4(num(ln.dispatched_qty));
+            const short = round4(dispatched - received);
+            if (short > 1e-6) {
+                totalShort += short;
+                shortLineCount += 1;
+            }
+            ln.received_qty = String(received);
             await this.povLineRepository.save(ln);
         }
 
@@ -1095,12 +1141,21 @@ export class PoVendorService {
         this.logger.log(`POV closed (received): ${row._id}`);
 
         if (userId) {
+            const parts = [`Received on ${data.actual_arrival_date}`];
+            if (totalShort > 0) {
+                parts.push(
+                    `Short by ${round4(totalShort)} across ${shortLineCount} line(s) — returned to PO pending for re-procurement.`
+                );
+                if (data.short_reason) {
+                    parts.push(`Reason: ${data.short_reason}`);
+                }
+            }
             await this.emitSystemEvent(
                 row.company_id.toString(),
                 row._id.toString(),
                 ENUM_TRACKING_EVENT_TYPE.POV_RECEIVED,
                 userId,
-                `Received on ${data.actual_arrival_date}`
+                parts.join(' · ')
             );
         }
 
