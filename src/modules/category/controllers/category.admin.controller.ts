@@ -152,7 +152,8 @@ export class CategoryAdminController {
     async list(
         @AuthJwtPayload('companyId') companyId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
-        @Query('status') status?: string
+        @Query('status') status?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<CategoryListResponseDto>> {
         const find: any = {
             soft_delete: false,
@@ -168,10 +169,16 @@ export class CategoryAdminController {
             find.is_active = false;
         }
 
-        if (_search) {
+        // The PaginationSearchPipe only populates `_search` when the route
+        // declares `availableSearch` options — which we don't. Fall back to
+        // the raw `search` query param so the listing search box works.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { name: { $regex: _search, $options: 'i' } },
-                { description: { $regex: _search, $options: 'i' } },
+                { name: { $regex: searchTerm, $options: 'i' } },
+                { description: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

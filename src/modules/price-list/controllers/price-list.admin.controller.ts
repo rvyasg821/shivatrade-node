@@ -33,6 +33,8 @@ import { IFile } from '@common/file/interfaces/file.interface';
 import { PriceListService } from '../services/price-list.service';
 import { PriceListImportExportService } from '../services/price-list.import-export.service';
 import { PriceListRepository } from '../repository/repositories/price-list.repository';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
+import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { PriceListCreateRequestDto } from '../dtos/request/price-list.create.request.dto';
 import { PriceListUpdateRequestDto } from '../dtos/request/price-list.update.request.dto';
 import { PriceListGetResponseDto } from '../dtos/response/price-list.get.response.dto';
@@ -43,7 +45,9 @@ export class PriceListAdminController {
     constructor(
         private readonly priceListService: PriceListService,
         private readonly priceListRepository: PriceListRepository,
-        private readonly importExportService: PriceListImportExportService
+        private readonly importExportService: PriceListImportExportService,
+        private readonly vendorRepository: VendorRepository,
+        private readonly productRepository: ProductRepository
     ) {}
 
     // ============ IMPORT / EXPORT ============
@@ -165,7 +169,8 @@ export class PriceListAdminController {
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('vendor_id') vendorId?: string,
         @Query('product_id') productId?: string,
-        @Query('currency_id') currencyId?: string
+        @Query('currency_id') currencyId?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<PriceListGetResponseDto>> {
         const find: any = {};
         if (companyId) find.company_id = companyId;
@@ -173,8 +178,52 @@ export class PriceListAdminController {
         if (productId) find.product_id = productId;
         if (currencyId) find.currency_id = currencyId;
 
-        if (_search) {
-            find.$or = [{ notes: { $regex: _search, $options: 'i' } }];
+        // PaginationSearchPipe doesn't populate `_search` without an
+        // `availableSearch` option — fall back to the raw `search` query.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+
+        if (searchTerm) {
+            // Resolve term against vendor + product so the user can type a
+            // vendor code, vendor name, product code or product name and have
+            // matching rows surface. `notes` is also matched directly on the
+            // price-list row.
+            const [vendorMatches, productMatches] = await Promise.all([
+                this.vendorRepository.findAll({
+                    company_id: companyId,
+                    soft_delete: false,
+                    $or: [
+                        { vendor_code: { $regex: searchTerm, $options: 'i' } },
+                        { company_name: { $regex: searchTerm, $options: 'i' } },
+                    ],
+                } as any),
+                this.productRepository.findAll({
+                    company_id: companyId,
+                    soft_delete: false,
+                    $or: [
+                        { code: { $regex: searchTerm, $options: 'i' } },
+                        { name: { $regex: searchTerm, $options: 'i' } },
+                    ],
+                } as any),
+            ]);
+            const vendorIds = vendorMatches.map((v: any) => v._id.toString());
+            const productIds = productMatches.map((p: any) => p._id.toString());
+
+            // OR across whichever sources actually matched. Skipping empty
+            // branches matters because `vendor_id` / `product_id` are uuid
+            // columns — passing a sentinel like '__none__' makes Postgres
+            // reject the query with an invalid-input-syntax error.
+            const orBranches: any[] = [
+                { notes: { $regex: searchTerm, $options: 'i' } },
+            ];
+            if (vendorIds.length) {
+                orBranches.push({ vendor_id: { $in: vendorIds } });
+            }
+            if (productIds.length) {
+                orBranches.push({ product_id: { $in: productIds } });
+            }
+            find.$or = orBranches;
         }
 
         const rows = await this.priceListRepository.findAll(find, {

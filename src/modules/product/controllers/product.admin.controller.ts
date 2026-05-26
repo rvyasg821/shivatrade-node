@@ -161,7 +161,8 @@ export class ProductAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
-        @Query('category_id') categoryId?: string
+        @Query('category_id') categoryId?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<ProductListResponseDto>> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
@@ -171,11 +172,17 @@ export class ProductAdminController {
 
         if (categoryId) find.category_id = categoryId;
 
-        if (_search) {
+        // PaginationSearchPipe only populates `_search` when the route
+        // declares `availableSearch` — we don't. Fall back to the raw
+        // `search` query so the listing search box works.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { code: { $regex: _search, $options: 'i' } },
-                { name: { $regex: _search, $options: 'i' } },
-                { hsn_code: { $regex: _search, $options: 'i' } },
+                { code: { $regex: searchTerm, $options: 'i' } },
+                { name: { $regex: searchTerm, $options: 'i' } },
+                { hsn_code: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 
