@@ -65,7 +65,14 @@ export class VoucherService {
             return 1;
         });
 
-        return this.format(cleanCompanyPrefix, cfg.token, cfg.style, counter, fy);
+        return this.format(
+            cleanCompanyPrefix,
+            cfg.token,
+            cfg.style,
+            counter,
+            fy,
+            cfg.padDigits
+        );
     }
 
     /**
@@ -85,17 +92,22 @@ export class VoucherService {
      * Builds the displayed voucher number.
      *   glued     → COMPANY/TOKEN0001/FY    (e.g. STIPL/PI0001/2026-27)
      *   separated → COMPANY/TOKEN/0001/FY   (e.g. STIPL/OS/0001/2026-27)
+     *   compact   → COMPANY001/FY           (e.g. STIPL001/2025-26 - Invoice)
      */
     private format(
         companyPrefix: string,
         token: string,
-        style: 'glued' | 'separated',
+        style: 'glued' | 'separated' | 'compact',
         counter: number,
-        fy: string
+        fy: string,
+        padDigits: number = 4
     ): string {
-        const padded = counter.toString().padStart(4, '0');
+        const padded = counter.toString().padStart(padDigits, '0');
         if (style === 'glued') {
             return `${companyPrefix}/${token}${padded}/${fy}`;
+        }
+        if (style === 'compact') {
+            return `${companyPrefix}${padded}/${fy}`;
         }
         return `${companyPrefix}/${token}/${padded}/${fy}`;
     }

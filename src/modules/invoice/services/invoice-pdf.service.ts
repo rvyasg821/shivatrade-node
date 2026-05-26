@@ -1,0 +1,489 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PdfService } from '@common/pdf/pdf.service';
+import { InvoiceRepository } from '../repository/repositories/invoice.repository';
+import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
+import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
+import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
+import { ENUM_INVOICE_GST_ROUTE } from '../enums/invoice.enum';
+
+// Embed logo as data URI - puppeteer's file:// loads are flaky.
+const LOGO_DATA_URI: string = (() => {
+    try {
+        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
+        const buf = fs.readFileSync(p);
+        return `data:image/png;base64,${buf.toString('base64')}`;
+    } catch {
+        return '';
+    }
+})();
+
+const esc = (v: any): string =>
+    v == null
+        ? ''
+        : String(v)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+
+const num = (v: any) => Number(v || 0);
+const fmt = (v: any, dp = 2) =>
+    num(v).toLocaleString('en-IN', {
+        minimumFractionDigits: dp,
+        maximumFractionDigits: dp,
+    });
+
+const lines2br = (s: string | undefined): string =>
+    esc(s || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .join('<br/>');
+
+export type InvoicePdfDocType = 'commercial' | 'packing-list';
+
+/**
+ * Renders the export Commercial Invoice + Packing List PDFs from the same
+ * Invoice + Company + Customer data. Layout follows the STIPL119 template.
+ */
+@Injectable()
+export class InvoicePdfService {
+    constructor(
+        private readonly pdfService: PdfService,
+        private readonly invoiceRepository: InvoiceRepository,
+        private readonly invoiceLineRepository: InvoiceLineRepository,
+        private readonly companyRepository: CompanyRepository,
+        private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly customerRepository: CustomerRepository,
+        private readonly customerAddressRepository: CustomerAddressRepository
+    ) {}
+
+    async render(
+        companyId: string,
+        invoiceId: string,
+        doc: InvoicePdfDocType
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const data = await this.loadRenderData(companyId, invoiceId);
+
+        const html =
+            doc === 'packing-list'
+                ? buildPackingListHtml(data)
+                : buildCommercialInvoiceHtml(data);
+
+        const buffer = await this.pdfService.generateFromHtml(html, {
+            format: 'A4',
+            margin: {
+                top: '12mm',
+                right: '10mm',
+                bottom: '12mm',
+                left: '10mm',
+            },
+            displayHeaderFooter: false,
+        });
+
+        const safe = (data.invoice.voucher_no || 'INVOICE')
+            .replace(/[\\/]+/g, '-')
+            .replace(/[^A-Za-z0-9_\-.]/g, '');
+        const suffix = doc === 'packing-list' ? '-PackingList' : '';
+        return { buffer, filename: `${safe}${suffix}.pdf` };
+    }
+
+    /** Hydrates everything the templates need into a flat shape. */
+    private async loadRenderData(companyId: string, invoiceId: string) {
+        const invoice: any = await this.invoiceRepository.findOne({
+            _id: invoiceId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!invoice) throw new NotFoundException('Invoice not found');
+
+        const lines = await this.invoiceLineRepository.findByInvoiceId(
+            invoiceId
+        );
+
+        const company: any =
+            (await this.companyRepository.findOneById(companyId)) || {};
+        const companyAddresses = await this.companyAddressRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        const companyAddr: any =
+            (companyAddresses as any[]).find((a: any) => a.is_default) ||
+            (companyAddresses as any[])[0] ||
+            {};
+
+        const customer: any =
+            invoice.consignee_id
+                ? await this.customerRepository.findOneById(
+                      invoice.consignee_id.toString()
+                  )
+                : null;
+        const consigneeAddresses = customer
+            ? await this.customerAddressRepository.findAll({
+                  customer_id: customer._id.toString(),
+                  soft_delete: false,
+              } as any)
+            : [];
+        const consigneeAddr: any =
+            invoice.consignee_address_id
+                ? (consigneeAddresses as any[]).find(
+                      (a: any) =>
+                          a._id?.toString() ===
+                          invoice.consignee_address_id?.toString()
+                  )
+                : (consigneeAddresses as any[]).find((a: any) => a.is_default) ||
+                  (consigneeAddresses as any[])[0];
+
+        return {
+            invoice,
+            lines: lines as any[],
+            company,
+            companyAddr,
+            customer,
+            consigneeAddr,
+            notifySnapshot: invoice.notify_party_snapshot,
+        };
+    }
+}
+
+// ─── HTML templates ─────────────────────────────────────────────────────
+
+interface RenderData {
+    invoice: any;
+    lines: any[];
+    company: any;
+    companyAddr: any;
+    customer: any;
+    consigneeAddr: any;
+    notifySnapshot: any;
+}
+
+const baseStyles = `
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 9.5px; color: #222; margin: 0; }
+    .doc { width: 100%; }
+    .title {
+        text-align: center; font-weight: 700; font-size: 13px;
+        padding: 6px 0; border: 1px solid #222;
+    }
+    .subtitle {
+        text-align: center; font-size: 10px; font-weight: 600;
+        padding: 3px 0; border-bottom: 1px solid #222;
+        border-left: 1px solid #222; border-right: 1px solid #222;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { border: 1px solid #222; padding: 4px 6px; vertical-align: top; }
+    th { background: #f0f0f0; font-weight: 700; text-align: center; }
+    .nob td, .nob th { border: none; padding: 1px 0; }
+    .lbl { font-weight: 700; }
+    .small { font-size: 8.5px; }
+    .right { text-align: right; }
+    .center { text-align: center; }
+    .strong { font-weight: 700; }
+    .muted { color: #555; }
+    .row { display: flex; }
+    .col { flex: 1 1 0; }
+    .pad { padding: 4px 6px; }
+    .h6 { font-weight: 700; font-size: 10.5px; }
+    .sigbox { height: 60px; }
+`;
+
+function partiesBlock(d: RenderData, includeNotify = true): string {
+    const c = d.company || {};
+    const ca = d.companyAddr || {};
+    const cust = d.customer || {};
+    const cad = d.consigneeAddr || {};
+    const notify = d.notifySnapshot || {};
+
+    const shipperLines = [
+        ca.address_line1,
+        ca.address_line2,
+        [ca.city, ca.state].filter(Boolean).join(', '),
+        [ca.country, ca.postcode].filter(Boolean).join(' - '),
+    ]
+        .filter(Boolean)
+        .join('<br/>');
+
+    const consigneeLines = [
+        cust.company_name,
+        cad?.address_line1,
+        cad?.address_line2,
+        [cad?.city, cad?.state].filter(Boolean).join(', '),
+        cad?.country,
+    ]
+        .filter(Boolean)
+        .join('<br/>');
+
+    const notifyLines =
+        notify && (notify.name || notify.address)
+            ? [
+                  notify.name,
+                  notify.address || notify.address_line1,
+                  notify.city,
+                  notify.country,
+              ]
+                  .filter(Boolean)
+                  .join('<br/>')
+            : '';
+
+    return `
+    <table>
+        <tr>
+            <td style="width: 50%;">
+                <div class="lbl">SHIPPER:</div>
+                <div class="strong">${esc(c.company_name)}</div>
+                <div>${shipperLines}</div>
+                <table class="nob small" style="margin-top: 4px;">
+                    <tr><td class="lbl" style="width:90px;">GST No</td><td>${esc(ca.gstin || c.tax_number)}</td></tr>
+                    <tr><td class="lbl">PAN No.</td><td>${esc(c.pan)}</td></tr>
+                    <tr><td class="lbl">IEC No.</td><td>${esc(c.iec)}</td></tr>
+                    <tr><td class="lbl">LUT No. and date</td><td>${esc(d.invoice.lut_no)}${d.invoice.lut_date ? ' / ' + esc(String(d.invoice.lut_date).slice(0, 10)) : ''}</td></tr>
+                </table>
+            </td>
+            <td style="width: 50%;">
+                <div class="lbl">CONSIGNEE:</div>
+                <div>${consigneeLines}</div>
+                ${
+                    includeNotify && notifyLines
+                        ? `<div class="lbl" style="margin-top: 6px;">Buyer(s) / Notify Party</div>
+                           <div>${notifyLines}</div>`
+                        : ''
+                }
+            </td>
+        </tr>
+        <tr>
+            <td><span class="lbl">Country of Origin</span><br/>${esc(d.invoice.country_of_origin || 'India')}</td>
+            <td><span class="lbl">Terms of Delivery and Payment</span><br/>${esc(d.invoice.delivery_terms || d.invoice.incoterm || '')}${d.invoice.payment_terms ? '<br/>Payment: ' + esc(d.invoice.payment_terms) : ''}</td>
+        </tr>
+        <tr>
+            <td><span class="lbl">Country of Destination</span><br/>${esc(d.invoice.country_of_destination)}</td>
+            <td><span class="lbl">Export Route</span><br/>${d.invoice.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED ? 'Export Under LUT (Without Payment of IGST)' : 'Export With Payment of IGST'}</td>
+        </tr>
+    </table>`;
+}
+
+function buildCommercialInvoiceHtml(d: RenderData): string {
+    const inv = d.invoice;
+    const isLut = inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED;
+    const subtitle = isLut
+        ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
+        : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
+    const sym = esc(inv.currency_symbol || inv.currency_code || '');
+
+    const linesHtml = (d.lines || [])
+        .map(
+            (l, i) => `
+            <tr>
+                <td class="center">${i + 1}</td>
+                <td class="center">${esc(l.hsn_code)}</td>
+                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
+                <td class="right">${sym}${fmt(l.unit_price, 2)}</td>
+                <td class="right strong">${sym}${fmt(l.line_total, 2)}</td>
+            </tr>`
+        )
+        .join('');
+
+    const bucketsHtml =
+        Array.isArray(inv.igst_refund_buckets) && inv.igst_refund_buckets.length
+            ? `<table style="margin-top: 6px;">
+                <tr>
+                    <th class="right">Assessable Value (INR)</th>
+                    <th class="right">IGST Rate</th>
+                    <th class="right">IGST Amount (INR)</th>
+                </tr>
+                ${inv.igst_refund_buckets
+                    .map(
+                        (b: any) => `
+                    <tr>
+                        <td class="right">₹${fmt(b.assessable_value_inr, 2)}</td>
+                        <td class="right">${fmt(b.rate, 2)}%</td>
+                        <td class="right strong">₹${fmt(b.igst_amount_inr, 2)}</td>
+                    </tr>`
+                    )
+                    .join('')}
+                <tr>
+                    <td colspan="2" class="right strong">Total IGST Refund</td>
+                    <td class="right strong">₹${fmt(inv.igst_refund_amount, 2)}</td>
+                </tr>
+            </table>`
+            : '';
+
+    const banks = Array.isArray(inv.bank_snapshots) ? inv.bank_snapshots : [];
+    const banksHtml = banks.length
+        ? `<table style="margin-top: 6px;">
+            <tr>
+                <th colspan="6">BANK DETAILS</th>
+            </tr>
+            ${banks
+                .map(
+                    (b: any) => `
+                <tr>
+                    <td class="lbl" style="width:90px;">Bank Name</td><td>${esc(b.name)}</td>
+                    <td class="lbl" style="width:90px;">Account No.</td><td>${esc(b.account_no)}</td>
+                    <td class="lbl" style="width:90px;">AD Code</td><td>${esc(b.ad_code)}</td>
+                </tr>
+                <tr>
+                    <td class="lbl">Beneficiary</td><td>${esc(b.beneficiary)}</td>
+                    <td class="lbl">SWIFT</td><td>${esc(b.swift_code)}</td>
+                    <td class="lbl">Branch</td><td>${esc(b.branch)}</td>
+                </tr>`
+                )
+                .join('')}
+        </table>`
+        : '';
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><style>${baseStyles}</style></head>
+<body><div class="doc">
+    <div class="title">COMMERCIAL INVOICE</div>
+    <div class="subtitle">${subtitle}</div>
+
+    <table>
+        <tr>
+            <td style="width:60%;"><span class="lbl">Invoice No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
+            <td><span class="lbl">Date:</span> ${esc(String(inv.invoice_date || '').slice(0, 10))}</td>
+        </tr>
+    </table>
+
+    ${partiesBlock(d, true)}
+
+    <table style="margin-top: 0;">
+        <tr>
+            <td style="width:33%;"><span class="lbl">Incoterm</span><br/>${esc(inv.incoterm)}</td>
+            <td style="width:33%;"><span class="lbl">Buyer's PO #</span><br/>${esc(inv.customer_po_no)}</td>
+            <td><span class="lbl">Exchange Rate</span><br/>1 ${esc(inv.currency_code)} = ₹${fmt(inv.exchange_rate, 4)}</td>
+        </tr>
+    </table>
+
+    <table style="margin-top: 0;">
+        <tr>
+            <th style="width:36px;">SR NO</th>
+            <th style="width:80px;">HSN CODE</th>
+            <th>DESCRIPTION OF GOODS</th>
+            <th style="width:100px;">QTY</th>
+            <th style="width:110px;">PRICE / UNIT</th>
+            <th style="width:130px;">AMOUNT</th>
+        </tr>
+        ${linesHtml}
+        <tr>
+            <td colspan="5" class="right lbl">Subtotal</td>
+            <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
+        </tr>
+        ${num(inv.discount_total) > 0 ? `<tr><td colspan="5" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        <tr>
+            <td colspan="5" class="right lbl">FOB Value</td>
+            <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
+        </tr>
+        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="5" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
+        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="5" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
+        ${num(inv.other_charges) > 0 ? `<tr><td colspan="5" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        <tr>
+            <td colspan="5" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
+            <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
+        </tr>
+    </table>
+
+    ${inv.amount_in_words ? `<div class="pad" style="border:1px solid #222; border-top:none;"><span class="lbl">Amount in Words:</span> ${esc(inv.amount_in_words)}</div>` : ''}
+
+    ${bucketsHtml}
+
+    <table style="margin-top: 6px;">
+        <tr>
+            <td style="width:25%;"><span class="lbl">End Use Code</span><br/>${esc(inv.end_use_code)}</td>
+            <td style="width:25%;"><span class="lbl">Preferential Agreement</span><br/>${esc(inv.preferential_agreement || 'N/A')}</td>
+            <td style="width:25%;"><span class="lbl">Place of Supply</span><br/>${esc(inv.place_of_supply || '96')} - Other Territory</td>
+            <td><span class="lbl">Advance Received</span><br/>${sym}${fmt(inv.advance_received, 2)}</td>
+        </tr>
+    </table>
+
+    ${banksHtml}
+
+    <div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+        <div class="lbl">Declaration:</div>
+        <div class="small">${esc(inv.declaration_text || 'We declare that invoice shows the actual price of the goods described and that all particulars are true and correct.')}</div>
+    </div>
+
+    <table style="margin-top: 6px;">
+        <tr>
+            <td class="sigbox">
+                <div class="small muted">For, ${esc(d.company.company_name)}</div>
+            </td>
+            <td class="sigbox right">
+                <div class="small muted">Authorized Signatory</div>
+            </td>
+        </tr>
+    </table>
+</div></body></html>`;
+}
+
+function buildPackingListHtml(d: RenderData): string {
+    const inv = d.invoice;
+    const linesHtml = (d.lines || [])
+        .map(
+            (l, i) => `
+            <tr>
+                <td class="center">${i + 1}</td>
+                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
+                <td class="right">-</td>
+                <td class="right">-</td>
+                <td class="right">-</td>
+            </tr>`
+        )
+        .join('');
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><style>${baseStyles}</style></head>
+<body><div class="doc">
+    <div class="title">PACKING LIST</div>
+    <div class="subtitle">SUPPLY MEANT FOR EXPORT</div>
+
+    <table>
+        <tr>
+            <td style="width:60%;"><span class="lbl">Packing List No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
+            <td><span class="lbl">Date:</span> ${esc(String(inv.invoice_date || '').slice(0, 10))}</td>
+        </tr>
+    </table>
+
+    ${partiesBlock(d, true)}
+
+    <table style="margin-top: 0;">
+        <tr>
+            <th style="width:36px;">SR NO</th>
+            <th>DESCRIPTION OF GOODS</th>
+            <th style="width:120px;">QTY / UNIT</th>
+            <th style="width:90px;">NO. OF PKGS</th>
+            <th style="width:100px;">NET WEIGHT</th>
+            <th style="width:100px;">GROSS WEIGHT</th>
+        </tr>
+        ${linesHtml}
+        <tr>
+            <td colspan="3" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
+            <td class="right strong" style="background:#f0f0f0;">-</td>
+            <td class="right strong" style="background:#f0f0f0;">-</td>
+            <td class="right strong" style="background:#f0f0f0;">-</td>
+        </tr>
+    </table>
+
+    <div class="pad small muted" style="margin-top: 6px;">
+        Note: Package count and weights are populated from the linked Shipping
+        record once the consignment is booked. Until then, fields show "-".
+    </div>
+
+    <table style="margin-top: 12px;">
+        <tr>
+            <td class="sigbox">
+                <div class="small muted">For, ${esc(d.company.company_name)}</div>
+            </td>
+            <td class="sigbox right">
+                <div class="small muted">Authorized Signatory</div>
+            </td>
+        </tr>
+    </table>
+</div></body></html>`;
+}

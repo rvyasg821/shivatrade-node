@@ -1,0 +1,203 @@
+import {
+    Controller,
+    Get,
+    Post,
+    Put,
+    Delete,
+    Body,
+    Param,
+    Query,
+    Res,
+} from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
+import { ApiTags } from '@nestjs/swagger';
+import {
+    AuthJwtAccessProtected,
+    AuthJwtPayload,
+} from '@modules/auth/decorators/auth.jwt.decorator';
+import {
+    Response,
+    ResponsePaging,
+} from '@common/response/decorators/response.decorator';
+import {
+    IResponse,
+    IResponsePaging,
+} from '@common/response/interfaces/response.interface';
+import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
+import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+
+import { InvoiceService } from '../services/invoice.service';
+import {
+    InvoicePdfService,
+    InvoicePdfDocType,
+} from '../services/invoice-pdf.service';
+import { InvoiceRepository } from '../repository/repositories/invoice.repository';
+import { InvoiceCreateRequestDto } from '../dtos/request/invoice.create.request.dto';
+import { InvoiceUpdateRequestDto } from '../dtos/request/invoice.update.request.dto';
+import { InvoiceCancelRequestDto } from '../dtos/request/invoice.cancel.request.dto';
+import {
+    InvoiceGetResponseDto,
+    InvoiceListResponseDto,
+} from '../dtos/response/invoice.get.response.dto';
+
+@ApiTags('admin.invoice')
+@Controller({
+    version: '1',
+    path: '/admin/invoice',
+})
+export class InvoiceAdminController {
+    constructor(
+        private readonly invoiceService: InvoiceService,
+        private readonly invoiceRepository: InvoiceRepository,
+        private readonly invoicePdfService: InvoicePdfService
+    ) {}
+
+    @Response('invoice.create')
+    @AuthJwtAccessProtected()
+    @Post('/create')
+    async create(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: InvoiceCreateRequestDto
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        const row = await this.invoiceService.create(companyId, body, userId);
+        const data = await this.invoiceService.mapGet(row);
+        return { data };
+    }
+
+    @ResponsePaging('invoice.list')
+    @AuthJwtAccessProtected()
+    @Get('/list')
+    async list(
+        @AuthJwtPayload('companyId') companyId: string,
+        @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
+        @Query('status') status?: string,
+        @Query('customer_id') customerId?: string,
+        @Query('purchase_order_id') purchaseOrderId?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string
+    ): Promise<IResponsePaging<InvoiceListResponseDto>> {
+        const find: any = { company_id: companyId, soft_delete: false };
+        if (status) find.status = status;
+        if (customerId) find.customer_id = customerId;
+        if (purchaseOrderId) find.purchase_order_id = purchaseOrderId;
+        if (dateFrom || dateTo) {
+            find.invoice_date = {};
+            if (dateFrom) (find.invoice_date as any).$gte = dateFrom;
+            if (dateTo) (find.invoice_date as any).$lte = dateTo;
+        }
+        if (_search) {
+            find.$or = [
+                { voucher_no: { $regex: _search, $options: 'i' } },
+                { purchase_order_voucher_no: { $regex: _search, $options: 'i' } },
+            ];
+        }
+
+        const rows = await this.invoiceRepository.findAll(find, {
+            paging: { limit: _limit, offset: _offset },
+            order: _order,
+        });
+        const total = await this.invoiceRepository.getTotal(find);
+        const data = (rows as any[]).map((r) => this.invoiceService.mapList(r));
+
+        return {
+            _pagination: { total, totalPage: Math.ceil(total / _limit) },
+            data,
+        };
+    }
+
+    @Response('invoice.get')
+    @AuthJwtAccessProtected()
+    @Get('/get/:invoiceId')
+    async get(
+        @Param('invoiceId') invoiceId: string
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        const data = await this.invoiceService.mapGet(row);
+        return { data };
+    }
+
+    @Response('invoice.update')
+    @AuthJwtAccessProtected()
+    @Put('/update/:invoiceId')
+    async update(
+        @Param('invoiceId') invoiceId: string,
+        @Body() body: InvoiceUpdateRequestDto
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        const updated = await this.invoiceService.update(row, body);
+        const data = await this.invoiceService.mapGet(updated);
+        return { data };
+    }
+
+    @Response('invoice.issue')
+    @AuthJwtAccessProtected()
+    @Post('/issue/:invoiceId')
+    async issue(
+        @AuthJwtPayload('user') userId: string,
+        @Param('invoiceId') invoiceId: string
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        const updated = await this.invoiceService.issue(row, userId);
+        const data = await this.invoiceService.mapGet(updated);
+        return { data };
+    }
+
+    @Response('invoice.cancel')
+    @AuthJwtAccessProtected()
+    @Post('/cancel/:invoiceId')
+    async cancel(
+        @AuthJwtPayload('user') userId: string,
+        @Param('invoiceId') invoiceId: string,
+        @Body() body: InvoiceCancelRequestDto
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        const updated = await this.invoiceService.cancel(row, body.reason, userId);
+        const data = await this.invoiceService.mapGet(updated);
+        return { data };
+    }
+
+    @Response('invoice.delete')
+    @AuthJwtAccessProtected()
+    @Delete('/delete/:invoiceId')
+    async softDelete(@Param('invoiceId') invoiceId: string): Promise<void> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        await this.invoiceService.softDelete(row);
+    }
+
+    /**
+     * Render the Invoice as a PDF. Two flavors:
+     *   ?doc=commercial   (default) → Commercial Invoice (STIPL119 layout)
+     *   ?doc=packing-list           → Packing List       (companion doc)
+     *
+     * Returns a stream - browser displays inline. Add `?download=1` to force
+     * a Content-Disposition: attachment header.
+     */
+    @AuthJwtAccessProtected()
+    @Get('/:invoiceId/pdf')
+    async pdf(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('invoiceId') invoiceId: string,
+        @Query('doc') docQuery: string | undefined,
+        @Query('download') downloadQuery: string | undefined,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const doc: InvoicePdfDocType =
+            docQuery === 'packing-list' ? 'packing-list' : 'commercial';
+        const { buffer, filename } = await this.invoicePdfService.render(
+            companyId,
+            invoiceId,
+            doc
+        );
+
+        const disposition =
+            downloadQuery === '1' ? 'attachment' : 'inline';
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `${disposition}; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buffer.length.toString());
+        res.end(buffer);
+    }
+}
