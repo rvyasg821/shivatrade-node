@@ -25,7 +25,14 @@ export class PoCoverageLineDto {
     /** Σ (dispatched - received) across CLOSED POVs only — booked loss. */
     @ApiProperty({ required: true, type: String }) lost: string;
 
-    /** ordered − covered. New POVs can be opened against this remaining capacity. */
+    /** Physical loss: qty that left the vendor (dispatched) on a CLOSED
+     *  POV but never arrived. Identical to `lost` — exposed under a more
+     *  user-friendly name for the PO Coverage UI. Under-dispatch is NOT
+     *  counted (those units never left the vendor; they show up in
+     *  `pending` instead). */
+    @ApiProperty({ required: true, type: String }) short: string;
+
+    /** ordered − consumed. New POVs can be opened against this remaining capacity. */
     @ApiProperty({ required: true, type: String }) pending: string;
 }
 
@@ -35,6 +42,7 @@ export class PoCoverageTotalsDto {
     @ApiProperty({ required: true, type: String }) dispatched: string;
     @ApiProperty({ required: true, type: String }) received: string;
     @ApiProperty({ required: true, type: String }) lost: string;
+    @ApiProperty({ required: true, type: String }) short: string;
     @ApiProperty({ required: true, type: String }) pending: string;
 }
 

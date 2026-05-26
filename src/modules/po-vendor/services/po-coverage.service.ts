@@ -71,6 +71,16 @@ export class PoCoverageService {
             : [];
 
         // ── Bucket POV lines by purchase_order_line_id ─────────────────
+        // `consumed` is the qty this PO line is still "owed" to non-cancelled
+        // POVs — status-aware so shortfalls release back to pending:
+        //   DRAFT      → ordered_qty
+        //   DISPATCHED → dispatched_qty (under-dispatch → pending)
+        //   CLOSED     → received_qty   (short receipt → pending)
+        // Mirrors `computePendingByPoLineId` in po-vendor.service.
+        const povStatusById = new Map<string, string>();
+        for (const p of activePovs) {
+            povStatusById.set(p._id.toString(), p.status);
+        }
         const aggByPoLine = new Map<
             string,
             {
@@ -78,6 +88,7 @@ export class PoCoverageService {
                 dispatched: number;
                 received: number;
                 lost: number;
+                consumed: number;
             }
         >();
         for (const pl of povLines as any[]) {
@@ -89,13 +100,20 @@ export class PoCoverageService {
                     dispatched: 0,
                     received: 0,
                     lost: 0,
+                    consumed: 0,
                 };
             cur.covered += num(pl.ordered_qty);
             cur.dispatched += num(pl.dispatched_qty);
             cur.received += num(pl.received_qty);
-            // Loss is only booked on closed POVs (§19.6).
-            if (closedPovIds.has(pl.po_vendor_id?.toString())) {
+            const status = povStatusById.get(pl.po_vendor_id?.toString());
+            if (status === ENUM_PO_VENDOR_STATUS.CLOSED) {
+                cur.consumed += num(pl.received_qty);
+                // Display-only: shortfall recorded as loss.
                 cur.lost += num(pl.dispatched_qty) - num(pl.received_qty);
+            } else if (status === ENUM_PO_VENDOR_STATUS.DISPATCHED) {
+                cur.consumed += num(pl.dispatched_qty);
+            } else {
+                cur.consumed += num(pl.ordered_qty);
             }
             aggByPoLine.set(k, cur);
         }
@@ -121,6 +139,7 @@ export class PoCoverageService {
             dispatched: '0',
             received: '0',
             lost: '0',
+            short: '0',
             pending: '0',
         };
         let totOrd = 0,
@@ -128,8 +147,8 @@ export class PoCoverageService {
             totDis = 0,
             totRec = 0,
             totLost = 0,
-            totPend = 0,
-            totUncov = 0;
+            totShort = 0,
+            totPend = 0;
 
         for (const pol of poLines as any[]) {
             const k = pol._id.toString();
@@ -139,15 +158,17 @@ export class PoCoverageService {
                     dispatched: 0,
                     received: 0,
                     lost: 0,
+                    consumed: 0,
                 };
             const ordered = num(pol.qty);
-            // "Pending" is what the vendor still owes us — outstanding
-            // procurement qty. Lost is permanently accounted for, so it
-            // counts as closed even though never received.
-            const pending = round4(ordered - a.received - a.lost);
-            // "Uncovered" is the planning gap — qty with no POV yet. Used
-            // internally to gate the "Create POV" button; not displayed.
-            const uncovered = round4(ordered - a.covered);
+            const pending = round4(ordered - a.consumed);
+            // Short = physical loss only: qty that left the vendor on a
+            // CLOSED POV but never arrived (dispatched − received). Under-
+            // dispatch is NOT counted here — those units never left the
+            // vendor, and the recovery POV flow makes them visible via
+            // `pending` instead. Keeps the column intuitive: Short ≈ GRN
+            // loss number, no historical accumulation.
+            const short = round4(a.lost);
             const product = pol.product_id
                 ? productMap.get(pol.product_id.toString())
                 : null;
@@ -165,6 +186,7 @@ export class PoCoverageService {
                 dispatched: String(round4(a.dispatched)),
                 received: String(round4(a.received)),
                 lost: String(round4(a.lost)),
+                short: String(short),
                 pending: String(pending),
             });
 
@@ -173,8 +195,8 @@ export class PoCoverageService {
             totDis += a.dispatched;
             totRec += a.received;
             totLost += a.lost;
+            totShort += short;
             totPend += pending;
-            totUncov += uncovered;
         }
 
         totals.ordered = String(round4(totOrd));
@@ -182,17 +204,19 @@ export class PoCoverageService {
         totals.dispatched = String(round4(totDis));
         totals.received = String(round4(totRec));
         totals.lost = String(round4(totLost));
+        totals.short = String(round4(totShort));
         totals.pending = String(round4(totPend));
 
         return {
             purchase_order_id: purchaseOrderId,
             purchase_order_voucher_no: po.voucher_no,
             status: po.status,
-            // `has_pending` gates the "Create POV" button — it must reflect
-            // *uncovered* qty (no POV yet), not unreceived qty. A line that
-            // is fully covered by an in-progress POV should NOT re-open the
-            // button.
-            has_pending: totUncov > 1e-6,
+            // `has_pending` gates the "Create POV" button. Re-opens on:
+            //  - a POV cancel (lines released)
+            //  - a CLOSED POV with short receipt (shortfall released for
+            //    damaged / lost recovery)
+            //  - a new PO line added post-PO-creation that has no POV
+            has_pending: totPend > 1e-6,
             lines,
             totals,
         };
