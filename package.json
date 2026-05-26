@@ -32,6 +32,7 @@
         "trade:seed-masters": "nestjs-command trade:seed-masters",
         "trade:fresh": "nestjs-command trade:fresh",
         "migrate:seed": "nestjs-command seed:role && nestjs-command seed:user",
+        "migrate:seed-ports": "nestjs-command seed:port-master",
         "migrate:remove": "nestjs-command remove:user && nestjs-command remove:role && nestjs-command remove:settings",
         "migrate:template": "nestjs-command migrate:emailTemplate",
         "rollback:template": "nestjs-command rollback:emailTemplate",

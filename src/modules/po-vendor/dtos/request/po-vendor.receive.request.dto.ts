@@ -13,9 +13,10 @@ import {
 } from 'class-validator';
 
 /**
- * One row per POV line — `received_qty` capped at `dispatched_qty`.
- * `short_qty = dispatched − received` is always treated as loss
- * (POV plan §19.6 — informational only, no user choice).
+ * One row per POV line — `received_qty` capped at `dispatched_qty`. Any
+ * shortfall (`dispatched − received`) flows back to the parent PO's
+ * pending qty so the operator can spawn a follow-up POV from the
+ * Coverage tab (damaged / lost recovery flow).
  */
 export class PoVendorReceiveLineDto {
     @IsUUID()
@@ -47,6 +48,13 @@ export class PoVendorReceiveRequestDto {
     @IsOptional()
     @MaxLength(2000)
     internal_notes?: string;
+
+    /** Optional reason recorded on the system tracking event when any
+     * line is short-received (damaged / lost / quality reject etc.). */
+    @IsString()
+    @IsOptional()
+    @MaxLength(500)
+    short_reason?: string;
 
     @IsArray()
     @ArrayMinSize(1, { message: 'At least one line is required.' })

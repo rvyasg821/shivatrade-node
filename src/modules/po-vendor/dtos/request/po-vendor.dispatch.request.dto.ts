@@ -14,7 +14,9 @@ import {
 
 /**
  * One row per POV line — `dispatched_qty` capped at `ordered_qty`.
- * Backend enforces the cap; client validates client-side too.
+ * Backend enforces the cap; client validates client-side too. Any
+ * shortfall (`ordered − dispatched`) flows back to the parent PO's
+ * pending qty so a follow-up POV can be raised from the Coverage tab.
  */
 export class PoVendorDispatchLineDto {
     @IsUUID()
@@ -77,6 +79,13 @@ export class PoVendorDispatchRequestDto {
     @IsOptional()
     @MaxLength(2000)
     internal_notes?: string;
+
+    /** Optional reason recorded on the system tracking event when any
+     * line is under-dispatched (vendor stock-out / partial fulfillment etc.). */
+    @IsString()
+    @IsOptional()
+    @MaxLength(500)
+    short_reason?: string;
 
     @IsArray()
     @ArrayMinSize(1, { message: 'At least one line is required.' })

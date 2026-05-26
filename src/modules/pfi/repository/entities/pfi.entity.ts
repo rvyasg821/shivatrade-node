@@ -135,7 +135,7 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     })
     tax_total: string;
 
-    /** Home-currency (INR) rounding adjustment — the ± difference applied to
+    /** Home-currency (INR) rounding adjustment - the ± difference applied to
      *  the raw home grand total to reach a whole-rupee figure. GST-compliant
      *  "Round Off" line. */
     @Column({
@@ -179,11 +179,28 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     consignee_address?: string;
 
     // ── Shipping ──
+    // Legacy free-text ports - kept readable for pre-2026-05-26 PFIs;
+    // new PFIs write via *_id + *_snapshot below (port_master FK pattern).
     @Column({ type: 'varchar', length: 150, nullable: true })
     port_of_loading?: string;
 
     @Column({ type: 'varchar', length: 150, nullable: true })
     port_of_discharge?: string;
+
+    /** FK → port_master._id. Indian-only; null when discharge is foreign. */
+    @Column({ type: 'uuid', nullable: true })
+    port_of_loading_id?: string;
+
+    /** jsonb snapshot at save time - { code, name, type, state, country_code, display_label }.
+     *  PDF + downstream Invoice/Shipping read from snapshot, not live join. */
+    @Column({ type: 'jsonb', nullable: true })
+    port_of_loading_snapshot?: any;
+
+    @Column({ type: 'uuid', nullable: true })
+    port_of_discharge_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    port_of_discharge_snapshot?: any;
 
     @Column({ type: 'varchar', length: 150, nullable: true })
     final_destination?: string;
@@ -194,7 +211,7 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 100, nullable: true })
     country_of_final_destination?: string;
 
-    /** enum: `sea` / `air` / `road` */
+    /** enum: `sea` / `air` (road dropped 2026-05-26 - ShivaTrade ships by sea + air only) */
     @Column({ type: 'varchar', length: 20, nullable: true })
     mode_of_shipment?: string;
 
