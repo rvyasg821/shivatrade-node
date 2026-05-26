@@ -307,20 +307,22 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
   }
   table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
   table.items th.num, table.items td.num { text-align: right; }
-  .totals {
-    width: 280px;
-    margin-left: auto;
-    margin-top: 14px;
-    margin-bottom: 4px;
-  }
-  .totals .row-grand {
-    display: flex;
-    justify-content: space-between;
-    padding: 10px 0 4px;
-    border-top: 2px solid #1f2937;
-    font-weight: 700;
+  /* Grand-total row sits inside <tbody> (not <tfoot>) so it does NOT
+     repeat on every printed page — puppeteer renders <tfoot> as a
+     per-page footer by default. */
+  table.items tr.row-grand-tr td {
+    padding: 12px 7px 6px;
     font-size: 12px;
-    color: #1f2937;
+    font-weight: 700;
+    color: #09418b;
+    background: transparent;
+    border: 0;
+  }
+  table.items tr.row-grand-tr td.grand-label,
+  table.items tr.row-grand-tr td.grand-value {
+    border-top: 2px solid #1f2937;
+    white-space: nowrap;
+    text-align: right;
   }
   .section {
     margin-top: 18px;
@@ -430,18 +432,17 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
           <th class="num" style="width:80px">Amount</th>
         </tr>
       </thead>
-      <tbody>${linesRows}</tbody>
+      <tbody>${linesRows}
+        <tr class="row-grand-tr">
+          <td colspan="7"></td>
+          <td class="grand-label">Grand Total</td>
+          <td class="grand-value">${money(p, p.grand_total)}</td>
+        </tr>
+      </tbody>
     </table>
   </div>
 
   ${packingBlock}
-
-  <div class="totals">
-    <div class="row-grand">
-      <span>Grand Total</span>
-      <span>${money(p, p.grand_total)}</span>
-    </div>
-  </div>
 
   ${bankBlock}
 
