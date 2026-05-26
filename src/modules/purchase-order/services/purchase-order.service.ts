@@ -1873,6 +1873,11 @@ export class PurchaseOrderService {
                                       l.vendor_id?.toString()
                                   ) as any)?.company_name
                                 : undefined,
+                            vendor_code: l.vendor_id
+                                ? (vendorMap.get(
+                                      l.vendor_id?.toString()
+                                  ) as any)?.vendor_code
+                                : undefined,
                             source_quotation_line_id:
                                 l.source_quotation_line_id?.toString(),
                             source_pfi_line_id:
