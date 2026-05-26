@@ -57,17 +57,24 @@ export class ExpenseAdminController {
     async list(
         @AuthJwtPayload('companyId') companyId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
-        @Query('status') status?: string
+        @Query('status') status?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<ExpenseListResponseDto>> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
         if (status === 'ACTIVE') find.is_active = true;
         else if (status === 'INACTIVE') find.is_active = false;
-        if (_search) {
+        // PaginationSearchPipe doesn't populate `_search` without an
+        // `availableSearch` option — fall back to the raw `search` query.
+        // ExpenseEntity has no `description` column, so search is limited
+        // to `name` and `code` (the only text fields on the entity).
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { name: { $regex: _search, $options: 'i' } },
-                { code: { $regex: _search, $options: 'i' } },
-                { description: { $regex: _search, $options: 'i' } },
+                { name: { $regex: searchTerm, $options: 'i' } },
+                { code: { $regex: searchTerm, $options: 'i' } },
             ];
         }
         const expenses = await this.expenseRepository.findAll(find, {

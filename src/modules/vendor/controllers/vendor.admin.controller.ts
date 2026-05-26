@@ -71,7 +71,8 @@ export class VendorAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
-        @Query('category_id') categoryId?: string
+        @Query('category_id') categoryId?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<VendorListResponseDto>> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
@@ -93,11 +94,15 @@ export class VendorAdminController {
             find._id = { $in: vendorIds };
         }
 
-        if (_search) {
+        // PaginationSearchPipe doesn't populate `_search` without an
+        // `availableSearch` option — fall back to the raw `search` query.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { company_name: { $regex: _search, $options: 'i' } },
-                { website: { $regex: _search, $options: 'i' } },
-                { city: { $regex: _search, $options: 'i' } },
+                { company_name: { $regex: searchTerm, $options: 'i' } },
+                { vendor_code: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

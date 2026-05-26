@@ -53,7 +53,8 @@ export class CurrencyAdminController {
     async list(
         @AuthJwtPayload('companyId') companyId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
-        @Query('status') status?: string
+        @Query('status') status?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<CurrencyListResponseDto>> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
@@ -61,11 +62,16 @@ export class CurrencyAdminController {
         if (status === 'ACTIVE') find.is_active = true;
         else if (status === 'INACTIVE') find.is_active = false;
 
-        if (_search) {
+        // PaginationSearchPipe doesn't populate `_search` without an
+        // `availableSearch` option — fall back to the raw `search` query.
+        const searchTerm =
+            searchRaw?.trim() ||
+            (_search && typeof _search === 'string' ? _search : null);
+        if (searchTerm) {
             find.$or = [
-                { code: { $regex: _search, $options: 'i' } },
-                { name: { $regex: _search, $options: 'i' } },
-                { symbol: { $regex: _search, $options: 'i' } },
+                { code: { $regex: searchTerm, $options: 'i' } },
+                { name: { $regex: searchTerm, $options: 'i' } },
+                { symbol: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 
