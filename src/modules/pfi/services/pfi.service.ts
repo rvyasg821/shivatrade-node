@@ -167,7 +167,11 @@ export class PfiService {
             consignee_name: data.consignee_name || null,
             consignee_address: data.consignee_address || null,
             port_of_loading: data.port_of_loading || null,
+            port_of_loading_id: data.port_of_loading_id || null,
+            port_of_loading_snapshot: data.port_of_loading_snapshot || null,
             port_of_discharge: data.port_of_discharge || null,
+            port_of_discharge_id: data.port_of_discharge_id || null,
+            port_of_discharge_snapshot: data.port_of_discharge_snapshot || null,
             final_destination: data.final_destination || null,
             country_of_origin: data.country_of_origin || null,
             country_of_final_destination:
@@ -993,7 +997,11 @@ export class PfiService {
                 consignee_name: (r as any).consignee_name,
                 consignee_address: (r as any).consignee_address,
                 port_of_loading: (r as any).port_of_loading,
+                port_of_loading_id: (r as any).port_of_loading_id,
+                port_of_loading_snapshot: (r as any).port_of_loading_snapshot,
                 port_of_discharge: (r as any).port_of_discharge,
+                port_of_discharge_id: (r as any).port_of_discharge_id,
+                port_of_discharge_snapshot: (r as any).port_of_discharge_snapshot,
                 final_destination: (r as any).final_destination,
                 country_of_origin: (r as any).country_of_origin,
                 country_of_final_destination: (r as any)
