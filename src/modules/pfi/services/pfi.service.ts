@@ -1052,6 +1052,9 @@ export class PfiService {
                             vendor_name: (
                                 vendorMap.get(l.vendor_id?.toString()) as any
                             )?.company_name,
+                            vendor_code: (
+                                vendorMap.get(l.vendor_id?.toString()) as any
+                            )?.vendor_code,
                             description: l.description,
                             qty: l.qty,
                             unit: l.unit,

@@ -8,6 +8,7 @@ export class PurchaseOrderLineResponseDto {
     @ApiProperty({ required: false, type: String }) product_code?: string;
     @ApiProperty({ required: false, type: String }) vendor_id?: string;
     @ApiProperty({ required: false, type: String }) vendor_name?: string;
+    @ApiProperty({ required: false, type: String }) vendor_code?: string;
     @ApiProperty({ required: false, type: String }) source_quotation_line_id?: string;
     @ApiProperty({ required: false, type: String }) source_pfi_line_id?: string;
     @ApiProperty({ required: false, type: String }) description?: string;
