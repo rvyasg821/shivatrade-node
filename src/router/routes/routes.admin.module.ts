@@ -70,6 +70,8 @@ import { PurchaseOrderModule } from '@modules/purchase-order/purchase-order.modu
 import { PurchaseOrderAdminController } from '@modules/purchase-order/controllers/purchase-order.admin.controller';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
 import { PoVendorAdminController } from '@modules/po-vendor/controllers/po-vendor.admin.controller';
+import { SalesDocImportModule } from '@modules/sales-doc-import/sales-doc-import.module';
+import { SalesDocImportAdminController } from '@modules/sales-doc-import/controllers/sales-doc-import.admin.controller';
 import { TrackingEventModule } from '@modules/tracking-event/tracking-event.module';
 import { TrackingEventAdminController } from '@modules/tracking-event/controllers/tracking-event.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
@@ -203,6 +205,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         PurchaseOrderAdminController,
         PoVendorAdminController,
         TrackingEventAdminController,
+        SalesDocImportAdminController,
     ],
     providers: [],
     exports: [],
@@ -252,6 +255,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         PurchaseOrderModule,
         PoVendorModule,
         TrackingEventModule,
+        SalesDocImportModule,
         EmployeeModule,
         HolidayCalendarModule,
         DocumentModule,
