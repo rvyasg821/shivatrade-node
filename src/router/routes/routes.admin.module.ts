@@ -45,6 +45,8 @@ import { LocationModule } from '@modules/location/location.module';
 import { LocationAdminController } from '@modules/location/controllers/location.admin.controller';
 import { CategoryModule } from '@modules/category/category.module';
 import { CategoryAdminController } from '@modules/category/controllers/category.admin.controller';
+import { PortMasterModule } from '@modules/port-master/port-master.module';
+import { PortMasterAdminController } from '@modules/port-master/controllers/port-master.admin.controller';
 import { ProductModule } from '@modules/product/product.module';
 import { ProductAdminController } from '@modules/product/controllers/product.admin.controller';
 import { VendorModule } from '@modules/vendor/vendor.module';
@@ -133,6 +135,9 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         // Category controller
         CategoryAdminController,
+
+        // Port master controller
+        PortMasterAdminController,
 
         // Product controller
         ProductAdminController,
@@ -238,6 +243,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         DashboardModule,
         LocationModule,
         CategoryModule,
+        PortMasterModule,
         ProductModule,
         VendorModule,
         CustomerModule,

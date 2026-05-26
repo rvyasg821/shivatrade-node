@@ -38,6 +38,8 @@ import { MigrationContractTemplatesSeed } from '@migration/seeds/migration.contr
 import { MigrationNotificationEventsSeed } from '@migration/seeds/migration.notification-events.seed';
 import { MigrationProductionSeed } from '@migration/seeds/migration.production.seed';
 import { MigrationTradeDataSeed } from '@migration/seeds/migration.trade-data.seed';
+import { MigrationPortMasterSeed } from '@migration/seeds/migration.port-master.seed';
+import { PortMasterModule } from '@modules/port-master/port-master.module';
 
 // Repository modules (no controllers)
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
@@ -124,6 +126,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         // Feature modules
         RoleModule,
         forwardRef(() => UserModule),
+        PortMasterModule,
 
         ToolDeletionModule
     ],
@@ -162,6 +165,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         MigrationNotificationEventsSeed,
         MigrationProductionSeed,
         MigrationTradeDataSeed,
+        MigrationPortMasterSeed,
 
         // Tools widgets and settings migration
         MigrateToolsWidgetsSettingsCommand,

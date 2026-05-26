@@ -1,5 +1,5 @@
 /**
- * Client-facing sanitized PFI — served by the no-auth public route
+ * Client-facing sanitized PFI - served by the no-auth public route
  * (`GET /public/pfi/:token`). Built field-by-field in
  * `pfi.service.mapPublic()`; it deliberately omits every internal costing
  * detail: margin, expenses, rebates, internal_notes, exchange rate, and
@@ -10,7 +10,7 @@
 export class PfiPublicLineDto {
     product_name?: string;
     description?: string;
-    /** HS / HSN code — printed on the customs documents at destination. */
+    /** HS / HSN code - printed on the customs documents at destination. */
     hs_code?: string;
     qty?: string;
     unit?: string;
@@ -45,19 +45,19 @@ export class PfiPublicResponseDto {
     voucher_no?: string;
     pfi_date?: string;
     valid_until?: string;
-    /** True when valid_until is in the past — the renderer shows a banner. */
+    /** True when valid_until is in the past - the renderer shows a banner. */
     is_expired?: boolean;
     status?: string;
 
     currency_code?: string;
     currency_symbol?: string;
 
-    /** Seller (us) — the "Exporter" block + letterhead. */
+    /** Seller (us) - the "Exporter" block + letterhead. */
     company_name?: string;
     company_email?: string;
     company_phone?: string;
     company_iec?: string;
-    /** Seller corporate address — newline-separated lines. */
+    /** Seller corporate address - newline-separated lines. */
     company_address?: string;
 
     /** Buyer. */
@@ -65,16 +65,18 @@ export class PfiPublicResponseDto {
     customer_contact_name?: string;
     customer_email?: string;
     customer_phone?: string;
-    /** Bill-to address — newline-separated lines. */
+    /** Bill-to address - newline-separated lines. */
     customer_address?: string;
 
-    /** Consignee block — falls back to buyer when consignee fields blank. */
+    /** Consignee block - falls back to buyer when consignee fields blank. */
     consignee_name?: string;
     consignee_address?: string;
 
     // Shipping
     port_of_loading?: string;
     port_of_discharge?: string;
+    port_of_loading_snapshot?: any;
+    port_of_discharge_snapshot?: any;
     final_destination?: string;
     country_of_origin?: string;
     country_of_final_destination?: string;

@@ -191,6 +191,8 @@ export class PfiCreateRequestDto {
     consignee_address?: string;
 
     // ── Shipping ──
+    // Free-text ports kept for backward write compatibility; new clients
+    // should send *_id + *_snapshot below (port_master FK pattern).
     @IsString()
     @IsOptional()
     @MaxLength(150)
@@ -200,6 +202,20 @@ export class PfiCreateRequestDto {
     @IsOptional()
     @MaxLength(150)
     port_of_discharge?: string;
+
+    @IsUUID()
+    @IsOptional()
+    port_of_loading_id?: string;
+
+    @IsOptional()
+    port_of_loading_snapshot?: any;
+
+    @IsUUID()
+    @IsOptional()
+    port_of_discharge_id?: string;
+
+    @IsOptional()
+    port_of_discharge_snapshot?: any;
 
     @IsString()
     @IsOptional()

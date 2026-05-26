@@ -114,6 +114,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
+        "port-master": {
+            name: "Port Master",
+            description: "Manage ICEGATE customs ports used by Invoice + Shipping (sea/air/ICD/SEZ). Read open to all auth users.",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
+        },
         products: {
             name: "Products",
             description: "Manage product / item master used in quotations, POs, price lists",
