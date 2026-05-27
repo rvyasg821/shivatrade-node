@@ -32,6 +32,11 @@ export class PfiLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     description?: string;
 
+    /** Buyer's Requirement # — propagated from quotation_line; flows
+     *  forward to po_line and invoice_line. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    customer_reference?: string;
+
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     qty: string;
 

@@ -28,6 +28,11 @@ export class QuotationLineCreateDto {
     @MaxLength(2000)
     description?: string;
 
+    @IsString()
+    @IsOptional()
+    @MaxLength(120)
+    customer_reference?: string;
+
     @IsNumberString({}, { message: 'qty must be a numeric string' })
     @IsNotEmpty()
     qty: string;

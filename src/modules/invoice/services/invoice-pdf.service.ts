@@ -8,6 +8,7 @@ import { CompanyRepository } from '@modules/company/repository/repositories/comp
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
+import { ShippingRepository } from '@modules/shipping/repository/repositories/shipping.repository';
 import { ENUM_INVOICE_GST_ROUTE } from '../enums/invoice.enum';
 
 // Embed logo as data URI - puppeteer's file:// loads are flaky.
@@ -44,7 +45,7 @@ const lines2br = (s: string | undefined): string =>
         .filter(Boolean)
         .join('<br/>');
 
-export type InvoicePdfDocType = 'commercial' | 'packing-list';
+export type InvoicePdfDocType = 'commercial' | 'packing-list' | 'export';
 
 /**
  * Renders the export Commercial Invoice + Packing List PDFs from the same
@@ -59,7 +60,8 @@ export class InvoicePdfService {
         private readonly companyRepository: CompanyRepository,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly customerRepository: CustomerRepository,
-        private readonly customerAddressRepository: CustomerAddressRepository
+        private readonly customerAddressRepository: CustomerAddressRepository,
+        private readonly shippingRepository: ShippingRepository
     ) {}
 
     async render(
@@ -72,6 +74,8 @@ export class InvoicePdfService {
         const html =
             doc === 'packing-list'
                 ? buildPackingListHtml(data)
+                : doc === 'export'
+                ? buildExportInvoiceHtml(data)
                 : buildCommercialInvoiceHtml(data);
 
         const buffer = await this.pdfService.generateFromHtml(html, {
@@ -88,7 +92,12 @@ export class InvoicePdfService {
         const safe = (data.invoice.voucher_no || 'INVOICE')
             .replace(/[\\/]+/g, '-')
             .replace(/[^A-Za-z0-9_\-.]/g, '');
-        const suffix = doc === 'packing-list' ? '-PackingList' : '';
+        const suffix =
+            doc === 'packing-list'
+                ? '-PackingList'
+                : doc === 'export'
+                ? '-Export'
+                : '';
         return { buffer, filename: `${safe}${suffix}.pdf` };
     }
 
@@ -138,6 +147,12 @@ export class InvoicePdfService {
                 : (consigneeAddresses as any[]).find((a: any) => a.is_default) ||
                   (consigneeAddresses as any[])[0];
 
+        const shipping: any = invoice.shipping_id
+            ? await this.shippingRepository.findOneById(
+                  invoice.shipping_id.toString()
+              )
+            : null;
+
         return {
             invoice,
             lines: lines as any[],
@@ -145,6 +160,7 @@ export class InvoicePdfService {
             companyAddr,
             customer,
             consigneeAddr,
+            shipping,
             notifySnapshot: invoice.notify_party_snapshot,
         };
     }
@@ -159,6 +175,7 @@ interface RenderData {
     companyAddr: any;
     customer: any;
     consigneeAddr: any;
+    shipping: any;
     notifySnapshot: any;
 }
 
@@ -191,6 +208,28 @@ const baseStyles = `
     .h6 { font-weight: 700; font-size: 10.5px; }
     .sigbox { height: 60px; }
 `;
+
+/** Pre-Carriage / Place of Receipt / Port of Loading / Port of Discharge /
+ *  Place of Delivery — populated from the linked Shipping record when
+ *  invoice.shipping_id is set. Returns empty string when no shipping link. */
+function shippingRouteBlock(d: RenderData): string {
+    const s = d.shipping;
+    if (!s) return '';
+    const pol = s.port_of_loading_snapshot || {};
+    const pod = s.port_of_discharge_snapshot || {};
+    const polLabel = pol.name || pol.port_name || pol.code || '';
+    const podLabel = pod.name || pod.port_name || pod.code || '';
+    return `
+    <table style="margin-top: 0;">
+        <tr>
+            <td style="width:20%;"><span class="lbl">Pre-Carriage By</span><br/>${esc(s.pre_carriage_by)}</td>
+            <td style="width:20%;"><span class="lbl">Place of Receipt</span><br/>${esc(s.place_of_receipt)}</td>
+            <td style="width:20%;"><span class="lbl">Port of Loading</span><br/>${esc(polLabel)}</td>
+            <td style="width:20%;"><span class="lbl">Port of Discharge</span><br/>${esc(podLabel)}</td>
+            <td><span class="lbl">Place of Delivery</span><br/>${esc(s.place_of_delivery)}</td>
+        </tr>
+    </table>`;
+}
 
 function partiesBlock(d: RenderData, includeNotify = true): string {
     const c = d.company || {};
@@ -352,6 +391,8 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
 
     ${partiesBlock(d, true)}
 
+    ${shippingRouteBlock(d)}
+
     <table style="margin-top: 0;">
         <tr>
             <td style="width:33%;"><span class="lbl">Incoterm</span><br/>${esc(inv.incoterm)}</td>
@@ -421,6 +462,159 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
 </div></body></html>`;
 }
 
+/**
+ * EXPORT INVOICE — the buyer-facing variant of the same Invoice record.
+ * Differences vs Commercial Invoice (client's STIPL119 EXPORT INVOICE template):
+ *   - Title: "EXPORT INVOICE"
+ *   - Per-line table gains a "Requirement #" column (customer_reference)
+ *   - Header strip surfaces buyer's PO # + AWB # (from linked Shipping)
+ *   - Footer adds Advance Received + Balance Receivable rows
+ *   - IGST refund buckets are intentionally OMITTED (buyer doesn't see
+ *     Indian tax refund machinery)
+ */
+function buildExportInvoiceHtml(d: RenderData): string {
+    const inv = d.invoice;
+    const isLut = inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED;
+    const subtitle = isLut
+        ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
+        : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
+    const sym = esc(inv.currency_symbol || inv.currency_code || '');
+
+    const linesHtml = (d.lines || [])
+        .map(
+            (l, i) => `
+            <tr>
+                <td class="center">${i + 1}</td>
+                <td class="center">${esc(l.hsn_code)}</td>
+                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td>${esc(l.customer_reference)}</td>
+                <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
+                <td class="right">${sym}${fmt(l.unit_price, 2)}</td>
+                <td class="right strong">${sym}${fmt(l.line_total, 2)}</td>
+            </tr>`
+        )
+        .join('');
+
+    const banks = Array.isArray(inv.bank_snapshots) ? inv.bank_snapshots : [];
+    const banksHtml = banks.length
+        ? `<table style="margin-top: 6px;">
+            <tr>
+                <th colspan="6">BANK DETAILS</th>
+            </tr>
+            ${banks
+                .map(
+                    (b: any) => `
+                <tr>
+                    <td class="lbl" style="width:90px;">Bank Name</td><td>${esc(b.name)}</td>
+                    <td class="lbl" style="width:90px;">Account No.</td><td>${esc(b.account_no)}</td>
+                    <td class="lbl" style="width:90px;">AD Code</td><td>${esc(b.ad_code)}</td>
+                </tr>
+                <tr>
+                    <td class="lbl">Beneficiary</td><td>${esc(b.beneficiary)}</td>
+                    <td class="lbl">SWIFT</td><td>${esc(b.swift_code)}</td>
+                    <td class="lbl">Branch</td><td>${esc(b.branch)}</td>
+                </tr>`
+                )
+                .join('')}
+        </table>`
+        : '';
+
+    // AWB / BL # is on the linked Shipping record (Phase 1 — Sea+Air only).
+    const awbNo = d.shipping?.bl_awb_no || '';
+    const awbType = d.shipping?.bl_awb_type || 'AWB';
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><style>${baseStyles}</style></head>
+<body><div class="doc">
+    <div class="title">EXPORT INVOICE</div>
+    <div class="subtitle">${subtitle}</div>
+
+    <table>
+        <tr>
+            <td style="width:60%;"><span class="lbl">Invoice No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
+            <td><span class="lbl">Date:</span> ${esc(String(inv.invoice_date || '').slice(0, 10))}</td>
+        </tr>
+    </table>
+
+    ${partiesBlock(d, true)}
+
+    ${shippingRouteBlock(d)}
+
+    <table style="margin-top: 0;">
+        <tr>
+            <td style="width:33%;"><span class="lbl">Incoterm</span><br/>${esc(inv.incoterm)}</td>
+            <td style="width:33%;"><span class="lbl">PO # Raised by Customer</span><br/>${esc(inv.customer_po_no)}</td>
+            <td><span class="lbl">${esc(awbType)} No.</span><br/>${esc(awbNo)}</td>
+        </tr>
+    </table>
+
+    <table style="margin-top: 0;">
+        <tr>
+            <th style="width:36px;">SR NO</th>
+            <th style="width:80px;">HSN CODE</th>
+            <th>DESCRIPTION OF GOODS</th>
+            <th style="width:120px;">REQUIREMENT # (PFI)</th>
+            <th style="width:100px;">QTY</th>
+            <th style="width:110px;">PRICE / UNIT</th>
+            <th style="width:130px;">AMOUNT</th>
+        </tr>
+        ${linesHtml}
+        <tr>
+            <td colspan="6" class="right lbl">Subtotal</td>
+            <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
+        </tr>
+        ${num(inv.discount_total) > 0 ? `<tr><td colspan="6" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        <tr>
+            <td colspan="6" class="right lbl">FOB Value</td>
+            <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
+        </tr>
+        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
+        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
+        ${num(inv.other_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        <tr>
+            <td colspan="6" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
+            <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
+        </tr>
+        <tr>
+            <td colspan="6" class="right lbl">Advance Received</td>
+            <td class="right">${sym}${fmt(inv.advance_received, 2)}</td>
+        </tr>
+        <tr>
+            <td colspan="6" class="right strong">Balance Receivable</td>
+            <td class="right strong">${sym}${fmt(inv.balance_receivable, 2)}</td>
+        </tr>
+    </table>
+
+    ${inv.amount_in_words ? `<div class="pad" style="border:1px solid #222; border-top:none;"><span class="lbl">Amount in Words:</span> ${esc(inv.amount_in_words)}</div>` : ''}
+
+    <table style="margin-top: 6px;">
+        <tr>
+            <td style="width:33%;"><span class="lbl">End Use Code</span><br/>${esc(inv.end_use_code)}</td>
+            <td style="width:33%;"><span class="lbl">Preferential Agreement</span><br/>${esc(inv.preferential_agreement || 'N/A')}</td>
+            <td><span class="lbl">Place of Supply</span><br/>${esc(inv.place_of_supply || '96')} - Other Territory</td>
+        </tr>
+    </table>
+
+    ${banksHtml}
+
+    <div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+        <div class="lbl">Declaration:</div>
+        <div class="small">${esc(inv.declaration_text || 'We declare that invoice shows the actual price of the goods described and that all particulars are true and correct.')}</div>
+    </div>
+
+    <table style="margin-top: 6px;">
+        <tr>
+            <td class="sigbox">
+                <div class="small muted">For, ${esc(d.company.company_name)}</div>
+            </td>
+            <td class="sigbox right">
+                <div class="small muted">Authorized Signatory</div>
+            </td>
+        </tr>
+    </table>
+</div></body></html>`;
+}
+
 function buildPackingListHtml(d: RenderData): string {
     const inv = d.invoice;
     const linesHtml = (d.lines || [])
@@ -452,6 +646,8 @@ function buildPackingListHtml(d: RenderData): string {
 
     ${partiesBlock(d, true)}
 
+    ${shippingRouteBlock(d)}
+
     <table style="margin-top: 0;">
         <tr>
             <th style="width:36px;">SR NO</th>
@@ -464,16 +660,35 @@ function buildPackingListHtml(d: RenderData): string {
         ${linesHtml}
         <tr>
             <td colspan="3" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
-            <td class="right strong" style="background:#f0f0f0;">-</td>
-            <td class="right strong" style="background:#f0f0f0;">-</td>
-            <td class="right strong" style="background:#f0f0f0;">-</td>
+            <td class="right strong" style="background:#f0f0f0;">${
+                d.shipping?.total_packages != null
+                    ? esc(String(d.shipping.total_packages)) +
+                      (d.shipping?.package_type
+                          ? ' ' + esc(d.shipping.package_type)
+                          : '')
+                    : '-'
+            }</td>
+            <td class="right strong" style="background:#f0f0f0;">${
+                d.shipping?.net_weight_kg != null
+                    ? fmt(d.shipping.net_weight_kg, 3) + ' kg'
+                    : '-'
+            }</td>
+            <td class="right strong" style="background:#f0f0f0;">${
+                d.shipping?.gross_weight_kg != null
+                    ? fmt(d.shipping.gross_weight_kg, 3) + ' kg'
+                    : '-'
+            }</td>
         </tr>
     </table>
 
-    <div class="pad small muted" style="margin-top: 6px;">
-        Note: Package count and weights are populated from the linked Shipping
-        record once the consignment is booked. Until then, fields show "-".
-    </div>
+    ${
+        d.shipping
+            ? ''
+            : `<div class="pad small muted" style="margin-top: 6px;">
+                Note: Package count and weights are populated from the linked Shipping
+                record once the consignment is booked. Until then, fields show "-".
+            </div>`
+    }
 
     <table style="margin-top: 12px;">
         <tr>

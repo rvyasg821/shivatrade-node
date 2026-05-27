@@ -8,6 +8,8 @@ import { PdfModule } from '@common/pdf/pdf.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { CustomerRepositoryModule } from '@modules/customer/repository/customer.repository.module';
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
+import { ShippingRepositoryModule } from '@modules/shipping/repository/shipping.repository.module';
+import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
 
 /**
  * Phase 1 - Export Commercial Invoice.
@@ -25,6 +27,8 @@ import { ProductRepositoryModule } from '@modules/product/repository/product.rep
         CompanyRepositoryModule,
         CustomerRepositoryModule,
         ProductRepositoryModule,
+        ShippingRepositoryModule,
+        PoVendorRepositoryModule,
     ],
     providers: [InvoiceService, InvoicePdfService],
     exports: [InvoiceRepositoryModule, InvoiceService, InvoicePdfService],

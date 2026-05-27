@@ -507,6 +507,7 @@ export class PurchaseOrderService {
                 source_quotation_line_id: l.source_quotation_line_id || null,
                 source_pfi_line_id: l.source_pfi_line_id || null,
                 description: l.description || null,
+                customer_reference: l.customer_reference || null,
                 hsn_code: l.hsn_code || null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
@@ -1534,6 +1535,7 @@ export class PurchaseOrderService {
                 sourceType === 'pfi' ? r.sourceLineId : undefined,
             description:
                 r.sourceLine.description || r.product?.description || '',
+            customer_reference: r.sourceLine.customer_reference || undefined,
             hsn_code: r.product?.hsn_code || '',
             qty: String(r.sourceLine.qty || '0'),
             unit: r.sourceLine.unit || r.product?.unit_of_measure || '',
@@ -1868,6 +1870,7 @@ export class PurchaseOrderService {
                 vendor_contact_country_code: primary?.country_code,
                 vendor_address_id: r.vendor_address_id?.toString(),
                 customer_id: r.customer_id?.toString(),
+                customer_address_id: (r as any).customer_address_id?.toString(),
                 customer_name: cust?.company_name,
                 customer_contact_name: custPrimary?.name,
                 customer_contact_email: custPrimary?.email,
@@ -1937,6 +1940,7 @@ export class PurchaseOrderService {
                             source_pfi_line_id:
                                 l.source_pfi_line_id?.toString(),
                             description: l.description,
+                            customer_reference: l.customer_reference,
                             // Fall back to product master when the PO line was
                             // saved without HSN (older rows + auto-generated
                             // POs that didn't capture it). Mirrors the same

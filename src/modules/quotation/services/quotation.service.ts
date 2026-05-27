@@ -508,6 +508,7 @@ export class QuotationService {
                 product_id: pid,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
+                customer_reference: l.customer_reference || null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
                 unit_price: l.unit_price || '0',
@@ -874,6 +875,7 @@ export class QuotationService {
                                 l.vendor_id?.toString()
                             ) as any)?.vendor_code,
                             description: l.description,
+                            customer_reference: l.customer_reference,
                             qty: l.qty,
                             unit: l.unit,
                             unit_price: l.unit_price,

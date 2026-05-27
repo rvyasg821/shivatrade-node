@@ -28,10 +28,14 @@ import {
 } from '../dtos/response/invoice.get.response.dto';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
+import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
+import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { In } from 'typeorm';
 
 const num = (v: any): number =>
@@ -86,7 +90,9 @@ export class InvoiceService {
         private readonly companyRepository: CompanyRepository,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly companyBankAccountRepository: CompanyBankAccountRepository,
-        private readonly productRepository: ProductRepository
+        private readonly productRepository: ProductRepository,
+        private readonly povRepository: PoVendorRepository,
+        private readonly povLineRepository: PoVendorLineRepository
     ) {}
 
     // ─── Company snapshot ───────────────────────────────────────────────
@@ -454,6 +460,10 @@ export class InvoiceService {
         row.grand_total = String(grand_total);
         row.grand_total_inr = String(grand_total_inr);
         row.balance_receivable = String(balance);
+        row.amount_in_words = numberToIndianWords(
+            grand_total,
+            row.currency_code || 'INR'
+        );
 
         await this.invoiceRepository.save(row);
     }
@@ -461,13 +471,13 @@ export class InvoiceService {
     // ─── Qty guard ──────────────────────────────────────────────────────
 
     /**
-     * `invoice_qty ≤ po_line.qty − Σ already-invoiced` (excluding cancelled
-     * invoices; excluding self if we're updating).
+     * Rule A (plan §8 #148):
+     *   per PO line:
+     *     requested + already_invoiced ≤ Σ POV.dispatched_qty
+     *     where POV.status IN ('dispatched','closed')
      *
-     * Phase 1: we only enforce against existing Invoice rows. PO line.qty
-     * check is delegated to the FE pre-fill flow (the "Generate Invoice from
-     * PO" action passes line.qty as the upper bound). A stricter BE check
-     * against `purchase_order_lines.qty` can land in Phase 2 if needed.
+     * Commercial Invoice can only ship qty the vendor has already
+     * dispatched. Operator may invoice partial lines as POVs land.
      */
     private async assertQtyGuardForLines(
         lines: InvoiceLineDto[],
@@ -479,11 +489,56 @@ export class InvoiceService {
             const k = l.purchase_order_line_id;
             requested.set(k, (requested.get(k) || 0) + num(l.qty));
         }
+        if (!requested.size) return;
+
+        // Pre-load dispatched qty per PO line from POV lines whose parent
+        // POV is dispatched/closed.
+        const poLineIds = Array.from(requested.keys());
+        const povLinesAll = (await this.povLineRepository.findAll({
+            purchase_order_line_id: { $in: poLineIds },
+        } as any)) as any[];
+        const povIds = Array.from(
+            new Set(
+                povLinesAll
+                    .map((pl: any) => pl.po_vendor_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const povs = povIds.length
+            ? ((await this.povRepository.findAll({
+                  _id: { $in: povIds },
+                  soft_delete: false,
+              } as any)) as any[])
+            : [];
+        const allowedPovIds = new Set(
+            povs
+                .filter(
+                    (p: any) =>
+                        p.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+                        p.status === ENUM_PO_VENDOR_STATUS.CLOSED
+                )
+                .map((p: any) => p._id.toString())
+        );
+        const dispatchedByPoLine = new Map<string, number>();
+        for (const pl of povLinesAll) {
+            if (!allowedPovIds.has(pl.po_vendor_id?.toString())) continue;
+            const k = pl.purchase_order_line_id?.toString();
+            if (!k) continue;
+            dispatchedByPoLine.set(
+                k,
+                (dispatchedByPoLine.get(k) || 0) + num(pl.dispatched_qty)
+            );
+        }
+
         for (const [poLineId, reqQty] of requested.entries()) {
+            if (reqQty < 0) {
+                throw new BadRequestException(
+                    `qty must be ≥ 0 on PO line ${poLineId}`
+                );
+            }
             const alreadyInvoiced =
                 await this.invoiceRepository.sumQtyByPoLineId(poLineId);
-            // (exclude-self adjustment): If we're updating, the self-invoice
-            // qty is already in alreadyInvoiced; subtract our previous qty.
+            // Exclude this invoice's prior qty so updates don't double-count.
             let selfPrev = 0;
             if (excludeInvoiceId) {
                 const selfLines =
@@ -497,17 +552,16 @@ export class InvoiceService {
                     .reduce((s, l) => s + num(l.qty), 0);
             }
             const availableHistorical = alreadyInvoiced - selfPrev;
-            if (reqQty < 0) {
-                throw new BadRequestException(
-                    `qty must be ≥ 0 on PO line ${poLineId}`
-                );
-            }
-            // We can only validate vs other invoices here; PO-line-total
-            // bound is the FE pre-fill responsibility (see method doc).
             if (availableHistorical < 0) {
-                // Shouldn't happen; defensive.
+                // Defensive — shouldn't happen.
                 throw new BadRequestException(
                     `Qty guard inconsistency on PO line ${poLineId}.`
+                );
+            }
+            const dispatched = dispatchedByPoLine.get(poLineId) || 0;
+            if (reqQty + availableHistorical > dispatched + 1e-6) {
+                throw new BadRequestException(
+                    `Invoice qty (${reqQty}) exceeds dispatched qty (${dispatched}) on PO line ${poLineId}. Wait for POV dispatch or reduce qty.`
                 );
             }
         }

@@ -50,6 +50,11 @@ export class PurchaseOrderLineCreateDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(120)
+    customer_reference?: string;
+
+    @IsString()
+    @IsOptional()
     @MaxLength(15)
     hsn_code?: string;
 
