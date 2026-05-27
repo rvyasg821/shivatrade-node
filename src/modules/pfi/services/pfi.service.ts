@@ -163,9 +163,10 @@ export class PfiService {
             skip_product_costing: !!data.skip_product_costing,
             status: data.status || ENUM_PFI_STATUS.DRAFT,
             version: 1,
-            // ── Consignee / shipping / packing / commercial (Phase 1) ──
-            consignee_name: data.consignee_name || null,
-            consignee_address: data.consignee_address || null,
+            // ── Consignee (Ship-to) — hybrid FK + snapshot ──
+            consignee_id: (data as any).consignee_id || null,
+            consignee_snapshot: (data as any).consignee_snapshot || null,
+            // ── Shipping / packing / commercial (Phase 1) ──
             port_of_loading: data.port_of_loading || null,
             port_of_loading_id: data.port_of_loading_id || null,
             port_of_loading_snapshot: data.port_of_loading_snapshot || null,
@@ -463,23 +464,25 @@ export class PfiService {
         const countryOfOrigin: string =
             (company?.country && String(company.country).trim()) || 'India';
 
-        // ── Bank account: pick the default for the PFI currency ──
-        const currencyCode = (q as any).currency_code;
+        // ── Bank account pick — company's HOME currency default ──────
+        // Operator can change to a different bank on the PFI form.
         let bankAccountId: string | undefined;
         try {
-            if (currencyCode) {
+            const homeCurrencyCode =
+                (company?.currency && String(company.currency).trim()) ||
+                undefined;
+            if (homeCurrencyCode) {
                 const currency: any = await this.currencyRepository.findOne({
-                    code: currencyCode,
+                    code: homeCurrencyCode,
                 } as any);
                 if (currency?._id) {
-                    const banks = await this.companyBankAccountRepository.findAll(
-                        {
+                    const banks =
+                        await this.companyBankAccountRepository.findAll({
                             company_id: companyId,
                             currency_id: currency._id.toString(),
                             is_active: true,
                             soft_delete: false,
-                        } as any
-                    );
+                        } as any);
                     const def =
                         (banks || []).find((b: any) => b.is_default) ||
                         (banks || [])[0];
@@ -516,7 +519,7 @@ export class PfiService {
             customer_address_id: q.customer_address_id?.toString(),
             pfi_date: today,
             valid_until: q.valid_until,
-            currency_code: currencyCode,
+            currency_code: (q as any).currency_code,
             exchange_rate: q.exchange_rate,
             payment_terms: q.payment_terms,
             delivery_terms: q.delivery_terms,
@@ -1002,9 +1005,10 @@ export class PfiService {
                 status: r.status,
                 version: r.version,
                 parent_version_id: r.parent_version_id?.toString(),
-                // ── Consignee / shipping / packing / commercial (Phase 1) ──
-                consignee_name: (r as any).consignee_name,
-                consignee_address: (r as any).consignee_address,
+                // ── Consignee (Ship-to) ──
+                consignee_id: (r as any).consignee_id?.toString(),
+                consignee_snapshot: (r as any).consignee_snapshot,
+                // ── Shipping / packing / commercial (Phase 1) ──
                 port_of_loading: (r as any).port_of_loading,
                 port_of_loading_id: (r as any).port_of_loading_id,
                 port_of_loading_snapshot: (r as any).port_of_loading_snapshot,
@@ -1288,10 +1292,21 @@ export class PfiService {
             }
         }
 
-        // Consignee falls back to buyer when both fields are blank.
-        const consignee_name = full.consignee_name || full.customer_name;
-        const consignee_address =
-            full.consignee_address || customer_address;
+        // Prefer the consignee_snapshot when the PFI carries one (hybrid
+        // ship-to model). Otherwise fall back to the buyer — keeps the
+        // public PDF / view useful for PFIs that never set a consignee.
+        const cs = (full as any).consignee_snapshot;
+        const consignee_name = cs?.name || full.customer_name;
+        const consignee_address = cs
+            ? [
+                  cs.address_line1,
+                  cs.address_line2,
+                  [cs.city, cs.state].filter(Boolean).join(', '),
+                  [cs.country, cs.postcode].filter(Boolean).join(' - '),
+              ]
+                  .filter(Boolean)
+                  .join('\n')
+            : customer_address;
 
         const today = new Date().toISOString().slice(0, 10);
         return {
