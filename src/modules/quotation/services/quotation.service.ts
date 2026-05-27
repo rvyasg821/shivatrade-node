@@ -626,29 +626,18 @@ export class QuotationService {
             const lineMarginAmt = afterExpenses * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
 
-            // GST applies on the post-margin balance.
+            // GST: per-line tax_pct is still captured on the line for
+            // reference (user enters it in the modal) but is NOT rolled
+            // into line_total or doc totals on Quotation. cgst/sgst/igst
+            // are forced to zero so legacy readers don't see stale tax.
             const lineNetTotal = afterExpenses + lineMarginAmt;
-            const taxPct = num(ln.tax_pct);
-            const totalTax = round2((lineNetTotal * taxPct) / 100);
-            let cgst = 0,
-                sgst = 0,
-                igst = 0;
-            if (totalTax > 0) {
-                if (split.tax_type === 'INTRA') {
-                    cgst = round2(totalTax / 2);
-                    sgst = round2(totalTax - cgst);
-                } else {
-                    igst = totalTax;
-                }
-            }
-            ln.cgst = String(cgst);
-            ln.sgst = String(sgst);
-            ln.igst = String(igst);
-            ln.line_total = String(round2(lineNetTotal + totalTax));
+            ln.cgst = '0';
+            ln.sgst = '0';
+            ln.igst = '0';
+            ln.line_total = String(round2(lineNetTotal));
             await this.quotationLineRepository.save(ln);
 
             subtotal += split.taxable;
-            tax_total += totalTax;
             product_rebates_total += lineRebatesAmt;
             product_expenses_total += lineExpensesAmt;
             line_margin_total += lineMarginAmt;
@@ -661,12 +650,14 @@ export class QuotationService {
         // Home-currency (INR) grand total, rounded to whole rupees. The
         // round_off line carries the ± adjustment; the customer (foreign)
         // total derives from the ROUNDED home total so the doc reconciles.
+        // Quotation grand total excludes GST — per-line tax_pct is
+        // captured for reference only, not added to the doc total.
+        tax_total = 0;
         const grand_inr_raw =
             subtotal +
             product_expenses_total -
             product_rebates_total +
-            margin_amount +
-            tax_total;
+            margin_amount;
         const grand_inr = Math.round(grand_inr_raw);
         const round_off = round2(grand_inr - grand_inr_raw);
         const grand_total = grand_inr * er;
@@ -1014,9 +1005,10 @@ export class QuotationService {
                 num(l.product_rebates_amount) +
                 num(l.margin_amount);
             const netCust = round2(netInr * er);
-            const taxPct = num(l.tax_pct);
-            const gstCust = round2((netCust * taxPct) / 100);
-            const lineTotal = round2(netCust + gstCust);
+            // GST is NOT applied to Quotation totals — per-line tax_pct
+            // is captured for reference only.
+            const gstCust = 0;
+            const lineTotal = round2(netCust);
             const rate = qty > 0 ? round2(lineTotal / qty) : 0;
             subtotal += netCust;
             gst_total += gstCust;
