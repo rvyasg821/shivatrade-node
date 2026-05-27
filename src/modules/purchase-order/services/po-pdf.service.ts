@@ -246,7 +246,9 @@ export class PoPdfService {
                 iec: company?.iec || '',
                 gstin: companyGstin,
                 address: companyAddress,
-                terms: company?.default_po_terms || '',
+                // Terms removed 2026-05-27 — STIPL client spec has no
+                // Terms block on PO PDFs. The text was moved to Invoice.
+                terms: '',
                 signatory: company?.authorised_signatory_name || '',
             },
             vendors,

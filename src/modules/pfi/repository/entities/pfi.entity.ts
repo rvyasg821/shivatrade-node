@@ -171,12 +171,24 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     parent_version_id?: string;
 
-    // ── Consignee (optional; falls back to buyer in public DTO/PDF) ──
-    @Column({ type: 'varchar', length: 200, nullable: true })
-    consignee_name?: string;
+    // ── Consignee (Ship-to) ─────────────────────────────────────────
+    // Hybrid model — operator can pick a customer (FK + auto-snapshot)
+    // or type a free-text consignee (snapshot only). Propagates forward
+    // to PO and Invoice on createFrom chain.
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    consignee_id?: string;
 
-    @Column({ type: 'text', nullable: true })
-    consignee_address?: string;
+    @Column({ type: 'jsonb', nullable: true })
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
 
     // ── Shipping ──
     // Legacy free-text ports - kept readable for pre-2026-05-26 PFIs;

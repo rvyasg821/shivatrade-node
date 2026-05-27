@@ -109,9 +109,12 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'jsonb', nullable: true })
     customer_snapshot?: any;
 
+    /** Optional FK — set only when consignee was picked from customer master.
+     *  Free-text consignees (ad-hoc third parties) leave this null and rely
+     *  entirely on `consignee_snapshot`. */
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    consignee_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    consignee_id?: string;
 
     @Column({ type: 'uuid', nullable: true })
     consignee_address_id?: string;
@@ -126,6 +129,16 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
 
     @Column({ type: 'jsonb', nullable: true })
     notify_party_snapshot?: any;
+
+    /** Company address (shipper) — FK + snapshot so historical invoices
+     *  print the address that was current at issue time even if master
+     *  is later edited. Snapshot captured at draft save, refreshed at issue. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    company_address_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    company_address_snapshot?: any;
 
     // ── Money (in invoice currency) ──
     @Index()

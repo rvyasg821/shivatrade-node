@@ -49,6 +49,8 @@ export class PurchaseOrderGetResponseDto {
 
     @ApiProperty({ required: false, type: String }) customer_id?: string;
     @ApiProperty({ required: false, type: String }) customer_address_id?: string;
+    @ApiProperty({ required: false, type: String }) consignee_id?: string;
+    @ApiProperty({ required: false }) consignee_snapshot?: any;
     @ApiProperty({ required: false, type: String }) customer_name?: string;
     @ApiProperty({ required: false, type: String }) customer_contact_name?: string;
     @ApiProperty({ required: false, type: String }) customer_contact_email?: string;
@@ -59,6 +61,7 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: false, type: String }) quotation_voucher_no?: string;
     @ApiProperty({ required: false, type: String }) pfi_id?: string;
     @ApiProperty({ required: false, type: String }) pfi_voucher_no?: string;
+    @ApiProperty({ required: false, type: String }) pfi_bank_account_id?: string;
 
     @ApiProperty({ required: true, type: String }) po_date: string;
     @ApiProperty({ required: false, type: String }) expected_delivery_date?: string;

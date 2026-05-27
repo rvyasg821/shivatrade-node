@@ -37,6 +37,26 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     customer_address_id?: string;
 
+    /** Consignee (Ship-to) — hybrid model. Set when PO was created via
+     *  createPoAndPovsFromSource and the source PFI/Quotation carried a
+     *  consignee. Used internally + propagated onto Invoice on Generate
+     *  Invoice. PO PDFs are vendor-facing; consignee block is not
+     *  rendered there. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    consignee_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
+
     /** Source Quotation - set when PO was created via createFromQuotation. */
     @Index()
     @Column({ type: 'uuid', nullable: true })

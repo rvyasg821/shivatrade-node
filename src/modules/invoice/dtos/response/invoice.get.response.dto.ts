@@ -66,6 +66,8 @@ export class InvoiceGetResponseDto {
     consignee_snapshot?: any;
     notify_party_id?: string;
     notify_party_snapshot?: any;
+    company_address_id?: string;
+    company_address_snapshot?: any;
 
     // Money
     currency_code?: string;

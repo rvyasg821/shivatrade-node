@@ -104,6 +104,22 @@ export class PurchaseOrderCreateRequestDto {
     @IsOptional()
     customer_address_id?: string;
 
+    // ── Consignee (Ship-to) — hybrid FK + snapshot ──
+    @IsUUID()
+    @IsOptional()
+    consignee_id?: string;
+
+    @IsOptional()
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
+
     @IsUUID()
     @IsOptional()
     quotation_id?: string;
