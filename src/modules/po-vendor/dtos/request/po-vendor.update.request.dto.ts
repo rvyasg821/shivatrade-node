@@ -12,6 +12,7 @@ import {
     ValidateNested,
 } from 'class-validator';
 import { ENUM_PO_VENDOR_STATUS } from '../../enums/po-vendor.enum';
+import { PoVendorExpenseInputDto } from './po-vendor.create.request.dto';
 
 /**
  * Per-line update payload. Editable fields depend on POV status
@@ -96,6 +97,15 @@ export class PoVendorUpdateRequestDto {
     @IsOptional()
     @MaxLength(2000)
     internal_notes?: string;
+
+    /** Replace the vendor-charges list. When provided, fully overrides
+     *  the existing snapshot — the service resolves master fields and
+     *  recomputes amounts. Editable only while POV is in `draft`. */
+    @IsArray()
+    @IsOptional()
+    @ValidateNested({ each: true })
+    @Type(() => PoVendorExpenseInputDto)
+    expenses?: PoVendorExpenseInputDto[];
 
     // ── Status transitions (service enforces transition map) ────────────
     @IsEnum(ENUM_PO_VENDOR_STATUS)

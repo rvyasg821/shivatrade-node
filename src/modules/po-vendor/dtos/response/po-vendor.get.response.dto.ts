@@ -67,4 +67,16 @@ export class PoVendorGetResponseDto {
 
     @ApiProperty({ required: true, type: [PoVendorLineResponseDto] })
     lines: PoVendorLineResponseDto[];
+
+    /** Vendor-side charges (Packing / Transport / etc.) snapshotted on
+     *  this POV. Empty `[]` when none. */
+    @ApiProperty({ required: false, type: Object, isArray: true })
+    expenses_snapshot?: Array<{
+        expense_id: string;
+        code: string;
+        name: string;
+        type: string;
+        value: string;
+        amount: string;
+    }>;
 }

@@ -1355,7 +1355,18 @@ export class PurchaseOrderService {
         pfiId: string,
         createdBy: string,
         assignments: Array<{ source_line_id: string; vendor_id: string }>,
-        opts?: { deliveryAddressId?: string; deliveryAddressText?: string }
+        opts?: {
+            deliveryAddressId?: string;
+            deliveryAddressText?: string;
+            vendorExpenses?: Record<
+                string,
+                Array<{
+                    expense_id: string;
+                    type?: 'percent' | 'fixed';
+                    value?: string;
+                }>
+            >;
+        }
     ) {
         return this.createPoAndPovsFromSource({
             companyId,
@@ -1365,6 +1376,7 @@ export class PurchaseOrderService {
             assignments,
             deliveryAddressId: opts?.deliveryAddressId,
             deliveryAddressText: opts?.deliveryAddressText,
+            vendorExpenses: opts?.vendorExpenses,
         });
     }
 
@@ -1382,6 +1394,14 @@ export class PurchaseOrderService {
         assignments: Array<{ source_line_id: string; vendor_id: string }>;
         deliveryAddressId?: string;
         deliveryAddressText?: string;
+        vendorExpenses?: Record<
+            string,
+            Array<{
+                expense_id: string;
+                type?: 'percent' | 'fixed';
+                value?: string;
+            }>
+        >;
     }) {
         const {
             companyId,
@@ -1391,6 +1411,7 @@ export class PurchaseOrderService {
             assignments,
             deliveryAddressId,
             deliveryAddressText,
+            vendorExpenses,
         } = opts;
 
         // ── Load source doc ──
@@ -1628,6 +1649,9 @@ export class PurchaseOrderService {
                             vendorPriceByPoLine.get(vl._id.toString()) ||
                             String(vl.unit_price || '0'),
                     })),
+                    // Per-vendor expense picks from the Generate-POs modal.
+                    // POV service resolves master fields and computes amounts.
+                    expenses: vendorExpenses?.[vendorId] || [],
                 };
                 const pov = await this.povService.createFromPo(
                     companyId,
@@ -1667,7 +1691,18 @@ export class PurchaseOrderService {
         quotationId: string,
         createdBy: string,
         assignments: Array<{ source_line_id: string; vendor_id: string }>,
-        opts?: { deliveryAddressId?: string; deliveryAddressText?: string }
+        opts?: {
+            deliveryAddressId?: string;
+            deliveryAddressText?: string;
+            vendorExpenses?: Record<
+                string,
+                Array<{
+                    expense_id: string;
+                    type?: 'percent' | 'fixed';
+                    value?: string;
+                }>
+            >;
+        }
     ) {
         return this.createPoAndPovsFromSource({
             companyId,
@@ -1677,6 +1712,7 @@ export class PurchaseOrderService {
             assignments,
             deliveryAddressId: opts?.deliveryAddressId,
             deliveryAddressText: opts?.deliveryAddressText,
+            vendorExpenses: opts?.vendorExpenses,
         });
     }
 

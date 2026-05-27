@@ -111,6 +111,28 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     })
     status: ENUM_PO_VENDOR_STATUS;
 
+    /** Vendor-side charges snapshotted from expense master at POV
+     *  creation (per PFI→POV flow) or appended later on the POV
+     *  detail page. Each row carries enough info to render the
+     *  vendor invoice copy independently of the master.
+     *
+     *  Shape: [{ expense_id, code, name, type ("percent"|"fixed"),
+     *           value (string), amount (string, computed) }]
+     */
+    @Column({
+        type: 'jsonb',
+        nullable: false,
+        default: () => "'[]'::jsonb",
+    })
+    expenses_snapshot: Array<{
+        expense_id: string;
+        code: string;
+        name: string;
+        type: string;
+        value: string;
+        amount: string;
+    }>;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

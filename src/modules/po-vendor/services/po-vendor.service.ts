@@ -25,6 +25,7 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { VendorContactRepository } from '@modules/vendor/repository/repositories/vendor-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
+import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
@@ -59,6 +60,7 @@ export class PoVendorService {
         private readonly vendorAddressRepository: VendorAddressRepository,
         private readonly vendorContactRepository: VendorContactRepository,
         private readonly productRepository: ProductRepository,
+        private readonly expenseRepository: ExpenseRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly locationRepository: LocationRepository,
@@ -114,6 +116,96 @@ export class PoVendorService {
                 .slice(0, 5)
                 .toUpperCase() || 'CO';
         return fallback;
+    }
+
+    // ─── Vendor expense snapshot builder ────────────────────────────────
+
+    /**
+     * Resolve a list of expense picks against the expense master and
+     * return the snapshot rows (with code/name filled, amount computed
+     * on subtotal). Validates:
+     *   - no duplicate expense_id in the same list
+     *   - each expense_id exists and belongs to the company
+     *
+     * `subtotal` is the running line total used as the percent base.
+     * For `fixed` rows, `value` is taken as the amount directly.
+     */
+    private async buildExpensesSnapshot(
+        companyId: string,
+        picks: Array<{
+            expense_id: string;
+            type?: 'percent' | 'fixed';
+            value?: string;
+        }>,
+        subtotal: number
+    ): Promise<
+        Array<{
+            expense_id: string;
+            code: string;
+            name: string;
+            type: string;
+            value: string;
+            amount: string;
+        }>
+    > {
+        if (!picks || picks.length === 0) return [];
+
+        // Reject duplicates up front (per locked-in rule #3).
+        const seen = new Set<string>();
+        for (const p of picks) {
+            const key = p.expense_id;
+            if (seen.has(key)) {
+                throw new BadRequestException(
+                    `Duplicate expense in vendor charges list (expense_id ${key}).`
+                );
+            }
+            seen.add(key);
+        }
+
+        const ids = picks.map(p => p.expense_id);
+        const masters: any[] = await this.expenseRepository.findAll({
+            _id: { $in: ids },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        const masterById = new Map<string, any>(
+            (masters || []).map(m => [m._id.toString(), m])
+        );
+
+        const out: Array<{
+            expense_id: string;
+            code: string;
+            name: string;
+            type: string;
+            value: string;
+            amount: string;
+        }> = [];
+        for (const p of picks) {
+            const m = masterById.get(p.expense_id);
+            if (!m) {
+                throw new BadRequestException(
+                    `Expense ${p.expense_id} not found in master.`
+                );
+            }
+            const type = (p.type || m.type) as 'percent' | 'fixed';
+            const value =
+                p.value != null && p.value !== ''
+                    ? String(p.value)
+                    : String(m.value || '0');
+            const amount =
+                type === 'percent'
+                    ? round2((subtotal * num(value)) / 100)
+                    : round2(num(value));
+            out.push({
+                expense_id: p.expense_id,
+                code: m.code,
+                name: m.name,
+                type,
+                value,
+                amount: String(amount),
+            });
+        }
+        return out;
     }
 
     // ─── Pending-qty calculator (POV plan §8 over-shipment guard) ───────
@@ -378,6 +470,24 @@ export class PoVendorService {
             .catch(() => null);
         const currency_code = homeCurrency?.code || 'INR';
 
+        // Pre-compute the subtotal so percent-typed expenses snapshot
+        // against the right base.
+        let preSubtotal = 0;
+        for (const ln of data.lines) {
+            const poLine = poLineById.get(ln.purchase_order_line_id);
+            const ordered = num(ln.ordered_qty);
+            const unitPriceStr =
+                (ln as any).unit_price != null && (ln as any).unit_price !== ''
+                    ? String((ln as any).unit_price)
+                    : String(poLine.unit_price || '0');
+            preSubtotal += ordered * num(unitPriceStr);
+        }
+        const expenses_snapshot = await this.buildExpensesSnapshot(
+            companyId,
+            (data as any).expenses || [],
+            preSubtotal
+        );
+
         const header = await this.povRepository.create({
             company_id: companyId,
             created_by: createdBy,
@@ -392,6 +502,7 @@ export class PoVendorService {
             currency_code,
             exchange_rate: '1',
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
+            expenses_snapshot,
         } as any);
 
         // ── Create lines (snapshot product/HSN/price/tax from PO line) ──
@@ -731,6 +842,7 @@ export class PoVendorService {
             'delivery_address',
             'delivery_address_id',
             'lines',
+            'expenses',
             'expected_arrival_date',
             'transporter_name',
             'vehicle_no',
@@ -810,9 +922,29 @@ export class PoVendorService {
         }
 
         // ── Apply scalar changes ────────────────────────────────────────
-        const { lines, status, ...scalar } = data as any;
+        const { lines, expenses, status, ...scalar } = data as any;
         Object.assign(row, scalar);
         if (status) row.status = status;
+
+        // Rebuild expenses_snapshot if the caller sent a new list.
+        // Compute subtotal from existing POV lines so the % base is
+        // accurate (lines may be replaced below — that path triggers
+        // its own re-snapshot via replaceLinesOnDraft if needed).
+        if (Array.isArray(expenses)) {
+            const existingLines = await this.povLineRepository.findAll({
+                po_vendor_id: row._id.toString(),
+            } as any);
+            const sub = (existingLines || []).reduce(
+                (s, l: any) => s + num(l.line_total),
+                0
+            );
+            row.expenses_snapshot = await this.buildExpensesSnapshot(
+                companyId,
+                expenses,
+                sub
+            );
+        }
+
         await this.povRepository.save(row);
 
         // ── Replace-on-update for lines (DRAFT only - already gated) ────
@@ -1349,6 +1481,10 @@ export class PoVendorService {
                 updatedAt: r.updatedAt,
 
                 lines,
+                expenses_snapshot:
+                    Array.isArray((r as any).expenses_snapshot)
+                        ? (r as any).expenses_snapshot
+                        : [],
             });
         }
         return out;

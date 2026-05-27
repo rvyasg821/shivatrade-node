@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
     ArrayMinSize,
     IsArray,
+    IsIn,
     IsInt,
     IsNotEmpty,
     IsNumberString,
@@ -12,6 +13,27 @@ import {
     Min,
     ValidateNested,
 } from 'class-validator';
+
+/**
+ * Per-vendor expense pick at POV creation. The server resolves
+ * `expense_id` against the expense master to fill code/name, then
+ * snapshots the row onto the POV (`expenses_snapshot`).
+ */
+export class PoVendorExpenseInputDto {
+    @IsUUID()
+    @IsNotEmpty()
+    expense_id: string;
+
+    /** Override; falls back to the master's type if omitted. */
+    @IsIn(['percent', 'fixed'])
+    @IsOptional()
+    type?: 'percent' | 'fixed';
+
+    /** Override; falls back to the master's value if omitted. */
+    @IsNumberString({}, { message: 'value must be a numeric string' })
+    @IsOptional()
+    value?: string;
+}
 
 /**
  * POV line — covers a single PO line by an `ordered_qty` quantity.
@@ -87,4 +109,13 @@ export class PoVendorCreateRequestDto {
     @ValidateNested({ each: true })
     @Type(() => PoVendorLineCreateDto)
     lines: PoVendorLineCreateDto[];
+
+    /** Optional vendor-side charges (Packing, Transport, etc.) picked
+     *  from the expense master. Server resolves code/name, computes
+     *  per-row `amount`, and stores the snapshot. */
+    @IsArray()
+    @IsOptional()
+    @ValidateNested({ each: true })
+    @Type(() => PoVendorExpenseInputDto)
+    expenses?: PoVendorExpenseInputDto[];
 }
