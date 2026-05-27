@@ -1081,6 +1081,10 @@ export class PurchaseOrderService {
             };
         });
 
+        const existingDelivery = await this.pickExistingDeliveryAddress(
+            enriched
+        );
+
         return {
             source: {
                 type: 'pfi',
@@ -1089,6 +1093,8 @@ export class PurchaseOrderService {
                 status: (pfi as any).status,
                 customer_id: (pfi as any).customer_id?.toString(),
             },
+            existing_delivery_address_id: existingDelivery.id,
+            existing_delivery_address: existingDelivery.text,
             lines: enriched,
         };
     }
@@ -1137,6 +1143,10 @@ export class PurchaseOrderService {
             };
         });
 
+        const existingDelivery = await this.pickExistingDeliveryAddress(
+            enriched
+        );
+
         return {
             source: {
                 type: 'quotation',
@@ -1145,7 +1155,44 @@ export class PurchaseOrderService {
                 status: (q as any).status,
                 customer_id: (q as any).customer_id?.toString(),
             },
+            existing_delivery_address_id: existingDelivery.id,
+            existing_delivery_address: existingDelivery.text,
             lines: enriched,
+        };
+    }
+
+    /**
+     * Across every line's existing_pos, find the most-recently-created PO
+     * and surface its delivery_address_id + snapshot text. The modal uses
+     * this to pre-fill "Deliver goods to" so the dropdown matches the
+     * address actually used on the downstream PO — instead of falling back
+     * to LocationSelect's is_default. Returns nulls when no POs exist yet.
+     */
+    private async pickExistingDeliveryAddress(
+        enrichedLines: any[]
+    ): Promise<{ id: string | null; text: string | null }> {
+        const poIds = unique(
+            enrichedLines.flatMap((l: any) =>
+                (l.existing_pos || []).map((p: any) => p.purchase_order_id)
+            )
+        );
+        if (!poIds.length) return { id: null, text: null };
+        const pos = (await this.poRepository.findAll({
+            _id: { $in: poIds },
+            soft_delete: false,
+        } as any)) as any[];
+        if (!pos.length) return { id: null, text: null };
+        // Most-recent wins so re-opening the modal after edits picks the
+        // latest operator decision.
+        const sorted = pos.sort(
+            (a, b) =>
+                new Date(b.createdAt || 0).getTime() -
+                new Date(a.createdAt || 0).getTime()
+        );
+        const picked = sorted.find(p => p.delivery_address_id) || sorted[0];
+        return {
+            id: picked?.delivery_address_id?.toString() || null,
+            text: picked?.delivery_address || null,
         };
     }
 
@@ -1475,8 +1522,14 @@ export class PurchaseOrderService {
         const poLinePayload = resolved.map(r => ({
             product_id: r.sourceLine.product_id?.toString(),
             vendor_id: r.vendorId,
+            // When generated via PFI, also propagate the grandparent
+            // quotation_line_id (stamped on pfi_line at createFromQuotation)
+            // so Quotation PO-coverage sees POs created via the PFI path.
             source_quotation_line_id:
-                sourceType === 'quotation' ? r.sourceLineId : undefined,
+                sourceType === 'quotation'
+                    ? r.sourceLineId
+                    : r.sourceLine.source_quotation_line_id?.toString() ||
+                      undefined,
             source_pfi_line_id:
                 sourceType === 'pfi' ? r.sourceLineId : undefined,
             description:
