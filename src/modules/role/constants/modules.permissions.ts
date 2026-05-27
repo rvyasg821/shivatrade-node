@@ -120,6 +120,18 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
         },
+        invoices: {
+            name: "Invoices",
+            description: "Manage Export Commercial Invoices - STIPL{N}/{FY} voucher, IGST-paid + LUT routes, IGST refund footer, multi-bank, Packing List PDF.",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        shipping: {
+            name: "Shipping",
+            description: "Manage Export Shipments - sea + air modes, BL/AWB, shipping bill, ports (port_master), status workflow (draft→booked→dispatched→arrived→cleared→delivered), event timeline.",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
         products: {
             name: "Products",
             description: "Manage product / item master used in quotations, POs, price lists",

@@ -546,6 +546,7 @@ export class PfiService {
                     vendor_id: l.vendor_id?.toString(),
                     source_quotation_line_id: l._id?.toString(),
                     description: l.description,
+                    customer_reference: l.customer_reference,
                     qty: l.qty,
                     unit: l.unit,
                     unit_price: l.unit_price,
@@ -680,6 +681,7 @@ export class PfiService {
                 source_quotation_line_id: l.source_quotation_line_id || null,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
+                customer_reference: l.customer_reference || null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
                 unit_price: l.unit_price || '0',
@@ -1088,6 +1090,7 @@ export class PfiService {
                                 vendorMap.get(l.vendor_id?.toString()) as any
                             )?.vendor_code,
                             description: l.description,
+                            customer_reference: l.customer_reference,
                             qty: l.qty,
                             unit: l.unit,
                             unit_price: l.unit_price,

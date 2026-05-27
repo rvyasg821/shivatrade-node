@@ -39,6 +39,11 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     description?: string;
 
+    /** Buyer's Requirement # — propagated from pfi_line / quotation_line;
+     *  flows forward to invoice_line + appears on Export Invoice PDF. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    customer_reference?: string;
+
     /** Snapshot from product master. */
     @Column({ type: 'varchar', length: 15, nullable: true })
     hsn_code?: string;

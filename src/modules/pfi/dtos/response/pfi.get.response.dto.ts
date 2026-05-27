@@ -9,6 +9,7 @@ export class PfiLineResponseDto {
     vendor_name?: string;
     vendor_code?: string;
     description?: string;
+    customer_reference?: string;
     qty?: string;
     unit?: string;
     unit_price?: string;

@@ -25,6 +25,12 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     description?: string;
 
+    /** Buyer's Requirement # — buyer's internal part code / requisition number.
+     *  Propagated from Quotation → PFI → PO → Invoice. Appears on the
+     *  Export Invoice PDF as the "Requirement # (PFI)" column. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    customer_reference?: string;
+
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     qty: string;
 

@@ -87,6 +87,7 @@ export interface ResolvedLine {
     product_code: string;
     product_name?: string;
     description?: string;
+    customer_reference?: string;
     vendor_id?: string;
     vendor_code?: string;
     qty: number;
@@ -147,6 +148,7 @@ export class SalesDocExportLineDto {
     @IsOptional() @IsString() product_code?: string;
     @IsOptional() @IsString() product_name?: string;
     @IsOptional() @IsString() description?: string;
+    @IsOptional() @IsString() customer_reference?: string;
     @IsOptional() @IsString() vendor_id?: string;
     @IsOptional() @IsString() vendor_code?: string;
     @IsOptional() qty?: number | string;

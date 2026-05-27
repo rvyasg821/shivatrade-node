@@ -28,6 +28,7 @@ import {
 const BASE_HEADERS = [
     'product_code',
     'vendor_code',
+    'customer_reference',
     'qty',
     'unit',
     'unit_price',
@@ -500,6 +501,7 @@ export class SalesDocImportService {
                 product_name:
                     get('product_name') || product.name,
                 description: get('description') || product.description || '',
+                customer_reference: get('customer_reference') || '',
                 vendor_id: vendorId,
                 vendor_code: vendorCode || undefined,
                 qty: qty || 0,
@@ -584,6 +586,7 @@ export class SalesDocImportService {
                 {
                     product_code: 'PRD-001',
                     vendor_code: 'VEN-001',
+                    customer_reference: 'BUYER-REF-001',
                     qty: 100,
                     unit: 'KG',
                     unit_price: 25,
@@ -759,6 +762,7 @@ export class SalesDocImportService {
             const scalars: any[] = [
                 l.product_code || '',
                 l.vendor_code || '',
+                (l as any).customer_reference || '',
                 l.qty ?? '',
                 l.unit || '',
                 l.unit_price ?? '',
