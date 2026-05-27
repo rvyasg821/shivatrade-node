@@ -231,8 +231,23 @@ export class PfiEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', nullable: false, default: 0 })
     total_packages: number;
 
-    @Column({ type: 'varchar', length: 50, nullable: true })
+    /** Comma-joined list of packing units, e.g. "Cartons, Drums". */
+    @Column({ type: 'varchar', length: 255, nullable: true })
     packing_type?: string;
+
+    /** Whether the cargo is consolidated into a container. null = unspecified. */
+    @Column({ type: 'boolean', nullable: true })
+    container_used?: boolean | null;
+
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    container_no?: string;
+
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    seal_no?: string;
+
+    /** 'FCL' = Full Container Load, 'LCL' = Less than Container Load. */
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    container_load_type?: string;
 
     @Column({
         type: 'numeric',

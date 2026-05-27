@@ -177,11 +177,20 @@ export class PfiService {
             country_of_final_destination:
                 data.country_of_final_destination || null,
             mode_of_shipment: data.mode_of_shipment || null,
-            container_details: data.container_details || null,
             est_shipment_date: data.est_shipment_date || null,
             est_delivery_date: data.est_delivery_date || null,
             packing_marks: data.packing_marks || null,
             packing_type: data.packing_type || null,
+            container_used:
+                data.container_used === undefined ? null : data.container_used,
+            container_details: data.container_used
+                ? data.container_details || null
+                : null,
+            container_no: data.container_used ? data.container_no || null : null,
+            seal_no: data.container_used ? data.seal_no || null : null,
+            container_load_type: data.container_used
+                ? data.container_load_type || null
+                : null,
             bank_account_id: data.bank_account_id || null,
             payment_terms_text: data.payment_terms_text || null,
             declaration_text: data.declaration_text || null,
@@ -250,6 +259,14 @@ export class PfiService {
 
         const { lines, ...scalar } = data as any;
         Object.assign(row, scalar);
+        // If container is not used, clear its dependent fields so stale
+        // values from a previous "Yes" don't linger on the record.
+        if ((row as any).container_used !== true) {
+            (row as any).container_details = null;
+            (row as any).container_no = null;
+            (row as any).seal_no = null;
+            (row as any).container_load_type = null;
+        }
         await this.pfiRepository.save(row);
 
         if (Array.isArray(lines)) {
@@ -1015,6 +1032,11 @@ export class PfiService {
                 packing_marks: (r as any).packing_marks,
                 total_packages: (r as any).total_packages,
                 packing_type: (r as any).packing_type,
+                container_used: (r as any).container_used ?? null,
+                container_no: (r as any).container_no || undefined,
+                seal_no: (r as any).seal_no || undefined,
+                container_load_type:
+                    (r as any).container_load_type || undefined,
                 gross_weight_kg: (r as any).gross_weight_kg,
                 net_weight_kg: (r as any).net_weight_kg,
                 bank_account_id: (r as any).bank_account_id?.toString(),
@@ -1312,6 +1334,11 @@ export class PfiService {
             packing_marks: full.packing_marks,
             total_packages: full.total_packages,
             packing_type: full.packing_type,
+            container_used: (full as any).container_used ?? null,
+            container_no: (full as any).container_no || undefined,
+            seal_no: (full as any).seal_no || undefined,
+            container_load_type:
+                (full as any).container_load_type || undefined,
             gross_weight_kg: full.gross_weight_kg,
             net_weight_kg: full.net_weight_kg,
             payment_terms_text: full.payment_terms_text,

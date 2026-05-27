@@ -89,6 +89,10 @@ export class PfiPublicResponseDto {
     packing_marks?: string;
     total_packages?: number;
     packing_type?: string;
+    container_used?: boolean | null;
+    container_no?: string;
+    seal_no?: string;
+    container_load_type?: string;
     gross_weight_kg?: string;
     net_weight_kg?: string;
 

@@ -262,8 +262,27 @@ export class PfiCreateRequestDto {
 
     @IsString()
     @IsOptional()
-    @MaxLength(50)
+    @MaxLength(255)
     packing_type?: string;
+
+    @IsBoolean()
+    @IsOptional()
+    container_used?: boolean | null;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(50)
+    container_no?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(50)
+    seal_no?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(10)
+    container_load_type?: string;
 
     // ── Bank + commercial defaults ──
     @IsUUID()
