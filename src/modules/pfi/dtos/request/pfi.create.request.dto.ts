@@ -189,16 +189,21 @@ export class PfiCreateRequestDto {
     @IsOptional()
     lines?: PfiLineCreateDto[];
 
-    // ── Consignee ──
-    @IsString()
+    // ── Consignee (Ship-to) — hybrid (optional FK + structured snapshot)
+    @IsUUID()
     @IsOptional()
-    @MaxLength(200)
-    consignee_name?: string;
+    consignee_id?: string;
 
-    @IsString()
     @IsOptional()
-    @MaxLength(2000)
-    consignee_address?: string;
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
 
     // ── Shipping ──
     // Free-text ports kept for backward write compatibility; new clients

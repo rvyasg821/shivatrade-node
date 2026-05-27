@@ -85,14 +85,22 @@ export class PfiGetResponseDto {
     parent_version_id?: string;
 
     // ── Consignee / shipping / packing / commercial (Phase 1) ──
-    consignee_name?: string;
-    consignee_address?: string;
     port_of_loading?: string;
     port_of_discharge?: string;
     port_of_loading_id?: string;
     port_of_loading_snapshot?: any;
     port_of_discharge_id?: string;
     port_of_discharge_snapshot?: any;
+    consignee_id?: string;
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
     final_destination?: string;
     country_of_origin?: string;
     country_of_final_destination?: string;

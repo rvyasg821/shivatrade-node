@@ -195,28 +195,17 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
       </div>`
         : '';
 
-    const norm = (s?: string | null) =>
-        (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const sameAsBuyer =
-        !!(p.consignee_name || p.consignee_address) &&
-        norm(p.consignee_name) === norm(p.customer_name) &&
-        norm(p.consignee_address) === norm(p.customer_address);
-
-    const consigneeBlock =
-        p.consignee_name || p.consignee_address
-            ? sameAsBuyer
-                ? `
+    // Consignee block — uses p.consignee_name / p.consignee_address which
+    // mapPublic populates from consignee_snapshot when set, else falls
+    // back to the buyer (customer) for single-party PFIs.
+    const consigneeBlock = p.consignee_name
+        ? `
       <div class="section">
         <div class="label">Consignee</div>
-        <div class="party-line muted"><em>Same as Buyer</em></div>
-      </div>`
-                : `
-      <div class="section">
-        <div class="label">Consignee</div>
-        <div class="party-name">${esc(p.consignee_name || '-')}</div>
+        <div class="party-name">${esc(p.consignee_name)}</div>
         ${p.consignee_address ? `<div class="party-line" style="white-space:pre-line">${esc(p.consignee_address)}</div>` : ''}
       </div>`
-            : '';
+        : '';
 
     return `<!DOCTYPE html>
 <html>

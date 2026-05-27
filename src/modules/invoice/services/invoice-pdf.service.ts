@@ -116,14 +116,27 @@ export class InvoicePdfService {
 
         const company: any =
             (await this.companyRepository.findOneById(companyId)) || {};
-        const companyAddresses = await this.companyAddressRepository.findAll({
-            company_id: companyId,
-            soft_delete: false,
-        } as any);
-        const companyAddr: any =
-            (companyAddresses as any[]).find((a: any) => a.is_default) ||
-            (companyAddresses as any[])[0] ||
-            {};
+        // Prefer the frozen snapshot on the invoice — historical doc must
+        // print the address as it was at issue time. Fall back to current
+        // master only when no snapshot exists (legacy / draft / unset).
+        let companyAddr: any = invoice.company_address_snapshot || null;
+        if (!companyAddr) {
+            const companyAddresses =
+                await this.companyAddressRepository.findAll({
+                    company_id: companyId,
+                    soft_delete: false,
+                } as any);
+            companyAddr =
+                (companyAddresses as any[]).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (companyAddresses as any[]).find(
+                    (a: any) => a.type === 'corporate'
+                ) ||
+                (companyAddresses as any[]).find((a: any) => a.is_default) ||
+                (companyAddresses as any[])[0] ||
+                {};
+        }
 
         const customer: any =
             invoice.consignee_id
@@ -161,6 +174,11 @@ export class InvoicePdfService {
             customer,
             consigneeAddr,
             shipping,
+            // Snapshot is the primary source of truth for the Consignee /
+            // Notify Party blocks. Falls back to FK lookup (customer +
+            // consigneeAddr) when missing (legacy invoices, drafts saved
+            // before the snapshot pattern landed).
+            consigneeSnapshot: invoice.consignee_snapshot,
             notifySnapshot: invoice.notify_party_snapshot,
         };
     }
@@ -176,6 +194,7 @@ interface RenderData {
     customer: any;
     consigneeAddr: any;
     shipping: any;
+    consigneeSnapshot: any;
     notifySnapshot: any;
 }
 
@@ -236,6 +255,7 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
     const ca = d.companyAddr || {};
     const cust = d.customer || {};
     const cad = d.consigneeAddr || {};
+    const cSnap = d.consigneeSnapshot || null;
     const notify = d.notifySnapshot || {};
 
     const shipperLines = [
@@ -247,23 +267,36 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
         .filter(Boolean)
         .join('<br/>');
 
-    const consigneeLines = [
-        cust.company_name,
-        cad?.address_line1,
-        cad?.address_line2,
-        [cad?.city, cad?.state].filter(Boolean).join(', '),
-        cad?.country,
-    ]
-        .filter(Boolean)
-        .join('<br/>');
+    // Prefer the snapshot (operator-typed or pre-filled from customer);
+    // fall back to FK lookup for legacy invoices where snapshot is null.
+    const consigneeLines = cSnap
+        ? [
+              cSnap.name,
+              cSnap.address_line1,
+              cSnap.address_line2,
+              [cSnap.city, cSnap.state].filter(Boolean).join(', '),
+              [cSnap.country, cSnap.postcode].filter(Boolean).join(' - '),
+          ]
+              .filter(Boolean)
+              .join('<br/>')
+        : [
+              cust.company_name,
+              cad?.address_line1,
+              cad?.address_line2,
+              [cad?.city, cad?.state].filter(Boolean).join(', '),
+              cad?.country,
+          ]
+              .filter(Boolean)
+              .join('<br/>');
 
     const notifyLines =
-        notify && (notify.name || notify.address)
+        notify && (notify.name || notify.address_line1 || notify.address)
             ? [
                   notify.name,
-                  notify.address || notify.address_line1,
-                  notify.city,
-                  notify.country,
+                  notify.address_line1 || notify.address,
+                  notify.address_line2,
+                  [notify.city, notify.state].filter(Boolean).join(', '),
+                  [notify.country, notify.postcode].filter(Boolean).join(' - '),
               ]
                   .filter(Boolean)
                   .join('<br/>')
@@ -444,6 +477,15 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
 
     ${banksHtml}
 
+    ${
+        d.company?.default_terms
+            ? `<div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+                 <div class="lbl">Terms &amp; Conditions:</div>
+                 <div class="small" style="white-space: pre-line">${esc(d.company.default_terms)}</div>
+               </div>`
+            : ''
+    }
+
     <div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
         <div class="lbl">Declaration:</div>
         <div class="small">${esc(inv.declaration_text || 'We declare that invoice shows the actual price of the goods described and that all particulars are true and correct.')}</div>
@@ -596,6 +638,15 @@ function buildExportInvoiceHtml(d: RenderData): string {
     </table>
 
     ${banksHtml}
+
+    ${
+        d.company?.default_terms
+            ? `<div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+                 <div class="lbl">Terms &amp; Conditions:</div>
+                 <div class="small" style="white-space: pre-line">${esc(d.company.default_terms)}</div>
+               </div>`
+            : ''
+    }
 
     <div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
         <div class="lbl">Declaration:</div>

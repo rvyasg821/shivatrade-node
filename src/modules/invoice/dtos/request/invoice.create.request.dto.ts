@@ -201,17 +201,56 @@ export class InvoiceCreateRequestDto {
     @IsOptional()
     customer_address_id?: string;
 
+    /** Optional FK — set when the operator picked "From Customer Master".
+     *  When absent, consignee is purely free-text (ad-hoc third party). */
     @IsUUID()
-    @IsNotEmpty()
-    consignee_id: string;
+    @IsOptional()
+    consignee_id?: string;
 
     @IsUUID()
     @IsOptional()
     consignee_address_id?: string;
 
+    /** Structured snapshot — primary source of truth for the PDF block.
+     *  Mirrors customer_addresses shape so "Load from customer" can copy
+     *  fields one-to-one. */
+    @IsOptional()
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
+
     @IsUUID()
     @IsOptional()
     notify_party_id?: string;
+
+    /** Structured snapshot — same shape as consignee_snapshot. Pre-fills
+     *  from a customer master pick when "From Customer Master" is used,
+     *  otherwise typed directly. */
+    @IsOptional()
+    notify_party_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
+
+    /** Picked company address (shipper). Service builds the snapshot from
+     *  this id at save time; PDF reads from the frozen snapshot. */
+    @IsUUID()
+    @IsOptional()
+    company_address_id?: string;
+
+    @IsOptional()
+    company_address_snapshot?: any;
 
     // Money
     @IsString()

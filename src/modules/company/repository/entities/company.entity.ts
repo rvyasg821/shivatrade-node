@@ -83,9 +83,11 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     // `company_addresses` via `purchase_orders.delivery_address_id`
     // (PO_DELIVERY_ADDRESS_REFACTOR_PLAN).
 
-    /** Default terms & conditions block printed on every PO PDF. */
+    /** Default terms & conditions block. Rendered on Invoice PDFs.
+     *  Renamed from `default_po_terms` 2026-05-27 — PO PDF no longer
+     *  consumes it (client's STIPL spec carries no PO terms block). */
     @Column({ type: 'text', nullable: true })
-    default_po_terms?: string;
+    default_terms?: string;
 
     /** Name printed under the authorized-signatory block on PFI / PO PDFs. */
     @Column({ type: 'varchar', length: 150, nullable: true })

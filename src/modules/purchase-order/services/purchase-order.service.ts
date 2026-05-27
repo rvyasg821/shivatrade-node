@@ -238,6 +238,8 @@ export class PurchaseOrderService {
             vendor_address_id: vendorAddressId,
             customer_id: data.customer_id || null,
             customer_address_id: (data as any).customer_address_id || null,
+            consignee_id: (data as any).consignee_id || null,
+            consignee_snapshot: (data as any).consignee_snapshot || null,
             quotation_id: data.quotation_id || null,
             pfi_id: data.pfi_id || null,
             po_date: data.po_date,
@@ -1548,6 +1550,10 @@ export class PurchaseOrderService {
                 customer_id: src.customer_id?.toString(),
                 customer_address_id:
                     src.customer_address_id?.toString() || undefined,
+                // Propagate consignee from source PFI (Quotation doesn't
+                // carry one). Operator picked on PFI; PO inherits.
+                consignee_id: src.consignee_id?.toString() || undefined,
+                consignee_snapshot: src.consignee_snapshot || undefined,
                 quotation_id:
                     sourceType === 'quotation' ? sourceId : undefined,
                 pfi_id: sourceType === 'pfi' ? sourceId : undefined,
@@ -1861,6 +1867,8 @@ export class PurchaseOrderService {
                 vendor_address_id: r.vendor_address_id?.toString(),
                 customer_id: r.customer_id?.toString(),
                 customer_address_id: (r as any).customer_address_id?.toString(),
+                consignee_id: (r as any).consignee_id?.toString(),
+                consignee_snapshot: (r as any).consignee_snapshot,
                 customer_name: cust?.company_name,
                 customer_contact_name: custPrimary?.name,
                 customer_contact_email: custPrimary?.email,
@@ -1870,6 +1878,10 @@ export class PurchaseOrderService {
                 quotation_voucher_no: q?.voucher_no,
                 pfi_id: r.pfi_id?.toString(),
                 pfi_voucher_no: pfi?.voucher_no,
+                // Surface PFI's bank_account_id so the Invoice add page
+                // (when generated via Generate Invoice on PO Coverage) can
+                // pre-select the same bank.
+                pfi_bank_account_id: (pfi as any)?.bank_account_id?.toString(),
                 po_date: r.po_date,
                 expected_delivery_date: r.expected_delivery_date,
                 delivery_address: r.delivery_address,

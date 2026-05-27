@@ -158,6 +158,53 @@ export class InvoiceService {
         };
     }
 
+    /**
+     * Resolve the picked `company_address_id` (or pick default) into a
+     * frozen snapshot. Returns null when no address can be found at all.
+     * Snapshot shape is intentionally flat — PDF reads it directly.
+     */
+    private async resolveCompanyAddressSnapshot(
+        companyId: string,
+        pickedAddressId?: string | null
+    ): Promise<{ id: string | null; snapshot: any | null }> {
+        const addresses = await this.companyAddressRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!addresses?.length) return { id: null, snapshot: null };
+        let addr: any = null;
+        if (pickedAddressId) {
+            addr = (addresses as any[]).find(
+                (a: any) => a._id?.toString() === pickedAddressId
+            );
+        }
+        if (!addr) {
+            // Default fallback: corporate + is_default → corporate → is_default → first.
+            addr =
+                (addresses as any[]).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses as any[]).find((a: any) => a.type === 'corporate') ||
+                (addresses as any[]).find((a: any) => a.is_default) ||
+                (addresses as any[])[0];
+        }
+        if (!addr) return { id: null, snapshot: null };
+        return {
+            id: addr._id?.toString() || null,
+            snapshot: {
+                label: addr.label || null,
+                type: addr.type || null,
+                address_line1: addr.address_line1 || null,
+                address_line2: addr.address_line2 || null,
+                city: addr.city || null,
+                state: addr.state || null,
+                postcode: addr.postcode || null,
+                country: addr.country || null,
+                gstin: addr.gstin || null,
+            },
+        };
+    }
+
     // ─── Create ─────────────────────────────────────────────────────────
 
     async create(
@@ -170,6 +217,10 @@ export class InvoiceService {
         // Pull defaults from Company master so the DRAFT carries snapshot
         // values from the start - operator can override before issuing.
         const ctx = await this.loadCompanyContext(companyId);
+        const companyAddr = await this.resolveCompanyAddressSnapshot(
+            companyId,
+            (data as any).company_address_id
+        );
 
         const header = await this.invoiceRepository.create({
             company_id: companyId,
@@ -187,9 +238,13 @@ export class InvoiceService {
             shipping_id: data.shipping_id,
             customer_id: data.customer_id,
             customer_address_id: data.customer_address_id,
-            consignee_id: data.consignee_id,
-            consignee_address_id: data.consignee_address_id,
+            consignee_id: data.consignee_id || null,
+            consignee_address_id: data.consignee_address_id || null,
+            consignee_snapshot: (data as any).consignee_snapshot || null,
             notify_party_id: data.notify_party_id,
+            notify_party_snapshot: (data as any).notify_party_snapshot || null,
+            company_address_id: companyAddr.id,
+            company_address_snapshot: companyAddr.snapshot,
             currency_code: data.currency_code,
             currency_symbol: data.currency_symbol,
             exchange_rate: data.exchange_rate || '1',
@@ -243,6 +298,21 @@ export class InvoiceService {
             const lines = data.lines;
             const { lines: _omit, ...header } = data as any;
             Object.assign(row, header);
+
+            // Refresh company_address_snapshot whenever company_address_id
+            // is in the payload (or row carries one) — snapshot stays in
+            // sync with the picked address until issue() freezes it.
+            if (
+                (data as any).company_address_id !== undefined ||
+                row.company_address_id
+            ) {
+                const resolved = await this.resolveCompanyAddressSnapshot(
+                    row.company_id.toString(),
+                    (data as any).company_address_id ?? row.company_address_id
+                );
+                (row as any).company_address_id = resolved.id;
+                (row as any).company_address_snapshot = resolved.snapshot;
+            }
 
             await this.invoiceRepository.save(row);
 
@@ -326,6 +396,16 @@ export class InvoiceService {
         row.pan_no = ctx.pan_no;
         row.iec_no = ctx.iec_no;
         row.ad_code = ctx.ad_code;
+
+        // Freeze company address snapshot from the currently-picked id (or
+        // default fallback). Mirrors the gst_no/pan_no refresh above so the
+        // issued PDF reflects the address master at issue time.
+        const frozen = await this.resolveCompanyAddressSnapshot(
+            row.company_id.toString(),
+            row.company_address_id
+        );
+        (row as any).company_address_id = frozen.id;
+        (row as any).company_address_snapshot = frozen.snapshot;
 
         // Assign voucher (compact format e.g. STIPL001/2026-27)
         row.voucher_no = await this.voucherService.getNext(
