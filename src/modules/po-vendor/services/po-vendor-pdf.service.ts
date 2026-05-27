@@ -152,8 +152,24 @@ export class PoVendorPdfService {
             0
         );
 
-        // Pull live tax_pct from product master and accumulate GST on
-        // per-line line_total. Same rule used in the FE detail view.
+        // Vendor charges snapshot (Packing, Transport, etc.) on the POV.
+        // Per-row `amount` is server-computed at save time and stored.
+        const expensesSnapshot: Array<{
+            name: string;
+            type: string;
+            value: string;
+            amount: string;
+        }> = Array.isArray((pov as any).expenses_snapshot)
+            ? (pov as any).expenses_snapshot
+            : [];
+        const chargesInrTotal = expensesSnapshot.reduce(
+            (s, e) => s + (Number(e.amount) || 0),
+            0
+        );
+        // Taxable = Subtotal + Charges (per Excel reference).
+        const taxableInrTotal = linesInrTotal + chargesInrTotal;
+
+        // GST is applied on Taxable (not just Subtotal).
         const productIds = Array.from(
             new Set(
                 (pov.lines || [])
@@ -174,11 +190,18 @@ export class PoVendorPdfService {
                         Number(pr.tax_pct) || 0
                     );
                 }
+                // Per line: scale the line's contribution to Taxable by
+                // (1 + chargesPct) so charges share GST proportionally.
+                const chargesPct =
+                    linesInrTotal > 0
+                        ? chargesInrTotal / linesInrTotal
+                        : 0;
                 for (const l of pov.lines || []) {
                     const pid = (l as any).product_id?.toString();
                     const lineTotal = Number((l as any).line_total) || 0;
                     const taxPct = taxByProduct.get(pid) || 0;
-                    gstInrTotal += (lineTotal * taxPct) / 100;
+                    const lineTaxable = lineTotal * (1 + chargesPct);
+                    gstInrTotal += (lineTaxable * taxPct) / 100;
                 }
             } catch {
                 /* graceful — keep GST as 0 if lookup fails */
@@ -205,6 +228,8 @@ export class PoVendorPdfService {
             },
             inrTotal: linesInrTotal,
             gstInrTotal,
+            chargesInrTotal,
+            expensesSnapshot,
         };
     }
 }
@@ -231,6 +256,13 @@ interface PovPdfContext {
     };
     inrTotal: number;
     gstInrTotal: number;
+    chargesInrTotal: number;
+    expensesSnapshot: Array<{
+        name: string;
+        type: string;
+        value: string;
+        amount: string;
+    }>;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -294,15 +326,17 @@ function buildFooterTemplate(ctx: PovPdfContext): string {
 }
 
 function buildPovHtml(ctx: PovPdfContext): string {
-    const { pov, company, vendor, inrTotal, gstInrTotal } = ctx;
+    const { pov, company, vendor, inrTotal, gstInrTotal, chargesInrTotal, expensesSnapshot } = ctx;
     const lines = pov.lines || [];
     const sym = pov.currency_symbol || pov.currency_code || '₹';
     const rate = Number(pov.exchange_rate) || 1;
     const subtotalCcy = inrTotal * rate;
+    const chargesCcy = chargesInrTotal * rate;
+    const taxableCcy = subtotalCcy + chargesCcy;
     const gstTotalCcy = gstInrTotal * rate;
     const cgstCcy = gstTotalCcy / 2;
     const sgstCcy = gstTotalCcy - cgstCcy;
-    const grandRawCcy = subtotalCcy + gstTotalCcy;
+    const grandRawCcy = taxableCcy + gstTotalCcy;
     const grandTotalCcy = Math.round(grandRawCcy);
     const roundOffCcy = grandTotalCcy - grandRawCcy;
 
@@ -576,6 +610,27 @@ function buildPovHtml(ctx: PovPdfContext): string {
       <span>Subtotal</span>
       <span>${ccyMoney(sym, subtotalCcy)}</span>
     </div>
+    ${expensesSnapshot
+        .map(e => {
+            const amtCcy = (Number(e.amount) || 0) * rate;
+            const label =
+                e.type === 'percent'
+                    ? `+ ${esc(e.name)} (${Number(e.value) || 0}%)`
+                    : `+ ${esc(e.name)}`;
+            return `<div class="row">
+      <span>${label}</span>
+      <span>${ccyMoney(sym, amtCcy)}</span>
+    </div>`;
+        })
+        .join('')}
+    ${
+        chargesCcy > 0
+            ? `<div class="row">
+      <span>= Taxable</span>
+      <span>${ccyMoney(sym, taxableCcy)}</span>
+    </div>`
+            : ''
+    }
     ${
         gstTotalCcy > 0
             ? `<div class="row">

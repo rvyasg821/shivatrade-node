@@ -193,6 +193,7 @@ export class PurchaseOrderAdminController {
             {
                 deliveryAddressId: body.delivery_address_id,
                 deliveryAddressText: body.delivery_address,
+                vendorExpenses: body.vendor_expenses,
             }
         );
         const purchaseOrder = await this.poService.mapGet(out.purchase_order);
@@ -221,6 +222,7 @@ export class PurchaseOrderAdminController {
             {
                 deliveryAddressId: body.delivery_address_id,
                 deliveryAddressText: body.delivery_address,
+                vendorExpenses: body.vendor_expenses,
             }
         );
         const purchaseOrder = await this.poService.mapGet(out.purchase_order);
