@@ -193,7 +193,6 @@ export class PfiService {
                 ? data.container_load_type || null
                 : null,
             bank_account_id: data.bank_account_id || null,
-            payment_terms_text: data.payment_terms_text || null,
             declaration_text: data.declaration_text || null,
             validity_days:
                 data.validity_days === undefined ? 30 : data.validity_days,
@@ -535,7 +534,6 @@ export class PfiService {
             // the PFI.
             port_of_loading: defaultPort,
             country_of_origin: countryOfOrigin,
-            payment_terms_text: '100% advance via T/T',
             declaration_text: defaultDeclaration,
             bank_account_id: bankAccountId,
             lines: qLines.map((l: any) => {
@@ -1053,7 +1051,6 @@ export class PfiService {
                         currency_code: bk.currency_code,
                     };
                 })(),
-                payment_terms_text: (r as any).payment_terms_text,
                 declaration_text: (r as any).declaration_text,
                 validity_days: (r as any).validity_days,
                 public_token: (r as any).public_token,
@@ -1348,7 +1345,7 @@ export class PfiService {
                 (full as any).container_load_type || undefined,
             gross_weight_kg: full.gross_weight_kg,
             net_weight_kg: full.net_weight_kg,
-            payment_terms_text: full.payment_terms_text,
+            payment_terms: full.payment_terms,
             declaration_text: full.declaration_text,
             notes_to_client: full.notes_to_client,
             lines,

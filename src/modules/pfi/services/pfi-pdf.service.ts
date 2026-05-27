@@ -440,8 +440,8 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
   ${bankBlock}
 
   ${
-      p.payment_terms_text
-          ? `<div class="section"><div class="label">Payment Terms</div><div class="body">${esc(p.payment_terms_text)}</div></div>`
+      p.payment_terms
+          ? `<div class="section"><div class="label">Payment Terms</div><div class="body">${esc(p.payment_terms)}</div></div>`
           : ''
   }
   ${

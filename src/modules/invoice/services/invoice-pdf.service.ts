@@ -333,10 +333,27 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
         </tr>
         <tr>
             <td><span class="lbl">Country of Destination</span><br/>${esc(d.invoice.country_of_destination)}</td>
-            <td><span class="lbl">Export Route</span><br/>${d.invoice.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED ? 'Export Under LUT (Without Payment of IGST)' : 'Export With Payment of IGST'}</td>
+            <td>
+                <span class="lbl">Export Route</span><br/>${d.invoice.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED ? 'Export Under LUT (Without Payment of IGST)' : 'Export With Payment of IGST'}
+                ${
+                    d.shipping?.shipping_bill_type
+                        ? `<br/>Export Under ${esc(SHIPPING_BILL_TYPE_LABELS[d.shipping.shipping_bill_type] || d.shipping.shipping_bill_type)}`
+                        : ''
+                }
+            </td>
         </tr>
     </table>`;
 }
+
+// Indian export-scheme labels shown next to "Export Route" on the
+// Commercial Invoice. Values come from the linked Shipping record.
+const SHIPPING_BILL_TYPE_LABELS: Record<string, string> = {
+    free: 'Free Scheme',
+    dbk: 'Drawback',
+    rodtep: 'RoDTEP',
+    rosctl: 'RoSCTL',
+    seis: 'SEIS',
+};
 
 function buildCommercialInvoiceHtml(d: RenderData): string {
     const inv = d.invoice;
@@ -478,10 +495,10 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
     ${banksHtml}
 
     ${
-        d.company?.default_terms
+        d.invoice?.terms
             ? `<div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
                  <div class="lbl">Terms &amp; Conditions:</div>
-                 <div class="small" style="white-space: pre-line">${esc(d.company.default_terms)}</div>
+                 <div class="small" style="white-space: pre-line">${esc(d.invoice.terms)}</div>
                </div>`
             : ''
     }
@@ -640,10 +657,10 @@ function buildExportInvoiceHtml(d: RenderData): string {
     ${banksHtml}
 
     ${
-        d.company?.default_terms
+        d.invoice?.terms
             ? `<div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
                  <div class="lbl">Terms &amp; Conditions:</div>
-                 <div class="small" style="white-space: pre-line">${esc(d.company.default_terms)}</div>
+                 <div class="small" style="white-space: pre-line">${esc(d.invoice.terms)}</div>
                </div>`
             : ''
     }
