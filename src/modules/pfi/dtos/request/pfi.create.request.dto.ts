@@ -27,6 +27,11 @@ export class PfiLineCreateDto {
     @IsOptional()
     vendor_id?: string;
 
+    /** Internal-only: stamped by createFromQuotation; never set from FE. */
+    @IsUUID()
+    @IsOptional()
+    source_quotation_line_id?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(2000)
