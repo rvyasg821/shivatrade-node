@@ -115,6 +115,7 @@ export class InvoiceService {
         ad_code?: string;
         voucher_prefix: string;
         bank_snapshots: any[];
+        default_terms?: string;
     }> {
         const company: any = await this.companyRepository.findOneById(companyId);
         if (!company) {
@@ -155,6 +156,7 @@ export class InvoiceService {
                 (company.voucher_prefix || '').toUpperCase().trim() ||
                 (company.company_name || 'CO').substring(0, 5).toUpperCase(),
             bank_snapshots,
+            default_terms: company.default_terms || undefined,
         };
     }
 
@@ -274,6 +276,10 @@ export class InvoiceService {
             notes_to_buyer: data.notes_to_buyer,
             internal_notes: data.internal_notes,
             declaration_text: data.declaration_text,
+            terms:
+                (data as any).terms !== undefined
+                    ? (data as any).terms
+                    : ctx.default_terms,
         } as any);
 
         await this.writeLines(header._id.toString(), companyId, data.lines);

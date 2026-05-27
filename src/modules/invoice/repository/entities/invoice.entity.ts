@@ -271,6 +271,12 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     declaration_text?: string;
 
+    /** Per-invoice Terms & Conditions. Defaults from company.default_terms
+     *  at create time; editable per invoice; rendered on Commercial /
+     *  Export PDFs. */
+    @Column({ type: 'text', nullable: true })
+    terms?: string;
+
     // ── Audit ──
     @Column({ type: 'uuid', nullable: true })
     issued_by?: string;

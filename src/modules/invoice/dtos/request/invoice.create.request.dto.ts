@@ -348,6 +348,10 @@ export class InvoiceCreateRequestDto {
     @IsOptional()
     declaration_text?: string;
 
+    @IsString()
+    @IsOptional()
+    terms?: string;
+
     // Lines
     @IsArray()
     @ArrayMinSize(1)
