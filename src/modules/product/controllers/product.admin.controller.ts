@@ -222,6 +222,7 @@ export class ProductAdminController {
                 hsn_code?: string;
                 net_weight_per_unit?: string;
                 gross_weight_per_unit?: string;
+                pack_size?: number;
                 product_rebates?: Array<{
                     rebate_id: string;
                     code?: string;
@@ -348,6 +349,7 @@ export class ProductAdminController {
                     (p as any).gross_weight_per_unit != null
                         ? String((p as any).gross_weight_per_unit)
                         : undefined,
+                pack_size: (p as any).pack_size ?? undefined,
                 product_rebates: rebatesByProduct.get(p._id.toString()) || [],
                 product_expenses:
                     expensesByProduct.get(p._id.toString()) || [],
