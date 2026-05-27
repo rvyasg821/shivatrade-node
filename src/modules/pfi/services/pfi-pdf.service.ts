@@ -133,7 +133,6 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
         ['Mode', p.mode_of_shipment],
         ['Country of Origin', p.country_of_origin],
         ['Country of Destination', p.country_of_final_destination],
-        ['Container', p.container_details],
         ['Est. Shipment', dateOnly(p.est_shipment_date as any)],
         ['Est. Delivery', dateOnly(p.est_delivery_date as any)],
     ].filter((r) => !!r[1]) as Array<[string, any]>;
@@ -158,6 +157,11 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
         <div class="label">Packing</div>
         <div class="kv-grid">
           ${kv('Total Packages', `${p.total_packages || 0}${p.packing_type ? ` × ${esc(p.packing_type)}` : ''}`)}
+          ${kv('Container', p.container_used === true ? 'Yes' : 'No')}
+          ${p.container_used === true ? kv('Qty × Size', p.container_details) : ''}
+          ${p.container_used === true ? kv('Container No', p.container_no) : ''}
+          ${p.container_used === true ? kv('Seal No', p.seal_no) : ''}
+          ${p.container_used === true ? kv('Load Type', p.container_load_type) : ''}
           ${kv('Net Wt', `${fmt(p.net_weight_kg || 0)} kg`)}
           ${kv('Gross Wt', `${fmt(p.gross_weight_kg || 0)} kg`)}
           ${kv('Marks', p.packing_marks)}
