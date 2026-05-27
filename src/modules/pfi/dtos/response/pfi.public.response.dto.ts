@@ -96,7 +96,7 @@ export class PfiPublicResponseDto {
     gross_weight_kg?: string;
     net_weight_kg?: string;
 
-    payment_terms_text?: string;
+    payment_terms?: string;
     declaration_text?: string;
     notes_to_client?: string;
 

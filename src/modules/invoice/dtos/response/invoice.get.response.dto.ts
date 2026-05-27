@@ -116,6 +116,7 @@ export class InvoiceGetResponseDto {
     notes_to_buyer?: string;
     internal_notes?: string;
     declaration_text?: string;
+    terms?: string;
 
     // Audit
     issued_by?: string;
