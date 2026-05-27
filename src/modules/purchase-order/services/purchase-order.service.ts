@@ -648,59 +648,49 @@ export class PurchaseOrderService {
                 split.taxable + lineExpensesAmt - lineRebatesAmt;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
 
+            // GST: per-line tax_pct is captured for reference but NOT
+            // rolled into line_total or doc totals on PO. cgst/sgst/igst
+            // are forced to zero so legacy readers don't see stale tax.
             const lineNet =
                 split.taxable +
                 lineExpensesAmt -
                 lineRebatesAmt +
                 lineMarginAmt;
-            const taxPct = num(ln.tax_pct);
-            const totalTax = round2((lineNet * taxPct) / 100);
-
-            let cgst = 0,
-                sgst = 0,
-                igst = 0;
-            if (totalTax > 0) {
-                if (split.tax_type === 'INTRA') {
-                    cgst = round2(totalTax / 2);
-                    sgst = round2(totalTax - cgst);
-                } else {
-                    igst = totalTax;
-                }
-            }
 
             ln.taxable = String(round2(split.taxable));
-            ln.cgst = String(cgst);
-            ln.sgst = String(sgst);
-            ln.igst = String(igst);
-            ln.line_total = String(round2(lineNet + totalTax));
+            ln.cgst = '0';
+            ln.sgst = '0';
+            ln.igst = '0';
+            ln.line_total = String(round2(lineNet));
             await this.poLineRepository.save(ln);
 
             subtotal += split.taxable;
-            cgst_total += cgst;
-            sgst_total += sgst;
-            igst_total += igst;
-            tax_total += totalTax;
             product_rebates_total += lineRebatesAmt;
             product_expenses_total += lineExpensesAmt;
             line_margin_total += lineMarginAmt;
         }
 
         const er = num(header.exchange_rate) || 1;
+        // PO grand total excludes GST — per-line tax_pct is captured
+        // for reference only, not added to the doc total.
+        tax_total = 0;
+        cgst_total = 0;
+        sgst_total = 0;
+        igst_total = 0;
         const grand_inr_raw =
             subtotal +
             product_expenses_total -
             product_rebates_total +
-            line_margin_total +
-            tax_total;
+            line_margin_total;
         const grand_inr = Math.round(grand_inr_raw);
         const round_off = round2(grand_inr - grand_inr_raw);
         const grand_total = grand_inr * er;
 
         header.subtotal = String(round2(subtotal));
-        header.cgst_total = String(round2(cgst_total));
-        header.sgst_total = String(round2(sgst_total));
-        header.igst_total = String(round2(igst_total));
-        header.tax_total = String(round2(tax_total));
+        header.cgst_total = '0';
+        header.sgst_total = '0';
+        header.igst_total = '0';
+        header.tax_total = '0';
         header.round_off = String(round_off);
         header.grand_total = String(round2(grand_total));
 
