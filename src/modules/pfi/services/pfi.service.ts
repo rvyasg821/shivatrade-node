@@ -527,6 +527,7 @@ export class PfiService {
                 return {
                     product_id: pid,
                     vendor_id: l.vendor_id?.toString(),
+                    source_quotation_line_id: l._id?.toString(),
                     description: l.description,
                     qty: l.qty,
                     unit: l.unit,
@@ -659,6 +660,7 @@ export class PfiService {
                 company_id: companyId,
                 pfi_id: pfiId,
                 product_id: pid,
+                source_quotation_line_id: l.source_quotation_line_id || null,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
                 qty: l.qty || '0',

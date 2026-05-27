@@ -16,6 +16,14 @@ export class PfiLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     product_id: string;
 
+    /** Source quotation_line._id when this PFI was created via
+     *  createFromQuotation. Lets us propagate the id onto downstream
+     *  po_line.source_quotation_line_id so Quotation PO-coverage rolls up
+     *  POs created via the PFI path. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    source_quotation_line_id?: string;
+
     /** Vendor selected on the PFI line — copied from source quotation_line. */
     @Index()
     @Column({ type: 'uuid', nullable: true })
