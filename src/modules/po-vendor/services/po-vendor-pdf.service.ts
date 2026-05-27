@@ -5,6 +5,7 @@ import { PdfService } from '@common/pdf/pdf.service';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
+import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { PoVendorGetResponseDto } from '../dtos/response/po-vendor.get.response.dto';
 
 /**
@@ -28,7 +29,8 @@ export class PoVendorPdfService {
         private readonly pdfService: PdfService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
-        private readonly vendorAddressRepository: VendorAddressRepository
+        private readonly vendorAddressRepository: VendorAddressRepository,
+        private readonly productRepository: ProductRepository
     ) {}
 
     async render(
@@ -150,6 +152,39 @@ export class PoVendorPdfService {
             0
         );
 
+        // Pull live tax_pct from product master and accumulate GST on
+        // per-line line_total. Same rule used in the FE detail view.
+        const productIds = Array.from(
+            new Set(
+                (pov.lines || [])
+                    .map((l: any) => l.product_id?.toString())
+                    .filter(Boolean)
+            )
+        );
+        let gstInrTotal = 0;
+        if (productIds.length) {
+            try {
+                const products: any[] = await this.productRepository.findAll({
+                    _id: { $in: productIds },
+                } as any);
+                const taxByProduct = new Map<string, number>();
+                for (const pr of products) {
+                    taxByProduct.set(
+                        pr._id.toString(),
+                        Number(pr.tax_pct) || 0
+                    );
+                }
+                for (const l of pov.lines || []) {
+                    const pid = (l as any).product_id?.toString();
+                    const lineTotal = Number((l as any).line_total) || 0;
+                    const taxPct = taxByProduct.get(pid) || 0;
+                    gstInrTotal += (lineTotal * taxPct) / 100;
+                }
+            } catch {
+                /* graceful — keep GST as 0 if lookup fails */
+            }
+        }
+
         return {
             pov,
             company: {
@@ -169,6 +204,7 @@ export class PoVendorPdfService {
                 address: vendorAddress,
             },
             inrTotal: linesInrTotal,
+            gstInrTotal,
         };
     }
 }
@@ -194,6 +230,7 @@ interface PovPdfContext {
         address?: string;
     };
     inrTotal: number;
+    gstInrTotal: number;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
@@ -257,11 +294,17 @@ function buildFooterTemplate(ctx: PovPdfContext): string {
 }
 
 function buildPovHtml(ctx: PovPdfContext): string {
-    const { pov, company, vendor, inrTotal } = ctx;
+    const { pov, company, vendor, inrTotal, gstInrTotal } = ctx;
     const lines = pov.lines || [];
     const sym = pov.currency_symbol || pov.currency_code || '₹';
     const rate = Number(pov.exchange_rate) || 1;
-    const grandTotalCcy = inrTotal * rate;
+    const subtotalCcy = inrTotal * rate;
+    const gstTotalCcy = gstInrTotal * rate;
+    const cgstCcy = gstTotalCcy / 2;
+    const sgstCcy = gstTotalCcy - cgstCcy;
+    const grandRawCcy = subtotalCcy + gstTotalCcy;
+    const grandTotalCcy = Math.round(grandRawCcy);
+    const roundOffCcy = grandTotalCcy - grandRawCcy;
 
     const linesRows = lines.length
         ? lines
@@ -277,15 +320,13 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="muted">${i + 1}</td>
           <td><div class="fw">${esc(l.product_name || '-')}</div></td>
           <td class="num">${l.ordered_qty ? fmt(l.ordered_qty) : '-'}</td>
-          <td class="num">${l.dispatched_qty ? fmt(l.dispatched_qty) : '-'}</td>
-          <td class="num">${l.received_qty ? fmt(l.received_qty) : '-'}</td>
           <td>${esc(l.unit || '-')}</td>
           <td class="num">${ccyMoney(sym, effRate)}</td>
           <td class="num fw">${ccyMoney(sym, lineTotalCcy)}</td>
         </tr>`;
               })
               .join('')
-        : `<tr><td colspan="8" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
+        : `<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
 
     const transportRows: Array<[string, any]> = [
         ['Transporter', pov.transporter_name],
@@ -407,6 +448,13 @@ function buildPovHtml(ctx: PovPdfContext): string {
     margin-top: 14px;
     margin-bottom: 4px;
   }
+  .totals .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    font-size: 10.5px;
+    color: #374151;
+  }
   .totals .row-grand {
     display: flex;
     justify-content: space-between;
@@ -513,12 +561,10 @@ function buildPovHtml(ctx: PovPdfContext): string {
         <tr>
           <th style="width:24px">#</th>
           <th>Product</th>
-          <th class="num" style="width:60px">Ordered</th>
-          <th class="num" style="width:70px">Dispatched</th>
-          <th class="num" style="width:65px">Received</th>
-          <th style="width:50px">Unit</th>
-          <th class="num" style="width:80px">Rate</th>
-          <th class="num" style="width:100px">Amount</th>
+          <th class="num" style="width:70px">Qty</th>
+          <th style="width:60px">Unit</th>
+          <th class="num" style="width:100px">Rate</th>
+          <th class="num" style="width:120px">Amount</th>
         </tr>
       </thead>
       <tbody>${linesRows}</tbody>
@@ -526,6 +572,30 @@ function buildPovHtml(ctx: PovPdfContext): string {
   </div>
 
   <div class="totals">
+    <div class="row">
+      <span>Subtotal</span>
+      <span>${ccyMoney(sym, subtotalCcy)}</span>
+    </div>
+    ${
+        gstTotalCcy > 0
+            ? `<div class="row">
+      <span>+ CGST</span>
+      <span>${ccyMoney(sym, cgstCcy)}</span>
+    </div>
+    <div class="row">
+      <span>+ SGST</span>
+      <span>${ccyMoney(sym, sgstCcy)}</span>
+    </div>`
+            : ''
+    }
+    ${
+        Math.abs(roundOffCcy) > 0.005
+            ? `<div class="row">
+      <span>Round Off</span>
+      <span>${roundOffCcy >= 0 ? '+ ' : '− '}${ccyMoney(sym, Math.abs(roundOffCcy))}</span>
+    </div>`
+            : ''
+    }
     <div class="row-grand">
       <span>Grand Total</span>
       <span>${ccyMoney(sym, grandTotalCcy)}</span>
