@@ -1,0 +1,145 @@
+import {
+    ENUM_INVOICE_GST_ROUTE,
+    ENUM_INVOICE_STATUS,
+    ENUM_INVOICE_TYPE,
+} from '@modules/invoice/enums/invoice.enum';
+
+export class InvoiceLineResponseDto {
+    _id?: string;
+    seq?: number;
+    purchase_order_line_id?: string;
+    po_vendor_line_id?: string;
+    product_id?: string;
+    product_name?: string;
+    product_code?: string;
+    description?: string;
+    hsn_code?: string;
+    customer_reference?: string;
+    unit?: string;
+    uqc_code?: string;
+    qty?: string;
+    unit_price?: string;
+    discount_pct?: string;
+    tax_pct?: string;
+    taxable_amount?: string;
+    cgst_amount?: string;
+    sgst_amount?: string;
+    igst_amount?: string;
+    line_total?: string;
+    igst_rate_pct?: string;
+    product_rebates_snapshot?: any;
+    product_expenses_snapshot?: any;
+}
+
+export class InvoiceGetResponseDto {
+    _id?: string;
+    company_id?: string;
+    voucher_no?: string;
+    invoice_type?: ENUM_INVOICE_TYPE;
+    status?: ENUM_INVOICE_STATUS;
+    invoice_date?: string;
+    due_date?: string;
+
+    // Source
+    purchase_order_id?: string;
+    purchase_order_voucher_no?: string;
+    pfi_id?: string;
+    pfi_voucher_no?: string;
+    quotation_id?: string;
+    quotation_voucher_no?: string;
+    customer_po_no?: string;
+
+    // Destination
+    country_of_destination?: string;
+    country_of_origin?: string;
+
+    // Shipping
+    shipping_id?: string;
+    shipping_voucher_no?: string;
+
+    // Parties
+    customer_id?: string;
+    customer_address_id?: string;
+    customer_snapshot?: any;
+    consignee_id?: string;
+    consignee_address_id?: string;
+    consignee_snapshot?: any;
+    notify_party_id?: string;
+    notify_party_snapshot?: any;
+
+    // Money
+    currency_code?: string;
+    currency_symbol?: string;
+    exchange_rate?: string;
+    subtotal?: string;
+    discount_total?: string;
+    fob_value?: string;
+    freight_charges?: string;
+    insurance_charges?: string;
+    other_charges?: string;
+    grand_total?: string;
+    grand_total_inr?: string;
+    amount_in_words?: string;
+    advance_received?: string;
+    balance_receivable?: string;
+
+    // GST / compliance
+    gst_route?: ENUM_INVOICE_GST_ROUTE;
+    lut_no?: string;
+    lut_date?: string;
+    cgst_amount?: string;
+    sgst_amount?: string;
+    igst_amount?: string;
+    igst_refund_amount?: string;
+    igst_refund_buckets?: any;
+    place_of_supply?: string;
+
+    // Company snapshots
+    gst_no?: string;
+    pan_no?: string;
+    iec_no?: string;
+    ad_code?: string;
+
+    // Trade terms
+    incoterm?: string;
+    payment_terms?: string;
+    delivery_terms?: string;
+    end_use_code?: string;
+    preferential_agreement?: string;
+
+    // Banks
+    bank_snapshots?: any;
+
+    // Notes
+    notes_to_buyer?: string;
+    internal_notes?: string;
+    declaration_text?: string;
+
+    // Audit
+    issued_by?: string;
+    issued_at?: Date;
+    cancelled_by?: string;
+    cancelled_at?: Date;
+    cancelled_reason?: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+
+    lines?: InvoiceLineResponseDto[];
+}
+
+export class InvoiceListResponseDto {
+    _id?: string;
+    voucher_no?: string;
+    status?: ENUM_INVOICE_STATUS;
+    invoice_date?: string;
+    customer_id?: string;
+    customer_name?: string;
+    purchase_order_voucher_no?: string;
+    currency_code?: string;
+    currency_symbol?: string;
+    grand_total?: string;
+    grand_total_inr?: string;
+    balance_receivable?: string;
+    advance_received?: string;
+    createdAt?: Date;
+}

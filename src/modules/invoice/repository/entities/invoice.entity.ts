@@ -1,0 +1,282 @@
+import { DatabaseObjectIdEntityBase } from '@common/database/bases/database.object-id.entity';
+import { Entity, Column, Index } from 'typeorm';
+import {
+    ENUM_INVOICE_TYPE,
+    ENUM_INVOICE_STATUS,
+    ENUM_INVOICE_GST_ROUTE,
+} from '@modules/invoice/enums/invoice.enum';
+import { INVOICE_COLLECTION_NAME } from '../../constants/invoice.entity.constant';
+
+/**
+ * Export Commercial Invoice header. Mirrors the STIPL119 template exactly:
+ *   - 3-party export (Shipper / Consignee / Notify-Party-or-Buyer)
+ *   - IGST-paid (default) vs LUT zero-rated routes
+ *   - FOB / Freight / Insurance / Other breakdown → grand_total
+ *   - Multi-bank snapshots
+ *   - country_of_destination snapshot (independent of Shipping)
+ *   - igst_refund_buckets jsonb for the PDF footer block (per HSN rate)
+ *
+ * Shipping linkage (`shipping_id`) is optional - Invoice can be issued
+ * before Shipping is booked.
+ */
+@Entity(INVOICE_COLLECTION_NAME)
+export class InvoiceEntity extends DatabaseObjectIdEntityBase {
+    @Index()
+    @Column({ type: 'uuid', nullable: false })
+    company_id: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    created_by?: string;
+
+    /** Voucher no - assigned at ISSUED (`STIPL119/2025-26` format). Null in DRAFT. */
+    @Index()
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    voucher_no?: string;
+
+    @Index()
+    @Column({
+        type: 'varchar',
+        length: 20,
+        nullable: false,
+        default: ENUM_INVOICE_TYPE.EXPORT,
+    })
+    invoice_type: ENUM_INVOICE_TYPE;
+
+    @Index()
+    @Column({
+        type: 'varchar',
+        length: 20,
+        nullable: false,
+        default: ENUM_INVOICE_STATUS.DRAFT,
+    })
+    status: ENUM_INVOICE_STATUS;
+
+    @Column({ type: 'date', nullable: false })
+    invoice_date: string;
+
+    @Column({ type: 'date', nullable: true })
+    due_date?: string;
+
+    // ── Source linkage ──
+    @Index()
+    @Column({ type: 'uuid', nullable: false })
+    purchase_order_id: string;
+
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    purchase_order_voucher_no?: string;
+
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    pfi_id?: string;
+
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    pfi_voucher_no?: string;
+
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    quotation_id?: string;
+
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    quotation_voucher_no?: string;
+
+    /** Customer's own PO reference (text on their letterhead). */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    customer_po_no?: string;
+
+    // ── Destination snapshot (visible on Commercial Invoice header) ──
+    @Column({ type: 'varchar', length: 80, nullable: true })
+    country_of_destination?: string;
+
+    @Column({ type: 'varchar', length: 80, nullable: false, default: 'India' })
+    country_of_origin: string;
+
+    // ── Shipping linkage ──
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    shipping_id?: string;
+
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    shipping_voucher_no?: string;
+
+    // ── Parties (FK + snapshot pattern) ──
+    @Index()
+    @Column({ type: 'uuid', nullable: false })
+    customer_id: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    customer_address_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    customer_snapshot?: any;
+
+    @Index()
+    @Column({ type: 'uuid', nullable: false })
+    consignee_id: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    consignee_address_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    consignee_snapshot?: any;
+
+    /** 3-party export: Notify Party / Buyer (the one paying, often LC issuer). */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    notify_party_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    notify_party_snapshot?: any;
+
+    // ── Money (in invoice currency) ──
+    @Index()
+    @Column({ type: 'varchar', length: 10, nullable: false })
+    currency_code: string;
+
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    currency_symbol?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: false, default: 1 })
+    exchange_rate: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    subtotal: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    discount_total: string;
+
+    /** subtotal − discount_total. Labelled FOB on the PDF when incoterm = FOB. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    fob_value: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    freight_charges: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    insurance_charges: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    other_charges: string;
+
+    /** fob_value + freight + insurance + other. Labelled FOB/CNF/CIF per incoterm. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    grand_total: string;
+
+    /** INR-equivalent of grand_total - snapshot at issue for GSTR-1 + refund. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    grand_total_inr: string;
+
+    @Column({ type: 'text', nullable: true })
+    amount_in_words?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    advance_received: string;
+
+    /** grand_total − advance_received. Maintained on each save. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    balance_receivable: string;
+
+    // ── GST / compliance ──
+    @Index()
+    @Column({
+        type: 'varchar',
+        length: 30,
+        nullable: false,
+        default: ENUM_INVOICE_GST_ROUTE.IGST_PAID,
+    })
+    gst_route: ENUM_INVOICE_GST_ROUTE;
+
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    lut_no?: string;
+
+    @Column({ type: 'date', nullable: true })
+    lut_date?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    cgst_amount: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    sgst_amount: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    igst_amount: string;
+
+    /** For `igst_paid` route - total IGST refund claimable across HSN buckets. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    igst_refund_amount: string;
+
+    /** Per-HSN-rate breakdown for the PDF refund footer:
+     *  [{ rate: 0.18, assessable_value_inr: 191780.51, igst_amount_inr: 34520.49 }, ...] */
+    @Column({ type: 'jsonb', nullable: true })
+    igst_refund_buckets?: any;
+
+    /** "96 - Other Territory" for exports under GST. Domestic = state code. */
+    @Column({ type: 'varchar', length: 20, nullable: false, default: '96' })
+    place_of_supply: string;
+
+    // ── Company snapshots (frozen at issue) ──
+    @Column({ type: 'varchar', length: 30, nullable: true })
+    gst_no?: string;
+
+    @Column({ type: 'varchar', length: 30, nullable: true })
+    pan_no?: string;
+
+    @Column({ type: 'varchar', length: 30, nullable: true })
+    iec_no?: string;
+
+    @Column({ type: 'varchar', length: 30, nullable: true })
+    ad_code?: string;
+
+    // ── Trade terms ──
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    incoterm?: string;
+
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    payment_terms?: string;
+
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    delivery_terms?: string;
+
+    // ── DGFT (scheme codes) ──
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    end_use_code?: string;
+
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    preferential_agreement?: string;
+
+    // ── Banks (multi-bank jsonb array - at least one required at ISSUED) ──
+    /** [{ name, account_no, beneficiary, ad_code, swift_code, branch, currency_code }, ...] */
+    @Column({ type: 'jsonb', nullable: true })
+    bank_snapshots?: any;
+
+    // ── Notes ──
+    @Column({ type: 'text', nullable: true })
+    notes_to_buyer?: string;
+
+    @Column({ type: 'text', nullable: true })
+    internal_notes?: string;
+
+    @Column({ type: 'text', nullable: true })
+    declaration_text?: string;
+
+    // ── Audit ──
+    @Column({ type: 'uuid', nullable: true })
+    issued_by?: string;
+
+    @Column({ type: 'timestamp with time zone', nullable: true })
+    issued_at?: Date;
+
+    @Column({ type: 'uuid', nullable: true })
+    cancelled_by?: string;
+
+    @Column({ type: 'timestamp with time zone', nullable: true })
+    cancelled_at?: Date;
+
+    @Column({ type: 'text', nullable: true })
+    cancelled_reason?: string;
+
+    @Index()
+    @Column({ type: 'boolean', default: false })
+    soft_delete: boolean;
+}
+
+export type InvoiceDoc = InvoiceEntity;
