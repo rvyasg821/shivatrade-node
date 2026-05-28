@@ -32,6 +32,7 @@ import { PfiRepository } from '../repository/repositories/pfi.repository';
 import { PfiCreateRequestDto } from '../dtos/request/pfi.create.request.dto';
 import { PfiUpdateRequestDto } from '../dtos/request/pfi.update.request.dto';
 import { PfiGetResponseDto } from '../dtos/response/pfi.get.response.dto';
+import { PfiStatsResponseDto } from '../dtos/response/pfi.stats.response.dto';
 
 @ApiTags('admin.pfi')
 @Controller({ version: '1', path: '/admin/pfi' })
@@ -83,29 +84,18 @@ export class PfiAdminController {
         @Query('date_to') dateTo?: string,
         @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<PfiGetResponseDto>> {
-        const find: any = { company_id: companyId, soft_delete: false };
-        if (customerId) find.customer_id = customerId;
-        if (quotationId) find.quotation_id = quotationId;
-        if (status) find.status = status;
-        if (dateFrom && dateTo) {
-            find.pfi_date = { $gte: dateFrom, $lte: dateTo };
-        } else if (dateFrom) {
-            find.pfi_date = { $gte: dateFrom };
-        } else if (dateTo) {
-            find.pfi_date = { $lte: dateTo };
-        }
-
-        // PaginationSearchPipe doesn't populate `_search` without an
-        // `availableSearch` option — fall back to the raw `search` query.
+        const statusValue = parseStatusParam(status);
         const searchTerm =
             searchRaw?.trim() ||
-            (_search && typeof _search === 'string' ? _search : null);
-        if (searchTerm) {
-            find.$or = [
-                { voucher_no: { $regex: searchTerm, $options: 'i' } },
-                { notes_to_client: { $regex: searchTerm, $options: 'i' } },
-            ];
-        }
+            (_search && typeof _search === 'string' ? _search : '');
+        const find = this.pfiService.buildListFind(companyId, {
+            customer_id: customerId,
+            quotation_id: quotationId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchTerm,
+        });
 
         const rows = await this.pfiRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -117,6 +107,30 @@ export class PfiAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data: await this.pfiService.mapList(rows),
         };
+    }
+
+    @Response('pfi.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('customer_id') customerId?: string,
+        @Query('quotation_id') quotationId?: string,
+        @Query('status') status?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
+    ): Promise<IResponse<PfiStatsResponseDto>> {
+        const statusValue = parseStatusParam(status);
+        const data = await this.pfiService.stats(companyId, {
+            customer_id: customerId,
+            quotation_id: quotationId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchRaw,
+        });
+        return { data };
     }
 
     @Response('pfi.get')
@@ -213,4 +227,19 @@ export class PfiAdminController {
         res.setHeader('Content-Length', buf.length);
         res.end(buf);
     }
+}
+
+// Normalize `status` query: empty → undefined, "a" → "a", "a,b" → ["a","b"].
+function parseStatusParam(raw?: string): string | string[] | undefined {
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    if (!trimmed.includes(',')) return trimmed;
+    const parts = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return undefined;
+    if (parts.length === 1) return parts[0];
+    return parts;
 }
