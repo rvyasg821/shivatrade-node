@@ -574,7 +574,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
       </div>
     </div>
     <div style="text-align:right">
-      <div class="qd-title">Purchase Order</div>
+      <div class="qd-title">Sales Order</div>
       <div class="voucher">#${esc(po.voucher_no || '-')}</div>
       <div class="voucher">
         Date: <span class="fw">${dateOnly(po.po_date) || '-'}</span>
