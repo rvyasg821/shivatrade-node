@@ -12,6 +12,7 @@ import {
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
+import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -31,7 +32,8 @@ export class PoCoverageService {
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
-        private readonly productRepository: ProductRepository
+        private readonly productRepository: ProductRepository,
+        private readonly invoiceRepository: InvoiceRepository
     ) {}
 
     async getCoverage(
@@ -131,6 +133,17 @@ export class PoCoverageService {
             : [];
         const productMap = toMap(products as any[]);
 
+        // ── Per-PO-line invoiced totals (drives Generate Invoice gate).
+        // sumQtyByPoLineId already excludes CANCELLED invoices. We can
+        // safely subtract `invoiced` from `dispatched` to get what's still
+        // available to invoice.
+        const invoicedByPoLine = new Map<string, number>();
+        for (const pol of poLines as any[]) {
+            const k = pol._id.toString();
+            const invoiced = await this.invoiceRepository.sumQtyByPoLineId(k);
+            invoicedByPoLine.set(k, invoiced);
+        }
+
         // ── Build per-line response ────────────────────────────────────
         const lines: PoCoverageLineDto[] = [];
         const totals: PoCoverageTotalsDto = {
@@ -141,6 +154,8 @@ export class PoCoverageService {
             lost: '0',
             short: '0',
             pending: '0',
+            invoiced: '0',
+            invoiceable: '0',
         };
         let totOrd = 0,
             totCov = 0,
@@ -148,7 +163,9 @@ export class PoCoverageService {
             totRec = 0,
             totLost = 0,
             totShort = 0,
-            totPend = 0;
+            totPend = 0,
+            totInv = 0,
+            totInvoiceable = 0;
 
         for (const pol of poLines as any[]) {
             const k = pol._id.toString();
@@ -173,6 +190,9 @@ export class PoCoverageService {
                 ? productMap.get(pol.product_id.toString())
                 : null;
 
+            const invoiced = invoicedByPoLine.get(k) || 0;
+            const invoiceable = Math.max(0, round4(a.dispatched - invoiced));
+
             lines.push({
                 purchase_order_line_id: k,
                 vendor_id: pol.vendor_id?.toString(),
@@ -188,6 +208,8 @@ export class PoCoverageService {
                 lost: String(round4(a.lost)),
                 short: String(short),
                 pending: String(pending),
+                invoiced: String(round4(invoiced)),
+                invoiceable: String(invoiceable),
             });
 
             totOrd += ordered;
@@ -197,6 +219,8 @@ export class PoCoverageService {
             totLost += a.lost;
             totShort += short;
             totPend += pending;
+            totInv += invoiced;
+            totInvoiceable += invoiceable;
         }
 
         totals.ordered = String(round4(totOrd));
@@ -206,6 +230,8 @@ export class PoCoverageService {
         totals.lost = String(round4(totLost));
         totals.short = String(round4(totShort));
         totals.pending = String(round4(totPend));
+        totals.invoiced = String(round4(totInv));
+        totals.invoiceable = String(round4(totInvoiceable));
 
         return {
             purchase_order_id: purchaseOrderId,

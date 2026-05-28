@@ -113,7 +113,7 @@ export class CompanySharedController {
             email, mobile, country_code, website,
             address_1, address_2, city, state, country, zipcode,
             iec, lut_no, lut_date, cin,
-            default_port_of_loading, default_declaration_text,
+            default_port_of_loading, default_port_of_loading_id, default_port_of_loading_snapshot, default_declaration_text,
             addresses, bank_accounts,
         } = body;
         const user = (request as any).user;
@@ -160,7 +160,7 @@ export class CompanySharedController {
                     email, mobile, country_code, website,
                     address_1, address_2, city, state, country, zipcode,
                     iec, lut_no, lut_date, cin,
-                    default_port_of_loading, default_declaration_text,
+                    default_port_of_loading, default_port_of_loading_id, default_port_of_loading_snapshot, default_declaration_text,
                 }
             );
 

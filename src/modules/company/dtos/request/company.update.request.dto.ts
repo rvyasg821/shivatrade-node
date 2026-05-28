@@ -348,6 +348,8 @@ export class CompanyUpdateRequestDto {
 
     // ── PFI / export-document defaults ──
     @IsOptional() @IsString() @MaxLength(150) default_port_of_loading?: string;
+    @IsOptional() @IsUUID() default_port_of_loading_id?: string;
+    @IsOptional() default_port_of_loading_snapshot?: any;
     @IsOptional() @IsString() @MaxLength(4000) default_declaration_text?: string;
 
     // ── PO defaults ──

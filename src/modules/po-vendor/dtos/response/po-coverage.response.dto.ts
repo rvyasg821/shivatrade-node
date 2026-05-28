@@ -34,6 +34,13 @@ export class PoCoverageLineDto {
 
     /** ordered − consumed. New POVs can be opened against this remaining capacity. */
     @ApiProperty({ required: true, type: String }) pending: string;
+
+    /** Σ qty invoiced against this PO line (excludes cancelled invoices). */
+    @ApiProperty({ required: true, type: String }) invoiced: string;
+
+    /** dispatched − invoiced. > 0 means more invoices can still be raised
+     *  against the dispatched stock. Drives the Generate Invoice button. */
+    @ApiProperty({ required: true, type: String }) invoiceable: string;
 }
 
 export class PoCoverageTotalsDto {
@@ -44,6 +51,8 @@ export class PoCoverageTotalsDto {
     @ApiProperty({ required: true, type: String }) lost: string;
     @ApiProperty({ required: true, type: String }) short: string;
     @ApiProperty({ required: true, type: String }) pending: string;
+    @ApiProperty({ required: true, type: String }) invoiced: string;
+    @ApiProperty({ required: true, type: String }) invoiceable: string;
 }
 
 export class PoCoverageResponseDto {

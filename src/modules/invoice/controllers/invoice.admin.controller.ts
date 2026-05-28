@@ -36,6 +36,10 @@ import { InvoiceCreateRequestDto } from '../dtos/request/invoice.create.request.
 import { InvoiceUpdateRequestDto } from '../dtos/request/invoice.update.request.dto';
 import { InvoiceCancelRequestDto } from '../dtos/request/invoice.cancel.request.dto';
 import {
+    InvoicePaymentCreateRequestDto,
+    InvoicePaymentVoidRequestDto,
+} from '../dtos/request/invoice-payment.create.request.dto';
+import {
     InvoiceGetResponseDto,
     InvoiceListResponseDto,
 } from '../dtos/response/invoice.get.response.dto';
@@ -177,6 +181,50 @@ export class InvoiceAdminController {
     async softDelete(@Param('invoiceId') invoiceId: string): Promise<void> {
         const row = await this.invoiceService.findOneById(invoiceId);
         await this.invoiceService.softDelete(row);
+    }
+
+    // ─── Payments ──────────────────────────────────────────────────────
+
+    @Response('invoice.payment.list')
+    @AuthJwtAccessProtected()
+    @Get('/payments/:invoiceId')
+    async listPayments(
+        @Param('invoiceId') invoiceId: string
+    ): Promise<IResponse<any[]>> {
+        await this.invoiceService.findOneById(invoiceId); // 404 guard
+        const data = await this.invoiceService.listPaymentsForInvoice(invoiceId);
+        return { data };
+    }
+
+    @Response('invoice.payment.create')
+    @AuthJwtAccessProtected()
+    @Post('/payments/:invoiceId')
+    async recordPayment(
+        @AuthJwtPayload('user') userId: string,
+        @Param('invoiceId') invoiceId: string,
+        @Body() body: InvoicePaymentCreateRequestDto
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        await this.invoiceService.recordPayment(row, body, userId);
+        const fresh = await this.invoiceService.findOneById(invoiceId);
+        const data = await this.invoiceService.mapGet(fresh);
+        return { data };
+    }
+
+    @Response('invoice.payment.void')
+    @AuthJwtAccessProtected()
+    @Post('/payments/:invoiceId/void/:paymentId')
+    async voidPayment(
+        @AuthJwtPayload('user') userId: string,
+        @Param('invoiceId') invoiceId: string,
+        @Param('paymentId') paymentId: string,
+        @Body() body: InvoicePaymentVoidRequestDto
+    ): Promise<IResponse<InvoiceGetResponseDto>> {
+        await this.invoiceService.findOneById(invoiceId);
+        await this.invoiceService.voidPayment(paymentId, userId, body.reason);
+        const fresh = await this.invoiceService.findOneById(invoiceId);
+        const data = await this.invoiceService.mapGet(fresh);
+        return { data };
     }
 
     /**

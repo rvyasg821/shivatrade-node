@@ -8,6 +8,9 @@ import { plainToInstance } from 'class-transformer';
 
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
+import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
+import { InvoicePaymentDoc } from '../repository/entities/invoice-payment.entity';
+import { InvoicePaymentCreateRequestDto } from '../dtos/request/invoice-payment.create.request.dto';
 import { InvoiceDoc } from '../repository/entities/invoice.entity';
 import { InvoiceLineDoc } from '../repository/entities/invoice-line.entity';
 import {
@@ -100,7 +103,8 @@ export class InvoiceService {
         private readonly customerRepository: CustomerRepository,
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly poRepository: PurchaseOrderRepository,
-        private readonly poLineRepository: PurchaseOrderLineRepository
+        private readonly poLineRepository: PurchaseOrderLineRepository,
+        private readonly invoicePaymentRepository: InvoicePaymentRepository
     ) {}
 
     // ─── Company snapshot ───────────────────────────────────────────────
@@ -482,6 +486,119 @@ export class InvoiceService {
         return row;
     }
 
+    // ─── Payments ───────────────────────────────────────────────────────
+
+    /**
+     * Record a payment receipt against an Issued/Partially_Paid invoice.
+     * Append-only — voiding a payment is a separate action that leaves
+     * the original row for audit. Status + advance_received +
+     * balance_receivable are derived from the sum of active payments.
+     */
+    async recordPayment(
+        row: InvoiceDoc,
+        data: InvoicePaymentCreateRequestDto,
+        userId: string
+    ): Promise<InvoicePaymentDoc> {
+        if (
+            row.status !== ENUM_INVOICE_STATUS.ISSUED &&
+            row.status !== ENUM_INVOICE_STATUS.PARTIALLY_PAID
+        ) {
+            throw new BadRequestException(
+                `Cannot record payment when invoice status is ${row.status}.`
+            );
+        }
+        const amount = num(data.amount);
+        if (amount <= 0) {
+            throw new BadRequestException('Payment amount must be > 0.');
+        }
+        const priorPaid = await this.invoicePaymentRepository.sumActiveByInvoiceId(
+            row._id.toString()
+        );
+        const grand = num(row.grand_total);
+        // 1¢ slack for FP rounding.
+        if (priorPaid + amount > grand + 1e-2) {
+            throw new BadRequestException(
+                `Payment ${amount} exceeds outstanding balance ${round2(
+                    grand - priorPaid
+                )}.`
+            );
+        }
+
+        const payment = await this.invoicePaymentRepository.create({
+            invoice_id: row._id.toString(),
+            company_id: row.company_id.toString(),
+            payment_date: data.payment_date,
+            amount: data.amount,
+            currency_code: row.currency_code,
+            method: data.method,
+            reference: data.reference,
+            notes: data.notes,
+            created_by: userId,
+        } as any);
+
+        await this.applyPaymentDerived(row);
+        this.logger.log(
+            `Invoice ${row._id} payment recorded: ${data.amount}`
+        );
+        return payment;
+    }
+
+    async voidPayment(
+        paymentId: string,
+        userId: string,
+        reason?: string
+    ): Promise<void> {
+        const p: any = await this.invoicePaymentRepository.findOneById(
+            paymentId
+        );
+        if (!p || p.soft_delete) {
+            throw new NotFoundException('Payment not found');
+        }
+        if (p.voided_at) {
+            throw new BadRequestException('Payment is already voided.');
+        }
+        p.voided_at = new Date();
+        p.voided_by = userId;
+        p.voided_reason = reason;
+        await this.invoicePaymentRepository.save(p);
+
+        const inv = await this.invoiceRepository.findOneById(
+            p.invoice_id.toString()
+        );
+        if (inv) await this.applyPaymentDerived(inv);
+    }
+
+    async listPaymentsForInvoice(
+        invoiceId: string
+    ): Promise<InvoicePaymentDoc[]> {
+        return this.invoicePaymentRepository.findActiveByInvoiceId(invoiceId);
+    }
+
+    /**
+     * Refresh advance_received / balance_receivable / status from the
+     * current sum of active payments. Status flips between ISSUED →
+     * PARTIALLY_PAID → PAID and back as payments are added or voided.
+     * Never touches CANCELLED.
+     */
+    private async applyPaymentDerived(row: InvoiceDoc): Promise<void> {
+        if (row.status === ENUM_INVOICE_STATUS.CANCELLED) return;
+        const paid = await this.invoicePaymentRepository.sumActiveByInvoiceId(
+            row._id.toString()
+        );
+        const grand = num(row.grand_total);
+        const bal = round2(grand - paid);
+        row.advance_received = String(round2(paid));
+        row.balance_receivable = String(bal);
+        if (paid <= 1e-2) {
+            row.status = ENUM_INVOICE_STATUS.ISSUED;
+        } else if (bal <= 1e-2) {
+            row.status = ENUM_INVOICE_STATUS.PAID;
+        } else {
+            row.status = ENUM_INVOICE_STATUS.PARTIALLY_PAID;
+        }
+        await this.invoiceRepository.save(row);
+    }
+
     // ─── Find ───────────────────────────────────────────────────────────
 
     async findOneById(invoiceId: string): Promise<InvoiceDoc> {
@@ -773,6 +890,10 @@ export class InvoiceService {
         );
         const dto = plainToInstance(InvoiceGetResponseDto, row);
         dto.lines = lines.map((l) => plainToInstance(InvoiceLineResponseDto, l));
+        const payments = await this.invoicePaymentRepository.findActiveByInvoiceId(
+            row._id.toString()
+        );
+        (dto as any).payments = payments;
         return dto;
     }
 
