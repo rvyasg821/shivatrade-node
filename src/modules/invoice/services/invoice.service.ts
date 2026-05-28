@@ -32,9 +32,13 @@ import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
+import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
+import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
+import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { In } from 'typeorm';
 
@@ -92,7 +96,11 @@ export class InvoiceService {
         private readonly companyBankAccountRepository: CompanyBankAccountRepository,
         private readonly productRepository: ProductRepository,
         private readonly povRepository: PoVendorRepository,
-        private readonly povLineRepository: PoVendorLineRepository
+        private readonly povLineRepository: PoVendorLineRepository,
+        private readonly customerRepository: CustomerRepository,
+        private readonly customerContactRepository: CustomerContactRepository,
+        private readonly poRepository: PurchaseOrderRepository,
+        private readonly poLineRepository: PurchaseOrderLineRepository
     ) {}
 
     // ─── Company snapshot ───────────────────────────────────────────────
@@ -116,6 +124,8 @@ export class InvoiceService {
         voucher_prefix: string;
         bank_snapshots: any[];
         default_terms?: string;
+        lut_no?: string;
+        lut_date?: string;
     }> {
         const company: any = await this.companyRepository.findOneById(companyId);
         if (!company) {
@@ -157,6 +167,8 @@ export class InvoiceService {
                 (company.company_name || 'CO').substring(0, 5).toUpperCase(),
             bank_snapshots,
             default_terms: company.default_terms || undefined,
+            lut_no: company.lut_no || undefined,
+            lut_date: company.lut_date || undefined,
         };
     }
 
@@ -256,8 +268,8 @@ export class InvoiceService {
             other_charges: data.other_charges || '0',
             advance_received: data.advance_received || '0',
             gst_route: data.gst_route || ENUM_INVOICE_GST_ROUTE.IGST_PAID,
-            lut_no: data.lut_no,
-            lut_date: data.lut_date,
+            lut_no: data.lut_no !== undefined ? data.lut_no : ctx.lut_no,
+            lut_date: data.lut_date !== undefined ? data.lut_date : ctx.lut_date,
             // Company snapshots - pre-filled, operator can override before issue.
             gst_no: ctx.gst_no,
             pan_no: ctx.pan_no,
@@ -537,7 +549,10 @@ export class InvoiceService {
         const insurance = num(row.insurance_charges);
         const other = num(row.other_charges);
         const grand_total = round2(fob_value + freight + insurance + other);
-        const grand_total_inr = round2(grand_total * num(row.exchange_rate));
+        // exchange_rate convention: foreign-per-INR (matches PFI/PO).
+        // INR equivalent = foreign / rate. Guard against 0 rate.
+        const er = num(row.exchange_rate);
+        const grand_total_inr = er > 0 ? round2(grand_total / er) : 0;
         const advance = num(row.advance_received);
         const balance = round2(grand_total - advance);
 
@@ -657,8 +672,11 @@ export class InvoiceService {
 
     /**
      * Buckets invoice lines by `igst_rate_pct`. For each bucket:
-     *   assessable_value_inr = Σ (taxable_amount × exchange_rate)
+     *   assessable_value_inr = Σ (taxable_amount / exchange_rate)
      *   igst_amount_inr      = assessable_value_inr × rate
+     *
+     * exchange_rate is foreign-per-INR (matches PFI/PO convention), so
+     * INR conversion divides.
      *
      * Returns the array + the total IGST refund (sum of buckets).
      */
@@ -667,9 +685,10 @@ export class InvoiceService {
         exchangeRate: number
     ): { buckets: any[]; totalRefund: number } {
         const grouped = new Map<string, number>(); // rate_pct → INR assessable
+        const safeEr = exchangeRate > 0 ? exchangeRate : 1;
         for (const l of lines) {
             const rate = num(l.igst_rate_pct);
-            const taxableInr = num(l.taxable_amount) * exchangeRate;
+            const taxableInr = num(l.taxable_amount) / safeEr;
             grouped.set(String(rate), (grouped.get(String(rate)) || 0) + taxableInr);
         }
         const buckets: any[] = [];
@@ -757,7 +776,182 @@ export class InvoiceService {
         return dto;
     }
 
+    /**
+     * For an existing draft Invoice, return PO lines that still have
+     * dispatched-but-not-yet-invoiced qty available — i.e. lines that
+     * were added to POVs after the draft was first created. UI uses
+     * this to power an "Add lines from PO" picker on edit.
+     */
+    async getAddablePoLines(
+        poId: string,
+        excludeInvoiceId?: string
+    ): Promise<any[]> {
+        const po: any = await this.poRepository.findOneById(poId);
+        if (!po) return [];
+        const poLines = await this.poLineRepository.findAll({
+            purchase_order_id: poId,
+        } as any);
+        if (!poLines.length) return [];
+
+        const poLineIds = poLines.map((l: any) => l._id.toString());
+
+        // PO lines store product_id only — hydrate names/codes for the UI.
+        const productIds = Array.from(
+            new Set(
+                poLines
+                    .map((l: any) => l.product_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const products = productIds.length
+            ? ((await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)) as any[])
+            : [];
+        const productById = new Map<string, any>(
+            products.map((p: any) => [p._id.toString(), p])
+        );
+
+        // dispatched-qty per PO line, only counting POVs in
+        // dispatched/closed status (matches assertQtyGuardForLines).
+        const povLinesAll = (await this.povLineRepository.findAll({
+            purchase_order_line_id: { $in: poLineIds },
+        } as any)) as any[];
+        const povIds = Array.from(
+            new Set(
+                povLinesAll
+                    .map((pl: any) => pl.po_vendor_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const povs = povIds.length
+            ? ((await this.povRepository.findAll({
+                  _id: { $in: povIds },
+                  soft_delete: false,
+              } as any)) as any[])
+            : [];
+        const allowedPovIds = new Set(
+            povs
+                .filter(
+                    (p: any) =>
+                        p.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+                        p.status === ENUM_PO_VENDOR_STATUS.CLOSED
+                )
+                .map((p: any) => p._id.toString())
+        );
+        const dispatchedByPoLine = new Map<string, number>();
+        for (const pl of povLinesAll) {
+            if (!allowedPovIds.has(pl.po_vendor_id?.toString())) continue;
+            const k = pl.purchase_order_line_id?.toString();
+            if (!k) continue;
+            dispatchedByPoLine.set(
+                k,
+                (dispatchedByPoLine.get(k) || 0) + num(pl.dispatched_qty)
+            );
+        }
+
+        // Qty already on the current draft, keyed by PO line id — these
+        // don't count as "available to add" (the operator already has them).
+        const selfQtyByPoLine = new Map<string, number>();
+        if (excludeInvoiceId) {
+            const selfLines =
+                await this.invoiceLineRepository.findByInvoiceId(
+                    excludeInvoiceId
+                );
+            for (const sl of selfLines as any[]) {
+                const k = sl.purchase_order_line_id?.toString();
+                if (!k) continue;
+                selfQtyByPoLine.set(
+                    k,
+                    (selfQtyByPoLine.get(k) || 0) + num(sl.qty)
+                );
+            }
+        }
+
+        const result: any[] = [];
+        for (const l of poLines as any[]) {
+            const k = l._id.toString();
+            const dispatched = dispatchedByPoLine.get(k) || 0;
+            if (dispatched <= 0) continue;
+            const invoicedAll = await this.invoiceRepository.sumQtyByPoLineId(k);
+            const invoicedOthers = invoicedAll - (selfQtyByPoLine.get(k) || 0);
+            const available = dispatched - invoicedOthers - (selfQtyByPoLine.get(k) || 0);
+            if (available <= 1e-6) continue;
+            const prod = productById.get(l.product_id?.toString());
+            result.push({
+                purchase_order_line_id: k,
+                product_id: l.product_id?.toString(),
+                product_name: prod?.name || l.product_name,
+                product_code: prod?.code || l.product_code,
+                description: l.description || prod?.description,
+                hsn_code: l.hsn_code || prod?.hsn_code,
+                customer_reference: l.customer_reference,
+                unit: l.unit,
+                unit_price: l.unit_price,
+                tax_pct: l.tax_pct,
+                product_rebates_snapshot: l.product_rebates_snapshot || [],
+                product_expenses_snapshot: l.product_expenses_snapshot || [],
+                dispatched: String(dispatched),
+                invoiced_others: String(invoicedOthers),
+                already_on_draft: String(selfQtyByPoLine.get(k) || 0),
+                available: String(available),
+            });
+        }
+        return result;
+    }
+
     mapList(row: any): InvoiceListResponseDto {
         return plainToInstance(InvoiceListResponseDto, row);
+    }
+
+    /**
+     * Batch-enrich list rows with customer_name + customer_snapshot
+     * (primary contact name/email) so the listing can show buyer info
+     * without an N+1 lookup per row.
+     */
+    async mapListBatch(rows: any[]): Promise<InvoiceListResponseDto[]> {
+        if (!rows.length) return [];
+        const customerIds = Array.from(
+            new Set(
+                rows
+                    .map((r) => r.customer_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const [customers, contacts] = await Promise.all([
+            customerIds.length
+                ? this.customerRepository.findAll({
+                      _id: { $in: customerIds },
+                  } as any)
+                : Promise.resolve([] as any[]),
+            customerIds.length
+                ? this.customerContactRepository.findAll({
+                      customer_id: { $in: customerIds },
+                      soft_delete: false,
+                  } as any)
+                : Promise.resolve([] as any[]),
+        ]);
+        const custById = new Map<string, any>(
+            (customers as any[]).map((c) => [c._id.toString(), c])
+        );
+        const primaryByCustomer = new Map<string, any>();
+        for (const c of contacts as any[]) {
+            const key = c.customer_id?.toString();
+            if (!key) continue;
+            const existing = primaryByCustomer.get(key);
+            if (!existing || c.is_primary) primaryByCustomer.set(key, c);
+        }
+        return rows.map((r) => {
+            const cid = r.customer_id?.toString();
+            const c = cid ? custById.get(cid) : null;
+            const ct: any = cid ? primaryByCustomer.get(cid) : null;
+            const dto: any = plainToInstance(InvoiceListResponseDto, r);
+            dto.customer_name = c?.company_name || c?.name || undefined;
+            dto.customer_contact_name = ct?.name;
+            dto.customer_contact_email = ct?.email;
+            dto.customer_contact_phone = ct?.phone;
+            dto.customer_contact_country_code = ct?.country_code;
+            return dto;
+        });
     }
 }
