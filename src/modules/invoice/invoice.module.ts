@@ -10,6 +10,7 @@ import { CustomerRepositoryModule } from '@modules/customer/repository/customer.
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
 import { ShippingRepositoryModule } from '@modules/shipping/repository/shipping.repository.module';
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
+import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 
 /**
  * Phase 1 - Export Commercial Invoice.
@@ -29,6 +30,7 @@ import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendo
         ProductRepositoryModule,
         ShippingRepositoryModule,
         PoVendorRepositoryModule,
+        PurchaseOrderRepositoryModule,
     ],
     providers: [InvoiceService, InvoicePdfService],
     exports: [InvoiceRepositoryModule, InvoiceService, InvoicePdfService],

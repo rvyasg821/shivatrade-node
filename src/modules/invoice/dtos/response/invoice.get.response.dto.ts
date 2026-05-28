@@ -137,6 +137,10 @@ export class InvoiceListResponseDto {
     invoice_date?: string;
     customer_id?: string;
     customer_name?: string;
+    customer_contact_name?: string;
+    customer_contact_email?: string;
+    customer_contact_phone?: string;
+    customer_contact_country_code?: any;
     purchase_order_voucher_no?: string;
     currency_code?: string;
     currency_symbol?: string;
