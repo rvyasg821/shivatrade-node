@@ -26,12 +26,12 @@ export enum ENUM_INVOICE_GST_ROUTE {
 
 export const INVOICE_EDITABLE_AT_DRAFT = '*';
 
-/** Fields that remain editable after ISSUED (everything else is frozen). */
+/** Fields that remain editable after ISSUED (everything else is frozen).
+ *  Payments are recorded via the payment endpoints, NOT by editing
+ *  advance_received / balance_receivable — those are derived. */
 export const INVOICE_EDITABLE_AT_ISSUED: ReadonlyArray<string> = [
     'shipping_id',
     'shipping_voucher_no',
-    'advance_received',
-    'balance_receivable',
     'internal_notes',
     'notes_to_buyer',
 ];

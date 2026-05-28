@@ -128,6 +128,7 @@ export class InvoiceGetResponseDto {
     updatedAt?: Date;
 
     lines?: InvoiceLineResponseDto[];
+    payments?: any[];
 }
 
 export class InvoiceListResponseDto {

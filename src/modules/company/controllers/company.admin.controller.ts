@@ -833,6 +833,8 @@ export class CompanyAdminController {
             lut_date,
             cin,
             default_port_of_loading,
+            default_port_of_loading_id,
+            default_port_of_loading_snapshot,
             default_declaration_text,
             addresses,
             bank_accounts,
@@ -904,6 +906,8 @@ export class CompanyAdminController {
                 lut_date,
                 cin,
                 default_port_of_loading,
+                default_port_of_loading_id,
+                default_port_of_loading_snapshot,
                 default_declaration_text,
             });
 

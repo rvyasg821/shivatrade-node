@@ -458,6 +458,10 @@ export class PfiService {
         }
         const defaultPort: string | undefined =
             company?.default_port_of_loading || undefined;
+        const defaultPortId: string | undefined =
+            (company as any)?.default_port_of_loading_id || undefined;
+        const defaultPortSnap: any =
+            (company as any)?.default_port_of_loading_snapshot || undefined;
         const defaultDeclaration: string | undefined =
             company?.default_declaration_text || undefined;
         const countryOfOrigin: string =
@@ -533,6 +537,8 @@ export class PfiService {
             // intentionally left blank — user fills these when finalising
             // the PFI.
             port_of_loading: defaultPort,
+            port_of_loading_id: defaultPortId,
+            port_of_loading_snapshot: defaultPortSnap,
             country_of_origin: countryOfOrigin,
             declaration_text: defaultDeclaration,
             bank_account_id: bankAccountId,

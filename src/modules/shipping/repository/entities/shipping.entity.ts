@@ -55,8 +55,8 @@ export class ShippingEntity extends DatabaseObjectIdEntityBase {
     customer_snapshot?: any;
 
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    consignee_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    consignee_id?: string;
 
     @Column({ type: 'uuid', nullable: true })
     consignee_address_id?: string;

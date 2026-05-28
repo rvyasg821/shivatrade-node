@@ -228,6 +228,49 @@ const baseStyles = `
     .sigbox { height: 60px; }
 `;
 
+/** Render the BANK DETAILS table from `bank_snapshots[]`. Only fields with
+ *  a value are emitted — empty optional fields (SWIFT / AD Code / Branch)
+ *  are dropped, then remaining pairs are reflowed into a 3-column grid so
+ *  there are no gaps at the right edge. */
+function bankDetailsBlock(banks: any[] | undefined): string {
+    if (!Array.isArray(banks) || !banks.length) return '';
+    const renderBank = (b: any): string => {
+        const pairs: Array<[string, any]> = [
+            ['Bank Name', b.name],
+            ['Account No.', b.account_no],
+            ['Beneficiary', b.beneficiary],
+            ['Branch', b.branch],
+            ['SWIFT', b.swift_code],
+            ['AD Code', b.ad_code],
+        ].filter(([, v]) => !!v) as Array<[string, any]>;
+        if (!pairs.length) return '';
+        // Pack 3 pairs per row; pad the last row with an empty 2-cell block
+        // so widths stay aligned without leaving a visible gap.
+        const PAIRS_PER_ROW = 3;
+        let html = '';
+        for (let i = 0; i < pairs.length; i += PAIRS_PER_ROW) {
+            const slice = pairs.slice(i, i + PAIRS_PER_ROW);
+            const cells = slice
+                .map(
+                    ([label, value]) =>
+                        `<td class="lbl" style="width:14%;">${label}</td><td style="width:19%;">${esc(value)}</td>`
+                )
+                .join('');
+            const padPairs = PAIRS_PER_ROW - slice.length;
+            const padding =
+                padPairs > 0
+                    ? `<td colspan="${padPairs * 2}"></td>`
+                    : '';
+            html += `<tr>${cells}${padding}</tr>`;
+        }
+        return html;
+    };
+    return `<table style="margin-top: 6px;">
+        <tr><th colspan="6">BANK DETAILS</th></tr>
+        ${banks.map(renderBank).join('')}
+    </table>`;
+}
+
 /** Pre-Carriage / Place of Receipt / Port of Loading / Port of Discharge /
  *  Place of Delivery — populated from the linked Shipping record when
  *  invoice.shipping_id is set. Returns empty string when no shipping link. */
@@ -363,9 +406,22 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
     const sym = esc(inv.currency_symbol || inv.currency_code || '');
 
+    // Per-line IGST is shown in INR (matches the refund bucket basis).
+    // For LUT route IGST is 0% — we drop the two columns entirely.
+    const showIgst = !isLut;
+    const er = Number(inv.exchange_rate || 0);
+    let totalIgstInr = 0;
+    const lineIgstInr = (l: any): number => {
+        const rate = Number(l.igst_rate_pct || 0);
+        if (!showIgst || rate <= 0 || er <= 0) return 0;
+        const taxableInr = Number(l.taxable_amount || 0) / er;
+        return taxableInr * (rate / 100);
+    };
     const linesHtml = (d.lines || [])
-        .map(
-            (l, i) => `
+        .map((l: any, i: number) => {
+            const igstAmt = lineIgstInr(l);
+            totalIgstInr += igstAmt;
+            return `
             <tr>
                 <td class="center">${i + 1}</td>
                 <td class="center">${esc(l.hsn_code)}</td>
@@ -373,8 +429,10 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
                 <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${sym}${fmt(l.unit_price, 2)}</td>
                 <td class="right strong">${sym}${fmt(l.line_total, 2)}</td>
-            </tr>`
-        )
+                ${showIgst ? `<td class="right">${fmt(l.igst_rate_pct || 0, 2)}%</td>` : ''}
+                ${showIgst ? `<td class="right">₹${fmt(igstAmt, 2)}</td>` : ''}
+            </tr>`;
+        })
         .join('');
 
     const bucketsHtml =
@@ -402,29 +460,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             </table>`
             : '';
 
-    const banks = Array.isArray(inv.bank_snapshots) ? inv.bank_snapshots : [];
-    const banksHtml = banks.length
-        ? `<table style="margin-top: 6px;">
-            <tr>
-                <th colspan="6">BANK DETAILS</th>
-            </tr>
-            ${banks
-                .map(
-                    (b: any) => `
-                <tr>
-                    <td class="lbl" style="width:90px;">Bank Name</td><td>${esc(b.name)}</td>
-                    <td class="lbl" style="width:90px;">Account No.</td><td>${esc(b.account_no)}</td>
-                    <td class="lbl" style="width:90px;">AD Code</td><td>${esc(b.ad_code)}</td>
-                </tr>
-                <tr>
-                    <td class="lbl">Beneficiary</td><td>${esc(b.beneficiary)}</td>
-                    <td class="lbl">SWIFT</td><td>${esc(b.swift_code)}</td>
-                    <td class="lbl">Branch</td><td>${esc(b.branch)}</td>
-                </tr>`
-                )
-                .join('')}
-        </table>`
-        : '';
+    const banksHtml = bankDetailsBlock(inv.bank_snapshots);
 
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/><style>${baseStyles}</style></head>
@@ -459,22 +495,25 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <th style="width:100px;">QTY</th>
             <th style="width:110px;">PRICE / UNIT</th>
             <th style="width:130px;">AMOUNT</th>
+            ${showIgst ? '<th style="width:60px;">IGST</th>' : ''}
+            ${showIgst ? '<th style="width:110px;">IGST Amt.</th>' : ''}
         </tr>
         ${linesHtml}
         <tr>
-            <td colspan="5" class="right lbl">Subtotal</td>
+            <td colspan="${showIgst ? 7 : 5}" class="right lbl">Subtotal</td>
             <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
         </tr>
-        ${num(inv.discount_total) > 0 ? `<tr><td colspan="5" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        ${num(inv.discount_total) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="5" class="right lbl">FOB Value</td>
+            <td colspan="${showIgst ? 7 : 5}" class="right lbl">FOB Value</td>
             <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
         </tr>
-        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="5" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
-        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="5" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
-        ${num(inv.other_charges) > 0 ? `<tr><td colspan="5" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
+        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
+        ${num(inv.other_charges) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${showIgst ? `<tr><td colspan="7" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="5" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
+            <td colspan="${showIgst ? 7 : 5}" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
         </tr>
     </table>
@@ -554,29 +593,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
         )
         .join('');
 
-    const banks = Array.isArray(inv.bank_snapshots) ? inv.bank_snapshots : [];
-    const banksHtml = banks.length
-        ? `<table style="margin-top: 6px;">
-            <tr>
-                <th colspan="6">BANK DETAILS</th>
-            </tr>
-            ${banks
-                .map(
-                    (b: any) => `
-                <tr>
-                    <td class="lbl" style="width:90px;">Bank Name</td><td>${esc(b.name)}</td>
-                    <td class="lbl" style="width:90px;">Account No.</td><td>${esc(b.account_no)}</td>
-                    <td class="lbl" style="width:90px;">AD Code</td><td>${esc(b.ad_code)}</td>
-                </tr>
-                <tr>
-                    <td class="lbl">Beneficiary</td><td>${esc(b.beneficiary)}</td>
-                    <td class="lbl">SWIFT</td><td>${esc(b.swift_code)}</td>
-                    <td class="lbl">Branch</td><td>${esc(b.branch)}</td>
-                </tr>`
-                )
-                .join('')}
-        </table>`
-        : '';
+    const banksHtml = bankDetailsBlock(inv.bank_snapshots);
 
     // AWB / BL # is on the linked Shipping record (Phase 1 — Sea+Air only).
     const awbNo = d.shipping?.bl_awb_no || '';

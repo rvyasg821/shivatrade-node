@@ -254,6 +254,8 @@ export class CompanyGetResponseDto {
 
     // ── PFI / export-document defaults ──
     @ApiProperty({ required: false, type: String }) default_port_of_loading?: string;
+    @ApiProperty({ required: false, type: String }) default_port_of_loading_id?: string;
+    @ApiProperty({ required: false }) default_port_of_loading_snapshot?: any;
     @ApiProperty({ required: false, type: String }) default_declaration_text?: string;
 
     // ── PO defaults ──

@@ -38,12 +38,20 @@ export class ShippingCreateRequestDto {
     customer_id: string;
 
     @IsUUID()
-    @IsNotEmpty()
-    consignee_id: string;
+    @IsOptional()
+    consignee_id?: string;
 
     @IsUUID()
     @IsOptional()
     consignee_address_id?: string;
+
+    @IsObject()
+    @IsOptional()
+    consignee_snapshot?: any;
+
+    @IsObject()
+    @IsOptional()
+    customer_snapshot?: any;
 
     @IsUUID()
     @IsOptional()
