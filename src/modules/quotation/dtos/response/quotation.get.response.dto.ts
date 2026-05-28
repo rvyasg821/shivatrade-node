@@ -39,6 +39,11 @@ export class QuotationLineResponseDto {
     margin_pct?: string;
     margin_amount?: string;
     seq?: number;
+    // ── Export / Shipping (mirrors PFI line shape) ──
+    hs_code?: string;
+    net_weight_kg?: string;
+    gross_weight_kg?: string;
+    package_count?: number;
 }
 
 export class QuotationGetResponseDto {

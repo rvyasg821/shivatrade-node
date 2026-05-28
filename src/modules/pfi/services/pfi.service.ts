@@ -565,15 +565,27 @@ export class PfiService {
                     // captured.
                     product_rebates_snapshot: l.product_rebates_snapshot,
                     product_expenses_snapshot: l.product_expenses_snapshot,
-                    // ── Export-document line auto-fill (Phase 6 / §5.4) ──
-                    hs_code: prod?.hsn_code,
+                    // ── Export / Shipping carry-over ──
+                    // Prefer values already captured on the quotation line
+                    // (so user overrides survive the convert). Fall back to
+                    // product master + qty math when the quote line is
+                    // blank or zero.
+                    hs_code: l.hs_code || prod?.hsn_code,
                     net_weight_kg:
-                        qty > 0 && nwpu > 0
-                            ? String(round2(qty * nwpu))
-                            : undefined,
+                        num(l.net_weight_kg) > 0
+                            ? String(l.net_weight_kg)
+                            : qty > 0 && nwpu > 0
+                              ? String(round2(qty * nwpu))
+                              : undefined,
                     gross_weight_kg:
-                        qty > 0 && gwpu > 0
-                            ? String(round2(qty * gwpu))
+                        num(l.gross_weight_kg) > 0
+                            ? String(l.gross_weight_kg)
+                            : qty > 0 && gwpu > 0
+                              ? String(round2(qty * gwpu))
+                              : undefined,
+                    package_count:
+                        Number(l.package_count) > 0
+                            ? Number(l.package_count)
                             : undefined,
                 };
             }),

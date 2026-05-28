@@ -110,6 +110,37 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     /** Display order in the quotation document. */
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
+
+    // ── Export / Shipping fields (mirrors PFI line). Optional on quote;
+    //   become authoritative once the line is copied into a PFI. ──
+
+    /** HS / HSN code — auto-filled from product.hsn_code, overridable. */
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    hs_code?: string;
+
+    /** qty × product.net_weight_per_unit; user may override. */
+    @Column({
+        type: 'numeric',
+        precision: 14,
+        scale: 3,
+        nullable: false,
+        default: 0,
+    })
+    net_weight_kg: string;
+
+    /** qty × product.gross_weight_per_unit; user may override. */
+    @Column({
+        type: 'numeric',
+        precision: 14,
+        scale: 3,
+        nullable: false,
+        default: 0,
+    })
+    gross_weight_kg: string;
+
+    /** Number of packages contributed by this line. */
+    @Column({ type: 'int', nullable: false, default: 0 })
+    package_count: number;
 }
 
 export type QuotationLineDoc = QuotationLineEntity;
