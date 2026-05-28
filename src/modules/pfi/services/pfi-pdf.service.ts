@@ -112,7 +112,6 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
           <td class="muted">${i + 1}</td>
           <td>
             <div class="fw">${esc(l.product_name || '-')}</div>
-            ${l.description ? `<div class="muted sm" style="white-space:pre-line">${esc(l.description)}</div>` : ''}
           </td>
           <td class="num">${esc(l.qty || '-')}</td>
           <td>${esc(l.unit || '-')}</td>
@@ -133,6 +132,16 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
         ['Mode', p.mode_of_shipment],
         ['Country of Origin', p.country_of_origin],
         ['Country of Destination', p.country_of_final_destination],
+        // Container details inline with the rest of the shipping rows.
+        ['Container', p.container_used === true ? 'Yes' : 'No'],
+        ...(p.container_used === true
+            ? ([
+                  ['Container Qty × Size', p.container_details],
+                  ['Container No.', p.container_no],
+                  ['Seal No.', p.seal_no],
+                  ['Load Type', p.container_load_type],
+              ] as Array<[string, any]>)
+            : []),
         ['Est. Shipment', dateOnly(p.est_shipment_date as any)],
         ['Est. Delivery', dateOnly(p.est_delivery_date as any)],
     ].filter((r) => !!r[1]) as Array<[string, any]>;
@@ -157,11 +166,6 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
         <div class="label">Packing</div>
         <div class="kv-grid">
           ${kv('Total Packages', `${p.total_packages || 0}${p.packing_type ? ` × ${esc(p.packing_type)}` : ''}`)}
-          ${kv('Container', p.container_used === true ? 'Yes' : 'No')}
-          ${p.container_used === true ? kv('Qty × Size', p.container_details) : ''}
-          ${p.container_used === true ? kv('Container No', p.container_no) : ''}
-          ${p.container_used === true ? kv('Seal No', p.seal_no) : ''}
-          ${p.container_used === true ? kv('Load Type', p.container_load_type) : ''}
           ${kv('Net Wt', `${fmt(p.net_weight_kg || 0)} kg`)}
           ${kv('Gross Wt', `${fmt(p.gross_weight_kg || 0)} kg`)}
           ${kv('Marks', p.packing_marks)}
@@ -318,9 +322,9 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
     text-align: right;
   }
   .section {
-    margin-top: 18px;
-    padding-top: 14px;
-    border-top: 1px solid #e5e7eb;
+    margin-top: 14px;
+    padding-top: 0;
+    border-top: 0;
   }
   .section .body {
     font-size: 10px;
@@ -377,6 +381,10 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
     <div style="text-align:right">
       <div class="qd-title">Proforma Invoice</div>
       <div class="voucher">#${esc(p.voucher_no || '-')}</div>
+      <div class="voucher">
+        Date: <span class="fw">${dateOnly(p.pfi_date as any) || '-'}</span>
+        · Currency: <span class="fw">${esc(sym(p))} ${esc(p.currency_code || '-')}</span>
+      </div>
       ${p.status ? `<span class="status-badge">${esc(p.status)}</span>` : ''}
     </div>
   </div>
@@ -399,14 +407,16 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
       ${p.customer_email ? `<div class="party-line">${esc(p.customer_email)}</div>` : ''}
     </div>
     <div>
-      <div class="label">PFI Details</div>
-      <div class="party-line"><span class="muted">Date: </span><span class="fw">${dateOnly(p.pfi_date as any) || '-'}</span></div>
-      ${p.valid_until ? `<div class="party-line"><span class="muted">Valid Until: </span><span class="fw">${dateOnly(p.valid_until as any)}</span></div>` : ''}
-      <div class="party-line"><span class="muted">Currency: </span><span class="fw">${esc(sym(p))} ${esc(p.currency_code || '-')}</span></div>
+      <div class="label">Consignee</div>
+      <div class="party-name">${esc(p.consignee_name || p.customer_name || '-')}</div>
+      ${
+          p.consignee_address || p.customer_address
+              ? `<div class="party-line" style="white-space:pre-line">${esc((p.consignee_address || p.customer_address) as string)}</div>`
+              : ''
+      }
+      ${p.valid_until ? `<div class="party-line muted">Valid Until: ${dateOnly(p.valid_until as any)}</div>` : ''}
     </div>
   </div>
-
-  ${consigneeBlock}
 
   ${shippingBlock}
 
@@ -414,15 +424,15 @@ function buildPfiHtml(p: PfiPublicResponseDto): string {
     <table class="items">
       <thead>
         <tr>
-          <th style="width:24px">#</th>
+          <th style="width:22px">#</th>
           <th>Product / Description</th>
-          <th class="num" style="width:50px">Qty</th>
-          <th style="width:42px">Unit</th>
-          <th class="num" style="width:72px">Rate</th>
-          <th class="num" style="width:60px">Net Wt</th>
-          <th class="num" style="width:65px">Gross Wt</th>
-          <th class="num" style="width:46px">Pkgs</th>
-          <th class="num" style="width:80px">Amount</th>
+          <th class="num" style="width:42px">Qty</th>
+          <th style="width:36px">Unit</th>
+          <th class="num" style="width:58px">Rate</th>
+          <th class="num" style="width:50px">Net Wt</th>
+          <th class="num" style="width:72px">Gross Wt</th>
+          <th class="num" style="width:40px">Pkgs</th>
+          <th class="num" style="width:66px">Amount</th>
         </tr>
       </thead>
       <tbody>${linesRows}

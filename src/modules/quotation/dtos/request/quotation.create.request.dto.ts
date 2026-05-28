@@ -77,6 +77,31 @@ export class QuotationLineCreateDto {
         type: string;
         value: string;
     }>;
+
+    // ── Export / Shipping (mirrors PFI). Optional on quote — moves into
+    //   the PFI line later. ──
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(15)
+    hs_code?: string;
+
+    @IsNumberString(
+        {},
+        { message: 'net_weight_kg must be a numeric string' }
+    )
+    @IsOptional()
+    net_weight_kg?: string;
+
+    @IsNumberString(
+        {},
+        { message: 'gross_weight_kg must be a numeric string' }
+    )
+    @IsOptional()
+    gross_weight_kg?: string;
+
+    @IsOptional()
+    package_count?: number;
 }
 
 export class QuotationCreateRequestDto {

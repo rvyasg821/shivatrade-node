@@ -539,6 +539,11 @@ export class QuotationService {
                         : null,
                 margin_amount: '0',
                 seq,
+                // ── Export / Shipping (mirrors PFI line shape) ──
+                hs_code: l.hs_code || null,
+                net_weight_kg: l.net_weight_kg || '0',
+                gross_weight_kg: l.gross_weight_kg || '0',
+                package_count: Number(l.package_count || 0),
             } as any);
         }
     }
@@ -886,7 +891,11 @@ export class QuotationService {
                             margin_pct: l.margin_pct,
                             margin_amount: l.margin_amount,
                             seq: l.seq,
-                        })
+                            hs_code: l.hs_code,
+                            net_weight_kg: l.net_weight_kg,
+                            gross_weight_kg: l.gross_weight_kg,
+                            package_count: l.package_count,
+                        }) as any
                     ),
             };
             return dto;

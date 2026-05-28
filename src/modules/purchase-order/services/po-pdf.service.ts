@@ -524,9 +524,9 @@ function buildPoHtml(ctx: PoPdfContext): string {
     color: #1f2937;
   }
   .section {
-    margin-top: 18px;
-    padding-top: 14px;
-    border-top: 1px solid #e5e7eb;
+    margin-top: 14px;
+    padding-top: 0;
+    border-top: 0;
   }
   .section .body {
     font-size: 10px;
@@ -576,6 +576,10 @@ function buildPoHtml(ctx: PoPdfContext): string {
     <div style="text-align:right">
       <div class="qd-title">Purchase Order</div>
       <div class="voucher">#${esc(po.voucher_no || '-')}</div>
+      <div class="voucher">
+        Date: <span class="fw">${dateOnly(po.po_date) || '-'}</span>
+        · Currency: <span class="fw">${esc(sym)} ${esc(po.currency_code || '-')}</span>
+      </div>
       ${po.status ? `<span class="status-badge">${esc(po.status)}</span>` : ''}
     </div>
   </div>
@@ -598,20 +602,13 @@ function buildPoHtml(ctx: PoPdfContext): string {
       ${customer.email ? `<div class="party-line">${esc(customer.email)}</div>` : ''}
     </div>
     <div>
-      <div class="label">PO Details</div>
-      <div class="party-line"><span class="muted">PO Date: </span><span class="fw">${dateOnly(po.po_date) || '-'}</span></div>
-      ${po.expected_delivery_date ? `<div class="party-line"><span class="muted">Expected: </span><span class="fw">${dateOnly(po.expected_delivery_date)}</span></div>` : ''}
-      ${po.payment_terms ? `<div class="party-line"><span class="muted">Payment: </span><span class="fw">${esc(po.payment_terms)}</span></div>` : ''}
-      ${po.delivery_terms ? `<div class="party-line"><span class="muted">Delivery: </span><span class="fw">${esc(po.delivery_terms)}</span></div>` : ''}
-      <div class="party-line"><span class="muted">Currency: </span><span class="fw">${esc(sym)} ${esc(po.currency_code || '-')}</span></div>
+      <div class="label">Ship To</div>
+      <div class="party-line" style="white-space:pre-line">${esc(po.delivery_address || customer.address || '-')}</div>
+      ${po.expected_delivery_date ? `<div class="party-line muted">Expected: ${dateOnly(po.expected_delivery_date)}</div>` : ''}
+      ${po.payment_terms ? `<div class="party-line muted">Payment: ${esc(po.payment_terms)}</div>` : ''}
+      ${po.delivery_terms ? `<div class="party-line muted">Delivery: ${esc(po.delivery_terms)}</div>` : ''}
     </div>
   </div>
-
-  ${
-      po.delivery_address
-          ? `<div class="section"><div class="label">Deliver To</div><div class="body">${esc(po.delivery_address)}</div></div>`
-          : ''
-  }
 
   <div class="section" style="border-top:none;padding-top:0;margin-top:18px">
     <table class="items">

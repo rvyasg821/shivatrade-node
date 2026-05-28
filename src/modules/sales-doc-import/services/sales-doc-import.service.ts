@@ -23,8 +23,8 @@ import {
     ResolvedExpenseSnapshot,
 } from '../dtos/sales-doc-import.dto';
 
-// Stable column order. PFI extras and dynamic rebate/expense columns are
-// appended at workbook build time.
+// Stable column order. Export-shipping extras and dynamic rebate/expense
+// columns are appended at workbook build time.
 const BASE_HEADERS = [
     'product_code',
     'vendor_code',
@@ -36,12 +36,18 @@ const BASE_HEADERS = [
     'tax_pct',
     'margin_pct',
 ];
-const PFI_EXTRA_HEADERS = [
+// Carried by both Quotation and PFI line items. Quotation captures them
+// upfront so they ride into the PFI naturally on convert.
+const EXPORT_EXTRA_HEADERS = [
     'hs_code',
     'net_weight_kg',
     'gross_weight_kg',
     'package_count',
 ];
+
+// Doc types that include the Export/Shipping columns in import/export.
+const docHasExportFields = (t: ENUM_SALES_DOC_TYPE): boolean =>
+    t === ENUM_SALES_DOC_TYPE.PFI || t === ENUM_SALES_DOC_TYPE.QUOTATION;
 
 const num = (v: any): number => {
     if (v === null || v === undefined || v === '') return 0;
@@ -513,7 +519,7 @@ export class SalesDocImportService {
                 product_rebates_snapshot: rebatesSnapshot,
                 product_expenses_snapshot: expensesSnapshot,
             };
-            if (docType === ENUM_SALES_DOC_TYPE.PFI) {
+            if (docHasExportFields(docType)) {
                 line.hs_code = get('hs_code') || product.hsn_code || '';
                 line.net_weight_kg =
                     numOrUndef(get('net_weight_kg')) ??
@@ -685,7 +691,7 @@ export class SalesDocImportService {
                 product_rebates_snapshot: rebatesSnapshot,
                 product_expenses_snapshot: expensesSnapshot,
             };
-            if (docType === ENUM_SALES_DOC_TYPE.PFI) {
+            if (docHasExportFields(docType)) {
                 line.hs_code = product.hsn_code || '';
                 line.net_weight_kg = num(product.net_weight_per_unit) * 10;
                 line.gross_weight_kg = num(product.gross_weight_per_unit) * 10;
@@ -710,8 +716,11 @@ export class SalesDocImportService {
             includeReadme: boolean; // sample mode adds _README + _ProductsRef
         },
     ): Promise<Buffer> {
-        const isPfi = opts.docType === ENUM_SALES_DOC_TYPE.PFI;
-        const headers = [...BASE_HEADERS, ...(isPfi ? PFI_EXTRA_HEADERS : [])];
+        const includeExport = docHasExportFields(opts.docType);
+        const headers = [
+            ...BASE_HEADERS,
+            ...(includeExport ? EXPORT_EXTRA_HEADERS : []),
+        ];
 
         // Convention (mirrors the product master sample sheet):
         //   header row has repeated literal "rebate" and "expense" columns.
@@ -770,7 +779,7 @@ export class SalesDocImportService {
                 l.tax_pct ?? '',
                 l.margin_pct ?? '',
             ];
-            if (isPfi) {
+            if (includeExport) {
                 scalars.push(
                     l.hs_code || '',
                     l.net_weight_kg ?? '',
