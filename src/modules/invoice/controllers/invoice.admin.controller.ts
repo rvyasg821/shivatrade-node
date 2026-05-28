@@ -98,12 +98,26 @@ export class InvoiceAdminController {
             order: _order,
         });
         const total = await this.invoiceRepository.getTotal(find);
-        const data = (rows as any[]).map((r) => this.invoiceService.mapList(r));
+        const data = await this.invoiceService.mapListBatch(rows as any[]);
 
         return {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
         };
+    }
+
+    @Response('invoice.po-addable')
+    @AuthJwtAccessProtected()
+    @Get('/po-addable/:poId')
+    async getAddablePoLines(
+        @Param('poId') poId: string,
+        @Query('exclude_invoice_id') excludeInvoiceId?: string
+    ): Promise<IResponse<any[]>> {
+        const data = await this.invoiceService.getAddablePoLines(
+            poId,
+            excludeInvoiceId
+        );
+        return { data };
     }
 
     @Response('invoice.get')
