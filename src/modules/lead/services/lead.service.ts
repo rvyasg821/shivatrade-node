@@ -11,6 +11,7 @@ import { LeadCreateRequestDto } from '../dtos/request/lead.create.request.dto';
 import { LeadUpdateRequestDto } from '../dtos/request/lead.update.request.dto';
 import { LeadGetResponseDto } from '../dtos/response/lead.get.response.dto';
 import { LeadListResponseDto } from '../dtos/response/lead.list.response.dto';
+import { LeadStatsResponseDto } from '../dtos/response/lead.stats.response.dto';
 import { ENUM_LEAD_STATUS } from '../enums/lead.enum';
 import { ENUM_LEAD_ACTIVITY_TYPE } from '../enums/lead-activity.enum';
 import { LeadActivityService } from './lead-activity.service';
@@ -807,5 +808,123 @@ export class LeadService {
             );
             if (u) dto.assigned_to_name = (u as any).name || '';
         }
+    }
+
+    // ── Listing filter helper ────────────────────────────────────────────
+    //
+    // Single source of truth for the `find` object used by BOTH the
+    // `/list` endpoint and the `/stats` endpoint. Keeping the filter
+    // logic centralized prevents the tile counts from drifting away
+    // from the table they sit above (Docs/VOUCHER_STATS_PLAN.md §7).
+    //
+    // `status` accepts either a single value or an array — pass
+    // `'won'` for a single status tile or `['new','contacted',...]`
+    // for the "In Pipeline" multi-status tile. Arrays are translated
+    // to SQL `IN (...)` by translateMongoFilter in the repo base.
+    buildListFind(
+        companyId: string,
+        filters: {
+            status?: string | string[];
+            source?: string;
+            assigned_to?: string;
+            search?: string;
+        }
+    ): Record<string, any> {
+        const find: any = { soft_delete: false };
+        if (companyId) find.company_id = companyId;
+        if (filters.status) find.status = filters.status;
+        if (filters.source) find.source = filters.source;
+        if (filters.assigned_to) find.assigned_to = filters.assigned_to;
+
+        const searchTerm =
+            typeof filters.search === 'string' ? filters.search.trim() : '';
+        if (searchTerm) {
+            find.$or = [
+                { company_name: { $regex: searchTerm, $options: 'i' } },
+                { contact_name: { $regex: searchTerm, $options: 'i' } },
+                { contact_email: { $regex: searchTerm, $options: 'i' } },
+            ];
+        }
+        return find;
+    }
+
+    // ── KPI stats for the lead listing tile strip ────────────────────────
+    //
+    // Returns counts per status + a SUM(expected_value) for the SAME
+    // filtered set the listing is showing. One QueryBuilder GROUP BY
+    // call — sub-millisecond at our row counts (Plan §4.4).
+    async stats(
+        companyId: string,
+        filters: {
+            status?: string | string[];
+            source?: string;
+            assigned_to?: string;
+            search?: string;
+        }
+    ): Promise<LeadStatsResponseDto> {
+        const find = this.buildListFind(companyId, filters);
+
+        const rows = await this.leadRepository.aggregate<{
+            status: string;
+            count: string;
+            expected_value: string;
+        }>((qb) => {
+            qb.andWhere('entity.soft_delete = :sd', { sd: false });
+            if (find.company_id) {
+                qb.andWhere('entity.company_id = :cid', {
+                    cid: find.company_id,
+                });
+            }
+            if (filters.status) {
+                if (Array.isArray(filters.status)) {
+                    qb.andWhere('entity.status IN (:...st)', {
+                        st: filters.status,
+                    });
+                } else {
+                    qb.andWhere('entity.status = :st', { st: filters.status });
+                }
+            }
+            if (filters.source) {
+                qb.andWhere('entity.source = :src', { src: filters.source });
+            }
+            if (filters.assigned_to) {
+                qb.andWhere('entity.assigned_to = :at', {
+                    at: filters.assigned_to,
+                });
+            }
+            const searchTerm =
+                typeof filters.search === 'string'
+                    ? filters.search.trim()
+                    : '';
+            if (searchTerm) {
+                qb.andWhere(
+                    '(entity.company_name ILIKE :q OR entity.contact_name ILIKE :q OR entity.contact_email ILIKE :q)',
+                    { q: `%${searchTerm}%` }
+                );
+            }
+            return qb
+                .select('entity.status', 'status')
+                .addSelect('COUNT(*)::int', 'count')
+                .addSelect(
+                    'COALESCE(SUM(entity.expected_value), 0)::text',
+                    'expected_value'
+                )
+                .groupBy('entity.status');
+        });
+
+        const by_status: Record<string, number> = {};
+        let total = 0;
+        let total_expected_value = 0;
+        for (const r of rows) {
+            const cnt = Number(r.count) || 0;
+            by_status[r.status] = cnt;
+            total += cnt;
+            total_expected_value += Number(r.expected_value) || 0;
+        }
+        return {
+            total,
+            total_expected_value: total_expected_value.toFixed(2),
+            by_status,
+        };
     }
 }
