@@ -74,6 +74,8 @@ export interface ICompanyCreate {
     lut_date?: string;
     cin?: string;
     default_port_of_loading?: string;
+    default_port_of_loading_id?: string;
+    default_port_of_loading_snapshot?: any;
     default_declaration_text?: string;
     default_terms?: string;
     authorised_signatory_name?: string;
@@ -244,6 +246,12 @@ export class CompanyService {
         if (data.cin !== undefined) repository.cin = data.cin;
         if (data.default_port_of_loading !== undefined)
             repository.default_port_of_loading = data.default_port_of_loading;
+        if (data.default_port_of_loading_id !== undefined)
+            (repository as any).default_port_of_loading_id =
+                data.default_port_of_loading_id || null;
+        if (data.default_port_of_loading_snapshot !== undefined)
+            (repository as any).default_port_of_loading_snapshot =
+                data.default_port_of_loading_snapshot || null;
         if (data.default_declaration_text !== undefined)
             repository.default_declaration_text = data.default_declaration_text;
         if (data.default_terms !== undefined)
@@ -790,6 +798,11 @@ export class CompanyService {
                 cin: (company as any)?.cin || undefined,
                 default_port_of_loading:
                     (company as any)?.default_port_of_loading || undefined,
+                default_port_of_loading_id:
+                    (company as any)?.default_port_of_loading_id || undefined,
+                default_port_of_loading_snapshot:
+                    (company as any)?.default_port_of_loading_snapshot ||
+                    undefined,
                 default_declaration_text:
                     (company as any)?.default_declaration_text || undefined,
                 default_terms:
@@ -836,6 +849,11 @@ export class CompanyService {
                 cin: (company as any)?.cin || undefined,
                 default_port_of_loading:
                     (company as any)?.default_port_of_loading || undefined,
+                default_port_of_loading_id:
+                    (company as any)?.default_port_of_loading_id || undefined,
+                default_port_of_loading_snapshot:
+                    (company as any)?.default_port_of_loading_snapshot ||
+                    undefined,
                 default_declaration_text:
                     (company as any)?.default_declaration_text || undefined,
                 default_terms:

@@ -70,9 +70,23 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     voucher_prefix?: string;
 
     /** Default port of loading used as the PFI's `port_of_loading`
-     *  when converting a Quotation. Editable per PFI. */
+     *  when converting a Quotation. Editable per PFI.
+     *  Legacy free-text — kept briefly for migration safety. Drop once
+     *  default_port_of_loading_id is populated for all rows. */
     @Column({ type: 'varchar', length: 150, nullable: true })
     default_port_of_loading?: string;
+
+    /** Default Port of Loading — FK to port_master (Indian sea/ICD/SEZ).
+     *  Used to pre-fill PFI port_of_loading on Quotation→PFI conversion
+     *  and Shipping port_of_loading on new Shipping creation. */
+    @Column({ type: 'uuid', nullable: true })
+    default_port_of_loading_id?: string;
+
+    /** Frozen snapshot of the picked port — { code, name, country_code,
+     *  port_type }. Resilient if the port_master row is later renamed
+     *  or removed. */
+    @Column({ type: 'jsonb', nullable: true })
+    default_port_of_loading_snapshot?: any;
 
     /** Default declaration block printed on every PFI / Commercial
      *  Invoice. Editable per document. */
