@@ -33,6 +33,7 @@ import { PurchaseOrderCreateRequestDto } from '../dtos/request/purchase-order.cr
 import { PurchaseOrderUpdateRequestDto } from '../dtos/request/purchase-order.update.request.dto';
 import { PurchaseOrderAutoSplitRequestDto } from '../dtos/request/purchase-order.auto-split.request.dto';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
+import { PurchaseOrderStatsResponseDto } from '../dtos/response/purchase-order.stats.response.dto';
 import { PoCoverageService } from '@modules/po-vendor/services/po-coverage.service';
 import { PoCoverageResponseDto } from '@modules/po-vendor/dtos/response/po-coverage.response.dto';
 
@@ -81,31 +82,20 @@ export class PurchaseOrderAdminController {
         @Query('date_to') dateTo?: string,
         @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<PurchaseOrderGetResponseDto>> {
-        const find: any = { company_id: companyId, soft_delete: false };
-        if (vendorId) find.vendor_id = vendorId;
-        if (customerId) find.customer_id = customerId;
-        if (quotationId) find.quotation_id = quotationId;
-        if (pfiId) find.pfi_id = pfiId;
-        if (status) find.status = status;
-        if (dateFrom && dateTo) {
-            find.po_date = { $gte: dateFrom, $lte: dateTo };
-        } else if (dateFrom) {
-            find.po_date = { $gte: dateFrom };
-        } else if (dateTo) {
-            find.po_date = { $lte: dateTo };
-        }
-
-        // PaginationSearchPipe doesn't populate `_search` without an
-        // `availableSearch` option — fall back to the raw `search` query.
+        const statusValue = parseStatusParam(status);
         const searchTerm =
             searchRaw?.trim() ||
-            (_search && typeof _search === 'string' ? _search : null);
-        if (searchTerm) {
-            find.$or = [
-                { voucher_no: { $regex: searchTerm, $options: 'i' } },
-                { notes_to_vendor: { $regex: searchTerm, $options: 'i' } },
-            ];
-        }
+            (_search && typeof _search === 'string' ? _search : '');
+        const find = this.poService.buildListFind(companyId, {
+            vendor_id: vendorId,
+            customer_id: customerId,
+            quotation_id: quotationId,
+            pfi_id: pfiId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchTerm,
+        });
 
         const rows = await this.poRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -116,6 +106,34 @@ export class PurchaseOrderAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data: await this.poService.mapList(rows),
         };
+    }
+
+    @Response('purchaseOrder.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('vendor_id') vendorId?: string,
+        @Query('customer_id') customerId?: string,
+        @Query('quotation_id') quotationId?: string,
+        @Query('pfi_id') pfiId?: string,
+        @Query('status') status?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
+    ): Promise<IResponse<PurchaseOrderStatsResponseDto>> {
+        const statusValue = parseStatusParam(status);
+        const data = await this.poService.stats(companyId, {
+            vendor_id: vendorId,
+            customer_id: customerId,
+            quotation_id: quotationId,
+            pfi_id: pfiId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchRaw,
+        });
+        return { data };
     }
 
     @Response('purchaseOrder.get')
@@ -345,4 +363,19 @@ export class PurchaseOrderAdminController {
         const data = await this.poCoverageService.getCoverage(companyId, id);
         return { data };
     }
+}
+
+// Normalize `status` query: empty → undefined, "a" → "a", "a,b" → ["a","b"].
+function parseStatusParam(raw?: string): string | string[] | undefined {
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    if (!trimmed.includes(',')) return trimmed;
+    const parts = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return undefined;
+    if (parts.length === 1) return parts[0];
+    return parts;
 }

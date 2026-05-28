@@ -29,6 +29,7 @@ import { QuotationRepository } from '../repository/repositories/quotation.reposi
 import { QuotationCreateRequestDto } from '../dtos/request/quotation.create.request.dto';
 import { QuotationUpdateRequestDto } from '../dtos/request/quotation.update.request.dto';
 import { QuotationGetResponseDto } from '../dtos/response/quotation.get.response.dto';
+import { QuotationStatsResponseDto } from '../dtos/response/quotation.stats.response.dto';
 
 @ApiTags('admin.quotation')
 @Controller({ version: '1', path: '/admin/quotation' })
@@ -63,29 +64,20 @@ export class QuotationAdminController {
         @Query('date_to') dateTo?: string,
         @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<QuotationGetResponseDto>> {
-        const find: any = { company_id: companyId, soft_delete: false };
-        if (customerId) find.customer_id = customerId;
-        if (leadId) find.lead_id = leadId;
-        if (status) find.status = status;
-        if (dateFrom && dateTo) {
-            find.quotation_date = { $gte: dateFrom, $lte: dateTo };
-        } else if (dateFrom) {
-            find.quotation_date = { $gte: dateFrom };
-        } else if (dateTo) {
-            find.quotation_date = { $lte: dateTo };
-        }
-
-        // PaginationSearchPipe doesn't populate `_search` without an
-        // `availableSearch` option — fall back to the raw `search` query.
+        // Status accepts a single value or comma-separated list — the
+        // tile strip uses csv for multi-status buckets like "Draft + Sent".
+        const statusValue = parseStatusParam(status);
         const searchTerm =
             searchRaw?.trim() ||
-            (_search && typeof _search === 'string' ? _search : null);
-        if (searchTerm) {
-            find.$or = [
-                { voucher_no: { $regex: searchTerm, $options: 'i' } },
-                { notes_to_client: { $regex: searchTerm, $options: 'i' } },
-            ];
-        }
+            (_search && typeof _search === 'string' ? _search : '');
+        const find = this.quotationService.buildListFind(companyId, {
+            customer_id: customerId,
+            lead_id: leadId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchTerm,
+        });
 
         const rows = await this.quotationRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -97,6 +89,30 @@ export class QuotationAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data: await this.quotationService.mapList(rows),
         };
+    }
+
+    @Response('quotation.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('customer_id') customerId?: string,
+        @Query('lead_id') leadId?: string,
+        @Query('status') status?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
+    ): Promise<IResponse<QuotationStatsResponseDto>> {
+        const statusValue = parseStatusParam(status);
+        const data = await this.quotationService.stats(companyId, {
+            customer_id: customerId,
+            lead_id: leadId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchRaw,
+        });
+        return { data };
     }
 
     @Response('quotation.get')
@@ -172,4 +188,19 @@ export class QuotationAdminController {
         const row = await this.quotationService.findOneById(id);
         return { data: await this.quotationService.mapPublic(row) };
     }
+}
+
+// Normalize `status` query: empty → undefined, "a" → "a", "a,b" → ["a","b"].
+function parseStatusParam(raw?: string): string | string[] | undefined {
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    if (!trimmed.includes(',')) return trimmed;
+    const parts = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return undefined;
+    if (parts.length === 1) return parts[0];
+    return parts;
 }

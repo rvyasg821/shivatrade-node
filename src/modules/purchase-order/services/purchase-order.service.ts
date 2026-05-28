@@ -2123,6 +2123,156 @@ export class PurchaseOrderService {
             customer_address,
         };
     }
+
+    // ── Listing filter helper ────────────────────────────────────────────
+    //
+    // Shared between `/list` and `/stats` so tile counts and table rows
+    // can't drift (Docs/VOUCHER_STATS_PLAN.md §7).
+    buildListFind(
+        companyId: string,
+        filters: {
+            vendor_id?: string;
+            customer_id?: string;
+            quotation_id?: string;
+            pfi_id?: string;
+            status?: string | string[];
+            date_from?: string;
+            date_to?: string;
+            search?: string;
+        }
+    ): Record<string, any> {
+        const find: any = { company_id: companyId, soft_delete: false };
+        if (filters.vendor_id) find.vendor_id = filters.vendor_id;
+        if (filters.customer_id) find.customer_id = filters.customer_id;
+        if (filters.quotation_id) find.quotation_id = filters.quotation_id;
+        if (filters.pfi_id) find.pfi_id = filters.pfi_id;
+        if (filters.status) find.status = filters.status;
+        if (filters.date_from && filters.date_to) {
+            find.po_date = {
+                $gte: filters.date_from,
+                $lte: filters.date_to,
+            };
+        } else if (filters.date_from) {
+            find.po_date = { $gte: filters.date_from };
+        } else if (filters.date_to) {
+            find.po_date = { $lte: filters.date_to };
+        }
+        const searchTerm =
+            typeof filters.search === 'string' ? filters.search.trim() : '';
+        if (searchTerm) {
+            find.$or = [
+                { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { notes_to_vendor: { $regex: searchTerm, $options: 'i' } },
+            ];
+        }
+        return find;
+    }
+
+    // ── KPI stats for the PO listing tile strip ──────────────────────────
+    //
+    // Counts per status + INR-converted SUM(grand_total / exchange_rate).
+    // exchange_rate stored as "1 INR = X foreign-currency-units" so we
+    // divide. Money sum EXCLUDES cancelled rows — "Pipeline Total Value"
+    // is money still in play, not killed-deal money.
+    async stats(
+        companyId: string,
+        filters: {
+            vendor_id?: string;
+            customer_id?: string;
+            quotation_id?: string;
+            pfi_id?: string;
+            status?: string | string[];
+            date_from?: string;
+            date_to?: string;
+            search?: string;
+        }
+    ): Promise<{
+        total: number;
+        total_amount_inr: string;
+        by_status: Record<string, number>;
+    }> {
+        const rows = await this.poRepository.aggregate<{
+            status: string;
+            count: string;
+            amount_inr: string;
+        }>((qb) => {
+            qb.andWhere('entity.soft_delete = :sd', { sd: false });
+            qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            if (filters.vendor_id) {
+                qb.andWhere('entity.vendor_id = :v', { v: filters.vendor_id });
+            }
+            if (filters.customer_id) {
+                qb.andWhere('entity.customer_id = :cust', {
+                    cust: filters.customer_id,
+                });
+            }
+            if (filters.quotation_id) {
+                qb.andWhere('entity.quotation_id = :qid', {
+                    qid: filters.quotation_id,
+                });
+            }
+            if (filters.pfi_id) {
+                qb.andWhere('entity.pfi_id = :pid', { pid: filters.pfi_id });
+            }
+            if (filters.status) {
+                if (Array.isArray(filters.status)) {
+                    qb.andWhere('entity.status IN (:...st)', {
+                        st: filters.status,
+                    });
+                } else {
+                    qb.andWhere('entity.status = :st', { st: filters.status });
+                }
+            }
+            if (filters.date_from) {
+                qb.andWhere('entity.po_date >= :df', {
+                    df: filters.date_from,
+                });
+            }
+            if (filters.date_to) {
+                qb.andWhere('entity.po_date <= :dt', {
+                    dt: filters.date_to,
+                });
+            }
+            const searchTerm =
+                typeof filters.search === 'string'
+                    ? filters.search.trim()
+                    : '';
+            if (searchTerm) {
+                qb.andWhere(
+                    '(entity.voucher_no ILIKE :q OR entity.notes_to_vendor ILIKE :q)',
+                    { q: `%${searchTerm}%` }
+                );
+            }
+            return qb
+                .select('entity.status', 'status')
+                .addSelect('COUNT(*)::int', 'count')
+                .addSelect(
+                    `COALESCE(SUM(
+                        CASE
+                            WHEN entity.status = '${ENUM_PURCHASE_ORDER_STATUS.CANCELLED}' THEN 0
+                            ELSE entity.grand_total / COALESCE(NULLIF(entity.exchange_rate, 0), 1)
+                        END
+                    ), 0)::text`,
+                    'amount_inr'
+                )
+                .groupBy('entity.status');
+        });
+
+        const by_status: Record<string, number> = {};
+        let total = 0;
+        let total_amount_inr = 0;
+        for (const r of rows) {
+            const cnt = Number(r.count) || 0;
+            by_status[r.status] = cnt;
+            total += cnt;
+            total_amount_inr += Number(r.amount_inr) || 0;
+        }
+        return {
+            total,
+            total_amount_inr: total_amount_inr.toFixed(2),
+            by_status,
+        };
+    }
 }
 
 // ─── Utilities (module-private) ─────────────────────────────────────────

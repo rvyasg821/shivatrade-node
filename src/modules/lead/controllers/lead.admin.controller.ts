@@ -30,6 +30,7 @@ import { LeadCreateRequestDto } from '../dtos/request/lead.create.request.dto';
 import { LeadUpdateRequestDto } from '../dtos/request/lead.update.request.dto';
 import { LeadGetResponseDto } from '../dtos/response/lead.get.response.dto';
 import { LeadListResponseDto } from '../dtos/response/lead.list.response.dto';
+import { LeadStatsResponseDto } from '../dtos/response/lead.stats.response.dto';
 
 @ApiTags('admin.lead')
 @Controller({ version: '1', path: '/admin/lead' })
@@ -63,24 +64,19 @@ export class LeadAdminController {
         @Query('assigned_to') assignedTo?: string,
         @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<LeadListResponseDto>> {
-        const find: any = { soft_delete: false };
-        if (companyId) find.company_id = companyId;
-        if (status) find.status = status;
-        if (source) find.source = source;
-        if (assignedTo) find.assigned_to = assignedTo;
-
-        // PaginationSearchPipe doesn't populate `_search` without an
-        // `availableSearch` option — fall back to the raw `search` query.
+        // Status accepts a single value or a comma-separated list — the
+        // tile strip uses the latter for the "In Pipeline" multi-status
+        // bucket (Plan §7 gotcha #1).
+        const statusValue = parseStatusParam(status);
         const searchTerm =
             searchRaw?.trim() ||
-            (_search && typeof _search === 'string' ? _search : null);
-        if (searchTerm) {
-            find.$or = [
-                { company_name: { $regex: searchTerm, $options: 'i' } },
-                { contact_name: { $regex: searchTerm, $options: 'i' } },
-                { contact_email: { $regex: searchTerm, $options: 'i' } },
-            ];
-        }
+            (_search && typeof _search === 'string' ? _search : '');
+        const find = this.leadService.buildListFind(companyId, {
+            status: statusValue,
+            source,
+            assigned_to: assignedTo,
+            search: searchTerm,
+        });
 
         const leads = await this.leadRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -93,6 +89,26 @@ export class LeadAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
         };
+    }
+
+    @Response('lead.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('status') status?: string,
+        @Query('source') source?: string,
+        @Query('assigned_to') assignedTo?: string,
+        @Query('search') searchRaw?: string
+    ): Promise<IResponse<LeadStatsResponseDto>> {
+        const statusValue = parseStatusParam(status);
+        const data = await this.leadService.stats(companyId, {
+            status: statusValue,
+            source,
+            assigned_to: assignedTo,
+            search: searchRaw,
+        });
+        return { data };
     }
 
     @Response('lead.get')
@@ -146,4 +162,21 @@ export class LeadAdminController {
         const data = await this.leadService.mapGetWithRelations(updated);
         return { data };
     }
+}
+
+// Normalize the `status` query param: returns `undefined` for empty,
+// the string itself when one status was passed, or an array when the
+// caller sent a comma-separated list (e.g. `?status=new,contacted`).
+function parseStatusParam(raw?: string): string | string[] | undefined {
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    if (!trimmed.includes(',')) return trimmed;
+    const parts = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return undefined;
+    if (parts.length === 1) return parts[0];
+    return parts;
 }
