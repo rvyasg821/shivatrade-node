@@ -199,6 +199,21 @@ export class CustomerService {
     ): Promise<CustomerDoc> {
         const name = data.company_name.trim();
 
+        this.assertContactsValid(data.contacts);
+        this.assertAddressesValid(data.addresses);
+
+        // Revive path — if any contact email matches a SOFT-DELETED customer
+        // in this company, restore that record instead of creating a new one.
+        // Preserves history (quotations / PFIs / POs that pointed at the
+        // deleted customer become valid again, and the lead's
+        // converted_customer_id linkage is naturally restored).
+        const revived = await this.tryReviveDeletedCustomer(
+            companyId,
+            data,
+            createdBy
+        );
+        if (revived) return revived;
+
         const exists = await this.customerRepository.isCompanyNameExists(companyId, name);
         if (exists) {
             throw new BadRequestException(
@@ -206,9 +221,7 @@ export class CustomerService {
             );
         }
 
-        this.assertContactsValid(data.contacts);
         await this.assertContactEmailsUnique(companyId, data.contacts);
-        this.assertAddressesValid(data.addresses);
 
         const { contacts, addresses, ...customerFields } = data;
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
@@ -466,6 +479,97 @@ export class CustomerService {
         if (dup) {
             throw new BadRequestException(`Duplicate contact email: ${dup}`);
         }
+    }
+
+    // ── Revive flow ─────────────────────────────────────────────────────
+    //
+    // Looks up any soft-deleted customer in this company that owned an
+    // email present in the new payload. If found, restores the customer
+    // (and its contacts + addresses) with the new payload's data instead
+    // of creating a fresh row. Returns null when no match.
+    private async tryReviveDeletedCustomer(
+        companyId: string,
+        data: CustomerCreateRequestDto,
+        updatedBy: string
+    ): Promise<CustomerDoc | null> {
+        // Look for the first email in the payload that maps to a
+        // soft-deleted contact in this company.
+        let matchedCustomerId: string | null = null;
+        for (const c of data.contacts) {
+            const email = c.email.trim().toLowerCase();
+            const stale = await this.contactRepository.findSoftDeletedByEmail(
+                companyId,
+                email
+            );
+            if (stale?.customer_id) {
+                matchedCustomerId = stale.customer_id.toString();
+                break;
+            }
+        }
+        if (!matchedCustomerId) return null;
+
+        // Pull the customer — it must be soft-deleted to qualify for revive.
+        // Pass withDeleted=true so the base auto-filter (deleted=false) doesn't
+        // hide it (softDelete sets BOTH soft_delete=true and deleted=true).
+        const customer = await this.customerRepository.findOneById(
+            matchedCustomerId,
+            { withDeleted: true }
+        );
+        if (!customer || !(customer as any).soft_delete) return null;
+
+        // Provision (or reuse) the primary user row up front. If this
+        // fails we haven't touched any existing data yet.
+        const primaryContact =
+            data.contacts.find((c) => c.is_primary) || data.contacts[0];
+        await this.assertPrimaryEmailAvailable(primaryContact.email);
+        const primaryUserId = await this.provisionCustomerUser(
+            companyId,
+            primaryContact
+        );
+
+        // Overwrite scalar fields with the new payload — same shape used
+        // by the regular create path.
+        const { contacts, addresses, ...customerFields } = data;
+        Object.assign(customer, customerFields);
+        (customer as any).company_name = data.company_name.trim();
+        (customer as any).soft_delete = false;
+        (customer as any).is_active = true;
+        // Clear the base entity's deleted flag too — softDelete sets both
+        // (see customer.service.ts line ~411). Without this, future
+        // findOneById() calls (which auto-filter deleted=false) would
+        // still treat the revived row as gone.
+        (customer as any).deleted = false;
+        (customer as any).deletedAt = null;
+        (customer as any).deletedBy = null;
+        (customer as any).updatedBy = updatedBy;
+        await this.customerRepository.save(customer);
+
+        // Replace contacts: soft-delete any lingering rows on this
+        // customer (active or stale), then create fresh from payload.
+        await this.contactRepository.softDeleteByCustomerId(
+            customer._id.toString()
+        );
+        for (const c of contacts) {
+            await this.contactRepository.create({
+                ...c,
+                email: c.email.trim().toLowerCase(),
+                customer_id: customer._id.toString(),
+                company_id: companyId,
+                user_id: c === primaryContact ? primaryUserId : undefined,
+            } as any);
+        }
+
+        // replaceAddresses already soft-deletes existing + creates new.
+        await this.replaceAddresses(
+            companyId,
+            customer._id.toString(),
+            addresses
+        );
+
+        this.logger.log(
+            `Customer revived: ${customer._id} for company: ${companyId}`
+        );
+        return customer;
     }
 
     private async assertContactEmailsUnique(

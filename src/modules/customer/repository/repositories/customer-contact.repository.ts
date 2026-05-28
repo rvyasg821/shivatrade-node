@@ -41,4 +41,23 @@ export class CustomerContactRepository extends DatabaseObjectIdRepositoryBase<Cu
             { soft_delete: true } as any
         );
     }
+
+    // Returns the most-recent SOFT-DELETED contact in the company that
+    // matches an email (case-insensitive). Used by the customer revive
+    // flow to detect "this email belonged to a previously deleted
+    // customer — restore that record instead of creating a new one".
+    async findSoftDeletedByEmail(
+        companyId: string,
+        email: string
+    ): Promise<CustomerContactDoc | null> {
+        const row = await this._repository.findOne({
+            where: {
+                company_id: companyId,
+                email: ILike(email.trim()),
+                soft_delete: true,
+            } as any,
+            order: { createdAt: 'DESC' as any },
+        });
+        return row || null;
+    }
 }

@@ -718,6 +718,13 @@ export class LeadService {
     async mapListWithRelations(
         leads: LeadDoc[]
     ): Promise<LeadListResponseDto[]> {
+        // Drop stale customer pointers so the listing matches the detail
+        // page — without this, deleting a converted customer would leave
+        // converted_customer_id set on the lead, keeping the Convert-to-
+        // Customer icon hidden on the row even though the detail page
+        // (which already scrubs) shows it.
+        await Promise.all(leads.map((l) => this.scrubStaleCustomerRefs(l)));
+
         const dtos = leads.map((l) =>
             plainToInstance(LeadListResponseDto, l)
         );
