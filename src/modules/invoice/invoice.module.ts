@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { InvoiceRepositoryModule } from './repository/invoice.repository.module';
 import { InvoiceService } from './services/invoice.service';
 import { InvoicePdfService } from './services/invoice-pdf.service';
+import { InvoiceLineImportService } from './services/invoice-line-import.service';
 import { InvoiceAdminController } from './controllers/invoice.admin.controller';
 import { VoucherModule } from '@common/voucher/voucher.module';
 import { PdfModule } from '@common/pdf/pdf.module';
@@ -11,6 +12,8 @@ import { ProductRepositoryModule } from '@modules/product/repository/product.rep
 import { ShippingRepositoryModule } from '@modules/shipping/repository/shipping.repository.module';
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
+import { RebateRepositoryModule } from '@modules/rebate/repository/rebate.repository.module';
+import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 
 /**
  * Phase 1 - Export Commercial Invoice.
@@ -31,9 +34,16 @@ import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repositor
         ShippingRepositoryModule,
         PoVendorRepositoryModule,
         PurchaseOrderRepositoryModule,
+        RebateRepositoryModule,
+        ExpenseRepositoryModule,
     ],
-    providers: [InvoiceService, InvoicePdfService],
-    exports: [InvoiceRepositoryModule, InvoiceService, InvoicePdfService],
+    providers: [InvoiceService, InvoicePdfService, InvoiceLineImportService],
+    exports: [
+        InvoiceRepositoryModule,
+        InvoiceService,
+        InvoicePdfService,
+        InvoiceLineImportService,
+    ],
     controllers: [InvoiceAdminController],
 })
 export class InvoiceModule {}

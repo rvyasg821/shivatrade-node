@@ -538,13 +538,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
 
   <div class="qd-header">
     <div>
-      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:34px;margin-bottom:8px;display:block" />` : ''}
-      <div class="company-name">${esc(company.name || '-')}</div>
-      ${company.address ? `<div class="party-line muted" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
-      <div class="party-line muted">
-        ${company.phone ? esc(company.phone) + ' · ' : ''}${esc(company.email || '')}
-        ${company.gstin ? ' · GSTIN: ' + esc(company.gstin) : ''}
-      </div>
+      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:56px;display:block" />` : ''}
     </div>
     <div style="text-align:right">
       <div class="qd-title">Dispatch Advice</div>
