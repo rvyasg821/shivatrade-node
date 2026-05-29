@@ -242,18 +242,27 @@ export class InvoiceAdminController {
     //     the source of truth.
     // ───────────────────────────────────────────────────────────────
     @AuthJwtAccessProtected()
-    @Get('/lines/export')
+    @HttpCode(HttpStatus.OK)
+    @Post('/lines/export')
     async exportLines(
         @AuthJwtPayload('companyId') companyId: string,
-        @Query('purchase_order_id') purchaseOrderId: string,
-        @Query('invoice_id') invoiceId: string | undefined,
+        @Body()
+        body: {
+            purchase_order_id: string;
+            invoice_id?: string;
+            // Optional in-memory line-items snapshot. Sent by the form
+            // when the operator has unsaved edits so the workbook
+            // reflects the screen rather than the persisted draft.
+            lines?: Array<Record<string, any>>;
+        },
         @Res() res: ExpressResponse
     ): Promise<void> {
         const { buffer, filename } =
             await this.invoiceLineImportService.exportWorkbook({
                 companyId,
-                purchaseOrderId,
-                invoiceId,
+                purchaseOrderId: body.purchase_order_id,
+                invoiceId: body.invoice_id,
+                liveLines: body.lines,
             });
         res.setHeader(
             'Content-Type',

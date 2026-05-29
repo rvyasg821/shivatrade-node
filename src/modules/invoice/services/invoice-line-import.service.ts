@@ -85,17 +85,26 @@ export class InvoiceLineImportService {
         companyId: string;
         purchaseOrderId: string;
         invoiceId?: string;
+        /**
+         * In-memory rows from the form. When provided, these override the
+         * persisted draft — keeps the workbook in sync with unsaved edits
+         * on screen instead of dropping them.
+         */
+        liveLines?: Array<Record<string, any>>;
     }): Promise<{ buffer: Buffer; filename: string }> {
-        const { companyId, purchaseOrderId, invoiceId } = opts;
+        const { companyId, purchaseOrderId, invoiceId, liveLines } = opts;
         const addable = await this.invoiceService.getAddablePoLines(
             purchaseOrderId,
             invoiceId,
         );
 
-        // Current draft lines, if any.
-        const draftLines: any[] = invoiceId
-            ? await this.invoiceLineRepository.findByInvoiceId(invoiceId)
-            : [];
+        // Current draft lines — live form snapshot wins over the
+        // persisted draft so unsaved edits show up in the export.
+        const draftLines: any[] = Array.isArray(liveLines)
+            ? (liveLines as any[])
+            : invoiceId
+              ? await this.invoiceLineRepository.findByInvoiceId(invoiceId)
+              : [];
 
         // Hydrate product names/codes for the export rows so the file is
         // human-readable even before re-upload.
