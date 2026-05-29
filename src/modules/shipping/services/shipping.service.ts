@@ -34,6 +34,7 @@ import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.en
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
+import { UserRepository } from '@modules/user/repository/repositories/user.repository';
 
 const num = (v: any) =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -51,7 +52,8 @@ export class ShippingService {
         private readonly voucherService: VoucherService,
         private readonly companyRepository: CompanyRepository,
         private readonly companyBankAccountRepository: CompanyBankAccountRepository,
-        private readonly invoiceRepository: InvoiceRepository
+        private readonly invoiceRepository: InvoiceRepository,
+        private readonly userRepository: UserRepository
     ) {}
 
     // ─── Create (DRAFT) ─────────────────────────────────────────────────
@@ -447,7 +449,8 @@ export class ShippingService {
     async addEvent(
         row: ShippingDoc,
         data: ShippingEventCreateRequestDto,
-        userId: string
+        userId: string,
+        attachmentUrl?: string
     ): Promise<any> {
         if (SYSTEM_SHIPPING_EVENT_TYPES.includes(data.type)) {
             throw new BadRequestException(
@@ -467,13 +470,18 @@ export class ShippingService {
             occurred_at: new Date(data.occurred_at),
             location: data.location,
             notes: data.notes,
+            attachment_url: attachmentUrl,
             is_system: false,
             created_by: userId,
         } as any);
         return ev;
     }
 
-    async retractEvent(eventId: string): Promise<void> {
+    async retractEvent(
+        eventId: string,
+        userId: string,
+        reason: string
+    ): Promise<void> {
         const ev: any = await this.shippingEventRepository.findOneById(eventId);
         if (!ev) throw new NotFoundException('Event not found');
         if (ev.is_system) {
@@ -481,7 +489,18 @@ export class ShippingService {
                 'System events cannot be retracted.'
             );
         }
+        if (ev.soft_delete) {
+            throw new BadRequestException('Event is already retracted.');
+        }
+        if (!reason || !reason.trim()) {
+            throw new BadRequestException(
+                'A reason is required to retract an event.'
+            );
+        }
         ev.soft_delete = true;
+        ev.deleted_at = new Date();
+        ev.deleted_by_user_id = userId;
+        ev.deleted_reason = reason.trim();
         await this.shippingEventRepository.save(ev);
     }
 
@@ -547,14 +566,52 @@ export class ShippingService {
     // ─── Mappers ───────────────────────────────────────────────────────
 
     async mapGet(row: ShippingDoc): Promise<ShippingGetResponseDto> {
-        const events = await this.shippingEventRepository.findByShippingId(
+        const events = await this.shippingEventRepository.findAllByShippingId(
             row._id.toString()
         );
         const links = await this.shippingInvoiceRepository.findByShippingId(
             row._id.toString()
         );
         const dto = plainToInstance(ShippingGetResponseDto, row);
-        dto.events = events.map((e) => plainToInstance(ShippingEventDto, e));
+
+        // Batch-resolve user names for created_by + deleted_by_user_id so
+        // the FE can show "— Logged by …" / "Retracted by …" without a
+        // per-row lookup.
+        const userIds = Array.from(
+            new Set(
+                events
+                    .flatMap((e: any) => [
+                        e.created_by?.toString(),
+                        e.deleted_by_user_id?.toString(),
+                    ])
+                    .filter(Boolean)
+            )
+        );
+        const userNameMap = new Map<string, string>();
+        if (userIds.length) {
+            const users: any[] = await this.userRepository.findAll({
+                _id: { $in: userIds },
+            } as any);
+            for (const u of users) {
+                userNameMap.set(
+                    u._id.toString(),
+                    u.name || u.contact_name || u.email || ''
+                );
+            }
+        }
+
+        dto.events = events.map((e: any) => {
+            const ev: any = plainToInstance(ShippingEventDto, e);
+            if (e.created_by) {
+                ev.created_by_name = userNameMap.get(e.created_by.toString());
+            }
+            if (e.deleted_by_user_id) {
+                ev.deleted_by_name = userNameMap.get(
+                    e.deleted_by_user_id.toString()
+                );
+            }
+            return ev;
+        });
         dto.invoices = links.map((l) =>
             plainToInstance(ShippingInvoiceAttachmentDto, l)
         );

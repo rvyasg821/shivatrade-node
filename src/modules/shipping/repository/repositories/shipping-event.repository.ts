@@ -19,7 +19,28 @@ export class ShippingEventRepository extends DatabaseObjectIdRepositoryBase<Ship
     async findByShippingId(shippingId: string): Promise<ShippingEventDoc[]> {
         return this.findAll(
             { shipping_id: shippingId, soft_delete: false },
-            { order: { occurred_at: 'DESC' as any } }
+            {
+                order: {
+                    occurred_at: 'DESC' as any,
+                    createdAt: 'DESC' as any,
+                },
+            }
+        );
+    }
+
+    /** Returns ALL events for the shipping, including retracted (soft_delete=true).
+     *  Used by the detail view so retracted rows render struck-through.
+     *  Secondary sort on createdAt so events with the same occurred_at date
+     *  still come out newest-first. */
+    async findAllByShippingId(shippingId: string): Promise<ShippingEventDoc[]> {
+        return this.findAll(
+            { shipping_id: shippingId },
+            {
+                order: {
+                    occurred_at: 'DESC' as any,
+                    createdAt: 'DESC' as any,
+                },
+            }
         );
     }
 }
