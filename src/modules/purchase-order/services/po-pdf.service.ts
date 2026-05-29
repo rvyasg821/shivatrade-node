@@ -351,7 +351,7 @@ function buildHeaderTemplate(ctx: PoPdfContext): string {
     <div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;
                 display:flex;justify-content:space-between;align-items:center;">
       <span>${esc(ctx.company.name)}</span>
-      <span><strong style="color:#1f2937">PURCHASE ORDER</strong> · ${esc(ctx.po.voucher_no || '')}</span>
+      <span><strong style="color:#1f2937">SALES ORDER</strong> · ${esc(ctx.po.voucher_no || '')}</span>
     </div>`;
 }
 
@@ -564,14 +564,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
 
   <div class="qd-header">
     <div>
-      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:34px;margin-bottom:8px;display:block" />` : ''}
-      <div class="company-name">${esc(company.name || '-')}</div>
-      ${company.address ? `<div class="party-line muted" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
-      <div class="party-line muted">
-        ${company.phone ? esc(company.phone) + ' · ' : ''}${esc(company.email || '')}
-        ${company.gstin ? ' · GSTIN: ' + esc(company.gstin) : ''}
-        ${company.iec ? ' · IEC: ' + esc(company.iec) : ''}
-      </div>
+      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:56px;display:block" />` : ''}
     </div>
     <div style="text-align:right">
       <div class="qd-title">Sales Order</div>
@@ -580,6 +573,17 @@ function buildPoHtml(ctx: PoPdfContext): string {
         Date: <span class="fw">${dateOnly(po.po_date) || '-'}</span>
         · Currency: <span class="fw">${esc(sym)} ${esc(po.currency_code || '-')}</span>
       </div>
+      ${
+        (po as any).pfi_voucher_no || (po as any).quotation_voucher_no
+          ? `<div class="voucher">${
+              (po as any).pfi_voucher_no ? 'Source PFI' : 'Source Quote'
+            }: <span class="fw">${esc(
+              (po as any).pfi_voucher_no ||
+                (po as any).quotation_voucher_no ||
+                '',
+            )}</span></div>`
+          : ''
+      }
       ${po.status ? `<span class="status-badge">${esc(po.status)}</span>` : ''}
     </div>
   </div>
