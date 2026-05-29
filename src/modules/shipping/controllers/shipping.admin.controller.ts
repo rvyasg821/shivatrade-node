@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     Controller,
     Get,
     Post,
@@ -7,8 +8,10 @@ import {
     Body,
     Param,
     Query,
+    UploadedFile,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -25,12 +28,24 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { ShippingService } from '../services/shipping.service';
+import { ShippingEventFileService } from '../services/shipping-event-file.service';
+
+const ALLOWED_EVENT_ATTACHMENT_EXTS = new Set([
+    'jpg',
+    'jpeg',
+    'png',
+    'gif',
+    'webp',
+    'pdf',
+    'heic',
+]);
 import { ShippingRepository } from '../repository/repositories/shipping.repository';
 import { ShippingCreateRequestDto } from '../dtos/request/shipping.create.request.dto';
 import { ShippingUpdateRequestDto } from '../dtos/request/shipping.update.request.dto';
 import { ShippingTransitionRequestDto } from '../dtos/request/shipping.transition.request.dto';
 import { ShippingCancelRequestDto } from '../dtos/request/shipping.cancel.request.dto';
 import { ShippingEventCreateRequestDto } from '../dtos/request/shipping-event.create.request.dto';
+import { ShippingEventDeleteRequestDto } from '../dtos/request/shipping-event.delete.request.dto';
 import { ShippingAttachInvoiceRequestDto } from '../dtos/request/shipping-attach-invoice.request.dto';
 import {
     ShippingGetResponseDto,
@@ -45,7 +60,8 @@ import {
 export class ShippingAdminController {
     constructor(
         private readonly shippingService: ShippingService,
-        private readonly shippingRepository: ShippingRepository
+        private readonly shippingRepository: ShippingRepository,
+        private readonly eventFileService: ShippingEventFileService
     ) {}
 
     @Response('shipping.create')
@@ -197,21 +213,48 @@ export class ShippingAdminController {
 
     @Response('shipping.event.create')
     @AuthJwtAccessProtected()
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'attachment', fileSize: 15 * 1024 * 1024 })
     @Post('/event/:shippingId')
     async addEvent(
+        @AuthJwtPayload('companyId') companyId: string,
         @AuthJwtPayload('user') userId: string,
         @Param('shippingId') id: string,
-        @Body() body: ShippingEventCreateRequestDto
+        @Body() body: ShippingEventCreateRequestDto,
+        @UploadedFile() file?: Express.Multer.File
     ): Promise<IResponse<any>> {
         const row = await this.shippingService.findOneById(id);
-        const ev = await this.shippingService.addEvent(row, body, userId);
+        let attachmentUrl: string | undefined;
+        if (file && file.buffer && file.originalname) {
+            const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+            if (!ALLOWED_EVENT_ATTACHMENT_EXTS.has(ext)) {
+                throw new BadRequestException(
+                    `Unsupported attachment type: .${ext}`
+                );
+            }
+            attachmentUrl = await this.eventFileService.saveFile(
+                file.buffer,
+                file.originalname,
+                companyId
+            );
+        }
+        const ev = await this.shippingService.addEvent(
+            row,
+            body,
+            userId,
+            attachmentUrl
+        );
         return { data: ev };
     }
 
     @Response('shipping.event.retract')
     @AuthJwtAccessProtected()
-    @Delete('/event/:eventId')
-    async retractEvent(@Param('eventId') eventId: string): Promise<void> {
-        await this.shippingService.retractEvent(eventId);
+    @Post('/event/:eventId/retract')
+    async retractEvent(
+        @AuthJwtPayload('user') userId: string,
+        @Param('eventId') eventId: string,
+        @Body() body: ShippingEventDeleteRequestDto
+    ): Promise<void> {
+        await this.shippingService.retractEvent(eventId, userId, body.reason);
     }
 }

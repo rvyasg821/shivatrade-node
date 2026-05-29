@@ -22,7 +22,14 @@ export class ShippingEventDto {
     notes?: string;
     is_system?: boolean;
     created_by?: string;
+    created_by_name?: string;
     createdAt?: Date;
+    attachment_url?: string;
+    soft_delete?: boolean;
+    deleted_at?: Date;
+    deleted_by_user_id?: string;
+    deleted_by_name?: string;
+    deleted_reason?: string;
 }
 
 export class ShippingGetResponseDto {

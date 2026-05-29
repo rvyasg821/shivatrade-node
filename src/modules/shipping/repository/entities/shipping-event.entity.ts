@@ -49,6 +49,24 @@ export class ShippingEventEntity extends DatabaseObjectIdEntityBase {
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;
+
+    /** Optional single attachment per event (relative path under static
+     *  root, e.g. `files/shipping-events/<file>`). FE prepends PDF URL base. */
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    attachment_url?: string;
+
+    /** When `soft_delete` was flipped true. */
+    @Column({ type: 'timestamp with time zone', nullable: true })
+    deleted_at?: Date;
+
+    /** User who retracted the event. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    deleted_by_user_id?: string;
+
+    /** Required reason captured at retraction — preserves chain-of-custody. */
+    @Column({ type: 'text', nullable: true })
+    deleted_reason?: string;
 }
 
 export type ShippingEventDoc = ShippingEventEntity;
