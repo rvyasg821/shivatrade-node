@@ -8,6 +8,8 @@ import {
     Param,
     Query,
     Res,
+    HttpCode,
+    HttpStatus,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
@@ -27,6 +29,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { InvoiceService } from '../services/invoice.service';
+import { InvoiceLineImportService } from '../services/invoice-line-import.service';
 import {
     InvoicePdfService,
     InvoicePdfDocType,
@@ -53,7 +56,8 @@ export class InvoiceAdminController {
     constructor(
         private readonly invoiceService: InvoiceService,
         private readonly invoiceRepository: InvoiceRepository,
-        private readonly invoicePdfService: InvoicePdfService
+        private readonly invoicePdfService: InvoicePdfService,
+        private readonly invoiceLineImportService: InvoiceLineImportService
     ) {}
 
     @Response('invoice.create')
@@ -224,6 +228,64 @@ export class InvoiceAdminController {
         await this.invoiceService.voidPayment(paymentId, userId, body.reason);
         const fresh = await this.invoiceService.findOneById(invoiceId);
         const data = await this.invoiceService.mapGet(fresh);
+        return { data };
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Line items import / export (Step 3 power-user shortcut)
+    //   - Export ALWAYS reflects the current draft (or, for a brand-new
+    //     invoice, seeds the addable SO lines so a user has a real
+    //     starting point).
+    //   - Resolve validates every row against the same Add-from-SO rules
+    //     (line must belong to this SO + dispatched stock must cover
+    //     qty). The FE never round-trips product codes — the SO line is
+    //     the source of truth.
+    // ───────────────────────────────────────────────────────────────
+    @AuthJwtAccessProtected()
+    @Get('/lines/export')
+    async exportLines(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('purchase_order_id') purchaseOrderId: string,
+        @Query('invoice_id') invoiceId: string | undefined,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const { buffer, filename } =
+            await this.invoiceLineImportService.exportWorkbook({
+                companyId,
+                purchaseOrderId,
+                invoiceId,
+            });
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buffer.length.toString());
+        res.end(buffer);
+    }
+
+    @Response('invoice.lines.resolve')
+    @AuthJwtAccessProtected()
+    @HttpCode(HttpStatus.OK)
+    @Post('/lines/resolve')
+    async resolveLines(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body()
+        body: {
+            purchase_order_id: string;
+            invoice_id?: string;
+            rows: Array<Record<string, any>>;
+        }
+    ): Promise<IResponse<any>> {
+        const data = await this.invoiceLineImportService.resolveImport({
+            companyId,
+            purchaseOrderId: body.purchase_order_id,
+            invoiceId: body.invoice_id,
+            rows: body.rows || [],
+        });
         return { data };
     }
 
