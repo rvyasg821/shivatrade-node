@@ -5,6 +5,7 @@ import {
     IsBoolean,
     IsDateString,
     IsEnum,
+    IsInt,
     IsNotEmpty,
     IsNumber,
     IsNumberString,
@@ -18,6 +19,8 @@ import {
 import {
     ENUM_INVOICE_GST_ROUTE,
     ENUM_INVOICE_TYPE,
+    ENUM_SHIPPING_BILL_TYPE,
+    ENUM_SHIPPING_MODE,
 } from '@modules/invoice/enums/invoice.enum';
 
 export class InvoiceLineDto {
@@ -106,6 +109,23 @@ export class InvoiceLineDto {
 
     @IsOptional()
     product_expenses_snapshot?: any;
+
+    // ── Packing List (per-line; SHIPPING_INVOICE_MERGE_PLAN §3b) ──
+    @IsInt()
+    @Min(0)
+    @IsOptional()
+    packages?: number;
+
+    @IsNumberString()
+    @IsOptional()
+    net_weight?: string;
+
+    @IsNumberString()
+    @IsOptional()
+    gross_weight?: string;
+
+    // purchase_order_voucher_no / quotation_voucher_no are snapshotted
+    // server-side from the source PO at create (not trusted from the client).
 }
 
 export class InvoiceBankSnapshotDto {
@@ -158,10 +178,12 @@ export class InvoiceCreateRequestDto {
     @IsOptional()
     due_date?: string;
 
-    // Source linkage
+    // Source linkage. Optional "primary SO" pointer — real per-line linkage
+    // is purchase_order_line_id (a multi-SO invoice may span several POs).
+    // (SHIPPING_INVOICE_MERGE_PLAN §5c)
     @IsUUID()
-    @IsNotEmpty()
-    purchase_order_id: string;
+    @IsOptional()
+    purchase_order_id?: string;
 
     @IsUUID()
     @IsOptional()
@@ -327,6 +349,72 @@ export class InvoiceCreateRequestDto {
     @IsOptional()
     @MaxLength(60)
     preferential_agreement?: string;
+
+    // ── Shipment & Shipping Bill (SHIPPING_INVOICE_MERGE_PLAN §3a) ──
+    // All optional at create; filled in Phase B and editable post-ISSUED.
+    @IsEnum(ENUM_SHIPPING_MODE)
+    @IsOptional()
+    mode?: ENUM_SHIPPING_MODE;
+
+    @IsEnum(ENUM_SHIPPING_BILL_TYPE)
+    @IsOptional()
+    shipping_bill_type?: ENUM_SHIPPING_BILL_TYPE;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(60)
+    shipping_bill_no?: string;
+
+    @IsDateString()
+    @IsOptional()
+    shipping_bill_date?: string;
+
+    @IsUUID()
+    @IsOptional()
+    port_of_loading_id?: string;
+
+    @IsOptional()
+    port_of_loading_snapshot?: any;
+
+    @IsUUID()
+    @IsOptional()
+    port_of_discharge_id?: string;
+
+    @IsOptional()
+    port_of_discharge_snapshot?: any;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(80)
+    pre_carriage_by?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(80)
+    place_of_receipt?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(80)
+    place_of_delivery?: string;
+
+    @IsInt()
+    @Min(0)
+    @IsOptional()
+    total_packages?: number;
+
+    @IsNumberString()
+    @IsOptional()
+    net_weight_kg?: string;
+
+    @IsNumberString()
+    @IsOptional()
+    gross_weight_kg?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(60)
+    bl_awb_no?: string;
 
     // Banks
     @IsArray()

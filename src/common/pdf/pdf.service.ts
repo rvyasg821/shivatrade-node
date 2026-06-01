@@ -44,7 +44,7 @@ export class PdfService {
             browser = await puppeteer.launch(this.launchOptions());
             const page = await browser.newPage();
             await page.setContent(html, {
-                waitUntil: 'networkidle0',
+                waitUntil: 'networkidle0' as any,
                 timeout: 30000,
             });
             const buf = await page.pdf({

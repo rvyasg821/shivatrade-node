@@ -17,6 +17,7 @@ import {
     ENUM_INVOICE_GST_ROUTE,
     ENUM_INVOICE_STATUS,
     ENUM_INVOICE_TYPE,
+    ENUM_SHIPPING_BILL_TYPE,
     INVOICE_EDITABLE_AT_ISSUED,
 } from '../enums/invoice.enum';
 import {
@@ -42,6 +43,7 @@ import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/p
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
+import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { In } from 'typeorm';
 
@@ -104,6 +106,7 @@ export class InvoiceService {
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
+        private readonly quotationRepository: QuotationRepository,
         private readonly invoicePaymentRepository: InvoicePaymentRepository
     ) {}
 
@@ -232,6 +235,11 @@ export class InvoiceService {
     ): Promise<InvoiceDoc> {
         await this.assertQtyGuardForLines(data.lines);
 
+        // Resolve source SOs (POs) + enforce the single-source invariant
+        // (one customer / currency / country) before writing anything.
+        const source = await this.loadSourcePoContext(data.lines);
+        this.assertSingleSourceInvariant(source.pos, data.customer_id);
+
         // Pull defaults from Company master so the DRAFT carries snapshot
         // values from the start - operator can override before issuing.
         const ctx = await this.loadCompanyContext(companyId);
@@ -253,7 +261,6 @@ export class InvoiceService {
             customer_po_no: data.customer_po_no,
             country_of_destination: data.country_of_destination,
             country_of_origin: data.country_of_origin || 'India',
-            shipping_id: data.shipping_id,
             customer_id: data.customer_id,
             customer_address_id: data.customer_address_id,
             consignee_id: data.consignee_id || null,
@@ -284,6 +291,23 @@ export class InvoiceService {
             delivery_terms: data.delivery_terms,
             end_use_code: data.end_use_code,
             preferential_agreement: data.preferential_agreement,
+            // ── Shipment & Shipping Bill (§3a) — optional at create ──
+            mode: data.mode,
+            shipping_bill_type:
+                data.shipping_bill_type || ENUM_SHIPPING_BILL_TYPE.FREE,
+            shipping_bill_no: data.shipping_bill_no,
+            shipping_bill_date: data.shipping_bill_date,
+            port_of_loading_id: data.port_of_loading_id,
+            port_of_loading_snapshot: (data as any).port_of_loading_snapshot,
+            port_of_discharge_id: data.port_of_discharge_id,
+            port_of_discharge_snapshot: (data as any).port_of_discharge_snapshot,
+            pre_carriage_by: data.pre_carriage_by,
+            place_of_receipt: data.place_of_receipt,
+            place_of_delivery: data.place_of_delivery,
+            total_packages: data.total_packages,
+            net_weight_kg: data.net_weight_kg,
+            gross_weight_kg: data.gross_weight_kg,
+            bl_awb_no: data.bl_awb_no,
             // Pre-fill banks from active company bank accounts if client didn't pass any.
             bank_snapshots:
                 data.bank_snapshots && data.bank_snapshots.length > 0
@@ -298,7 +322,12 @@ export class InvoiceService {
                     : ctx.default_terms,
         } as any);
 
-        await this.writeLines(header._id.toString(), companyId, data.lines);
+        await this.writeLines(
+            header._id.toString(),
+            companyId,
+            data.lines,
+            source.byPoLineId
+        );
         await this.recompute(header._id.toString());
 
         this.logger.log(`Invoice DRAFT created: ${header._id}`);
@@ -340,10 +369,20 @@ export class InvoiceService {
 
             if (Array.isArray(lines)) {
                 await this.assertQtyGuardForLines(lines, row._id.toString());
+                const source = await this.loadSourcePoContext(lines);
+                this.assertSingleSourceInvariant(
+                    source.pos,
+                    row.customer_id?.toString()
+                );
                 await this.invoiceLineRepository.deleteByInvoiceId(
                     row._id.toString()
                 );
-                await this.writeLines(row._id.toString(), row.company_id.toString(), lines);
+                await this.writeLines(
+                    row._id.toString(),
+                    row.company_id.toString(),
+                    lines,
+                    source.byPoLineId
+                );
             }
             await this.recompute(row._id.toString());
             return this.invoiceRepository.findOneById(row._id.toString());
@@ -785,6 +824,129 @@ export class InvoiceService {
         }
     }
 
+    // ─── Multi-SO source resolution + invariant ─────────────────────────
+
+    /**
+     * Resolve each line's source PO (SO) + its quotation voucher, keyed by
+     * purchase_order_line_id. Used both to enforce the single-source invariant
+     * and to snapshot purchase_order_voucher_no / quotation_voucher_no per line.
+     * (SHIPPING_INVOICE_MERGE_PLAN §5b / §5c)
+     */
+    private async loadSourcePoContext(lines: InvoiceLineDto[]): Promise<{
+        byPoLineId: Map<string, { po: any; quotationVoucherNo?: string }>;
+        pos: any[];
+    }> {
+        const poLineIds = Array.from(
+            new Set(
+                lines.map((l) => l.purchase_order_line_id).filter(Boolean)
+            )
+        ) as string[];
+        if (!poLineIds.length) return { byPoLineId: new Map(), pos: [] };
+
+        const poLines = (await this.poLineRepository.findAll({
+            _id: { $in: poLineIds },
+        } as any)) as any[];
+
+        const poIds = Array.from(
+            new Set(
+                poLines
+                    .map((pl: any) => pl.purchase_order_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const pos = poIds.length
+            ? ((await this.poRepository.findAll({
+                  _id: { $in: poIds },
+              } as any)) as any[])
+            : [];
+        const poById = new Map<string, any>(
+            pos.map((p: any) => [p._id.toString(), p])
+        );
+
+        const quotationIds = Array.from(
+            new Set(
+                pos
+                    .map((p: any) => p.quotation_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const quotations = quotationIds.length
+            ? ((await this.quotationRepository.findAll({
+                  _id: { $in: quotationIds },
+              } as any)) as any[])
+            : [];
+        const qVoucherById = new Map<string, string>(
+            quotations.map((q: any) => [q._id.toString(), q.voucher_no])
+        );
+
+        const byPoLineId = new Map<
+            string,
+            { po: any; quotationVoucherNo?: string }
+        >();
+        for (const pl of poLines) {
+            const po = poById.get(pl.purchase_order_id?.toString());
+            if (!po) continue;
+            byPoLineId.set(pl._id.toString(), {
+                po,
+                quotationVoucherNo: po.quotation_id
+                    ? qVoucherById.get(po.quotation_id.toString())
+                    : undefined,
+            });
+        }
+        return { byPoLineId, pos };
+    }
+
+    /**
+     * Single-source invariant: one invoice = one customer + one currency +
+     * one destination country. Every source SO (PO) must belong to the
+     * invoice customer and the bundle must share a single currency + country.
+     * The PO carries `customer_id` + `currency_code`; the destination country
+     * lives in its `consignee_snapshot.country`. (SHIPPING_INVOICE_MERGE_PLAN §5b)
+     */
+    private assertSingleSourceInvariant(
+        sourcePos: any[],
+        headerCustomerId?: string
+    ): void {
+        if (!sourcePos.length) return;
+
+        if (headerCustomerId) {
+            const mismatched = sourcePos.find(
+                (p: any) =>
+                    p.customer_id &&
+                    p.customer_id.toString() !== headerCustomerId.toString()
+            );
+            if (mismatched) {
+                throw new BadRequestException(
+                    'All source Sales Orders must belong to the invoice customer.'
+                );
+            }
+        }
+
+        const currencies = new Set(
+            sourcePos
+                .map((p: any) => (p.currency_code || '').toUpperCase())
+                .filter(Boolean)
+        );
+        if (currencies.size > 1) {
+            throw new BadRequestException(
+                'All source Sales Orders must share the same currency.'
+            );
+        }
+
+        const countries = new Set(
+            sourcePos
+                .map((p: any) =>
+                    (p.consignee_snapshot?.country || '').trim().toLowerCase()
+                )
+                .filter(Boolean)
+        );
+        if (countries.size > 1) {
+            throw new BadRequestException(
+                'All source Sales Orders must share the same destination country.'
+            );
+        }
+    }
+
     // ─── IGST refund buckets ────────────────────────────────────────────
 
     /**
@@ -831,7 +993,10 @@ export class InvoiceService {
     private async writeLines(
         invoiceId: string,
         companyId: string,
-        lines: InvoiceLineDto[]
+        lines: InvoiceLineDto[],
+        // Source PO context keyed by purchase_order_line_id — supplies the
+        // per-line SO + Quotation voucher snapshots (§3b / §5c).
+        sourceByPoLineId?: Map<string, { po: any; quotationVoucherNo?: string }>
     ): Promise<void> {
         // Pre-fetch the product master for every line in one go, so missing
         // hsn_code / product_name / unit fields on the incoming DTO fall back
@@ -855,6 +1020,7 @@ export class InvoiceService {
         for (let i = 0; i < lines.length; i++) {
             const l = lines[i];
             const prod: any = l.product_id ? productMap.get(l.product_id) : null;
+            const src = sourceByPoLineId?.get(l.purchase_order_line_id);
             await this.invoiceLineRepository.create({
                 invoice_id: invoiceId,
                 company_id: companyId,
@@ -878,6 +1044,13 @@ export class InvoiceService {
                     (l as any).product_rebates_snapshot ?? null,
                 product_expenses_snapshot:
                     (l as any).product_expenses_snapshot ?? null,
+                // Packing List (§3b)
+                packages: l.packages ?? null,
+                net_weight: l.net_weight ?? null,
+                gross_weight: l.gross_weight ?? null,
+                // Source-doc voucher snapshots (§3b / §5c)
+                purchase_order_voucher_no: src?.po?.voucher_no ?? null,
+                quotation_voucher_no: src?.quotationVoucherNo ?? null,
             } as any);
         }
     }
@@ -1019,6 +1192,68 @@ export class InvoiceService {
             });
         }
         return result;
+    }
+
+    /**
+     * Multi-SO picker source (SHIPPING_INVOICE_MERGE_PLAN §5b). For a customer,
+     * returns every active SO (PO) that still has invoiceable (dispatched-but-
+     * not-yet-invoiced) lines, grouped by SO. Each group carries the SO +
+     * Quotation voucher, the SO currency + destination country (so the FE can
+     * disable non-matching groups) and a buyer-requirement hint.
+     */
+    async getCustomerInvoiceableSoGroups(
+        companyId: string,
+        customerId: string
+    ): Promise<any[]> {
+        const pos = (await this.poRepository.findAll({
+            company_id: companyId,
+            customer_id: customerId,
+            soft_delete: false,
+        } as any)) as any[];
+        // "Active" SO = anything past draft and not cancelled (dispatch, and
+        // therefore invoiceable qty, only exists after the PO is confirmed).
+        const active = pos.filter(
+            (p) => p.status !== 'draft' && p.status !== 'cancelled'
+        );
+        if (!active.length) return [];
+
+        const quotationIds = Array.from(
+            new Set(
+                active
+                    .map((p) => p.quotation_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const quotations = quotationIds.length
+            ? ((await this.quotationRepository.findAll({
+                  _id: { $in: quotationIds },
+              } as any)) as any[])
+            : [];
+        const qVoucherById = new Map<string, string>(
+            quotations.map((q: any) => [q._id.toString(), q.voucher_no])
+        );
+
+        const groups: any[] = [];
+        for (const po of active) {
+            const lines = await this.getAddablePoLines(po._id.toString());
+            if (!lines.length) continue;
+            groups.push({
+                po_id: po._id.toString(),
+                po_voucher_no: po.voucher_no,
+                quotation_id: po.quotation_id?.toString() || null,
+                quotation_voucher_no: po.quotation_id
+                    ? qVoucherById.get(po.quotation_id.toString()) || null
+                    : null,
+                currency_code: po.currency_code || null,
+                country_of_destination:
+                    po.consignee_snapshot?.country || null,
+                buyer_reference:
+                    lines.find((l: any) => l.customer_reference)
+                        ?.customer_reference || null,
+                lines,
+            });
+        }
+        return groups;
     }
 
     mapList(row: any): InvoiceListResponseDto {

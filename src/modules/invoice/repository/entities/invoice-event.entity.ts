@@ -1,21 +1,21 @@
 import { DatabaseObjectIdEntityBase } from '@common/database/bases/database.object-id.entity';
 import { Entity, Column, Index } from 'typeorm';
-import { ENUM_SHIPPING_EVENT_TYPE } from '@modules/shipping/enums/shipping.enum';
-import { SHIPPING_EVENT_COLLECTION_NAME } from '../../constants/shipping.entity.constant';
+import { ENUM_INVOICE_EVENT_TYPE } from '@modules/invoice/enums/invoice.enum';
+import { INVOICE_EVENT_COLLECTION_NAME } from '../../constants/invoice.entity.constant';
 
 /**
- * Append-only timeline of shipping events.
+ * Append-only timeline of manual invoice tracking events
+ * (SHIPPING_INVOICE_MERGE_PLAN §8 — re-homed from shipping_events).
  *
- * System events (is_system=true) are auto-emitted by the service at every
- * status flip (booked / dispatched / arrived / cleared / delivered /
- * cancelled / updated). Operators can also add manual events post-BOOKED.
- * Manual events can be retracted (soft_delete), system events cannot.
+ * Manual events only — there are no system lifecycle events. Operators add
+ * them from the invoice "Tracking" tab; each event can carry one attachment
+ * and can be retracted (soft_delete) with a mandatory reason.
  */
-@Entity(SHIPPING_EVENT_COLLECTION_NAME)
-export class ShippingEventEntity extends DatabaseObjectIdEntityBase {
+@Entity(INVOICE_EVENT_COLLECTION_NAME)
+export class InvoiceEventEntity extends DatabaseObjectIdEntityBase {
     @Index()
     @Column({ type: 'uuid', nullable: false })
-    shipping_id: string;
+    invoice_id: string;
 
     @Index()
     @Column({ type: 'uuid', nullable: false })
@@ -23,25 +23,21 @@ export class ShippingEventEntity extends DatabaseObjectIdEntityBase {
 
     @Index()
     @Column({ type: 'varchar', length: 40, nullable: false })
-    type: ENUM_SHIPPING_EVENT_TYPE;
+    type: ENUM_INVOICE_EVENT_TYPE;
 
-    /** Free-text label when type=OTHER (carrier app sometimes has bespoke labels). */
+    /** Free-text label when type=OTHER. */
     @Column({ type: 'varchar', length: 120, nullable: true })
     type_other?: string;
 
     @Column({ type: 'timestamp with time zone', nullable: false })
     occurred_at: Date;
 
-    /** Free text - port, checkpoint, customs office, transhipment hub. */
+    /** Free text — port, checkpoint, customs office, transhipment hub. */
     @Column({ type: 'varchar', length: 200, nullable: true })
     location?: string;
 
     @Column({ type: 'text', nullable: true })
     notes?: string;
-
-    @Index()
-    @Column({ type: 'boolean', default: false })
-    is_system: boolean;
 
     @Column({ type: 'uuid', nullable: true })
     created_by?: string;
@@ -51,7 +47,7 @@ export class ShippingEventEntity extends DatabaseObjectIdEntityBase {
     soft_delete: boolean;
 
     /** Optional single attachment per event (relative path under static
-     *  root, e.g. `files/shipping-events/<file>`). FE prepends PDF URL base. */
+     *  root, e.g. `files/invoice-events/<file>`). FE prepends PDF URL base. */
     @Column({ type: 'varchar', length: 500, nullable: true })
     attachment_url?: string;
 
@@ -69,4 +65,4 @@ export class ShippingEventEntity extends DatabaseObjectIdEntityBase {
     deleted_reason?: string;
 }
 
-export type ShippingEventDoc = ShippingEventEntity;
+export type InvoiceEventDoc = InvoiceEventEntity;

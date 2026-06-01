@@ -1,0 +1,27 @@
+{
+    "list": "Invoices retrieved successfully.",
+    "get": "Invoice fetched successfully.",
+    "create": "Invoice created successfully.",
+    "update": "Invoice updated successfully.",
+    "delete": "Invoice deleted successfully.",
+    "issue": "Invoice issued successfully.",
+    "cancel": "Invoice cancelled.",
+    "po-addable": "Addable Sales Order lines loaded.",
+    "customer-invoiceable": "Invoiceable Sales Orders loaded.",
+    "payment": {
+        "list": "Payments retrieved successfully.",
+        "create": "Payment recorded successfully.",
+        "void": "Payment voided successfully."
+    },
+    "lines": {
+        "resolve": "Line items resolved."
+    },
+    "event": {
+        "list": "Tracking events loaded.",
+        "create": "Tracking event added.",
+        "retract": "Tracking event retracted."
+    },
+    "error": {
+        "notFound": "Sorry, we couldn't find the requested Invoice."
+    }
+}

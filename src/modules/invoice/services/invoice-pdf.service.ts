@@ -8,8 +8,11 @@ import { CompanyRepository } from '@modules/company/repository/repositories/comp
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
-import { ShippingRepository } from '@modules/shipping/repository/repositories/shipping.repository';
-import { ENUM_INVOICE_GST_ROUTE } from '../enums/invoice.enum';
+import {
+    ENUM_INVOICE_GST_ROUTE,
+    ENUM_SHIPPING_MODE,
+    SEA_MODES,
+} from '../enums/invoice.enum';
 
 // Embed logo as data URI - puppeteer's file:// loads are flaky.
 const LOGO_DATA_URI: string = (() => {
@@ -60,8 +63,7 @@ export class InvoicePdfService {
         private readonly companyRepository: CompanyRepository,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly customerRepository: CustomerRepository,
-        private readonly customerAddressRepository: CustomerAddressRepository,
-        private readonly shippingRepository: ShippingRepository
+        private readonly customerAddressRepository: CustomerAddressRepository
     ) {}
 
     async render(
@@ -160,12 +162,6 @@ export class InvoicePdfService {
                 : (consigneeAddresses as any[]).find((a: any) => a.is_default) ||
                   (consigneeAddresses as any[])[0];
 
-        const shipping: any = invoice.shipping_id
-            ? await this.shippingRepository.findOneById(
-                  invoice.shipping_id.toString()
-              )
-            : null;
-
         return {
             invoice,
             lines: lines as any[],
@@ -173,7 +169,6 @@ export class InvoicePdfService {
             companyAddr,
             customer,
             consigneeAddr,
-            shipping,
             // Snapshot is the primary source of truth for the Consignee /
             // Notify Party blocks. Falls back to FK lookup (customer +
             // consigneeAddr) when missing (legacy invoices, drafts saved
@@ -193,9 +188,16 @@ interface RenderData {
     companyAddr: any;
     customer: any;
     consigneeAddr: any;
-    shipping: any;
     consigneeSnapshot: any;
     notifySnapshot: any;
+}
+
+/** AWB/BL transport-doc label, derived from invoice.mode (sea→BL, air-courier
+ *  →Courier, air→AWB). Replaces the dropped `bl_awb_type` field. */
+function awbLabel(mode?: ENUM_SHIPPING_MODE): string {
+    if (mode && SEA_MODES.includes(mode)) return 'BL';
+    if (mode === ENUM_SHIPPING_MODE.AIR_COURIER) return 'Courier';
+    return 'AWB';
 }
 
 const baseStyles = `
@@ -272,23 +274,29 @@ function bankDetailsBlock(banks: any[] | undefined): string {
 }
 
 /** Pre-Carriage / Place of Receipt / Port of Loading / Port of Discharge /
- *  Place of Delivery — populated from the linked Shipping record when
- *  invoice.shipping_id is set. Returns empty string when no shipping link. */
+ *  Place of Delivery — read from the invoice's own shipment block (§10).
+ *  Returns empty string when no route/port field has been recorded yet. */
 function shippingRouteBlock(d: RenderData): string {
-    const s = d.shipping;
-    if (!s) return '';
-    const pol = s.port_of_loading_snapshot || {};
-    const pod = s.port_of_discharge_snapshot || {};
+    const inv = d.invoice || {};
+    const pol = inv.port_of_loading_snapshot || {};
+    const pod = inv.port_of_discharge_snapshot || {};
     const polLabel = pol.name || pol.port_name || pol.code || '';
     const podLabel = pod.name || pod.port_name || pod.code || '';
+    const hasAny =
+        inv.pre_carriage_by ||
+        inv.place_of_receipt ||
+        inv.place_of_delivery ||
+        polLabel ||
+        podLabel;
+    if (!hasAny) return '';
     return `
     <table style="margin-top: 0;">
         <tr>
-            <td style="width:20%;"><span class="lbl">Pre-Carriage By</span><br/>${esc(s.pre_carriage_by)}</td>
-            <td style="width:20%;"><span class="lbl">Place of Receipt</span><br/>${esc(s.place_of_receipt)}</td>
+            <td style="width:20%;"><span class="lbl">Pre-Carriage By</span><br/>${esc(inv.pre_carriage_by)}</td>
+            <td style="width:20%;"><span class="lbl">Place of Receipt</span><br/>${esc(inv.place_of_receipt)}</td>
             <td style="width:20%;"><span class="lbl">Port of Loading</span><br/>${esc(polLabel)}</td>
             <td style="width:20%;"><span class="lbl">Port of Discharge</span><br/>${esc(podLabel)}</td>
-            <td><span class="lbl">Place of Delivery</span><br/>${esc(s.place_of_delivery)}</td>
+            <td><span class="lbl">Place of Delivery</span><br/>${esc(inv.place_of_delivery)}</td>
         </tr>
     </table>`;
 }
@@ -379,8 +387,8 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
             <td>
                 <span class="lbl">Export Route</span><br/>${d.invoice.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED ? 'Export Under LUT (Without Payment of IGST)' : 'Export With Payment of IGST'}
                 ${
-                    d.shipping?.shipping_bill_type
-                        ? `<br/>Export Under ${esc(SHIPPING_BILL_TYPE_LABELS[d.shipping.shipping_bill_type] || d.shipping.shipping_bill_type)}`
+                    d.invoice.shipping_bill_type
+                        ? `<br/>Export Under ${esc(SHIPPING_BILL_TYPE_LABELS[d.invoice.shipping_bill_type] || d.invoice.shipping_bill_type)}`
                         : ''
                 }
             </td>
@@ -389,7 +397,8 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
 }
 
 // Indian export-scheme labels shown next to "Export Route" on the
-// Commercial Invoice. Values come from the linked Shipping record.
+// Commercial Invoice. Driven by invoice.shipping_bill_type (independent of
+// gst_route) — renders on both IGST-paid and LUT invoices.
 const SHIPPING_BILL_TYPE_LABELS: Record<string, string> = {
     free: 'Free Scheme',
     dbk: 'Drawback',
@@ -565,7 +574,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
  * Differences vs Commercial Invoice (client's STIPL119 EXPORT INVOICE template):
  *   - Title: "EXPORT INVOICE"
  *   - Per-line table gains a "Requirement #" column (customer_reference)
- *   - Header strip surfaces buyer's PO # + AWB # (from linked Shipping)
+ *   - Header strip surfaces buyer's PO # + AWB # (from invoice.bl_awb_no)
  *   - Footer adds Advance Received + Balance Receivable rows
  *   - IGST refund buckets are intentionally OMITTED (buyer doesn't see
  *     Indian tax refund machinery)
@@ -595,9 +604,9 @@ function buildExportInvoiceHtml(d: RenderData): string {
 
     const banksHtml = bankDetailsBlock(inv.bank_snapshots);
 
-    // AWB / BL # is on the linked Shipping record (Phase 1 — Sea+Air only).
-    const awbNo = d.shipping?.bl_awb_no || '';
-    const awbType = d.shipping?.bl_awb_type || 'AWB';
+    // AWB / BL # is recorded on the invoice (§10); label derives from mode.
+    const awbNo = inv.bl_awb_no || '';
+    const awbType = awbLabel(inv.mode);
 
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/><style>${baseStyles}</style></head>
@@ -709,9 +718,9 @@ function buildPackingListHtml(d: RenderData): string {
                 <td class="center">${i + 1}</td>
                 <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
                 <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
-                <td class="right">-</td>
-                <td class="right">-</td>
-                <td class="right">-</td>
+                <td class="right">${l.packages != null && l.packages !== '' ? esc(String(l.packages)) : '-'}</td>
+                <td class="right">${l.net_weight != null && l.net_weight !== '' ? fmt(l.net_weight, 3) + ' kg' : '-'}</td>
+                <td class="right">${l.gross_weight != null && l.gross_weight !== '' ? fmt(l.gross_weight, 3) + ' kg' : '-'}</td>
             </tr>`
         )
         .join('');
@@ -746,32 +755,32 @@ function buildPackingListHtml(d: RenderData): string {
         <tr>
             <td colspan="3" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
             <td class="right strong" style="background:#f0f0f0;">${
-                d.shipping?.total_packages != null
-                    ? esc(String(d.shipping.total_packages)) +
-                      (d.shipping?.package_type
-                          ? ' ' + esc(d.shipping.package_type)
-                          : '')
+                inv.total_packages != null
+                    ? esc(String(inv.total_packages))
                     : '-'
             }</td>
             <td class="right strong" style="background:#f0f0f0;">${
-                d.shipping?.net_weight_kg != null
-                    ? fmt(d.shipping.net_weight_kg, 3) + ' kg'
+                inv.net_weight_kg != null
+                    ? fmt(inv.net_weight_kg, 3) + ' kg'
                     : '-'
             }</td>
             <td class="right strong" style="background:#f0f0f0;">${
-                d.shipping?.gross_weight_kg != null
-                    ? fmt(d.shipping.gross_weight_kg, 3) + ' kg'
+                inv.gross_weight_kg != null
+                    ? fmt(inv.gross_weight_kg, 3) + ' kg'
                     : '-'
             }</td>
         </tr>
     </table>
 
     ${
-        d.shipping
+        inv.total_packages != null ||
+        inv.net_weight_kg != null ||
+        inv.gross_weight_kg != null
             ? ''
             : `<div class="pad small muted" style="margin-top: 6px;">
-                Note: Package count and weights are populated from the linked Shipping
-                record once the consignment is booked. Until then, fields show "-".
+                Note: Package count and weights are recorded on the invoice's
+                Shipment &amp; Shipping Bill block once the consignment ships.
+                Until then, fields show "-".
             </div>`
     }
 

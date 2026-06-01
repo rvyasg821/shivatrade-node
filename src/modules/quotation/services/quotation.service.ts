@@ -222,7 +222,8 @@ export class QuotationService {
             companyId,
             header._id.toString(),
             data.lines,
-            data.margin_pct || '0'
+            data.margin_pct || '0',
+            voucher_no
         );
 
         await this.recompute(header._id.toString(), companyId);
@@ -323,7 +324,8 @@ export class QuotationService {
                 companyId,
                 row._id.toString(),
                 lines,
-                (data.margin_pct ?? row.margin_pct) || '0'
+                (data.margin_pct ?? row.margin_pct) || '0',
+                row.voucher_no
             );
         }
 
@@ -488,7 +490,11 @@ export class QuotationService {
         companyId: string,
         quotationId: string,
         lines?: any[],
-        defaultMarginPct: string = '0'
+        defaultMarginPct: string = '0',
+        // Quotation voucher — fallback for an empty per-line buyer-ref
+        // (customer_reference). Fills only when the line has no ref so a
+        // user-entered value is never clobbered. (TKT-0, §7a)
+        voucherNo?: string
     ): Promise<void> {
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
         if (!lines?.length) return;
@@ -508,7 +514,11 @@ export class QuotationService {
                 product_id: pid,
                 vendor_id: l.vendor_id || null,
                 description: l.description || null,
-                customer_reference: l.customer_reference || null,
+                customer_reference:
+                    (typeof l.customer_reference === 'string' &&
+                        l.customer_reference.trim()) ||
+                    voucherNo ||
+                    null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
                 unit_price: l.unit_price || '0',
