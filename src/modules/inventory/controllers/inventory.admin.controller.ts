@@ -41,6 +41,7 @@ export class InventoryAdminController {
         @Query('po_id') poId?: string,
         @Query('pov_id') povId?: string,
         @Query('vendor_id') vendorId?: string,
+        @Query('location_id') locationId?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
         @Query('min_qty') minQty?: string,
@@ -53,6 +54,7 @@ export class InventoryAdminController {
             po_id: poId || undefined,
             pov_id: povId || undefined,
             vendor_id: vendorId || undefined,
+            location_id: locationId || undefined,
             date_from: dateFrom || undefined,
             date_to: dateTo || undefined,
             min_qty:

@@ -11,6 +11,9 @@ export interface InventoryListFilters {
     po_id?: string;
     pov_id?: string;
     vendor_id?: string;
+    // Deliver-to location (Locations master id). Stored on the POV/SO under
+    // the `delivery_address_id` column since the 2026-05-22 ship-to refactor.
+    location_id?: string;
     date_from?: string;
     date_to?: string;
     min_qty?: number;
@@ -96,6 +99,14 @@ export class InventoryService {
         if (filters.vendor_id) {
             where.push(`pv.vendor_id = $${i}`);
             params.push(filters.vendor_id);
+            i++;
+        }
+        if (filters.location_id) {
+            // POV snapshots the SO's deliver-to location; fall back to the SO.
+            where.push(
+                `COALESCE(pv.delivery_address_id, po.delivery_address_id) = $${i}`
+            );
+            params.push(filters.location_id);
             i++;
         }
         if (filters.date_from) {
