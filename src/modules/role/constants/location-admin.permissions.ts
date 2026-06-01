@@ -312,6 +312,10 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_add: true,
         can_delete: true,
     },
+    inventory: {
+        can_all: true,
+        can_read: true,
+    },
 } as const;
 
 export type LocationAdminPermissions = typeof LOCATION_ADMIN_DEFAULT_PERMISSIONS;

@@ -312,6 +312,10 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_add: false,
         can_delete: false,
     },
+    inventory: {
+        can_all: false,
+        can_read: false,
+    },
 } as const;
 
 export type EmployeePermissions = typeof EMPLOYEE_DEFAULT_PERMISSIONS;
