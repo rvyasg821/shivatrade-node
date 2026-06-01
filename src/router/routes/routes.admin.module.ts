@@ -75,8 +75,6 @@ import { PoVendorAdminController } from '@modules/po-vendor/controllers/po-vendo
 import { InventoryModule } from '@modules/inventory/inventory.module';
 import { InvoiceModule } from '@modules/invoice/invoice.module';
 import { InvoiceAdminController } from '@modules/invoice/controllers/invoice.admin.controller';
-import { ShippingModule } from '@modules/shipping/shipping.module';
-import { ShippingAdminController } from '@modules/shipping/controllers/shipping.admin.controller';
 import { SalesDocImportModule } from '@modules/sales-doc-import/sales-doc-import.module';
 import { SalesDocImportAdminController } from '@modules/sales-doc-import/controllers/sales-doc-import.admin.controller';
 import { TrackingEventModule } from '@modules/tracking-event/tracking-event.module';
@@ -215,7 +213,6 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         PurchaseOrderAdminController,
         PoVendorAdminController,
         InvoiceAdminController,
-        ShippingAdminController,
         TrackingEventAdminController,
         SalesDocImportAdminController,
     ],
@@ -269,7 +266,6 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         PoVendorModule,
         InventoryModule,
         InvoiceModule,
-        ShippingModule,
         TrackingEventModule,
         SalesDocImportModule,
         EmployeeModule,

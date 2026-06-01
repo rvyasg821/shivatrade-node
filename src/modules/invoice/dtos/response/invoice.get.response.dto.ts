@@ -2,6 +2,8 @@ import {
     ENUM_INVOICE_GST_ROUTE,
     ENUM_INVOICE_STATUS,
     ENUM_INVOICE_TYPE,
+    ENUM_SHIPPING_BILL_TYPE,
+    ENUM_SHIPPING_MODE,
 } from '@modules/invoice/enums/invoice.enum';
 
 export class InvoiceLineResponseDto {
@@ -29,6 +31,14 @@ export class InvoiceLineResponseDto {
     igst_rate_pct?: string;
     product_rebates_snapshot?: any;
     product_expenses_snapshot?: any;
+
+    // Packing List (§3b)
+    packages?: number;
+    net_weight?: string;
+    gross_weight?: string;
+    // Source-doc voucher snapshots
+    purchase_order_voucher_no?: string;
+    quotation_voucher_no?: string;
 }
 
 export class InvoiceGetResponseDto {
@@ -56,6 +66,23 @@ export class InvoiceGetResponseDto {
     // Shipping
     shipping_id?: string;
     shipping_voucher_no?: string;
+
+    // Shipment & Shipping Bill (§3a)
+    mode?: ENUM_SHIPPING_MODE;
+    shipping_bill_type?: ENUM_SHIPPING_BILL_TYPE;
+    shipping_bill_no?: string;
+    shipping_bill_date?: string;
+    port_of_loading_id?: string;
+    port_of_loading_snapshot?: any;
+    port_of_discharge_id?: string;
+    port_of_discharge_snapshot?: any;
+    pre_carriage_by?: string;
+    place_of_receipt?: string;
+    place_of_delivery?: string;
+    total_packages?: number;
+    net_weight_kg?: string;
+    gross_weight_kg?: string;
+    bl_awb_no?: string;
 
     // Parties
     customer_id?: string;

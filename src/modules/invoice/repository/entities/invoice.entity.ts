@@ -4,6 +4,8 @@ import {
     ENUM_INVOICE_TYPE,
     ENUM_INVOICE_STATUS,
     ENUM_INVOICE_GST_ROUTE,
+    ENUM_SHIPPING_MODE,
+    ENUM_SHIPPING_BILL_TYPE,
 } from '@modules/invoice/enums/invoice.enum';
 import { INVOICE_COLLECTION_NAME } from '../../constants/invoice.entity.constant';
 
@@ -58,9 +60,12 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     due_date?: string;
 
     // ── Source linkage ──
+    // Nullable "primary SO" pointer — a multi-SO invoice may span several POs;
+    // the authoritative per-line linkage is invoice_line.purchase_order_line_id.
+    // (SHIPPING_INVOICE_MERGE_PLAN §5c)
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    purchase_order_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    purchase_order_id?: string;
 
     @Column({ type: 'varchar', length: 60, nullable: true })
     purchase_order_voucher_no?: string;
@@ -97,6 +102,69 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
 
     @Column({ type: 'varchar', length: 60, nullable: true })
     shipping_voucher_no?: string;
+
+    // ── Shipment & Shipping Bill (recorded on the Invoice; SHIPPING_INVOICE_MERGE_PLAN §3a) ──
+    // All optional at create; the shipment block is filled in Phase B (after
+    // goods ship + customs issues the Shipping Bill) and stays editable even
+    // after the invoice is ISSUED.
+
+    /** sea/air family — drives the AWB-vs-BL label on the PDF. */
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    mode?: ENUM_SHIPPING_MODE;
+
+    /** Export scheme — renders "Export Under <scheme>" on the PDF (both GST routes). */
+    @Column({
+        type: 'varchar',
+        length: 20,
+        nullable: false,
+        default: ENUM_SHIPPING_BILL_TYPE.FREE,
+    })
+    shipping_bill_type: ENUM_SHIPPING_BILL_TYPE;
+
+    /** Shipping Bill no/date — record-only (CHA generates the SB externally; not printed). */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    shipping_bill_no?: string;
+
+    @Column({ type: 'date', nullable: true })
+    shipping_bill_date?: string;
+
+    /** Port of Loading — FK to port master + snapshot (so the PDF is stable). */
+    @Column({ type: 'uuid', nullable: true })
+    port_of_loading_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    port_of_loading_snapshot?: any;
+
+    /** Port of Discharge — FK to port master + snapshot. */
+    @Column({ type: 'uuid', nullable: true })
+    port_of_discharge_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    port_of_discharge_snapshot?: any;
+
+    // ── Route ──
+    @Column({ type: 'varchar', length: 80, nullable: true })
+    pre_carriage_by?: string;
+
+    @Column({ type: 'varchar', length: 80, nullable: true })
+    place_of_receipt?: string;
+
+    @Column({ type: 'varchar', length: 80, nullable: true })
+    place_of_delivery?: string;
+
+    // ── Cargo totals ──
+    @Column({ type: 'int', nullable: true })
+    total_packages?: number;
+
+    @Column({ type: 'numeric', precision: 12, scale: 3, nullable: true })
+    net_weight_kg?: string;
+
+    @Column({ type: 'numeric', precision: 12, scale: 3, nullable: true })
+    gross_weight_kg?: string;
+
+    /** Master transport doc no — label "AWB/BL No" on the PDF. */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    bl_awb_no?: string;
 
     // ── Parties (FK + snapshot pattern) ──
     @Index()

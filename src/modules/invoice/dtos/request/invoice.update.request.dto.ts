@@ -3,9 +3,10 @@ import { InvoiceCreateRequestDto } from './invoice.create.request.dto';
 
 /**
  * Update DTO - server enforces field-level edit gates per status:
- *  - DRAFT     : all fields editable
- *  - ISSUED    : only `shipping_id`, `advance_received`, `internal_notes`, `notes_to_buyer`
- *  - other     : nothing editable (transition only via /issue, /cancel)
+ *  - DRAFT     : all fields + line items editable
+ *  - ISSUED+   : only the Shipment & Shipping Bill block (§3a) + notes
+ *                editable; financial fields + line items frozen
+ *  - CANCELLED : nothing editable
  *
  * See INVOICE_EDITABLE_AT_ISSUED in invoice.enum.ts for the post-issue list.
  */

@@ -40,7 +40,7 @@ export class ContractPdfService {
             // Extract header / footer from HTML, return cleaned body
             const { bodyHtml, headerTemplate, footerTemplate } = this.extractHeaderFooter(html);
 
-            await page.setContent(bodyHtml, { waitUntil: 'networkidle0', timeout: 30000 });
+            await page.setContent(bodyHtml, { waitUntil: 'networkidle0' as any, timeout: 30000 });
 
             const pdfBuffer = await page.pdf({
                 format: 'A4',

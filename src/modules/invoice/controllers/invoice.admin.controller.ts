@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     Controller,
     Get,
     Post,
@@ -10,9 +11,11 @@ import {
     Res,
     HttpCode,
     HttpStatus,
+    UploadedFile,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -30,6 +33,8 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { InvoiceService } from '../services/invoice.service';
 import { InvoiceLineImportService } from '../services/invoice-line-import.service';
+import { InvoiceEventService } from '../services/invoice-event.service';
+import { InvoiceEventFileService } from '../services/invoice-event-file.service';
 import {
     InvoicePdfService,
     InvoicePdfDocType,
@@ -38,6 +43,8 @@ import { InvoiceRepository } from '../repository/repositories/invoice.repository
 import { InvoiceCreateRequestDto } from '../dtos/request/invoice.create.request.dto';
 import { InvoiceUpdateRequestDto } from '../dtos/request/invoice.update.request.dto';
 import { InvoiceCancelRequestDto } from '../dtos/request/invoice.cancel.request.dto';
+import { InvoiceEventCreateRequestDto } from '../dtos/request/invoice-event.create.request.dto';
+import { InvoiceEventDeleteRequestDto } from '../dtos/request/invoice-event.delete.request.dto';
 import {
     InvoicePaymentCreateRequestDto,
     InvoicePaymentVoidRequestDto,
@@ -57,8 +64,20 @@ export class InvoiceAdminController {
         private readonly invoiceService: InvoiceService,
         private readonly invoiceRepository: InvoiceRepository,
         private readonly invoicePdfService: InvoicePdfService,
-        private readonly invoiceLineImportService: InvoiceLineImportService
+        private readonly invoiceLineImportService: InvoiceLineImportService,
+        private readonly invoiceEventService: InvoiceEventService,
+        private readonly invoiceEventFileService: InvoiceEventFileService
     ) {}
+
+    private static readonly ALLOWED_EVENT_ATTACHMENT_EXTS = new Set([
+        'jpg',
+        'jpeg',
+        'png',
+        'gif',
+        'webp',
+        'pdf',
+        'heic',
+    ]);
 
     @Response('invoice.create')
     @AuthJwtAccessProtected()
@@ -124,6 +143,20 @@ export class InvoiceAdminController {
         const data = await this.invoiceService.getAddablePoLines(
             poId,
             excludeInvoiceId
+        );
+        return { data };
+    }
+
+    @Response('invoice.customer-invoiceable')
+    @AuthJwtAccessProtected()
+    @Get('/customer-invoiceable/:customerId')
+    async getCustomerInvoiceable(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('customerId') customerId: string
+    ): Promise<IResponse<any[]>> {
+        const data = await this.invoiceService.getCustomerInvoiceableSoGroups(
+            companyId,
+            customerId
         );
         return { data };
     }
@@ -337,5 +370,71 @@ export class InvoiceAdminController {
         );
         res.setHeader('Content-Length', buffer.length.toString());
         res.end(buffer);
+    }
+
+    // ─── Tracking events (SHIPPING_INVOICE_MERGE_PLAN §8) ───────────────
+
+    @Response('invoice.event.list')
+    @AuthJwtAccessProtected()
+    @Get('/event/:invoiceId')
+    async listEvents(
+        @Param('invoiceId') invoiceId: string
+    ): Promise<IResponse<any[]>> {
+        await this.invoiceService.findOneById(invoiceId); // 404 guard
+        const data = await this.invoiceEventService.listForInvoice(invoiceId);
+        return { data };
+    }
+
+    @Response('invoice.event.create')
+    @AuthJwtAccessProtected()
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'attachment', fileSize: 15 * 1024 * 1024 })
+    @Post('/event/:invoiceId')
+    async addEvent(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Param('invoiceId') invoiceId: string,
+        @Body() body: InvoiceEventCreateRequestDto,
+        @UploadedFile() file?: Express.Multer.File
+    ): Promise<IResponse<any>> {
+        const row = await this.invoiceService.findOneById(invoiceId);
+        let attachmentUrl: string | undefined;
+        if (file && file.buffer && file.originalname) {
+            const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+            if (
+                !InvoiceAdminController.ALLOWED_EVENT_ATTACHMENT_EXTS.has(ext)
+            ) {
+                throw new BadRequestException(
+                    `Unsupported attachment type: .${ext}`
+                );
+            }
+            attachmentUrl = await this.invoiceEventFileService.saveFile(
+                file.buffer,
+                file.originalname,
+                companyId
+            );
+        }
+        const ev = await this.invoiceEventService.addEvent(
+            row,
+            body,
+            userId,
+            attachmentUrl
+        );
+        return { data: ev };
+    }
+
+    @Response('invoice.event.retract')
+    @AuthJwtAccessProtected()
+    @Post('/event/:eventId/retract')
+    async retractEvent(
+        @AuthJwtPayload('user') userId: string,
+        @Param('eventId') eventId: string,
+        @Body() body: InvoiceEventDeleteRequestDto
+    ): Promise<void> {
+        await this.invoiceEventService.retractEvent(
+            eventId,
+            userId,
+            body.reason
+        );
     }
 }

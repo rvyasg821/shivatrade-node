@@ -109,6 +109,25 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'jsonb', nullable: true })
     product_expenses_snapshot?: any;
 
+    // ── Packing List (per-line; SHIPPING_INVOICE_MERGE_PLAN §3b) ──
+    @Column({ type: 'int', nullable: true })
+    packages?: number;
+
+    @Column({ type: 'numeric', precision: 12, scale: 3, nullable: true })
+    net_weight?: string;
+
+    @Column({ type: 'numeric', precision: 12, scale: 3, nullable: true })
+    gross_weight?: string;
+
+    // ── Source-doc voucher snapshots (carry refs when bundling multiple SOs) ──
+    /** SO (purchase_order) voucher — snapshot from the source PO at create. */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    purchase_order_voucher_no?: string;
+
+    /** Quotation voucher — snapshot from PO → PFI → Quotation at create. */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    quotation_voucher_no?: string;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

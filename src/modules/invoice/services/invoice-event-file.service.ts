@@ -3,20 +3,20 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 
 /**
- * Saves shipping-event attachments to `public/files/shipping-events/<filename>`.
+ * Saves invoice-event attachments to `public/files/invoice-events/<filename>`.
  * Returns the relative storage path (no host, no `/assets` prefix); the
  * frontend joins it with REACT_APP_BACKEND_REST_API_URL_PDF for display.
  *
- * Mirrors POV's TrackingEventFileService but writes to a separate directory
- * so the two timelines never collide on disk.
+ * Re-homed from ShippingEventFileService (SHIPPING_INVOICE_MERGE_PLAN §8);
+ * writes to a separate directory so timelines never collide on disk.
  */
 @Injectable()
-export class ShippingEventFileService {
+export class InvoiceEventFileService {
     private readonly uploadDir = path.resolve(
         process.cwd(),
         'public',
         'files',
-        'shipping-events'
+        'invoice-events'
     );
 
     async ensureUploadDir(): Promise<void> {
@@ -40,6 +40,6 @@ export class ShippingEventFileService {
             .slice(0, 40);
         const unique = `${Date.now()}_${companyId.slice(0, 8)}_${safe}${ext}`;
         await fs.writeFile(path.join(this.uploadDir, unique), buffer);
-        return `files/shipping-events/${unique}`;
+        return `files/invoice-events/${unique}`;
     }
 }
