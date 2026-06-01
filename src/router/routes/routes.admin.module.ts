@@ -72,6 +72,7 @@ import { PurchaseOrderModule } from '@modules/purchase-order/purchase-order.modu
 import { PurchaseOrderAdminController } from '@modules/purchase-order/controllers/purchase-order.admin.controller';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
 import { PoVendorAdminController } from '@modules/po-vendor/controllers/po-vendor.admin.controller';
+import { InventoryModule } from '@modules/inventory/inventory.module';
 import { InvoiceModule } from '@modules/invoice/invoice.module';
 import { InvoiceAdminController } from '@modules/invoice/controllers/invoice.admin.controller';
 import { ShippingModule } from '@modules/shipping/shipping.module';
@@ -266,6 +267,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         PfiModule,
         PurchaseOrderModule,
         PoVendorModule,
+        InventoryModule,
         InvoiceModule,
         ShippingModule,
         TrackingEventModule,

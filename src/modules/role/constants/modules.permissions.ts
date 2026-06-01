@@ -210,6 +210,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_delete: false }
         },
+        inventory: {
+            name: "Inventory",
+            description: "Received-goods register — read-only view of POV closures.",
+            permissions: ["can_all", "can_read"],
+            default: { can_all: false, can_read: false }
+        },
     },
     version: "1.0.0",
     lastUpdated: "2026-05-05"
