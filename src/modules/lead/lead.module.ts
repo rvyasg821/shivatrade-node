@@ -8,6 +8,7 @@ import { CustomerModule } from '@modules/customer/customer.module';
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
 import { ProductModule } from '@modules/product/product.module';
 import { CategoryModule } from '@modules/category/category.module';
+import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 // Repository-only import (no service-level cycle with QuotationModule).
 import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
 
@@ -18,6 +19,7 @@ import { QuotationRepositoryModule } from '@modules/quotation/repository/quotati
         UserRepositoryModule,
         ProductModule,
         CategoryModule,
+        CompanyRepositoryModule,
         QuotationRepositoryModule,
     ],
     providers: [LeadService, LeadActivityService],

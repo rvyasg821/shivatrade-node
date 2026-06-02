@@ -9,6 +9,7 @@ import { LeadLineResponseDto } from './lead-line.response.dto';
 export class LeadGetResponseDto {
     @ApiProperty({ required: true, type: String }) _id: string;
     @ApiProperty({ required: true, type: String }) company_id: string;
+    @ApiProperty({ required: false, type: String }) voucher_no?: string;
     @ApiProperty({ required: false, type: String }) created_by?: string;
 
     @ApiProperty({ required: false, type: String }) customer_id?: string;

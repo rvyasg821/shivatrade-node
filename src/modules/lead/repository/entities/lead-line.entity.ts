@@ -3,12 +3,12 @@ import { Entity, Column, Index } from 'typeorm';
 import { LEAD_LINE_COLLECTION_NAME } from '../../constants/lead-line.entity.constant';
 
 /**
- * A single requirement line on a Lead — what the customer is asking for.
- * Replaces the old `interested_categories` / `interested_products` jsonb
- * arrays with a structured, document-style table (mirrors the Quotation
- * line shape but without pricing/costing). A line may reference a catalogued
- * `product_id`, a `category_id`, or be purely free-text (`description`) for
- * items not yet in the catalogue.
+ * A requirement line on a Lead. Mirrors `quotation_line` so the Lead form can
+ * reuse the shared `SalesDocLineItems` component verbatim (product + vendor +
+ * price-from-price-list + Excel import/export). Costing/margin fields are
+ * stored as-sent (no server-side recompute at lead stage — pricing is finalised
+ * downstream at Quotation), so a lead can carry an indicative price the
+ * salesperson sources from the cheapest vendor in the price list.
  */
 @Entity(LEAD_LINE_COLLECTION_NAME)
 export class LeadLineEntity extends DatabaseObjectIdEntityBase {
@@ -20,38 +20,97 @@ export class LeadLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     lead_id: string;
 
-    /** Optional FK to the product master (line may be free-text instead). */
-    @Column({ type: 'uuid', nullable: true })
-    product_id?: string;
+    @Index()
+    @Column({ type: 'uuid', nullable: false })
+    product_id: string;
 
-    /** Optional FK to the category master. */
+    /** Vendor selected for this line (from price list). */
+    @Index()
     @Column({ type: 'uuid', nullable: true })
-    category_id?: string;
+    vendor_id?: string;
 
-    /** What the customer wants — product name or free-text item. */
     @Column({ type: 'text', nullable: true })
     description?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
-    qty?: string;
+    /** Buyer's requirement #. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    customer_reference?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
+    qty: string;
 
     @Column({ type: 'varchar', length: 30, nullable: true })
     unit?: string;
 
-    /** Customer's target / budget price (not our cost — captured for sourcing). */
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: true })
-    target_price?: string;
+    /** Indicative price — auto-filled from the cheapest current price-list vendor. */
+    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
+    unit_price: string;
 
-    /** Buyer's requirement / reference no. */
-    @Column({ type: 'varchar', length: 120, nullable: true })
-    customer_reference?: string;
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    discount_pct?: string;
 
-    /** Additional specs / remarks for this requirement. */
-    @Column({ type: 'text', nullable: true })
-    notes?: string;
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    tax_pct?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
+    cgst?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
+    sgst?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
+    igst?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    taxable: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    line_total: string;
+
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_rebates_snapshot?: Array<{
+        rebate_id: string;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
+
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_expenses_snapshot?: Array<{
+        expense_id: string;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_rebates_amount: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_expenses_amount: string;
+
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    margin_pct?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    margin_amount: string;
 
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
+
+    // ── Export / Shipping (mirrors quotation line) ──
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    hs_code?: string;
+
+    @Column({ type: 'numeric', precision: 14, scale: 3, nullable: false, default: 0 })
+    net_weight_kg: string;
+
+    @Column({ type: 'numeric', precision: 14, scale: 3, nullable: false, default: 0 })
+    gross_weight_kg: string;
+
+    @Column({ type: 'int', nullable: false, default: 0 })
+    package_count: number;
 
     @Index()
     @Column({ type: 'boolean', default: false })

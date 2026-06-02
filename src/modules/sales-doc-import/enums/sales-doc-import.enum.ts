@@ -4,6 +4,8 @@ export enum ENUM_SALES_DOC_TYPE {
     QUOTATION = 'quotation',
     PFI = 'pfi',
     PO = 'po',
+    // Lead requirement lines reuse the quotation line shape + export fields.
+    LEAD = 'lead',
 }
 
 // Row status mirrors the price-list import flow (see

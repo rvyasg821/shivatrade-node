@@ -26,6 +26,9 @@ import { UserRepository } from '@modules/user/repository/repositories/user.repos
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { VoucherService } from '@common/voucher/services/voucher.service';
+import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { ILike } from 'typeorm';
 import {
     IDatabaseFindAllOptions,
@@ -46,9 +49,24 @@ export class LeadService {
         private readonly productRepository: ProductRepository,
         private readonly categoryRepository: CategoryRepository,
         private readonly quotationRepository: QuotationRepository,
+        private readonly companyRepository: CompanyRepository,
+        private readonly voucherService: VoucherService,
         private readonly activityService: LeadActivityService,
         private readonly activityRepository: LeadActivityRepository
     ) {}
+
+    /** Company voucher prefix (explicit `voucher_prefix` or first 5 chars of name). */
+    private async resolveCompanyPrefix(companyId: string): Promise<string> {
+        const company: any = await this.companyRepository.findOneById(companyId);
+        const explicit = company?.voucher_prefix?.trim();
+        if (explicit) return explicit.toUpperCase();
+        return (
+            company?.company_name
+                ?.replace(/[^A-Za-z0-9]/g, '')
+                .slice(0, 5)
+                .toUpperCase() || 'CO'
+        );
+    }
 
     async create(
         companyId: string,
@@ -67,8 +85,15 @@ export class LeadService {
 
         // `lines` is a child table, not a lead column — keep it out of the write.
         const { lines, ...leadData } = data as any;
+        const prefix = await this.resolveCompanyPrefix(companyId);
+        const voucher_no = await this.voucherService.getNext(
+            companyId,
+            ENUM_VOUCHER_DOC_TYPE.LEAD,
+            prefix
+        );
         const lead = await this.leadRepository.create({
             ...leadData,
+            voucher_no,
             company_name: data.company_name.trim(),
             contact_email: data.contact_email.trim().toLowerCase(),
             company_id: companyId,
@@ -708,26 +733,13 @@ export class LeadService {
         const productIds = Array.from(
             new Set(rows.map((r) => r.product_id).filter(Boolean) as string[])
         );
-        const categoryIds = Array.from(
-            new Set(rows.map((r) => r.category_id).filter(Boolean) as string[])
-        );
-        const [products, categories] = await Promise.all([
-            productIds.length
-                ? (this.productRepository.findAll({
-                      _id: { $in: productIds },
-                  } as any) as Promise<any[]>)
-                : Promise.resolve([] as any[]),
-            categoryIds.length
-                ? (this.categoryRepository.findAll({
-                      _id: { $in: categoryIds },
-                  } as any) as Promise<any[]>)
-                : Promise.resolve([] as any[]),
-        ]);
+        const products = productIds.length
+            ? ((await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)) as any[])
+            : [];
         const productById = new Map<string, any>(
             products.map((p: any) => [p._id.toString(), p])
-        );
-        const categoryById = new Map<string, any>(
-            categories.map((c: any) => [c._id.toString(), c])
         );
 
         return rows.map((r) => {
@@ -735,47 +747,49 @@ export class LeadService {
             const prod = r.product_id
                 ? productById.get(r.product_id.toString())
                 : null;
-            const cat = r.category_id
-                ? categoryById.get(r.category_id.toString())
-                : null;
             dto.product_name = prod?.name;
             dto.product_code = prod?.code;
-            dto.category_name = cat?.name;
+            // vendor_name is resolved on the FE (SalesDocLineItems re-fetches
+            // price-list vendor options per line on hydration).
             return dto;
         });
     }
 
-    /** Replace a lead's requirement lines with the incoming set. */
+    /** Replace a lead's requirement lines with the incoming set. Mirrors the
+     *  quotation line shape; costing fields default to 0 (no recompute at lead
+     *  stage — pricing is finalised downstream at Quotation). */
     private async writeLeadLines(
         companyId: string,
         leadId: string,
         lines: LeadLineRequestDto[]
     ): Promise<void> {
         await this.leadLineRepository.deleteByLeadId(leadId);
+        const numOr = (v: any, fb: string) =>
+            v != null && String(v) !== '' ? String(v) : fb;
         let seq = 0;
         for (const l of lines || []) {
-            // Skip fully-empty rows.
-            if (!l.product_id && !l.category_id && !(l.description || '').trim()) {
-                continue;
-            }
+            if (!l.product_id) continue; // product is required (component-enforced)
             seq += 1;
             await this.leadLineRepository.create({
                 company_id: companyId,
                 lead_id: leadId,
-                product_id: l.product_id || null,
-                category_id: l.category_id || null,
+                product_id: l.product_id,
+                vendor_id: l.vendor_id || null,
                 description: l.description || null,
-                qty:
-                    l.qty != null && String(l.qty) !== ''
-                        ? String(l.qty)
-                        : null,
-                unit: l.unit || null,
-                target_price:
-                    l.target_price != null && String(l.target_price) !== ''
-                        ? String(l.target_price)
-                        : null,
                 customer_reference: l.customer_reference || null,
-                notes: l.notes || null,
+                qty: numOr(l.qty, '0'),
+                unit: l.unit || null,
+                unit_price: numOr(l.unit_price, '0'),
+                discount_pct: numOr(l.discount_pct, '0'),
+                tax_pct: numOr(l.tax_pct, '0'),
+                margin_pct: numOr(l.margin_pct, '0'),
+                product_rebates_snapshot: l.product_rebates_snapshot ?? null,
+                product_expenses_snapshot: l.product_expenses_snapshot ?? null,
+                hs_code: l.hs_code || null,
+                net_weight_kg: numOr(l.net_weight_kg, '0'),
+                gross_weight_kg: numOr(l.gross_weight_kg, '0'),
+                package_count:
+                    l.package_count != null ? Number(l.package_count) : 0,
                 seq: l.seq != null ? Number(l.seq) : seq,
                 soft_delete: false,
             } as any);
