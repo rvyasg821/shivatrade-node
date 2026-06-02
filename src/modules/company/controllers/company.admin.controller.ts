@@ -655,6 +655,11 @@ export class CompanyAdminController {
         @AuthJwtPayload('user') adminUserId: string,
         @Body() body: CompanyCreateRequestDto,
     ): Promise<IResponse<any>> {
+        // Single-tenant build: provisioning new tenants is disabled.
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            throw new ForbiddenException('Multi-tenant disabled. APP_MODE=single.');
+        }
+
         const { company_name, contact_name, contact_first_name, contact_last_name,
             email, mobile, country_code, website } = body;
 

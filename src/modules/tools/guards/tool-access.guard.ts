@@ -32,6 +32,12 @@ export class ToolAccessGuard implements CanActivate {
     ) {}
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
+        // Single-tenant mode: tool/subscription gating is disabled.
+        // Role permissions are still enforced elsewhere.
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            return true;
+        }
+
         // Get the parameter name from decorator metadata
         const paramName = this.reflector.get<string>(
             TOOL_ACCESS_KEY,

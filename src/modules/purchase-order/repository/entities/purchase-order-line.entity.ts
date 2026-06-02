@@ -127,6 +127,19 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
 
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
+
+    // ── Packing snapshot (propagated from quotation/pfi line) ───────────
+    // qty × product per-unit weight, user-overridable upstream. Carried
+    // forward to invoice_line for the Commercial Invoice / Packing List.
+    @Column({ type: 'numeric', precision: 14, scale: 3, nullable: true })
+    net_weight_kg?: string;
+
+    @Column({ type: 'numeric', precision: 14, scale: 3, nullable: true })
+    gross_weight_kg?: string;
+
+    /** Number of packages contributed by this line. */
+    @Column({ type: 'int', nullable: true })
+    package_count?: number;
 }
 
 export type PurchaseOrderLineDoc = PurchaseOrderLineEntity;

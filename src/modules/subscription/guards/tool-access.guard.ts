@@ -11,6 +11,11 @@ export class ToolAccessGuard implements CanActivate {
     ) { }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
+        // Single-tenant mode: tool/subscription gating is disabled.
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            return true;
+        }
+
         const requiredToolIds = this.reflector.getAllAndOverride<string[]>(TOOL_ACCESS_KEY, [
             context.getHandler(),
             context.getClass(),

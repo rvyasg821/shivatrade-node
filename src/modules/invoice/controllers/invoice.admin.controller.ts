@@ -320,6 +320,8 @@ export class InvoiceAdminController {
             purchase_order_id: string;
             invoice_id?: string;
             rows: Array<Record<string, any>>;
+            // Current (possibly unsaved) draft lines from the form.
+            draft_lines?: Array<Record<string, any>>;
         }
     ): Promise<IResponse<any>> {
         const data = await this.invoiceLineImportService.resolveImport({
@@ -327,6 +329,9 @@ export class InvoiceAdminController {
             purchaseOrderId: body.purchase_order_id,
             invoiceId: body.invoice_id,
             rows: body.rows || [],
+            draftLines: Array.isArray(body.draft_lines)
+                ? body.draft_lines
+                : undefined,
         });
         return { data };
     }

@@ -522,6 +522,10 @@ export class PurchaseOrderService {
                 taxable: '0',
                 line_total: '0',
                 seq: l.seq != null && l.seq !== '' ? Number(l.seq) : seq,
+                // Packing snapshot carried from quotation/pfi line → invoice line.
+                net_weight_kg: l.net_weight_kg ?? null,
+                gross_weight_kg: l.gross_weight_kg ?? null,
+                package_count: l.package_count ?? null,
             };
 
             const existingId = l._id ? String(l._id) : null;
@@ -1557,6 +1561,10 @@ export class PurchaseOrderService {
             tax_pct: String(
                 r.sourceLine.tax_pct ?? r.product?.tax_pct ?? '0'
             ),
+            // Carry packing forward from the source quotation/pfi line.
+            net_weight_kg: r.sourceLine.net_weight_kg ?? undefined,
+            gross_weight_kg: r.sourceLine.gross_weight_kg ?? undefined,
+            package_count: r.sourceLine.package_count ?? undefined,
         }));
 
         // ── Create PO (status = confirmed so POVs can be created against it) ──
@@ -2015,6 +2023,10 @@ export class PurchaseOrderService {
                                 src?.margin_amount != null
                                     ? String(src.margin_amount)
                                     : '0',
+                            // Packing snapshot → consumed by the invoice seed.
+                            net_weight_kg: (l as any).net_weight_kg ?? null,
+                            gross_weight_kg: (l as any).gross_weight_kg ?? null,
+                            package_count: (l as any).package_count ?? null,
                         };
                     }),
             };
