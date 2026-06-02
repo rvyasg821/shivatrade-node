@@ -47,7 +47,9 @@ const EXPORT_EXTRA_HEADERS = [
 
 // Doc types that include the Export/Shipping columns in import/export.
 const docHasExportFields = (t: ENUM_SALES_DOC_TYPE): boolean =>
-    t === ENUM_SALES_DOC_TYPE.PFI || t === ENUM_SALES_DOC_TYPE.QUOTATION;
+    t === ENUM_SALES_DOC_TYPE.PFI ||
+    t === ENUM_SALES_DOC_TYPE.QUOTATION ||
+    t === ENUM_SALES_DOC_TYPE.LEAD;
 
 const num = (v: any): number => {
     if (v === null || v === undefined || v === '') return 0;

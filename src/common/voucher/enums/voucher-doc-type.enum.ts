@@ -4,6 +4,7 @@
  * vouchers (Invoice, GRN, POV, etc.).
  */
 export enum ENUM_VOUCHER_DOC_TYPE {
+    LEAD = 'LEAD',
     QUOTATION = 'QUOTATION',
     PFI = 'PFI',
     PURCHASE_ORDER = 'PURCHASE_ORDER',
@@ -36,6 +37,8 @@ export interface VoucherDocConfig {
  *   INVOICE → STIPL001/2025-26           (compact, no token, 3-digit per STIPL119 template)
  */
 export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig> = {
+    // Lead / Customer Requirement → STIPL/RQ/0001/2026-27
+    [ENUM_VOUCHER_DOC_TYPE.LEAD]: { token: 'RQ', style: 'separated' },
     [ENUM_VOUCHER_DOC_TYPE.QUOTATION]: { token: 'QT', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.PFI]: { token: 'PI', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER]: { token: 'OS', style: 'separated' },

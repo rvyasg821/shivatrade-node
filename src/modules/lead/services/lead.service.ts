@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { LeadRepository } from '../repository/repositories/lead.repository';
+import { LeadLineRepository } from '../repository/repositories/lead-line.repository';
 import { LeadDoc } from '../repository/entities/lead.entity';
+import { LeadLineRequestDto } from '../dtos/request/lead-line.request.dto';
+import { LeadLineResponseDto } from '../dtos/response/lead-line.response.dto';
 import { LeadCreateRequestDto } from '../dtos/request/lead.create.request.dto';
 import { LeadUpdateRequestDto } from '../dtos/request/lead.update.request.dto';
 import { LeadGetResponseDto } from '../dtos/response/lead.get.response.dto';
@@ -23,6 +26,9 @@ import { UserRepository } from '@modules/user/repository/repositories/user.repos
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { VoucherService } from '@common/voucher/services/voucher.service';
+import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { ILike } from 'typeorm';
 import {
     IDatabaseFindAllOptions,
@@ -35,6 +41,7 @@ export class LeadService {
 
     constructor(
         private readonly leadRepository: LeadRepository,
+        private readonly leadLineRepository: LeadLineRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly customerService: CustomerService,
@@ -42,9 +49,24 @@ export class LeadService {
         private readonly productRepository: ProductRepository,
         private readonly categoryRepository: CategoryRepository,
         private readonly quotationRepository: QuotationRepository,
+        private readonly companyRepository: CompanyRepository,
+        private readonly voucherService: VoucherService,
         private readonly activityService: LeadActivityService,
         private readonly activityRepository: LeadActivityRepository
     ) {}
+
+    /** Company voucher prefix (explicit `voucher_prefix` or first 5 chars of name). */
+    private async resolveCompanyPrefix(companyId: string): Promise<string> {
+        const company: any = await this.companyRepository.findOneById(companyId);
+        const explicit = company?.voucher_prefix?.trim();
+        if (explicit) return explicit.toUpperCase();
+        return (
+            company?.company_name
+                ?.replace(/[^A-Za-z0-9]/g, '')
+                .slice(0, 5)
+                .toUpperCase() || 'CO'
+        );
+    }
 
     async create(
         companyId: string,
@@ -61,13 +83,26 @@ export class LeadService {
             data.interested_categories
         );
 
+        // `lines` is a child table, not a lead column — keep it out of the write.
+        const { lines, ...leadData } = data as any;
+        const prefix = await this.resolveCompanyPrefix(companyId);
+        const voucher_no = await this.voucherService.getNext(
+            companyId,
+            ENUM_VOUCHER_DOC_TYPE.LEAD,
+            prefix
+        );
         const lead = await this.leadRepository.create({
-            ...data,
+            ...leadData,
+            voucher_no,
             company_name: data.company_name.trim(),
             contact_email: data.contact_email.trim().toLowerCase(),
             company_id: companyId,
             created_by: createdBy,
         } as any);
+
+        if (Array.isArray(lines)) {
+            await this.writeLeadLines(companyId, lead._id.toString(), lines);
+        }
 
         // Timeline anchor — every lead's activity feed opens with this entry.
         this.activityService
@@ -110,6 +145,10 @@ export class LeadService {
     ): Promise<LeadDoc> {
         const companyId = lead.company_id.toString();
 
+        // Pull lines out — they're a child table, not a lead column.
+        const incomingLines: any = (data as any).lines;
+        if ('lines' in (data as any)) delete (data as any).lines;
+
         if (data.customer_id !== undefined && data.customer_id !== null && data.customer_id !== '') {
             await this.assertCustomerInCompany(companyId, data.customer_id);
         }
@@ -145,6 +184,15 @@ export class LeadService {
         Object.assign(lead, data);
         let updated = await this.leadRepository.save(lead);
         this.logger.log(`Lead updated: ${lead._id}`);
+
+        // Replace requirement lines when the payload carries them.
+        if (Array.isArray(incomingLines)) {
+            await this.writeLeadLines(
+                companyId,
+                lead._id.toString(),
+                incomingLines
+            );
+        }
 
         // Status change → timeline entry. Fire-and-forget; failure here
         // should not roll back the save itself.
@@ -671,7 +719,81 @@ export class LeadService {
             soft_delete: false,
         } as any);
         (dto as any).quotations_count = count;
+        dto.lines = await this.getLeadLines(lead._id.toString());
         return dto;
+    }
+
+    /** Requirement lines for a lead, enriched with product/category names. */
+    private async getLeadLines(
+        leadId: string
+    ): Promise<LeadLineResponseDto[]> {
+        const rows = await this.leadLineRepository.findByLeadId(leadId);
+        if (!rows.length) return [];
+
+        const productIds = Array.from(
+            new Set(rows.map((r) => r.product_id).filter(Boolean) as string[])
+        );
+        const products = productIds.length
+            ? ((await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)) as any[])
+            : [];
+        const productById = new Map<string, any>(
+            products.map((p: any) => [p._id.toString(), p])
+        );
+
+        return rows.map((r) => {
+            const dto = plainToInstance(LeadLineResponseDto, r);
+            const prod = r.product_id
+                ? productById.get(r.product_id.toString())
+                : null;
+            dto.product_name = prod?.name;
+            dto.product_code = prod?.code;
+            // vendor_name is resolved on the FE (SalesDocLineItems re-fetches
+            // price-list vendor options per line on hydration).
+            return dto;
+        });
+    }
+
+    /** Replace a lead's requirement lines with the incoming set. Mirrors the
+     *  quotation line shape; costing fields default to 0 (no recompute at lead
+     *  stage — pricing is finalised downstream at Quotation). */
+    private async writeLeadLines(
+        companyId: string,
+        leadId: string,
+        lines: LeadLineRequestDto[]
+    ): Promise<void> {
+        await this.leadLineRepository.deleteByLeadId(leadId);
+        const numOr = (v: any, fb: string) =>
+            v != null && String(v) !== '' ? String(v) : fb;
+        let seq = 0;
+        for (const l of lines || []) {
+            if (!l.product_id) continue; // product is required (component-enforced)
+            seq += 1;
+            await this.leadLineRepository.create({
+                company_id: companyId,
+                lead_id: leadId,
+                product_id: l.product_id,
+                vendor_id: l.vendor_id || null,
+                description: l.description || null,
+                customer_reference: l.customer_reference || null,
+                qty: numOr(l.qty, '0'),
+                unit: l.unit || null,
+                unit_price: numOr(l.unit_price, '0'),
+                discount_pct: numOr(l.discount_pct, '0'),
+                tax_pct: numOr(l.tax_pct, '0'),
+                margin_pct: numOr(l.margin_pct, '0'),
+                product_rebates_snapshot: l.product_rebates_snapshot ?? null,
+                product_expenses_snapshot: l.product_expenses_snapshot ?? null,
+                hs_code: l.hs_code || null,
+                net_weight_kg: numOr(l.net_weight_kg, '0'),
+                gross_weight_kg: numOr(l.gross_weight_kg, '0'),
+                package_count:
+                    l.package_count != null ? Number(l.package_count) : 0,
+                seq: l.seq != null ? Number(l.seq) : seq,
+                soft_delete: false,
+            } as any);
+        }
     }
 
     /** Clears `customer_id` / `converted_customer_id` on the lead when the
