@@ -33,6 +33,10 @@ export class PurchaseOrderLineResponseDto {
     @ApiProperty({ required: false, type: String }) product_rebates_amount?: string;
     @ApiProperty({ required: false, type: String }) product_expenses_amount?: string;
     @ApiProperty({ required: false, type: String }) margin_amount?: string;
+    // Packing snapshot carried from quotation/pfi line → consumed by invoice seed.
+    @ApiProperty({ required: false, type: String }) net_weight_kg?: string;
+    @ApiProperty({ required: false, type: String }) gross_weight_kg?: string;
+    @ApiProperty({ required: false, type: Number }) package_count?: number;
 }
 
 export class PurchaseOrderGetResponseDto {

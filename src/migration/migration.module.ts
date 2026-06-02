@@ -39,6 +39,7 @@ import { MigrationNotificationEventsSeed } from '@migration/seeds/migration.noti
 import { MigrationProductionSeed } from '@migration/seeds/migration.production.seed';
 import { MigrationTradeDataSeed } from '@migration/seeds/migration.trade-data.seed';
 import { MigrationPortMasterSeed } from '@migration/seeds/migration.port-master.seed';
+import { MigrationShivatradeTenantSeed } from '@migration/seeds/migration.shivatrade-tenant.seed';
 import { PortMasterModule } from '@modules/port-master/port-master.module';
 
 // Repository modules (no controllers)
@@ -56,6 +57,8 @@ import { LeaveRepositoryModule } from '@modules/leave/repository/leave.repositor
 import { DocumentRepositoryModule } from '@modules/document/repository/document.repository.module';
 import { ContractRepositoryModule } from '@modules/contract/repository/contract.repository.module';
 import { NotificationRepositoryModule } from '@modules/notification/repository/notification.repository.module';
+import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
+import { LocationRepositoryModule } from '@modules/location/repository/location.repository.module';
 
 // Services (directly imported to avoid controller dependencies)
 import { UserService } from '@modules/user/services/user.service';
@@ -119,6 +122,8 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         DocumentRepositoryModule,
         ContractRepositoryModule,
         NotificationRepositoryModule,
+        CompanyRepositoryModule,
+        LocationRepositoryModule,
 
         // Email module for templates
         EmailModule,
@@ -166,6 +171,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         MigrationProductionSeed,
         MigrationTradeDataSeed,
         MigrationPortMasterSeed,
+        MigrationShivatradeTenantSeed,
 
         // Tools widgets and settings migration
         MigrateToolsWidgetsSettingsCommand,

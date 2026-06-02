@@ -81,6 +81,11 @@ export class SubscriptionCronService implements ICronService {
      * Also respects CRON_ENABLED=false to disable crons entirely.
      */
     private shouldRunCron(): boolean {
+        // Single-tenant mode: subscription/billing crons have nothing to do.
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            this.logger.debug('Subscription cron skipped — single-tenant mode');
+            return false;
+        }
         if (process.env.CRON_ENABLED === 'false') return false;
         const instance = process.env.NODE_APP_INSTANCE;
         if (instance !== undefined && instance !== '0') return false;

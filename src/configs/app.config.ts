@@ -5,6 +5,8 @@ export default registerAs(
     'app',
     (): Record<string, any> => ({
         name: process.env.APP_NAME,
+        // "single" = single-tenant ShivaTrade build; "saas" = multi-tenant/subscription billing
+        mode: process.env.APP_MODE || 'single',
         env: process.env.APP_ENV,
         timezone: process.env.APP_TIMEZONE,
         version,

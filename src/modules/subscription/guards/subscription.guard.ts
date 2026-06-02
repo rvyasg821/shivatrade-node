@@ -17,6 +17,11 @@ export class SubscriptionGuard implements CanActivate {
     ) {}
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
+        // Single-tenant mode: subscription gating is disabled.
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            return true;
+        }
+
         // Check if route has skipSubscriptionCheck decorator
         const skipCheck = this.reflector.getAllAndOverride<boolean>(
             SKIP_SUBSCRIPTION_CHECK,

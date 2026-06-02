@@ -22,6 +22,10 @@ export class ToolAccessHelper {
      * @returns true if user has access, false otherwise
      */
     async hasToolAccess(userId: string, toolId: string): Promise<boolean> {
+        // Single-tenant mode: every user has access to every tool.
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            return true;
+        }
         try {
             const subscription = await this.subscriptionService.findActiveByUserId(userId);
 
