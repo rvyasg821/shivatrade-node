@@ -157,6 +157,11 @@ export class InvoiceLineImportService {
             'unit_price',
             'discount_pct',
             'igst_rate_pct',
+            // Packing List columns — operator-editable; feed the invoice's
+            // per-line packing + the auto-summed cargo totals.
+            'packages',
+            'net_weight',
+            'gross_weight',
         ];
         const computedHeaders = ['line_total'];
         const headerRow: string[] = [
@@ -184,6 +189,9 @@ export class InvoiceLineImportService {
                       unit_price: a.unit_price,
                       discount_pct: 0,
                       igst_rate_pct: 0,
+                      packages: a.package_count ?? '',
+                      net_weight: a.net_weight_kg ?? '',
+                      gross_weight: a.gross_weight_kg ?? '',
                       line_total: 0,
                       product_rebates_snapshot: a.product_rebates_snapshot,
                       product_expenses_snapshot: a.product_expenses_snapshot,
@@ -224,6 +232,9 @@ export class InvoiceLineImportService {
                 l.unit_price ?? '',
                 l.discount_pct ?? '',
                 l.igst_rate_pct ?? '',
+                l.packages ?? '',
+                l.net_weight ?? '',
+                l.gross_weight ?? '',
                 ...rebCells,
                 ...expCells,
                 l.line_total ?? '',
@@ -266,6 +277,11 @@ export class InvoiceLineImportService {
         purchaseOrderId: string;
         invoiceId?: string;
         rows: Array<Record<string, any>>;
+        // The form's current (possibly unsaved) draft lines. When provided
+        // these drive the new-vs-updated decision + the qty roll-up so the
+        // Review screen matches what the FE merge will actually do. Falls back
+        // to the saved invoice's lines when omitted.
+        draftLines?: Array<Record<string, any>>;
     }): Promise<{
         summary: {
             total: number;
@@ -301,11 +317,15 @@ export class InvoiceLineImportService {
                 this.poLineRepository.findAll({
                     purchase_order_id: purchaseOrderId,
                 } as any) as Promise<any[]>,
-                invoiceId
-                    ? (this.invoiceLineRepository.findByInvoiceId(
-                          invoiceId,
-                      ) as Promise<any[]>)
-                    : Promise.resolve([] as any[]),
+                // Prefer the form's live draft (what the merge targets); fall
+                // back to the saved invoice's lines when the FE didn't send it.
+                Array.isArray(opts.draftLines)
+                    ? Promise.resolve(opts.draftLines as any[])
+                    : invoiceId
+                      ? (this.invoiceLineRepository.findByInvoiceId(
+                            invoiceId,
+                        ) as Promise<any[]>)
+                      : Promise.resolve([] as any[]),
                 sheetUsesRebates
                     ? (this.rebateRepository.findAll({
                           company_id: companyId,
@@ -655,6 +675,10 @@ export class InvoiceLineImportService {
                             : num(poLine?.unit_price),
                     discount_pct: discountPct ?? 0,
                     igst_rate_pct: igstRate ?? 0,
+                    // Packing List (operator-editable in the sheet).
+                    packages: numOrUndef(get('packages')) ?? null,
+                    net_weight: numOrUndef(get('net_weight')) ?? null,
+                    gross_weight: numOrUndef(get('gross_weight')) ?? null,
                     product_rebates_snapshot:
                         rebateCodes.length > 0
                             ? rebatesSnapshot

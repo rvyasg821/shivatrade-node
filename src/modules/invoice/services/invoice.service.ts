@@ -1185,6 +1185,10 @@ export class InvoiceService {
                 tax_pct: l.tax_pct,
                 product_rebates_snapshot: l.product_rebates_snapshot || [],
                 product_expenses_snapshot: l.product_expenses_snapshot || [],
+                // Packing snapshot carried from the SO line → invoice line.
+                net_weight_kg: l.net_weight_kg ?? null,
+                gross_weight_kg: l.gross_weight_kg ?? null,
+                package_count: l.package_count ?? null,
                 dispatched: String(dispatched),
                 invoiced_others: String(invoicedOthers),
                 already_on_draft: String(selfQtyByPoLine.get(k) || 0),
