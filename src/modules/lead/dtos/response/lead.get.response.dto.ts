@@ -4,6 +4,7 @@ import {
     ENUM_LEAD_SOURCE,
     ENUM_LEAD_STATUS,
 } from '@modules/lead/enums/lead.enum';
+import { LeadLineResponseDto } from './lead-line.response.dto';
 
 export class LeadGetResponseDto {
     @ApiProperty({ required: true, type: String }) _id: string;
@@ -28,6 +29,10 @@ export class LeadGetResponseDto {
 
     @ApiProperty({ required: false, type: [String] })
     interested_products?: string[];
+
+    // Requirement line items (replaces interested_categories/products).
+    @ApiProperty({ required: false, type: [LeadLineResponseDto] })
+    lines?: LeadLineResponseDto[];
 
     @ApiProperty({ required: false, type: Number }) expected_value?: number;
     @ApiProperty({ required: false, type: String }) currency?: string;

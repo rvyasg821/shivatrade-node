@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { LeadRepository } from '../repository/repositories/lead.repository';
+import { LeadLineRepository } from '../repository/repositories/lead-line.repository';
 import { LeadDoc } from '../repository/entities/lead.entity';
+import { LeadLineRequestDto } from '../dtos/request/lead-line.request.dto';
+import { LeadLineResponseDto } from '../dtos/response/lead-line.response.dto';
 import { LeadCreateRequestDto } from '../dtos/request/lead.create.request.dto';
 import { LeadUpdateRequestDto } from '../dtos/request/lead.update.request.dto';
 import { LeadGetResponseDto } from '../dtos/response/lead.get.response.dto';
@@ -35,6 +38,7 @@ export class LeadService {
 
     constructor(
         private readonly leadRepository: LeadRepository,
+        private readonly leadLineRepository: LeadLineRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly customerService: CustomerService,
@@ -61,13 +65,19 @@ export class LeadService {
             data.interested_categories
         );
 
+        // `lines` is a child table, not a lead column — keep it out of the write.
+        const { lines, ...leadData } = data as any;
         const lead = await this.leadRepository.create({
-            ...data,
+            ...leadData,
             company_name: data.company_name.trim(),
             contact_email: data.contact_email.trim().toLowerCase(),
             company_id: companyId,
             created_by: createdBy,
         } as any);
+
+        if (Array.isArray(lines)) {
+            await this.writeLeadLines(companyId, lead._id.toString(), lines);
+        }
 
         // Timeline anchor — every lead's activity feed opens with this entry.
         this.activityService
@@ -110,6 +120,10 @@ export class LeadService {
     ): Promise<LeadDoc> {
         const companyId = lead.company_id.toString();
 
+        // Pull lines out — they're a child table, not a lead column.
+        const incomingLines: any = (data as any).lines;
+        if ('lines' in (data as any)) delete (data as any).lines;
+
         if (data.customer_id !== undefined && data.customer_id !== null && data.customer_id !== '') {
             await this.assertCustomerInCompany(companyId, data.customer_id);
         }
@@ -145,6 +159,15 @@ export class LeadService {
         Object.assign(lead, data);
         let updated = await this.leadRepository.save(lead);
         this.logger.log(`Lead updated: ${lead._id}`);
+
+        // Replace requirement lines when the payload carries them.
+        if (Array.isArray(incomingLines)) {
+            await this.writeLeadLines(
+                companyId,
+                lead._id.toString(),
+                incomingLines
+            );
+        }
 
         // Status change → timeline entry. Fire-and-forget; failure here
         // should not roll back the save itself.
@@ -671,7 +694,92 @@ export class LeadService {
             soft_delete: false,
         } as any);
         (dto as any).quotations_count = count;
+        dto.lines = await this.getLeadLines(lead._id.toString());
         return dto;
+    }
+
+    /** Requirement lines for a lead, enriched with product/category names. */
+    private async getLeadLines(
+        leadId: string
+    ): Promise<LeadLineResponseDto[]> {
+        const rows = await this.leadLineRepository.findByLeadId(leadId);
+        if (!rows.length) return [];
+
+        const productIds = Array.from(
+            new Set(rows.map((r) => r.product_id).filter(Boolean) as string[])
+        );
+        const categoryIds = Array.from(
+            new Set(rows.map((r) => r.category_id).filter(Boolean) as string[])
+        );
+        const [products, categories] = await Promise.all([
+            productIds.length
+                ? (this.productRepository.findAll({
+                      _id: { $in: productIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+            categoryIds.length
+                ? (this.categoryRepository.findAll({
+                      _id: { $in: categoryIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+        ]);
+        const productById = new Map<string, any>(
+            products.map((p: any) => [p._id.toString(), p])
+        );
+        const categoryById = new Map<string, any>(
+            categories.map((c: any) => [c._id.toString(), c])
+        );
+
+        return rows.map((r) => {
+            const dto = plainToInstance(LeadLineResponseDto, r);
+            const prod = r.product_id
+                ? productById.get(r.product_id.toString())
+                : null;
+            const cat = r.category_id
+                ? categoryById.get(r.category_id.toString())
+                : null;
+            dto.product_name = prod?.name;
+            dto.product_code = prod?.code;
+            dto.category_name = cat?.name;
+            return dto;
+        });
+    }
+
+    /** Replace a lead's requirement lines with the incoming set. */
+    private async writeLeadLines(
+        companyId: string,
+        leadId: string,
+        lines: LeadLineRequestDto[]
+    ): Promise<void> {
+        await this.leadLineRepository.deleteByLeadId(leadId);
+        let seq = 0;
+        for (const l of lines || []) {
+            // Skip fully-empty rows.
+            if (!l.product_id && !l.category_id && !(l.description || '').trim()) {
+                continue;
+            }
+            seq += 1;
+            await this.leadLineRepository.create({
+                company_id: companyId,
+                lead_id: leadId,
+                product_id: l.product_id || null,
+                category_id: l.category_id || null,
+                description: l.description || null,
+                qty:
+                    l.qty != null && String(l.qty) !== ''
+                        ? String(l.qty)
+                        : null,
+                unit: l.unit || null,
+                target_price:
+                    l.target_price != null && String(l.target_price) !== ''
+                        ? String(l.target_price)
+                        : null,
+                customer_reference: l.customer_reference || null,
+                notes: l.notes || null,
+                seq: l.seq != null ? Number(l.seq) : seq,
+                soft_delete: false,
+            } as any);
+        }
     }
 
     /** Clears `customer_id` / `converted_customer_id` on the lead when the

@@ -10,11 +10,14 @@ import {
     IsNumber,
     IsUUID,
     MaxLength,
+    ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import {
     ENUM_LEAD_SOURCE,
     ENUM_LEAD_STATUS,
 } from '@modules/lead/enums/lead.enum';
+import { LeadLineRequestDto } from './lead-line.request.dto';
 
 export class LeadCreateRequestDto {
     @IsUUID() @IsOptional() customer_id?: string;
@@ -36,6 +39,13 @@ export class LeadCreateRequestDto {
 
     @IsArray() @IsOptional() @IsUUID('all', { each: true })
     interested_products?: string[];
+
+    // Requirement line items (replaces interested_categories/products UI).
+    @IsArray()
+    @IsOptional()
+    @ValidateNested({ each: true })
+    @Type(() => LeadLineRequestDto)
+    lines?: LeadLineRequestDto[];
 
     @IsNumber() @IsOptional() expected_value?: number;
     @IsString() @IsOptional() @MaxLength(10) currency?: string;
