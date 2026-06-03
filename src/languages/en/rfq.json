@@ -1,0 +1,14 @@
+{
+    "create": "RFQ created from the lead.",
+    "list": "RFQ list retrieved.",
+    "stats": "RFQ stats retrieved.",
+    "get": "RFQ retrieved.",
+    "update": "RFQ updated.",
+    "delete": "RFQ deleted.",
+    "vendors": "RFQ vendors updated.",
+    "prices": "Vendor prices saved.",
+    "select": "Best price selected.",
+    "error": {
+        "notFound": "RFQ not found."
+    }
+}

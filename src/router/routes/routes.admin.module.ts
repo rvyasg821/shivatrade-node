@@ -54,6 +54,7 @@ import { VendorAdminController } from '@modules/vendor/controllers/vendor.admin.
 import { CustomerModule } from '@modules/customer/customer.module';
 import { CustomerAdminController } from '@modules/customer/controllers/customer.admin.controller';
 import { LeadModule } from '@modules/lead/lead.module';
+import { RfqModule } from '@modules/rfq/rfq.module';
 import { LeadAdminController } from '@modules/lead/controllers/lead.admin.controller';
 import { RebateModule } from '@modules/rebate/rebate.module';
 import { RebateAdminController } from '@modules/rebate/controllers/rebate.admin.controller';
@@ -255,6 +256,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         VendorModule,
         CustomerModule,
         LeadModule,
+        RfqModule,
         RebateModule,
         ExpenseModule,
         CurrencyModule,

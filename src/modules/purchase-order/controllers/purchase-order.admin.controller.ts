@@ -212,6 +212,12 @@ export class PurchaseOrderAdminController {
                 deliveryAddressId: body.delivery_address_id,
                 deliveryAddressText: body.delivery_address,
                 vendorExpenses: body.vendor_expenses,
+                customerOrder: {
+                    customer_po_number: body.customer_po_number,
+                    advance_amount: body.advance_amount,
+                    advance_date: body.advance_date,
+                    advance_notes: body.advance_notes,
+                },
             }
         );
         const purchaseOrder = await this.poService.mapGet(out.purchase_order);
@@ -241,6 +247,12 @@ export class PurchaseOrderAdminController {
                 deliveryAddressId: body.delivery_address_id,
                 deliveryAddressText: body.delivery_address,
                 vendorExpenses: body.vendor_expenses,
+                customerOrder: {
+                    customer_po_number: body.customer_po_number,
+                    advance_amount: body.advance_amount,
+                    advance_date: body.advance_date,
+                    advance_notes: body.advance_notes,
+                },
             }
         );
         const purchaseOrder = await this.poService.mapGet(out.purchase_order);

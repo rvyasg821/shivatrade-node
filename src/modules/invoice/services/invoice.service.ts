@@ -258,7 +258,13 @@ export class InvoiceService {
             purchase_order_id: data.purchase_order_id,
             pfi_id: data.pfi_id,
             quotation_id: data.quotation_id,
-            customer_po_no: data.customer_po_no,
+            // Default the buyer's PO# from the source Sales Order (S4) when
+            // the invoice payload didn't carry one; operator can override.
+            customer_po_no:
+                data.customer_po_no ||
+                (source.pos || []).find((p) => p?.customer_po_number)
+                    ?.customer_po_number ||
+                undefined,
             country_of_destination: data.country_of_destination,
             country_of_origin: data.country_of_origin || 'India',
             customer_id: data.customer_id,

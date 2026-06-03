@@ -22,6 +22,12 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     lead_id?: string;
 
+    /** Source RFQ - set when the quotation was seeded from an RFQ's selected
+     * vendor prices (Sales S3). Nullable for direct/lead-only quotations. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    rfq_id?: string;
+
     @Index()
     @Column({ type: 'uuid', nullable: false })
     customer_id: string;

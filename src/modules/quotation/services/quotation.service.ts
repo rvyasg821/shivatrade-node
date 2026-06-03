@@ -35,6 +35,7 @@ import { ProductRebateRepository } from '@modules/product/repository/repositorie
 import { ProductExpenseRepository } from '@modules/product/repository/repositories/product-expense.repository';
 import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
+import { RfqRepository } from '@modules/rfq/repository/repositories/rfq.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -70,6 +71,7 @@ export class QuotationService {
         private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly pfiRepository: PfiRepository,
         private readonly poRepository: PurchaseOrderRepository,
+        private readonly rfqRepository: RfqRepository,
         private readonly voucherService: VoucherService
     ) {}
 
@@ -202,6 +204,7 @@ export class QuotationService {
             created_by: createdBy,
             voucher_no,
             lead_id: data.lead_id || null,
+            rfq_id: data.rfq_id || null,
             customer_id: data.customer_id,
             customer_address_id: data.customer_address_id || null,
             quotation_date: data.quotation_date,
@@ -734,6 +737,11 @@ export class QuotationService {
                 .map((r) => r.lead_id?.toString())
                 .filter((v): v is string => !!v)
         );
+        const rfqIds = unique(
+            rows
+                .map((r) => (r as any).rfq_id?.toString())
+                .filter((v): v is string => !!v)
+        );
         const quotationIds = rows.map((r) => r._id.toString());
 
         // Pre-load lines once so we can collect vendor_ids before the parallel fan-out.
@@ -751,7 +759,7 @@ export class QuotationService {
                 .filter((v: any): v is string => !!v)
         );
 
-        const [customers, contacts, leads, vendors, products] =
+        const [customers, contacts, leads, vendors, products, rfqs] =
             await Promise.all([
                 customerIds.length
                     ? this.customerRepository.findAll({
@@ -779,6 +787,11 @@ export class QuotationService {
                           _id: { $in: productIds },
                       } as any)
                     : Promise.resolve([] as any[]),
+                rfqIds.length
+                    ? this.rfqRepository.findAll({
+                          _id: { $in: rfqIds },
+                      } as any)
+                    : Promise.resolve([] as any[]),
             ]);
 
         // Pick the primary contact per customer (or first if no flag set).
@@ -794,6 +807,7 @@ export class QuotationService {
 
         const customerMap = toMap(customers, '_id');
         const leadMap = toMap(leads, '_id');
+        const rfqMap = toMap(rfqs, '_id');
         const vendorMap = toMap(vendors, '_id');
         const productMap = toMap(products, '_id');
 
@@ -822,10 +836,19 @@ export class QuotationService {
                         : dial || digits;
                 }
             }
+            const lead: any = r.lead_id
+                ? leadMap.get(r.lead_id.toString())
+                : null;
+            const rfq: any = (r as any).rfq_id
+                ? rfqMap.get((r as any).rfq_id.toString())
+                : null;
             const dto: QuotationGetResponseDto = {
                 _id: qid,
                 voucher_no: r.voucher_no,
                 lead_id: r.lead_id?.toString(),
+                lead_voucher_no: lead?.voucher_no,
+                rfq_id: (r as any).rfq_id?.toString(),
+                rfq_voucher_no: rfq?.voucher_no,
                 customer_id: r.customer_id?.toString(),
                 customer_name: (cust as any)?.company_name,
                 customer_contact_name: primary?.name,

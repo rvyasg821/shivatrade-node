@@ -12,6 +12,12 @@ export class LeadEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     company_id: string;
 
+    /** Customer Requirement number — STIPL/RQ/0001/2026-27. Nullable for
+     *  leads created before voucher numbering was introduced. */
+    @Index()
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    voucher_no?: string;
+
     @Column({ type: 'uuid', nullable: true })
     created_by: string;
 

@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
     IsArray,
+    IsDateString,
     IsIn,
     IsNotEmpty,
     IsNumberString,
@@ -66,4 +67,23 @@ export class PurchaseOrderAutoSplitRequestDto {
     @IsObject()
     @IsOptional()
     vendor_expenses?: Record<string, PurchaseOrderVendorExpensePickDto[]>;
+
+    // ── Customer order reference + advance (S4) — captured at SO generation ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    customer_po_number?: string;
+
+    @IsNumberString({}, { message: 'advance_amount must be a numeric string' })
+    @IsOptional()
+    advance_amount?: string;
+
+    @IsDateString()
+    @IsOptional()
+    advance_date?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    advance_notes?: string;
 }
