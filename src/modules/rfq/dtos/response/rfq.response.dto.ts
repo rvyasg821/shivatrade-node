@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class RfqLineResponseDto {
     @ApiProperty() _id: string;
+    @ApiProperty({ required: false }) lead_line_id?: string;
     @ApiProperty({ required: false }) product_id?: string;
     @ApiProperty({ required: false }) product_name?: string;
     @ApiProperty({ required: false }) product_code?: string;
@@ -40,6 +41,10 @@ export class RfqGetResponseDto {
     @ApiProperty({ required: false }) voucher_no?: string;
     @ApiProperty({ required: false }) lead_id?: string;
     @ApiProperty({ required: false }) lead_voucher_no?: string;
+    @ApiProperty({ required: false }) lead_company_name?: string;
+    @ApiProperty({ required: false }) lead_contact_name?: string;
+    @ApiProperty({ required: false }) lead_contact_email?: string;
+    @ApiProperty({ required: false }) lead_contact_phone?: string;
     @ApiProperty({ required: false }) rfq_date?: string;
     @ApiProperty({ required: false }) notes?: string;
     @ApiProperty() status: string;
@@ -61,4 +66,14 @@ export class RfqListResponseDto {
     @ApiProperty({ required: false }) line_count?: number;
     @ApiProperty({ required: false }) vendor_count?: number;
     @ApiProperty({ required: false }) createdAt?: Date;
+}
+
+// Stats response for /admin/rfq/stats — drives the KPI tile strip on the
+// RFQ listing page. Same envelope shape as LeadStatsResponseDto so the
+// shared VoucherStatsTiles component consumes it unchanged.
+export class RfqStatsResponseDto {
+    total: number;
+    // Per-status counts. Keys are ENUM_RFQ_STATUS values present in the
+    // filtered set — missing keys = 0.
+    by_status: Record<string, number>;
 }

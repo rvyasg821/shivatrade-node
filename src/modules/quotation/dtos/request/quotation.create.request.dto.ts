@@ -109,6 +109,11 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     lead_id?: string;
 
+    /** Source RFQ this quotation was seeded from (Sales S3). */
+    @IsUUID()
+    @IsOptional()
+    rfq_id?: string;
+
     /** Required UNLESS lead_id is provided - service will auto-resolve a
      *  customer from the lead in that case. */
     @IsUUID()

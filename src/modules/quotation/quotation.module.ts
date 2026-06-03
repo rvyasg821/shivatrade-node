@@ -18,6 +18,7 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 // service-level cycles with PfiModule / PurchaseOrderModule).
 import { PfiRepositoryModule } from '@modules/pfi/repository/pfi.repository.module';
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
+import { RfqRepositoryModule } from '@modules/rfq/repository/rfq.repository.module';
 
 @Module({
     imports: [
@@ -33,6 +34,7 @@ import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repositor
         CompanyRepositoryModule,
         PfiRepositoryModule,
         PurchaseOrderRepositoryModule,
+        RfqRepositoryModule,
     ],
     providers: [QuotationService],
     exports: [QuotationRepositoryModule, QuotationService],

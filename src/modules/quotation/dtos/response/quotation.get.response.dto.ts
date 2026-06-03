@@ -50,6 +50,9 @@ export class QuotationGetResponseDto {
     _id?: string;
     voucher_no?: string;
     lead_id?: string;
+    lead_voucher_no?: string;
+    rfq_id?: string;
+    rfq_voucher_no?: string;
     customer_id?: string;
     customer_name?: string;
     customer_contact_name?: string;

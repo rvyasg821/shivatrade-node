@@ -1,6 +1,7 @@
 {
     "create": "RFQ created from the lead.",
     "list": "RFQ list retrieved.",
+    "stats": "RFQ stats retrieved.",
     "get": "RFQ retrieved.",
     "update": "RFQ updated.",
     "delete": "RFQ deleted.",

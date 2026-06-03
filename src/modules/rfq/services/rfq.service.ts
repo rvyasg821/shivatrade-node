@@ -22,6 +22,7 @@ import {
 import {
     RfqGetResponseDto,
     RfqListResponseDto,
+    RfqStatsResponseDto,
 } from '../dtos/response/rfq.response.dto';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { LeadLineRepository } from '@modules/lead/repository/repositories/lead-line.repository';
@@ -340,8 +341,51 @@ export class RfqService {
     }
 
     // ─── Read / map ──────────────────────────────────────────────────────
-    async list(companyId: string, options?: any): Promise<RfqListResponseDto[]> {
-        const rows = await this.rfqRepository.findByCompanyId(companyId, options);
+    /** Mongo-style find for the list/count/stats endpoints. */
+    buildListFind(
+        companyId: string,
+        filters: {
+            status?: string | string[];
+            lead_id?: string;
+            search?: string;
+        }
+    ): Record<string, any> {
+        const find: any = { soft_delete: false };
+        if (companyId) find.company_id = companyId;
+        if (filters.lead_id) find.lead_id = filters.lead_id;
+        if (filters.status) find.status = filters.status;
+        const searchTerm =
+            typeof filters.search === 'string' ? filters.search.trim() : '';
+        if (searchTerm) {
+            find.$or = [
+                { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { lead_voucher_no: { $regex: searchTerm, $options: 'i' } },
+            ];
+        }
+        return find;
+    }
+
+    async count(
+        companyId: string,
+        filters: { status?: string | string[]; lead_id?: string; search?: string }
+    ): Promise<number> {
+        return this.rfqRepository.getTotal(
+            this.buildListFind(companyId, filters) as any
+        );
+    }
+
+    async list(
+        companyId: string,
+        options?: { find?: Record<string, any>; paging?: any; order?: any }
+    ): Promise<RfqListResponseDto[]> {
+        const find = options?.find || {
+            company_id: companyId,
+            soft_delete: false,
+        };
+        const rows = await this.rfqRepository.findAll(find as any, {
+            paging: options?.paging,
+            order: options?.order,
+        });
         if (!rows.length) return [];
         const ids = rows.map((r: any) => r._id.toString());
         const [lines, vendors] = await Promise.all([
@@ -372,6 +416,53 @@ export class RfqService {
             dto.vendor_count = vendorCount.get(r._id.toString()) || 0;
             return dto;
         });
+    }
+
+    /** Status counts for the KPI tile strip (mirrors lead.stats). */
+    async stats(
+        companyId: string,
+        filters: { status?: string | string[]; lead_id?: string; search?: string }
+    ): Promise<RfqStatsResponseDto> {
+        const rows = await this.rfqRepository.aggregate<{
+            status: string;
+            count: string;
+        }>((qb) => {
+            qb.andWhere('entity.soft_delete = :sd', { sd: false });
+            qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            if (filters.lead_id) {
+                qb.andWhere('entity.lead_id = :lid', { lid: filters.lead_id });
+            }
+            if (filters.status) {
+                if (Array.isArray(filters.status)) {
+                    qb.andWhere('entity.status IN (:...st)', {
+                        st: filters.status,
+                    });
+                } else {
+                    qb.andWhere('entity.status = :st', { st: filters.status });
+                }
+            }
+            const searchTerm =
+                typeof filters.search === 'string' ? filters.search.trim() : '';
+            if (searchTerm) {
+                qb.andWhere(
+                    '(entity.voucher_no ILIKE :q OR entity.lead_voucher_no ILIKE :q)',
+                    { q: `%${searchTerm}%` }
+                );
+            }
+            return qb
+                .select('entity.status', 'status')
+                .addSelect('COUNT(*)::int', 'count')
+                .groupBy('entity.status');
+        });
+
+        const by_status: Record<string, number> = {};
+        let total = 0;
+        for (const r of rows) {
+            const cnt = Number(r.count) || 0;
+            by_status[r.status] = cnt;
+            total += cnt;
+        }
+        return { total, by_status };
     }
 
     async mapGet(companyId: string, rfqId: string): Promise<RfqGetResponseDto> {
@@ -414,12 +505,28 @@ export class RfqService {
         );
 
         const dto = plainToInstance(RfqGetResponseDto, rfq);
+
+        // Enrich with a bit of the source lead so the RFQ header can show
+        // who the requirement is for (company / contact).
+        if (rfq.lead_id) {
+            const lead: any = await this.leadRepository.findOneById(
+                rfq.lead_id.toString()
+            );
+            if (lead) {
+                dto.lead_company_name = lead.company_name;
+                dto.lead_contact_name = lead.contact_name;
+                dto.lead_contact_email = lead.contact_email;
+                dto.lead_contact_phone = lead.contact_phone;
+            }
+        }
+
         dto.lines = (lines as any[]).map((l) => {
             const prod = l.product_id
                 ? productById.get(l.product_id.toString())
                 : null;
             return {
                 _id: l._id.toString(),
+                lead_line_id: l.lead_line_id?.toString(),
                 product_id: l.product_id?.toString(),
                 product_name: prod?.name,
                 product_code: prod?.code,
@@ -492,8 +599,8 @@ export class RfqService {
                 (l, i) => `<tr>
                 <td>${i + 1}</td>
                 <td>${this.esc(l.product_name || l.product_code || '-')}${
-                    l.description
-                        ? `<br/><small style="color:#666">${this.esc(l.description)}</small>`
+                    l.product_code && l.product_name
+                        ? `<br/><small style="color:#666">${this.esc(l.product_code)}</small>`
                         : ''
                 }</td>
                 <td>${this.esc(l.hs_code || '-')}</td>
