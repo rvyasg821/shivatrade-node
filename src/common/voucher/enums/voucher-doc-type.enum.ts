@@ -10,6 +10,7 @@ export enum ENUM_VOUCHER_DOC_TYPE {
     PFI = 'PFI',
     PURCHASE_ORDER = 'PURCHASE_ORDER',
     PO_VENDOR = 'PO_VENDOR',
+    GRN = 'GRN',
     INVOICE_EXPORT = 'INVOICE_EXPORT',
     SHIPPING = 'SHIPPING',
 }
@@ -34,7 +35,7 @@ export interface VoucherDocConfig {
  *   PFI     → STIPL/PI0001/2026-27       (token+counter glued)
  *   SO      → STIPL/SO/0001/2026-27      (Sales Order; token and counter separated)
  *   QT      → STIPL/QT0001/2026-27       (glued, our convention)
- *   POV     → STIPL/POV0001/2026-27      (glued)
+ *   VPO     → STIPL/VPO/0001/2026-27     (Vendor PO; token and counter separated)
  *   INVOICE → STIPL001/2025-26           (compact, no token, 3-digit per STIPL119 template)
  */
 export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig> = {
@@ -47,7 +48,12 @@ export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig>
     // Sales Order → STIPL/SO/0001/2026-27 (S4: relabeled from 'OS').
     // Existing 'OS' vouchers are unchanged; only new SOs use 'SO'.
     [ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER]: { token: 'SO', style: 'separated' },
-    [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: { token: 'POV', style: 'glued' },
+    // Vendor Purchase Order → STIPL/VPO/0088/2026-27 (relabeled from 'POV').
+    // Voucher-number change only; the po-vendor module is otherwise untouched.
+    // Existing 'POV…' vouchers keep their stored number; only new ones use VPO.
+    [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: { token: 'VPO', style: 'separated' },
+    // Goods Receipt Note → STIPL/GRN0001/2026-27
+    [ENUM_VOUCHER_DOC_TYPE.GRN]: { token: 'GRN', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT]: { token: '', style: 'compact', padDigits: 3 },
     [ENUM_VOUCHER_DOC_TYPE.SHIPPING]: { token: 'SHP', style: 'glued' },
 };
