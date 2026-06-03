@@ -15,8 +15,16 @@ import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
 } from '@modules/auth/decorators/auth.jwt.decorator';
-import { Response } from '@common/response/decorators/response.decorator';
-import { IResponse } from '@common/response/interfaces/response.interface';
+import {
+    Response,
+    ResponsePaging,
+} from '@common/response/decorators/response.decorator';
+import {
+    IResponse,
+    IResponsePaging,
+} from '@common/response/interfaces/response.interface';
+import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
+import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { RfqService } from '../services/rfq.service';
 import {
@@ -29,6 +37,7 @@ import {
 import {
     RfqGetResponseDto,
     RfqListResponseDto,
+    RfqStatsResponseDto,
 } from '../dtos/response/rfq.response.dto';
 
 @ApiTags('admin.rfq')
@@ -54,16 +63,48 @@ export class RfqAdminController {
         return { data: await this.rfqService.mapGet(companyId, rfq._id.toString()) };
     }
 
-    @Response('rfq.list')
+    @ResponsePaging('rfq.list')
     @AuthJwtAccessProtected()
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
-        @Query('lead_id') leadId?: string
-    ): Promise<IResponse<RfqListResponseDto[]>> {
-        const find: any = {};
-        if (leadId) find.lead_id = leadId;
-        const data = await this.rfqService.list(companyId, { find });
+        @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
+        @Query('status') status?: string,
+        @Query('lead_id') leadId?: string,
+        @Query('search') search?: string
+    ): Promise<IResponsePaging<RfqListResponseDto>> {
+        const filters = {
+            status: parseRfqStatusParam(status),
+            lead_id: leadId,
+            search,
+        };
+        const find = this.rfqService.buildListFind(companyId, filters);
+        const data = await this.rfqService.list(companyId, {
+            find,
+            paging: { limit: _limit, offset: _offset },
+            order: _order,
+        });
+        const total = await this.rfqService.count(companyId, filters);
+        return {
+            _pagination: { total, totalPage: Math.ceil(total / _limit) },
+            data,
+        };
+    }
+
+    @Response('rfq.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('status') status?: string,
+        @Query('lead_id') leadId?: string,
+        @Query('search') search?: string
+    ): Promise<IResponse<RfqStatsResponseDto>> {
+        const data = await this.rfqService.stats(companyId, {
+            status: parseRfqStatusParam(status),
+            lead_id: leadId,
+            search,
+        });
         return { data };
     }
 
@@ -169,4 +210,19 @@ export class RfqAdminController {
         res.setHeader('Content-Length', buffer.length);
         res.end(buffer);
     }
+}
+
+// Normalize the `status` query param: `undefined` for empty, the string
+// itself for one status, or an array when comma-separated (the "In
+// Progress" tile sends `draft,sent,quoting`).
+function parseRfqStatusParam(
+    status?: string
+): string | string[] | undefined {
+    if (!status) return undefined;
+    const parts = status
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return undefined;
+    return parts.length === 1 ? parts[0] : parts;
 }
