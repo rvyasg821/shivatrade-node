@@ -32,7 +32,7 @@ export interface VoucherDocConfig {
 /**
  * Per-doc-type display config. Matches ShivaTrades sample sheets:
  *   PFI     → STIPL/PI0001/2026-27       (token+counter glued)
- *   PO      → STIPL/OS/0001/2026-27      (token and counter separated)
+ *   SO      → STIPL/SO/0001/2026-27      (Sales Order; token and counter separated)
  *   QT      → STIPL/QT0001/2026-27       (glued, our convention)
  *   POV     → STIPL/POV0001/2026-27      (glued)
  *   INVOICE → STIPL001/2025-26           (compact, no token, 3-digit per STIPL119 template)
@@ -44,7 +44,9 @@ export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig>
     [ENUM_VOUCHER_DOC_TYPE.RFQ]: { token: 'RFQ', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.QUOTATION]: { token: 'QT', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.PFI]: { token: 'PI', style: 'glued' },
-    [ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER]: { token: 'OS', style: 'separated' },
+    // Sales Order → STIPL/SO/0001/2026-27 (S4: relabeled from 'OS').
+    // Existing 'OS' vouchers are unchanged; only new SOs use 'SO'.
+    [ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER]: { token: 'SO', style: 'separated' },
     [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: { token: 'POV', style: 'glued' },
     [ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT]: { token: '', style: 'compact', padDigits: 3 },
     [ENUM_VOUCHER_DOC_TYPE.SHIPPING]: { token: 'SHP', style: 'glued' },

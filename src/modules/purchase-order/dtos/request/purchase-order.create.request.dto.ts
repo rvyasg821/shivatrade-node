@@ -136,6 +136,25 @@ export class PurchaseOrderCreateRequestDto {
     @IsOptional()
     expected_delivery_date?: string;
 
+    // ── Customer order reference + advance (S4) ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    customer_po_number?: string;
+
+    @IsNumberString({}, { message: 'advance_amount must be a numeric string' })
+    @IsOptional()
+    advance_amount?: string;
+
+    @IsDateString()
+    @IsOptional()
+    advance_date?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    advance_notes?: string;
+
     /** Free-text snapshot. Optional — if omitted, server resolves from
      *  `delivery_address_id` (preferred) or rejects. */
     @IsString()

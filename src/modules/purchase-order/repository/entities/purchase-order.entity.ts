@@ -73,6 +73,28 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'date', nullable: true })
     expected_delivery_date?: string;
 
+    // ── Customer order reference + advance (S4) ──────────────────────
+    /** The customer's own PO number for this order. Propagates onto the
+     *  Invoice's "Buyer's PO #" when generating the invoice. */
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    customer_po_number?: string;
+
+    /** Advance / down-payment received against this sales order. */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
+    advance_amount: string;
+
+    @Column({ type: 'date', nullable: true })
+    advance_date?: string;
+
+    @Column({ type: 'varchar', length: 200, nullable: true })
+    advance_notes?: string;
+
     /** Forwarder warehouse / port — frozen snapshot text printed on the
      *  PO PDF. Inherits from a picked company address (via
      *  `delivery_address_id`) or from a manual text override. */

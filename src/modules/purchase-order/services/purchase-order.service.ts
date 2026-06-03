@@ -49,6 +49,14 @@ const round2 = (n: number): number =>
 const round4 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 10000) / 10000;
 
+/** Customer-side order reference + advance captured at SO generation (S4). */
+type CustomerOrderInput = {
+    customer_po_number?: string;
+    advance_amount?: string;
+    advance_date?: string;
+    advance_notes?: string;
+};
+
 @Injectable()
 export class PurchaseOrderService {
     private readonly logger = new Logger(PurchaseOrderService.name);
@@ -244,6 +252,10 @@ export class PurchaseOrderService {
             pfi_id: data.pfi_id || null,
             po_date: data.po_date,
             expected_delivery_date: data.expected_delivery_date || null,
+            customer_po_number: (data as any).customer_po_number || null,
+            advance_amount: (data as any).advance_amount ?? '0',
+            advance_date: (data as any).advance_date || null,
+            advance_notes: (data as any).advance_notes || null,
             delivery_address: delivery.text,
             delivery_address_id: delivery.id || null,
             payment_terms: data.payment_terms || null,
@@ -1089,6 +1101,9 @@ export class PurchaseOrderService {
                 voucher_no: (pfi as any).voucher_no,
                 status: (pfi as any).status,
                 customer_id: (pfi as any).customer_id?.toString(),
+                grand_total: (pfi as any).grand_total,
+                currency_code: (pfi as any).currency_code,
+                currency_symbol: getCurrencySymbol((pfi as any).currency_code),
             },
             existing_delivery_address_id: existingDelivery.id,
             existing_delivery_address: existingDelivery.text,
@@ -1151,6 +1166,9 @@ export class PurchaseOrderService {
                 voucher_no: (q as any).voucher_no,
                 status: (q as any).status,
                 customer_id: (q as any).customer_id?.toString(),
+                grand_total: (q as any).grand_total,
+                currency_code: (q as any).currency_code,
+                currency_symbol: getCurrencySymbol((q as any).currency_code),
             },
             existing_delivery_address_id: existingDelivery.id,
             existing_delivery_address: existingDelivery.text,
@@ -1370,6 +1388,7 @@ export class PurchaseOrderService {
                     value?: string;
                 }>
             >;
+            customerOrder?: CustomerOrderInput;
         }
     ) {
         return this.createPoAndPovsFromSource({
@@ -1381,6 +1400,7 @@ export class PurchaseOrderService {
             deliveryAddressId: opts?.deliveryAddressId,
             deliveryAddressText: opts?.deliveryAddressText,
             vendorExpenses: opts?.vendorExpenses,
+            customerOrder: opts?.customerOrder,
         });
     }
 
@@ -1406,6 +1426,7 @@ export class PurchaseOrderService {
                 value?: string;
             }>
         >;
+        customerOrder?: CustomerOrderInput;
     }) {
         const {
             companyId,
@@ -1416,6 +1437,7 @@ export class PurchaseOrderService {
             deliveryAddressId,
             deliveryAddressText,
             vendorExpenses,
+            customerOrder,
         } = opts;
 
         // ── Load source doc ──
@@ -1591,6 +1613,11 @@ export class PurchaseOrderService {
                     sourceType === 'pfi'
                         ? src.est_delivery_date || undefined
                         : undefined,
+                // Customer-side order ref + advance (entered at generation).
+                customer_po_number: customerOrder?.customer_po_number,
+                advance_amount: customerOrder?.advance_amount,
+                advance_date: customerOrder?.advance_date,
+                advance_notes: customerOrder?.advance_notes,
                 payment_terms: src.payment_terms || undefined,
                 delivery_terms: src.delivery_terms || undefined,
                 internal_notes: src.internal_notes || undefined,
@@ -1710,6 +1737,7 @@ export class PurchaseOrderService {
                     value?: string;
                 }>
             >;
+            customerOrder?: CustomerOrderInput;
         }
     ) {
         return this.createPoAndPovsFromSource({
@@ -1721,6 +1749,7 @@ export class PurchaseOrderService {
             deliveryAddressId: opts?.deliveryAddressId,
             deliveryAddressText: opts?.deliveryAddressText,
             vendorExpenses: opts?.vendorExpenses,
+            customerOrder: opts?.customerOrder,
         });
     }
 
@@ -1928,6 +1957,10 @@ export class PurchaseOrderService {
                 pfi_bank_account_id: (pfi as any)?.bank_account_id?.toString(),
                 po_date: r.po_date,
                 expected_delivery_date: r.expected_delivery_date,
+                customer_po_number: (r as any).customer_po_number,
+                advance_amount: (r as any).advance_amount,
+                advance_date: (r as any).advance_date,
+                advance_notes: (r as any).advance_notes,
                 delivery_address: r.delivery_address,
                 delivery_address_id: r.delivery_address_id?.toString(),
                 payment_terms: r.payment_terms,

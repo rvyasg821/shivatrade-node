@@ -8,6 +8,7 @@ import {
     Param,
     Query,
     Res,
+    ForbiddenException,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
@@ -34,6 +35,19 @@ import { PfiUpdateRequestDto } from '../dtos/request/pfi.update.request.dto';
 import { PfiGetResponseDto } from '../dtos/response/pfi.get.response.dto';
 import { PfiStatsResponseDto } from '../dtos/response/pfi.stats.response.dto';
 
+// PFI is retired from the workflow (Sales S4): Quotation → Sales Order is
+// the path. Write/share endpoints are blocked so nothing new can be created
+// — read endpoints stay so existing PFIs remain accessible. Set
+// PFI_RETIRED=false to re-enable.
+const PFI_RETIRED = process.env.PFI_RETIRED !== 'false';
+const assertPfiNotRetired = () => {
+    if (PFI_RETIRED) {
+        throw new ForbiddenException(
+            'PFI is retired. Generate a Sales Order from the Quotation instead.'
+        );
+    }
+};
+
 @ApiTags('admin.pfi')
 @Controller({ version: '1', path: '/admin/pfi' })
 export class PfiAdminController {
@@ -51,6 +65,7 @@ export class PfiAdminController {
         @AuthJwtPayload('user') userId: string,
         @Body() body: PfiCreateRequestDto
     ): Promise<IResponse<PfiGetResponseDto>> {
+        assertPfiNotRetired();
         const row = await this.pfiService.create(companyId, body, userId);
         return { data: await this.pfiService.mapGet(row) };
     }
@@ -63,6 +78,7 @@ export class PfiAdminController {
         @AuthJwtPayload('user') userId: string,
         @Param('quotationId') quotationId: string
     ): Promise<IResponse<PfiGetResponseDto>> {
+        assertPfiNotRetired();
         const row = await this.pfiService.createFromQuotation(
             companyId,
             quotationId,
@@ -172,6 +188,7 @@ export class PfiAdminController {
     async publish(
         @Param('id') id: string
     ): Promise<IResponse<PfiGetResponseDto>> {
+        assertPfiNotRetired();
         const row = await this.pfiService.publish(id);
         return { data: await this.pfiService.mapGet(row) };
     }
@@ -182,6 +199,7 @@ export class PfiAdminController {
     async rotateToken(
         @Param('id') id: string
     ): Promise<IResponse<PfiGetResponseDto>> {
+        assertPfiNotRetired();
         const row = await this.pfiService.rotateToken(id);
         return { data: await this.pfiService.mapGet(row) };
     }
