@@ -1,0 +1,12 @@
+{
+    "create": "GRN created from the Vendor PO.",
+    "list": "GRN list retrieved.",
+    "stats": "GRN stats retrieved.",
+    "sourcePovs": "Receivable Vendor POs retrieved.",
+    "get": "GRN retrieved.",
+    "update": "GRN updated.",
+    "delete": "GRN deleted.",
+    "error": {
+        "notFound": "GRN not found."
+    }
+}
