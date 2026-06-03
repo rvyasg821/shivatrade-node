@@ -15,6 +15,15 @@ import { PfiPdfService } from '../services/pfi-pdf.service';
 import { PfiPublicResponseDto } from '../dtos/response/pfi.public.response.dto';
 import { ENUM_PFI_STATUS } from '../enums/pfi.enum';
 
+// PFI retired (Sales S4): public share links are disabled. Set
+// PFI_RETIRED=false to re-enable. 404 (not 403) so the resource stays opaque.
+const PFI_RETIRED = process.env.PFI_RETIRED !== 'false';
+const assertPfiNotRetired = () => {
+    if (PFI_RETIRED) {
+        throw new NotFoundException('PFI not found');
+    }
+};
+
 /**
  * No-auth, view-only PFI access by share token (`/p/:token` on the
  * client). Returns the sanitized projection only — no internal costing.
@@ -34,6 +43,7 @@ export class PfiPublicController {
     async getByToken(
         @Param('token') token: string
     ): Promise<IResponse<PfiPublicResponseDto>> {
+        assertPfiNotRetired();
         const row = await this.pfiService.findByPublicToken(token);
         if (!row) {
             throw new NotFoundException('PFI not found');
@@ -57,6 +67,7 @@ export class PfiPublicController {
         @Param('token') token: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
+        assertPfiNotRetired();
         const row = await this.pfiService.findByPublicToken(token);
         if (!row) {
             throw new NotFoundException('PFI not found');

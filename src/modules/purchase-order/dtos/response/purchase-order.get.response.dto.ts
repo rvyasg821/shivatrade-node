@@ -70,6 +70,12 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: true, type: String }) po_date: string;
     @ApiProperty({ required: false, type: String }) expected_delivery_date?: string;
 
+    // ── Customer order reference + advance (S4) ──
+    @ApiProperty({ required: false, type: String }) customer_po_number?: string;
+    @ApiProperty({ required: false, type: String }) advance_amount?: string;
+    @ApiProperty({ required: false, type: String }) advance_date?: string;
+    @ApiProperty({ required: false, type: String }) advance_notes?: string;
+
     @ApiProperty({ required: true, type: String }) delivery_address: string;
     @ApiProperty({ required: false, type: String }) delivery_address_id?: string;
     @ApiProperty({ required: false, type: String }) payment_terms?: string;
