@@ -92,6 +92,11 @@ export class InvoiceLineDto {
     @IsOptional()
     discount_pct?: string;
 
+    /** Per-line margin %, carried from the source Quotation/PO line. */
+    @IsNumberString()
+    @IsOptional()
+    margin_pct?: string;
+
     @IsNumberString()
     @IsOptional()
     tax_pct?: string;

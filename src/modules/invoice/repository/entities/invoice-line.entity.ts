@@ -71,6 +71,12 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: false, default: 0 })
     discount_pct: string;
 
+    /** Per-line margin %, carried from the source Quotation/PO line so the
+     *  invoice costing equals the source. Applied in recompute():
+     *  margin = (taxable + expenses − rebates) × margin_pct/100. */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: false, default: 0 })
+    margin_pct: string;
+
     /** Always 0 on export rows; reserved for future domestic. */
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: false, default: 0 })
     tax_pct: string;

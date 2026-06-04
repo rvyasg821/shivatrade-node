@@ -248,6 +248,24 @@ export class InvoiceService {
             (data as any).company_address_id
         );
 
+        // Snapshot the upstream voucher chain onto the invoice header so the
+        // PDF "References" block can print them (§10). Derived from the source
+        // SO(s) + their quotations; multiple sources are comma-joined.
+        const sourcePoVouchers = Array.from(
+            new Set(
+                (source.pos || [])
+                    .map((p: any) => p?.voucher_no)
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const sourceQuotationVouchers = Array.from(
+            new Set(
+                Array.from(source.byPoLineId.values())
+                    .map((v: any) => v?.quotationVoucherNo)
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+
         const header = await this.invoiceRepository.create({
             company_id: companyId,
             created_by: userId,
@@ -256,8 +274,10 @@ export class InvoiceService {
             invoice_date: data.invoice_date,
             due_date: data.due_date,
             purchase_order_id: data.purchase_order_id,
+            purchase_order_voucher_no: sourcePoVouchers.join(', ') || null,
             pfi_id: data.pfi_id,
             quotation_id: data.quotation_id,
+            quotation_voucher_no: sourceQuotationVouchers.join(', ') || null,
             // Default the buyer's PO# from the source Sales Order (S4) when
             // the invoice payload didn't carry one; operator can override.
             customer_po_no:
@@ -283,7 +303,20 @@ export class InvoiceService {
             freight_charges: data.freight_charges || '0',
             insurance_charges: data.insurance_charges || '0',
             other_charges: data.other_charges || '0',
-            advance_received: data.advance_received || '0',
+            // Carry the advance already collected on the source Sales Order(s)
+            // (S4 advance_amount) when the payload didn't supply one — backstop
+            // for API-direct callers; the create form prefills it visibly. Only
+            // applies when genuinely absent so an explicit 0 is respected.
+            // Overwritten by the sum of recorded payments once any is logged.
+            advance_received:
+                data.advance_received != null && data.advance_received !== ''
+                    ? data.advance_received
+                    : String(
+                          (source.pos || []).reduce(
+                              (sum, p) => sum + num(p?.advance_amount),
+                              0
+                          ) || 0
+                      ),
             gst_route: data.gst_route || ENUM_INVOICE_GST_ROUTE.IGST_PAID,
             lut_no: data.lut_no !== undefined ? data.lut_no : ctx.lut_no,
             lut_date: data.lut_date !== undefined ? data.lut_date : ctx.lut_date,
@@ -482,6 +515,39 @@ export class InvoiceService {
             new Date(row.invoice_date)
         );
 
+        // Seed the upfront advance (carried from the Sales Order) as the first
+        // payment receipt. Otherwise the header `advance_received` gets
+        // overwritten by the payment-log sum the moment a later payment is
+        // recorded (applyPaymentDerived), silently dropping the advance. As a
+        // real receipt it survives, gets its own receipt voucher, and later
+        // payments simply add on top.
+        const advanceAmt = num(row.advance_received);
+        if (advanceAmt > 0) {
+            const existingPayments =
+                await this.invoicePaymentRepository.findActiveByInvoiceId(
+                    row._id.toString()
+                );
+            if (!existingPayments.length) {
+                const receiptNo = await this.voucherService.getNext(
+                    row.company_id.toString(),
+                    ENUM_VOUCHER_DOC_TYPE.RECEIPT,
+                    ctx.voucher_prefix,
+                    new Date(row.invoice_date)
+                );
+                await this.invoicePaymentRepository.create({
+                    invoice_id: row._id.toString(),
+                    company_id: row.company_id.toString(),
+                    payment_date: row.invoice_date,
+                    amount: String(advanceAmt),
+                    currency_code: row.currency_code,
+                    method: 'advance',
+                    reference: 'Advance against Sales Order',
+                    receipt_voucher_no: receiptNo,
+                    created_by: userId,
+                } as any);
+            }
+        }
+
         // Compute IGST refund buckets per HSN rate (only for igst_paid route).
         const lines = await this.invoiceLineRepository.findByInvoiceId(
             row._id.toString()
@@ -569,6 +635,24 @@ export class InvoiceService {
             );
         }
 
+        // Assign a stable receipt voucher number (STIPL/RCP/0001/FY) at
+        // creation so the printable receipt has a fixed reference even if the
+        // payment is later voided.
+        const company: any = await this.companyRepository.findOneById(
+            row.company_id.toString()
+        );
+        const voucherPrefix =
+            ((company?.voucher_prefix || '').toUpperCase().trim() ||
+                (company?.company_name || 'CO')
+                    .substring(0, 5)
+                    .toUpperCase()) as string;
+        const receiptVoucherNo = await this.voucherService.getNext(
+            row.company_id.toString(),
+            ENUM_VOUCHER_DOC_TYPE.RECEIPT,
+            voucherPrefix,
+            new Date(data.payment_date)
+        );
+
         const payment = await this.invoicePaymentRepository.create({
             invoice_id: row._id.toString(),
             company_id: row.company_id.toString(),
@@ -578,6 +662,7 @@ export class InvoiceService {
             method: data.method,
             reference: data.reference,
             notes: data.notes,
+            receipt_voucher_no: receiptVoucherNo,
             created_by: userId,
         } as any);
 
@@ -670,55 +755,66 @@ export class InvoiceService {
         if (!row) return;
         const lines = await this.invoiceLineRepository.findByInvoiceId(invoiceId);
 
-        // Per-line:
-        //   base       = qty × unit_price
-        //   adjusted   = (base + Σ expenses) − Σ rebates
-        //   taxable    = adjusted × (1 − discount_pct / 100)
-        //
-        // `expenses` / `rebates` come from the per-line snapshot arrays
-        // (mirrors Quotation / PFI / PO costing). On export, tax_pct = 0 so
-        // cgst/sgst/igst remain 0 and line_total == taxable.
+        // Per-line — MUST mirror the Quotation costing engine (the customer
+        // source of truth) so the invoice total equals the quotation total.
+        // SEQUENTIAL on the running amount:
+        //   taxable      = qty × unit_price × (1 − discount_pct/100)
+        //   − rebates     (Σ snapshot, computed on `taxable`)
+        //   + expenses    (Σ snapshot, computed on the AFTER-rebate amount)
+        //   + margin      (margin_pct, computed on the AFTER-expense amount)
+        // Keep everything unrounded through the chain; round only line_net.
+        // On export tax_pct = 0 → cgst/sgst/igst stay 0.
         let subtotal = 0;
         for (const l of lines) {
             const qty = num(l.qty);
             const price = num(l.unit_price);
             const discount = num(l.discount_pct);
-            const base = qty * price;
+            const taxable = qty * price * (1 - discount / 100);
 
-            const expensesTotal = sumExpenses(
-                l.product_expenses_snapshot,
-                base
-            );
             const rebatesTotal = sumRebates(
                 l.product_rebates_snapshot,
-                base
+                taxable
             );
-            const adjusted = base + expensesTotal - rebatesTotal;
-            const taxable = round2(adjusted * (1 - discount / 100));
+            const afterRebate = taxable - rebatesTotal;
+            const expensesTotal = sumExpenses(
+                l.product_expenses_snapshot,
+                afterRebate
+            );
+            const afterExpense = afterRebate + expensesTotal;
+            const marginPct = num((l as any).margin_pct);
+            const marginAmt = (afterExpense * marginPct) / 100;
+            const lineNet = round2(afterExpense + marginAmt);
 
-            l.taxable_amount = String(taxable);
+            l.taxable_amount = String(lineNet);
             l.cgst_amount = '0';
             l.sgst_amount = '0';
             l.igst_amount = '0';
-            l.line_total = String(taxable);
+            l.line_total = String(lineNet);
             await this.invoiceLineRepository.save(l);
-            subtotal += taxable;
+            subtotal += lineNet;
         }
 
+        // Line items are stored in INR; charges/totals fields are typed in
+        // the document (customer) currency. Convert the INR subtotal to the
+        // document currency FIRST, then apply the doc-currency charges — this
+        // matches the detail "costing breakdown" card and keeps every header
+        // total in a single currency (the customer's). The old code subtracted
+        // doc-currency charges from an INR subtotal, producing a mixed value.
+        // exchange_rate convention: document-per-INR (doc = INR × rate).
+        const er = num(row.exchange_rate) || 1;
+        const subtotal_doc = round2(subtotal * er);
         const discount_total = num(row.discount_total);
-        const fob_value = round2(subtotal - discount_total);
+        const fob_value = round2(subtotal_doc - discount_total);
         const freight = num(row.freight_charges);
         const insurance = num(row.insurance_charges);
         const other = num(row.other_charges);
         const grand_total = round2(fob_value + freight + insurance + other);
-        // exchange_rate convention: foreign-per-INR (matches PFI/PO).
-        // INR equivalent = foreign / rate. Guard against 0 rate.
-        const er = num(row.exchange_rate);
-        const grand_total_inr = er > 0 ? round2(grand_total / er) : 0;
+        // INR equivalent of the document-currency grand total.
+        const grand_total_inr = er > 0 ? round2(grand_total / er) : grand_total;
         const advance = num(row.advance_received);
         const balance = round2(grand_total - advance);
 
-        row.subtotal = String(round2(subtotal));
+        row.subtotal = String(subtotal_doc);
         row.fob_value = String(fob_value);
         row.grand_total = String(grand_total);
         row.grand_total_inr = String(grand_total_inr);
@@ -957,23 +1053,23 @@ export class InvoiceService {
 
     /**
      * Buckets invoice lines by `igst_rate_pct`. For each bucket:
-     *   assessable_value_inr = Σ (taxable_amount / exchange_rate)
+     *   assessable_value_inr = Σ taxable_amount        (line values are INR)
      *   igst_amount_inr      = assessable_value_inr × rate
      *
-     * exchange_rate is foreign-per-INR (matches PFI/PO convention), so
-     * INR conversion divides.
+     * Line `taxable_amount` is stored in INR, so it IS the assessable value —
+     * no exchange-rate conversion (a prior version divided by the rate and
+     * inflated the IGST ~1/rate×).
      *
      * Returns the array + the total IGST refund (sum of buckets).
      */
     private buildIgstRefundBuckets(
         lines: InvoiceLineDoc[],
-        exchangeRate: number
+        _exchangeRate: number
     ): { buckets: any[]; totalRefund: number } {
         const grouped = new Map<string, number>(); // rate_pct → INR assessable
-        const safeEr = exchangeRate > 0 ? exchangeRate : 1;
         for (const l of lines) {
             const rate = num(l.igst_rate_pct);
-            const taxableInr = num(l.taxable_amount) / safeEr;
+            const taxableInr = num(l.taxable_amount);
             grouped.set(String(rate), (grouped.get(String(rate)) || 0) + taxableInr);
         }
         const buckets: any[] = [];
@@ -1044,6 +1140,7 @@ export class InvoiceService {
                 qty: l.qty,
                 unit_price: l.unit_price,
                 discount_pct: l.discount_pct || '0',
+                margin_pct: (l as any).margin_pct || '0',
                 tax_pct: l.tax_pct || '0',
                 igst_rate_pct: l.igst_rate_pct || '0',
                 product_rebates_snapshot:
