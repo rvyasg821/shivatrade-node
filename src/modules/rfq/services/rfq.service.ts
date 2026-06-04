@@ -26,6 +26,8 @@ import {
 } from '../dtos/response/rfq.response.dto';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { LeadLineRepository } from '@modules/lead/repository/repositories/lead-line.repository';
+import { LeadActivityService } from '@modules/lead/services/lead-activity.service';
+import { ENUM_LEAD_ACTIVITY_TYPE } from '@modules/lead/enums/lead-activity.enum';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
@@ -50,7 +52,8 @@ export class RfqService {
         private readonly companyRepository: CompanyRepository,
         private readonly priceListRepository: PriceListRepository,
         private readonly voucherService: VoucherService,
-        private readonly pdfService: PdfService
+        private readonly pdfService: PdfService,
+        private readonly leadActivityService: LeadActivityService
     ) {}
 
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
@@ -137,6 +140,18 @@ export class RfqService {
                 vendor_ids: dto.vendor_ids,
             });
         }
+
+        // Timeline entry on the source lead.
+        this.leadActivityService
+            .addSystem(companyId, leadId, ENUM_LEAD_ACTIVITY_TYPE.RFQ_CREATED, {
+                metadata: { rfq_id: rfqId, voucher_no },
+                createdBy,
+            })
+            .catch((err) =>
+                this.logger.warn(
+                    `Failed to log rfq_created activity: ${err.message}`
+                )
+            );
 
         this.logger.log(`RFQ created from lead ${leadId}: ${rfqId} (${voucher_no})`);
         return this.rfqRepository.findOneById(rfqId);

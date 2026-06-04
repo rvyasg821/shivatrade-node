@@ -902,6 +902,21 @@ export class LeadService {
             }
         }
 
+        // Count requirement line items per lead so the listing can show how
+        // many products each lead is interested in without fetching the lines.
+        const lineItemCounts = new Map<string, number>();
+        if (leadIds.length) {
+            const leadLines = await this.leadLineRepository.findAll({
+                lead_id: { $in: leadIds },
+                soft_delete: false,
+            } as any);
+            for (const ln of leadLines as any[]) {
+                const lid = ln.lead_id?.toString();
+                if (!lid) continue;
+                lineItemCounts.set(lid, (lineItemCounts.get(lid) || 0) + 1);
+            }
+        }
+
         const lastActivityMap = await this.activityRepository.findLastActivityMap(
             leadIds
         );
@@ -915,6 +930,8 @@ export class LeadService {
             }
             (dtos[i] as any).quotations_count =
                 quotationCounts.get(l._id.toString()) || 0;
+            (dtos[i] as any).line_items_count =
+                lineItemCounts.get(l._id.toString()) || 0;
             (dtos[i] as any).last_activity_at =
                 lastActivityMap.get(l._id.toString()) || null;
         });

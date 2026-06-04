@@ -49,6 +49,7 @@ export class LeadGetResponseDto {
     @ApiProperty({ required: false, type: String }) assigned_to?: string;
     @ApiProperty({ required: false, type: String }) assigned_to_name?: string;
     @ApiProperty({ required: false, type: Number }) quotations_count?: number;
+    @ApiProperty({ required: false, type: Number }) line_items_count?: number;
 
     @ApiProperty({ required: false, type: String }) description?: string;
     @ApiProperty({ required: false, type: String }) last_activity_at?: string;
