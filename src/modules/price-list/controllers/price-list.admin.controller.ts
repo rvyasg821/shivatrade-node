@@ -273,6 +273,39 @@ export class PriceListAdminController {
         return { data: result };
     }
 
+    // Current effective unit price for a vendor across a list of products.
+    // Used by the RFQ draft builder to pre-fill a freshly-added vendor's grid
+    // cells (mirrors the prefill that addVendors does when persisting).
+    @AuthJwtAccessProtected()
+    @Get('/current-prices')
+    async currentPrices(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('vendor_id') vendorId?: string,
+        @Query('product_ids') productIdsRaw?: string
+    ): Promise<IResponse<Array<{ product_id: string; unit_price: string }>>> {
+        const productIds = (productIdsRaw || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        if (!vendorId || !productIds.length) return { data: [] };
+
+        const results: Array<{ product_id: string; unit_price: string }> = [];
+        for (const productId of productIds) {
+            const row = await this.priceListRepository.findCurrentPrice(
+                companyId,
+                vendorId,
+                productId
+            );
+            if (row && (row as any).unit_price != null) {
+                results.push({
+                    product_id: productId,
+                    unit_price: String((row as any).unit_price),
+                });
+            }
+        }
+        return { data: results };
+    }
+
     @Response('priceList.get')
     @AuthJwtAccessProtected()
     @Get('/get/:priceListId')

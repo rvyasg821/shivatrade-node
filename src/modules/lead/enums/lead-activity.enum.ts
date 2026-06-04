@@ -7,6 +7,7 @@
  *  - STATUS_CHANGE     auto-recorded when lead.status moves
  *  - CONVERSION        auto-recorded when lead → customer link is set
  *  - QUOTATION_CREATED auto-recorded when a quotation is created with this lead_id
+ *  - RFQ_CREATED       auto-recorded when an RFQ is created from this lead
  *  - ASSIGNMENT_CHANGE auto-recorded when lead.assigned_to changes (future)
  */
 export enum ENUM_LEAD_ACTIVITY_TYPE {
@@ -15,5 +16,6 @@ export enum ENUM_LEAD_ACTIVITY_TYPE {
     STATUS_CHANGE = 'status_change',
     CONVERSION = 'conversion',
     QUOTATION_CREATED = 'quotation_created',
+    RFQ_CREATED = 'rfq_created',
     ASSIGNMENT_CHANGE = 'assignment_change',
 }
