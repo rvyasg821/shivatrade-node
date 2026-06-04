@@ -4,6 +4,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
+import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
@@ -48,7 +49,11 @@ const lines2br = (s: string | undefined): string =>
         .filter(Boolean)
         .join('<br/>');
 
-export type InvoicePdfDocType = 'commercial' | 'packing-list' | 'export';
+export type InvoicePdfDocType =
+    | 'commercial'
+    | 'packing-list'
+    | 'export'
+    | 'receipt';
 
 /**
  * Renders the export Commercial Invoice + Packing List PDFs from the same
@@ -60,6 +65,7 @@ export class InvoicePdfService {
         private readonly pdfService: PdfService,
         private readonly invoiceRepository: InvoiceRepository,
         private readonly invoiceLineRepository: InvoiceLineRepository,
+        private readonly invoicePaymentRepository: InvoicePaymentRepository,
         private readonly companyRepository: CompanyRepository,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly customerRepository: CustomerRepository,
@@ -101,6 +107,51 @@ export class InvoicePdfService {
                 ? '-Export'
                 : '';
         return { buffer, filename: `${safe}${suffix}.pdf` };
+    }
+
+    /**
+     * Render a printable Receipt Voucher for a single customer payment
+     * (chart step 11). Shows the receipt no, the amount received, and the
+     * running balance on the invoice after this receipt.
+     */
+    async renderReceipt(
+        companyId: string,
+        invoiceId: string,
+        paymentId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const data = await this.loadRenderData(companyId, invoiceId);
+
+        const payment: any = await this.invoicePaymentRepository.findOne({
+            _id: paymentId,
+            invoice_id: invoiceId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!payment || payment.voided_at) {
+            throw new NotFoundException('Receipt not found');
+        }
+
+        // Total received across all active payments → running balance.
+        const totalReceived =
+            await this.invoicePaymentRepository.sumActiveByInvoiceId(invoiceId);
+
+        const html = buildReceiptHtml(data, payment, totalReceived);
+
+        const buffer = await this.pdfService.generateFromHtml(html, {
+            format: 'A4',
+            margin: {
+                top: '12mm',
+                right: '10mm',
+                bottom: '12mm',
+                left: '10mm',
+            },
+            displayHeaderFooter: false,
+        });
+
+        const safe = (payment.receipt_voucher_no || 'RECEIPT')
+            .replace(/[\\/]+/g, '-')
+            .replace(/[^A-Za-z0-9_\-.]/g, '');
+        return { buffer, filename: `${safe}.pdf` };
     }
 
     /** Hydrates everything the templates need into a flat shape. */
@@ -228,6 +279,10 @@ const baseStyles = `
     .pad { padding: 4px 6px; }
     .h6 { font-weight: 700; font-size: 10.5px; }
     .sigbox { height: 60px; }
+    /* Keep a self-contained block from splitting across a page boundary —
+       the whole block moves to the next page instead of breaking in half. */
+    .avoid-break { page-break-inside: avoid; }
+    tr { page-break-inside: avoid; }
 `;
 
 /** Render the BANK DETAILS table from `bank_snapshots[]`. Only fields with
@@ -267,7 +322,7 @@ function bankDetailsBlock(banks: any[] | undefined): string {
         }
         return html;
     };
-    return `<table style="margin-top: 6px;">
+    return `<table class="avoid-break" style="margin-top: 6px;">
         <tr><th colspan="6">BANK DETAILS</th></tr>
         ${banks.map(renderBank).join('')}
     </table>`;
@@ -298,6 +353,52 @@ function shippingRouteBlock(d: RenderData): string {
             <td style="width:20%;"><span class="lbl">Port of Discharge</span><br/>${esc(podLabel)}</td>
             <td><span class="lbl">Place of Delivery</span><br/>${esc(inv.place_of_delivery)}</td>
         </tr>
+    </table>`;
+}
+
+/** Upstream document reference chain (§10 "must show references"):
+ *  Quotation (CST) → Sales Order (SO) → Shipping, whichever are recorded on
+ *  the invoice. The customer's own PO is shown separately in the Incoterm
+ *  strip. Returns '' when no upstream voucher is set. */
+function referencesBlock(d: RenderData): string {
+    const inv = d.invoice || {};
+    // Header snapshot is primary; fall back to distinct line-level vouchers
+    // (writeLines populates those) so older invoices — created before the
+    // header snapshot landed — still print their references.
+    const distinct = (key: string): string => {
+        const fromLines = Array.from(
+            new Set(
+                (d.lines || [])
+                    .map((l: any) => l?.[key])
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        return fromLines.join(', ');
+    };
+    const quotationNo =
+        inv.quotation_voucher_no || distinct('quotation_voucher_no');
+    const poNo =
+        inv.purchase_order_voucher_no || distinct('purchase_order_voucher_no');
+    const refs: Array<[string, any]> = (
+        [
+            ['Quotation No.', quotationNo],
+            ['Sales Order No.', poNo],
+            ['Shipping No.', inv.shipping_voucher_no],
+        ] as Array<[string, any]>
+    ).filter(([, v]) => !!v);
+    if (!refs.length) return '';
+    const width = Math.floor(100 / refs.length);
+    const cells = refs
+        .map(
+            ([label, value]) =>
+                `<td style="width:${width}%;"><span class="lbl">${esc(
+                    label
+                )}</span><br/>${esc(value)}</td>`
+        )
+        .join('');
+    return `
+    <table style="margin-top: 0;">
+        <tr>${cells}</tr>
     </table>`;
 }
 
@@ -407,6 +508,36 @@ const SHIPPING_BILL_TYPE_LABELS: Record<string, string> = {
     seis: 'SEIS',
 };
 
+/** Cargo totals strip — Total Packages / Net Weight / Gross Weight from the
+ *  invoice header (auto-summed from the lines). Returns '' when none set. */
+function cargoTotalsBlock(inv: any): string {
+    const has =
+        inv.total_packages != null ||
+        inv.net_weight_kg != null ||
+        inv.gross_weight_kg != null;
+    if (!has) return '';
+    return `
+    <table style="margin-top: 6px;">
+        <tr>
+            <td style="width:33%;"><span class="lbl">Total Packages</span><br/>${
+                inv.total_packages != null
+                    ? esc(String(inv.total_packages))
+                    : '-'
+            }</td>
+            <td style="width:33%;"><span class="lbl">Net Weight</span><br/>${
+                inv.net_weight_kg != null
+                    ? fmt(inv.net_weight_kg, 3) + ' kg'
+                    : '-'
+            }</td>
+            <td><span class="lbl">Gross Weight</span><br/>${
+                inv.gross_weight_kg != null
+                    ? fmt(inv.gross_weight_kg, 3) + ' kg'
+                    : '-'
+            }</td>
+        </tr>
+    </table>`;
+}
+
 function buildCommercialInvoiceHtml(d: RenderData): string {
     const inv = d.invoice;
     const isLut = inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED;
@@ -419,11 +550,15 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
     // For LUT route IGST is 0% — we drop the two columns entirely.
     const showIgst = !isLut;
     const er = Number(inv.exchange_rate || 0);
+    // Line values are stored in INR; show them in the document currency.
+    const erMul = er > 0 ? er : 1;
     let totalIgstInr = 0;
     const lineIgstInr = (l: any): number => {
         const rate = Number(l.igst_rate_pct || 0);
-        if (!showIgst || rate <= 0 || er <= 0) return 0;
-        const taxableInr = Number(l.taxable_amount || 0) / er;
+        if (!showIgst || rate <= 0) return 0;
+        // taxable_amount is already in INR — it IS the assessable value, so
+        // IGST = taxable_amount × rate. (No /er; that inflated it ~1/rate×.)
+        const taxableInr = Number(l.taxable_amount || 0);
         return taxableInr * (rate / 100);
     };
     const linesHtml = (d.lines || [])
@@ -434,10 +569,10 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <tr>
                 <td class="center">${i + 1}</td>
                 <td class="center">${esc(l.hsn_code)}</td>
-                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
-                <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
-                <td class="right">${sym}${fmt(l.unit_price, 2)}</td>
-                <td class="right strong">${sym}${fmt(l.line_total, 2)}</td>
+                <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
+                <td class="right">${sym}${fmt(num(l.qty) > 0 ? (num(l.line_total) * erMul) / num(l.qty) : num(l.unit_price) * erMul, 2)}</td>
+                <td class="right strong">${sym}${fmt(num(l.line_total) * erMul, 2)}</td>
                 ${showIgst ? `<td class="right">${fmt(l.igst_rate_pct || 0, 2)}%</td>` : ''}
                 ${showIgst ? `<td class="right">₹${fmt(igstAmt, 2)}</td>` : ''}
             </tr>`;
@@ -484,6 +619,8 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         </tr>
     </table>
 
+    ${referencesBlock(d)}
+
     ${partiesBlock(d, true)}
 
     ${shippingRouteBlock(d)}
@@ -498,14 +635,14 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
 
     <table style="margin-top: 0;">
         <tr>
-            <th style="width:36px;">SR NO</th>
-            <th style="width:80px;">HSN CODE</th>
+            <th style="width:32px;">SR NO</th>
+            <th style="width:64px;">HSN CODE</th>
             <th>DESCRIPTION OF GOODS</th>
-            <th style="width:100px;">QTY</th>
-            <th style="width:110px;">PRICE / UNIT</th>
-            <th style="width:130px;">AMOUNT</th>
-            ${showIgst ? '<th style="width:60px;">IGST</th>' : ''}
-            ${showIgst ? '<th style="width:110px;">IGST Amt.</th>' : ''}
+            <th style="width:74px;">QTY</th>
+            <th style="width:86px;">PRICE / UNIT</th>
+            <th style="width:100px;">AMOUNT</th>
+            ${showIgst ? '<th style="width:48px;">IGST</th>' : ''}
+            ${showIgst ? '<th style="width:90px;">IGST Amt.</th>' : ''}
         </tr>
         ${linesHtml}
         <tr>
@@ -540,23 +677,25 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         </tr>
     </table>
 
+    ${cargoTotalsBlock(inv)}
+
     ${banksHtml}
 
     ${
         d.invoice?.terms
-            ? `<div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+            ? `<div class="pad avoid-break" style="border:1px solid #222; border-top:none; margin-top: 6px;">
                  <div class="lbl">Terms &amp; Conditions:</div>
                  <div class="small" style="white-space: pre-line">${esc(d.invoice.terms)}</div>
                </div>`
             : ''
     }
 
-    <div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+    <div class="pad avoid-break" style="border:1px solid #222; border-top:none; margin-top: 6px;">
         <div class="lbl">Declaration:</div>
         <div class="small">${esc(inv.declaration_text || 'We declare that invoice shows the actual price of the goods described and that all particulars are true and correct.')}</div>
     </div>
 
-    <table style="margin-top: 6px;">
+    <table class="avoid-break" style="margin-top: 6px;">
         <tr>
             <td class="sigbox">
                 <div class="small muted">For, ${esc(d.company.company_name)}</div>
@@ -586,6 +725,9 @@ function buildExportInvoiceHtml(d: RenderData): string {
         ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
         : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
     const sym = esc(inv.currency_symbol || inv.currency_code || '');
+    // Line values are stored in INR; show them in the document currency.
+    const er = Number(inv.exchange_rate || 0);
+    const erMul = er > 0 ? er : 1;
 
     const linesHtml = (d.lines || [])
         .map(
@@ -593,11 +735,11 @@ function buildExportInvoiceHtml(d: RenderData): string {
             <tr>
                 <td class="center">${i + 1}</td>
                 <td class="center">${esc(l.hsn_code)}</td>
-                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
-                <td>${esc(l.customer_reference)}</td>
-                <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
-                <td class="right">${sym}${fmt(l.unit_price, 2)}</td>
-                <td class="right strong">${sym}${fmt(l.line_total, 2)}</td>
+                <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td style="white-space:nowrap;">${esc(l.customer_reference)}</td>
+                <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
+                <td class="right">${sym}${fmt(num(l.qty) > 0 ? (num(l.line_total) * erMul) / num(l.qty) : num(l.unit_price) * erMul, 2)}</td>
+                <td class="right strong">${sym}${fmt(num(l.line_total) * erMul, 2)}</td>
             </tr>`
         )
         .join('');
@@ -621,6 +763,8 @@ function buildExportInvoiceHtml(d: RenderData): string {
         </tr>
     </table>
 
+    ${referencesBlock(d)}
+
     ${partiesBlock(d, true)}
 
     ${shippingRouteBlock(d)}
@@ -635,13 +779,13 @@ function buildExportInvoiceHtml(d: RenderData): string {
 
     <table style="margin-top: 0;">
         <tr>
-            <th style="width:36px;">SR NO</th>
-            <th style="width:80px;">HSN CODE</th>
+            <th style="width:32px;">SR NO</th>
+            <th style="width:64px;">HSN CODE</th>
             <th>DESCRIPTION OF GOODS</th>
-            <th style="width:120px;">REQUIREMENT # (PFI)</th>
-            <th style="width:100px;">QTY</th>
-            <th style="width:110px;">PRICE / UNIT</th>
-            <th style="width:130px;">AMOUNT</th>
+            <th style="width:150px; white-space:nowrap;">REQUIREMENT #</th>
+            <th style="width:74px;">QTY</th>
+            <th style="width:86px;">PRICE / UNIT</th>
+            <th style="width:100px;">AMOUNT</th>
         </tr>
         ${linesHtml}
         <tr>
@@ -680,29 +824,142 @@ function buildExportInvoiceHtml(d: RenderData): string {
         </tr>
     </table>
 
+    ${cargoTotalsBlock(inv)}
+
     ${banksHtml}
 
     ${
         d.invoice?.terms
-            ? `<div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+            ? `<div class="pad avoid-break" style="border:1px solid #222; border-top:none; margin-top: 6px;">
                  <div class="lbl">Terms &amp; Conditions:</div>
                  <div class="small" style="white-space: pre-line">${esc(d.invoice.terms)}</div>
                </div>`
             : ''
     }
 
-    <div class="pad" style="border:1px solid #222; border-top:none; margin-top: 6px;">
+    <div class="pad avoid-break" style="border:1px solid #222; border-top:none; margin-top: 6px;">
         <div class="lbl">Declaration:</div>
         <div class="small">${esc(inv.declaration_text || 'We declare that invoice shows the actual price of the goods described and that all particulars are true and correct.')}</div>
     </div>
 
-    <table style="margin-top: 6px;">
+    <table class="avoid-break" style="margin-top: 6px;">
         <tr>
             <td class="sigbox">
                 <div class="small muted">For, ${esc(d.company.company_name)}</div>
             </td>
             <td class="sigbox right">
                 <div class="small muted">Authorized Signatory</div>
+            </td>
+        </tr>
+    </table>
+</div></body></html>`;
+}
+
+/**
+ * RECEIPT VOUCHER — printable acknowledgement of a single customer payment
+ * against an invoice (chart step 11). Shows the receipt number, amount
+ * received, payment method/reference, and the running balance after this
+ * receipt.
+ */
+function buildReceiptHtml(
+    d: RenderData,
+    payment: any,
+    totalReceived: number
+): string {
+    const inv = d.invoice || {};
+    const c = d.company || {};
+    const ca = d.companyAddr || {};
+    const sym = esc(inv.currency_symbol || inv.currency_code || '');
+
+    const companyLines = [
+        ca.address_line1,
+        ca.address_line2,
+        [ca.city, ca.state].filter(Boolean).join(', '),
+        [ca.country, ca.postcode].filter(Boolean).join(' - '),
+    ]
+        .filter(Boolean)
+        .join('<br/>');
+
+    const receivedFrom =
+        d.consigneeSnapshot?.name || d.customer?.company_name || '';
+    const grand = num(inv.grand_total);
+    const balance = grand - totalReceived;
+    const methodLabel = (payment.method || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (m: string) => m.toUpperCase());
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><style>${baseStyles}</style></head>
+<body><div class="doc">
+    <div class="title">RECEIPT VOUCHER</div>
+
+    <table style="margin-top: 0;">
+        <tr>
+            <td style="width:60%;">
+                <div class="strong">${esc(c.company_name)}</div>
+                <div class="small">${companyLines}</div>
+                <table class="nob small" style="margin-top: 4px;">
+                    <tr><td class="lbl" style="width:70px;">GST No</td><td>${esc(ca.gstin || c.tax_number)}</td></tr>
+                </table>
+            </td>
+            <td>
+                <table class="nob">
+                    <tr><td class="lbl" style="width:90px;">Receipt No.</td><td class="strong">${esc(payment.receipt_voucher_no || '—')}</td></tr>
+                    <tr><td class="lbl">Date</td><td>${esc(String(payment.payment_date || '').slice(0, 10))}</td></tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <table style="margin-top: 0;">
+        <tr>
+            <td><span class="lbl">Received with thanks from</span><br/>${esc(receivedFrom)}</td>
+        </tr>
+        <tr>
+            <td><span class="lbl">Amount Received</span><br/><span class="strong">${sym}${fmt(payment.amount, 2)}</span></td>
+        </tr>
+        <tr>
+            <td><span class="lbl">Towards Invoice</span><br/>${esc(inv.voucher_no || '(DRAFT)')}${inv.invoice_date ? ' dated ' + esc(String(inv.invoice_date).slice(0, 10)) : ''}</td>
+        </tr>
+    </table>
+
+    <table style="margin-top: 0;">
+        <tr>
+            <td style="width:25%;"><span class="lbl">Mode</span><br/>${esc(methodLabel || '—')}</td>
+            <td style="width:35%;"><span class="lbl">Reference</span><br/>${esc(payment.reference || '—')}</td>
+            <td><span class="lbl">Currency</span><br/>${esc(inv.currency_code || '')}</td>
+        </tr>
+    </table>
+
+    <table style="margin-top: 0;">
+        <tr>
+            <td class="right lbl" style="width:75%;">Invoice Total</td>
+            <td class="right">${sym}${fmt(inv.grand_total, 2)}</td>
+        </tr>
+        <tr>
+            <td class="right lbl">Total Received (incl. this receipt)</td>
+            <td class="right">${sym}${fmt(totalReceived, 2)}</td>
+        </tr>
+        <tr>
+            <td class="right strong" style="background:#f0f0f0;">Balance Receivable</td>
+            <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(balance, 2)}</td>
+        </tr>
+    </table>
+
+    ${
+        payment.notes
+            ? `<div class="pad" style="border:1px solid #222; border-top:none;"><span class="lbl">Notes:</span> ${esc(payment.notes)}</div>`
+            : ''
+    }
+
+    <table style="margin-top: 18px;">
+        <tr>
+            <td class="sigbox">
+                <div class="small muted">Received the above sum.</div>
+            </td>
+            <td class="sigbox right">
+                <div class="small muted">For, ${esc(c.company_name)}</div>
+                <div class="small muted" style="margin-top: 28px;">Authorized Signatory</div>
             </td>
         </tr>
     </table>
@@ -717,7 +974,7 @@ function buildPackingListHtml(d: RenderData): string {
             <tr>
                 <td class="center">${i + 1}</td>
                 <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
-                <td class="right">${fmt(l.qty, 4)} ${esc(l.uqc_code || l.unit)}</td>
+                <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${l.packages != null && l.packages !== '' ? esc(String(l.packages)) : '-'}</td>
                 <td class="right">${l.net_weight != null && l.net_weight !== '' ? fmt(l.net_weight, 3) + ' kg' : '-'}</td>
                 <td class="right">${l.gross_weight != null && l.gross_weight !== '' ? fmt(l.gross_weight, 3) + ' kg' : '-'}</td>

@@ -22,6 +22,7 @@ export class InvoiceLineResponseDto {
     qty?: string;
     unit_price?: string;
     discount_pct?: string;
+    margin_pct?: string;
     tax_pct?: string;
     taxable_amount?: string;
     cgst_amount?: string;

@@ -337,10 +337,11 @@ export class InvoiceAdminController {
     }
 
     /**
-     * Render the Invoice as a PDF. Three flavors of the same record:
+     * Render the Invoice as a PDF. Flavors of the same record:
      *   ?doc=commercial   (default) → Commercial Invoice (STIPL119 layout)
      *   ?doc=export                 → Export Invoice (buyer-facing variant)
      *   ?doc=packing-list           → Packing List   (companion doc)
+     *   ?doc=receipt&paymentId=…    → Receipt Voucher for one payment (§11)
      *
      * Returns a stream - browser displays inline. Add `?download=1` to force
      * a Content-Disposition: attachment header.
@@ -351,20 +352,36 @@ export class InvoiceAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string,
         @Query('doc') docQuery: string | undefined,
+        @Query('paymentId') paymentIdQuery: string | undefined,
         @Query('download') downloadQuery: string | undefined,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const doc: InvoicePdfDocType =
-            docQuery === 'packing-list'
-                ? 'packing-list'
-                : docQuery === 'export'
-                ? 'export'
-                : 'commercial';
-        const { buffer, filename } = await this.invoicePdfService.render(
-            companyId,
-            invoiceId,
-            doc
-        );
+        let buffer: Buffer;
+        let filename: string;
+        if (docQuery === 'receipt') {
+            if (!paymentIdQuery) {
+                throw new BadRequestException(
+                    'paymentId is required for a receipt.'
+                );
+            }
+            ({ buffer, filename } = await this.invoicePdfService.renderReceipt(
+                companyId,
+                invoiceId,
+                paymentIdQuery
+            ));
+        } else {
+            const doc: InvoicePdfDocType =
+                docQuery === 'packing-list'
+                    ? 'packing-list'
+                    : docQuery === 'export'
+                    ? 'export'
+                    : 'commercial';
+            ({ buffer, filename } = await this.invoicePdfService.render(
+                companyId,
+                invoiceId,
+                doc
+            ));
+        }
 
         const disposition =
             downloadQuery === '1' ? 'attachment' : 'inline';

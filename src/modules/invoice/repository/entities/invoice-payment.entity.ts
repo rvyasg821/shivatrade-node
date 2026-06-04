@@ -40,6 +40,11 @@ export class InvoicePaymentEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     notes?: string;
 
+    /** Receipt voucher number (STIPL/RCP/0001/FY), assigned once at creation
+     *  and kept stable for the life of the payment row (even if voided). */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    receipt_voucher_no?: string;
+
     @Column({ type: 'uuid', nullable: true })
     created_by?: string;
 
