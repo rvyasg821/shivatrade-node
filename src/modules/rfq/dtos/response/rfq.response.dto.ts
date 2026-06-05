@@ -12,6 +12,7 @@ export class RfqLineResponseDto {
     @ApiProperty({ required: false }) unit?: string;
     @ApiProperty({ required: false }) hs_code?: string;
     @ApiProperty() seq: number;
+    @ApiProperty({ required: false }) checked?: boolean;
 }
 
 export class RfqVendorResponseDto {
@@ -28,6 +29,7 @@ export class RfqVendorPriceResponseDto {
     @ApiProperty() rfq_line_id: string;
     @ApiProperty() vendor_id: string;
     @ApiProperty({ required: false }) unit_price?: string;
+    @ApiProperty({ required: false }) discount_pct?: string;
     @ApiProperty({ required: false }) currency_code?: string;
     @ApiProperty({ required: false }) lead_time_days?: number;
     @ApiProperty({ required: false }) moq?: number;
@@ -49,6 +51,9 @@ export class RfqGetResponseDto {
     @ApiProperty({ required: false }) notes?: string;
     @ApiProperty() status: string;
     @ApiProperty({ required: false }) createdAt?: Date;
+    // Vendor price-collection progress, for the "Quoting · 1/3 quoted" badge.
+    @ApiProperty({ required: false }) vendors_invited?: number;
+    @ApiProperty({ required: false }) vendors_quoted?: number;
     @ApiProperty({ type: [RfqLineResponseDto] }) lines: RfqLineResponseDto[];
     @ApiProperty({ type: [RfqVendorResponseDto] })
     vendors: RfqVendorResponseDto[];

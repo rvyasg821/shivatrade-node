@@ -790,6 +790,7 @@ export class QuotationService {
                 rfqIds.length
                     ? this.rfqRepository.findAll({
                           _id: { $in: rfqIds },
+                          soft_delete: false,
                       } as any)
                     : Promise.resolve([] as any[]),
             ]);

@@ -282,14 +282,26 @@ export class PriceListAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Query('vendor_id') vendorId?: string,
         @Query('product_ids') productIdsRaw?: string
-    ): Promise<IResponse<Array<{ product_id: string; unit_price: string }>>> {
+    ): Promise<
+        IResponse<
+            Array<{
+                product_id: string;
+                unit_price: string;
+                effective_date: string | null;
+            }>
+        >
+    > {
         const productIds = (productIdsRaw || '')
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean);
         if (!vendorId || !productIds.length) return { data: [] };
 
-        const results: Array<{ product_id: string; unit_price: string }> = [];
+        const results: Array<{
+            product_id: string;
+            unit_price: string;
+            effective_date: string | null;
+        }> = [];
         for (const productId of productIds) {
             const row = await this.priceListRepository.findCurrentPrice(
                 companyId,
@@ -300,6 +312,10 @@ export class PriceListAdminController {
                 results.push({
                     product_id: productId,
                     unit_price: String((row as any).unit_price),
+                    // Drives the grid's greyed "last known · date" reference.
+                    effective_date: (row as any).effective_date
+                        ? String((row as any).effective_date)
+                        : null,
                 });
             }
         }

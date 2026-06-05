@@ -24,6 +24,7 @@ import { CustomerRepository } from '@modules/customer/repository/repositories/cu
 import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
 import { UserRepository } from '@modules/user/repository/repositories/user.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
@@ -47,6 +48,7 @@ export class LeadService {
         private readonly customerService: CustomerService,
         private readonly userRepository: UserRepository,
         private readonly productRepository: ProductRepository,
+        private readonly vendorRepository: VendorRepository,
         private readonly categoryRepository: CategoryRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly companyRepository: CompanyRepository,
@@ -742,6 +744,18 @@ export class LeadService {
             products.map((p: any) => [p._id.toString(), p])
         );
 
+        const vendorIds = Array.from(
+            new Set(rows.map((r) => r.vendor_id).filter(Boolean) as string[])
+        );
+        const vendors = vendorIds.length
+            ? ((await this.vendorRepository.findAll({
+                  _id: { $in: vendorIds },
+              } as any)) as any[])
+            : [];
+        const vendorById = new Map<string, any>(
+            vendors.map((v: any) => [v._id.toString(), v])
+        );
+
         return rows.map((r) => {
             const dto = plainToInstance(LeadLineResponseDto, r);
             const prod = r.product_id
@@ -749,8 +763,11 @@ export class LeadService {
                 : null;
             dto.product_name = prod?.name;
             dto.product_code = prod?.code;
-            // vendor_name is resolved on the FE (SalesDocLineItems re-fetches
-            // price-list vendor options per line on hydration).
+            const ven = r.vendor_id
+                ? vendorById.get(r.vendor_id.toString())
+                : null;
+            dto.vendor_name = ven?.company_name;
+            (dto as any).vendor_code = ven?.vendor_code;
             return dto;
         });
     }
