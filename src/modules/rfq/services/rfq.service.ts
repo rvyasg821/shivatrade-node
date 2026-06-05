@@ -168,7 +168,6 @@ export class RfqService {
         const existingIds = new Set(
             existing.map((v: any) => v.vendor_id?.toString())
         );
-        const lines = await this.rfqLineRepository.findByRfqId(rfqId);
         for (const vendorId of dto.vendor_ids || []) {
             if (existingIds.has(vendorId)) continue;
             await this.rfqVendorRepository.create({
@@ -177,27 +176,10 @@ export class RfqService {
                 vendor_id: vendorId,
                 status: ENUM_RFQ_VENDOR_STATUS.INVITED,
             } as any);
-            // Pre-fill this vendor's grid cells from the price list (their last
-            // known price per product) as a starting reference for the quote.
-            for (const l of lines as any[]) {
-                if (!l.product_id) continue;
-                const pl: any = await this.priceListRepository.findCurrentPrice(
-                    companyId,
-                    vendorId,
-                    l.product_id.toString()
-                );
-                if (!pl) continue;
-                await this.rfqVendorPriceRepository.create({
-                    company_id: companyId,
-                    rfq_id: rfqId,
-                    rfq_line_id: l._id.toString(),
-                    vendor_id: vendorId,
-                    unit_price: String(pl.unit_price ?? '0'),
-                    lead_time_days: pl.lead_time_days ?? null,
-                    moq: pl.moq ?? null,
-                    is_selected: false,
-                } as any);
-            }
+            // No price prefill — grid cells start empty. The last-known price is
+            // shown only as a greyed reference in the UI; real prices arrive via
+            // the Excel import or manual entry, keeping the "x/y quoted" count
+            // meaningful.
         }
     }
 
@@ -244,6 +226,9 @@ export class RfqService {
             const row = byKey.get(key);
             if (row) {
                 row.unit_price = String(item.unit_price);
+                if (item.discount_pct != null) {
+                    row.discount_pct = String(item.discount_pct);
+                }
                 row.currency_code = item.currency_code || row.currency_code;
                 row.lead_time_days = item.lead_time_days ?? row.lead_time_days;
                 row.moq = item.moq ?? row.moq;
@@ -256,6 +241,10 @@ export class RfqService {
                     rfq_line_id: item.rfq_line_id,
                     vendor_id: item.vendor_id,
                     unit_price: String(item.unit_price),
+                    discount_pct:
+                        item.discount_pct != null
+                            ? String(item.discount_pct)
+                            : '0',
                     currency_code: item.currency_code || null,
                     lead_time_days: item.lead_time_days ?? null,
                     moq: item.moq ?? null,
@@ -264,7 +253,9 @@ export class RfqService {
                 } as any);
             }
         }
-        // Mark quoting vendors + bump RFQ status.
+        // Mark vendors that submitted prices as QUOTED — this drives the
+        // "x/y quoted" progress badge. The RFQ-level status is NOT changed
+        // automatically; the user sets it via the status dropdown.
         const vendors = await this.rfqVendorRepository.findByRfqId(rfqId);
         for (const v of vendors as any[]) {
             if (touchedVendors.has(v.vendor_id?.toString())) {
@@ -272,14 +263,18 @@ export class RfqService {
                 await this.rfqVendorRepository.save(v);
             }
         }
-        await this.bumpStatusToQuoting(rfqId);
-    }
 
-    private async bumpStatusToQuoting(rfqId: string): Promise<void> {
-        const rfq: any = await this.rfqRepository.findOneById(rfqId);
-        if (rfq && rfq.status === ENUM_RFQ_STATUS.DRAFT) {
-            rfq.status = ENUM_RFQ_STATUS.QUOTING;
-            await this.rfqRepository.save(rfq);
+        // Persist the per-line export checkbox state when provided.
+        if (Array.isArray(dto.checked_line_ids)) {
+            const checkedSet = new Set(dto.checked_line_ids.map(String));
+            const allLines = await this.rfqLineRepository.findByRfqId(rfqId);
+            for (const ln of allLines as any[]) {
+                const want = checkedSet.has(ln._id.toString());
+                if (!!ln.checked !== want) {
+                    ln.checked = want;
+                    await this.rfqLineRepository.save(ln);
+                }
+            }
         }
     }
 
@@ -308,31 +303,8 @@ export class RfqService {
                 'No price recorded for that line/vendor.'
             );
         }
-        await this.maybeComplete(rfqId);
-    }
-
-    /** Mark RFQ completed once every line has a selected price. */
-    private async maybeComplete(rfqId: string): Promise<void> {
-        const [lines, prices, rfq] = await Promise.all([
-            this.rfqLineRepository.findByRfqId(rfqId),
-            this.rfqVendorPriceRepository.findByRfqId(rfqId),
-            this.rfqRepository.findOneById(rfqId) as Promise<any>,
-        ]);
-        const selectedLineIds = new Set(
-            (prices as any[])
-                .filter((p) => p.is_selected)
-                .map((p) => p.rfq_line_id?.toString())
-        );
-        const allSelected =
-            lines.length > 0 &&
-            lines.every((l: any) => selectedLineIds.has(l._id.toString()));
-        const next = allSelected
-            ? ENUM_RFQ_STATUS.COMPLETED
-            : ENUM_RFQ_STATUS.QUOTING;
-        if (rfq && rfq.status !== next && rfq.status !== ENUM_RFQ_STATUS.CANCELLED) {
-            rfq.status = next;
-            await this.rfqRepository.save(rfq);
-        }
+        // Status is set manually via the dropdown — selecting a best price no
+        // longer auto-completes the RFQ.
     }
 
     // ─── Header update / delete ──────────────────────────────────────────
@@ -551,6 +523,7 @@ export class RfqService {
                 unit: l.unit,
                 hs_code: l.hs_code,
                 seq: l.seq,
+                checked: !!l.checked,
             };
         });
         dto.vendors = (vendors as any[]).map((v) => {
@@ -569,12 +542,21 @@ export class RfqService {
             rfq_line_id: p.rfq_line_id?.toString(),
             vendor_id: p.vendor_id?.toString(),
             unit_price: p.unit_price,
+            discount_pct: p.discount_pct ?? '0',
             currency_code: p.currency_code,
             lead_time_days: p.lead_time_days,
             moq: p.moq,
             notes: p.notes,
             is_selected: !!p.is_selected,
         }));
+
+        // Price-collection progress for the status badge. A vendor counts as
+        // "quoted" once they've submitted at least one price (vendor status is
+        // bumped to QUOTED in setPrices).
+        dto.vendors_invited = (vendors as any[]).length;
+        dto.vendors_quoted = (vendors as any[]).filter(
+            (v) => v.status === ENUM_RFQ_VENDOR_STATUS.QUOTED
+        ).length;
         return dto;
     }
 

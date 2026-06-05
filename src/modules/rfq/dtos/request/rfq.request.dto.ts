@@ -38,6 +38,9 @@ export class RfqPriceItemDto {
     @IsNumberString({}, { message: 'unit_price must be a numeric string' })
     @IsNotEmpty()
     unit_price: string;
+    @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
+    @IsOptional()
+    discount_pct?: string;
     @IsString() @IsOptional() currency_code?: string;
     @IsInt() @IsOptional() lead_time_days?: number;
     @IsInt() @IsOptional() moq?: number;
@@ -49,6 +52,13 @@ export class RfqSetPricesDto {
     @ValidateNested({ each: true })
     @Type(() => RfqPriceItemDto)
     prices: RfqPriceItemDto[];
+
+    // Per-line export checkbox state — the rfq_line_ids that are ticked. When
+    // provided, lines in the list are marked checked and all others unchecked.
+    @IsArray()
+    @IsUUID('all', { each: true })
+    @IsOptional()
+    checked_line_ids?: string[];
 }
 
 export class RfqSelectPriceDto {

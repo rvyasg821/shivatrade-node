@@ -8,9 +8,13 @@ import {
     Param,
     Query,
     Res,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiConsumes } from '@nestjs/swagger';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -27,6 +31,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { RfqService } from '../services/rfq.service';
+import { RfqVendorSheetService } from '../services/rfq-vendor-sheet.service';
 import {
     RfqAddVendorsDto,
     RfqCreateFromLeadDto,
@@ -43,7 +48,97 @@ import {
 @ApiTags('admin.rfq')
 @Controller({ version: '1', path: '/admin/rfq' })
 export class RfqAdminController {
-    constructor(private readonly rfqService: RfqService) {}
+    constructor(
+        private readonly rfqService: RfqService,
+        private readonly rfqVendorSheetService: RfqVendorSheetService
+    ) {}
+
+    // Per-vendor RFQ price-request sheets bundled into one ZIP. Draft-aware:
+    // keyed off lead_id + vendor_ids (no rfq_id exists yet).
+    @AuthJwtAccessProtected()
+    @Get('/vendor-price-sheets')
+    async vendorPriceSheets(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse,
+        @Query('lead_id') leadId?: string,
+        @Query('vendor_ids') vendorIdsRaw?: string
+    ): Promise<void> {
+        const vendorIds = (vendorIdsRaw || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const { filename, zip } =
+            await this.rfqVendorSheetService.buildVendorPriceSheets(
+                companyId,
+                leadId || '',
+                vendorIds
+            );
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.end(zip);
+    }
+
+    // Single-vendor price-request sheet (one .xlsx). product_ids = the checked
+    // line items (the products this vendor supplies). Draft-aware (lead_id).
+    @AuthJwtAccessProtected()
+    @Get('/vendor-price-sheet')
+    async vendorPriceSheet(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse,
+        @Query('lead_id') leadId?: string,
+        @Query('vendor_id') vendorId?: string,
+        @Query('product_ids') productIdsRaw?: string
+    ): Promise<void> {
+        const productIds = (productIdsRaw || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const { filename, buffer } =
+            await this.rfqVendorSheetService.buildVendorPriceSheet(
+                companyId,
+                leadId || '',
+                vendorId || '',
+                productIds
+            );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.end(buffer);
+    }
+
+    // Import one vendor's returned price sheet. Vendor identity = the `vendor_id`
+    // query param (the dropdown), NOT the sheet. Returns parsed rows for the
+    // grid + per-row errors; also upserts the price list.
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import-vendor-prices')
+    async importVendorPrices(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('vendor_id') vendorId?: string,
+        @Query('preview') preview?: string
+    ): Promise<IResponse<any>> {
+        if (!file) throw new BadRequestException('No file provided');
+        if (!vendorId) throw new BadRequestException('vendor_id is required');
+        const data = await this.rfqVendorSheetService.importVendorPrices(
+            companyId,
+            vendorId,
+            file.buffer,
+            userId,
+            preview === 'true'
+        );
+        return { data };
+    }
 
     @Response('rfq.create')
     @AuthJwtAccessProtected()

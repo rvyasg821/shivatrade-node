@@ -43,6 +43,11 @@ export class RfqLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 
+    /** Whether this product is requested from the (single) RFQ vendor — the
+     *  per-line export checkbox on the RFQ page. */
+    @Column({ type: 'boolean', default: false })
+    checked: boolean;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

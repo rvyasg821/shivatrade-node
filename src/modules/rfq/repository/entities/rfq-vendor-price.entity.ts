@@ -28,6 +28,10 @@ export class RfqVendorPriceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     unit_price: string;
 
+    /** Per-vendor, per-line discount %. Net = unit_price × (1 − discount_pct/100). */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    discount_pct?: string;
+
     @Column({ type: 'varchar', length: 10, nullable: true })
     currency_code?: string;
 
