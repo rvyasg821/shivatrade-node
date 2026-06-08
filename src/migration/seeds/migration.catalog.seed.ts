@@ -174,7 +174,7 @@ export class MigrationCatalogSeed {
                 // value the user has set by hand.
                 if (e) {
                     const patch: any = {};
-                    if (!existing.hsn_code) patch.hsn_code = e.hsn_code;
+                    if (existing.hsn_code == null) patch.hsn_code = e.hsn_code;
                     if (existing.tax_pct == null) patch.tax_pct = String(e.tax_pct);
                     if (existing.selling_price == null)
                         patch.selling_price = String(e.selling_price);
