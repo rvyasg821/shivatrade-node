@@ -84,6 +84,13 @@ export class MigrationUserSeed {
             for (const user of users) {
                 const userId = String(user._id);
 
+                // user.password is select:false on the entity, so the created
+                // doc returns without it. Re-attach the seed hash so the
+                // password-history row (password NOT NULL) is satisfied.
+                if (!user.password) {
+                    (user as any).password = passwordData.passwordHash;
+                }
+
                 await this.passwordHistoryService.createByAdmin(user, {
                     by: userId,
                     type: ENUM_PASSWORD_HISTORY_TYPE.SIGN_UP,
