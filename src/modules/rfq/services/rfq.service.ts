@@ -213,7 +213,7 @@ export class RfqService {
         rfqId: string,
         dto: RfqSetPricesDto
     ): Promise<void> {
-        await this.getOrThrow(companyId, rfqId);
+        const rfq: any = await this.getOrThrow(companyId, rfqId);
         const existing = await this.rfqVendorPriceRepository.findByRfqId(rfqId);
         const byKey = new Map<string, any>();
         for (const p of existing as any[]) {
@@ -262,6 +262,18 @@ export class RfqService {
                 v.status = ENUM_RFQ_VENDOR_STATUS.QUOTED;
                 await this.rfqVendorRepository.save(v);
             }
+        }
+
+        // Auto-advance the RFQ to "quoting" once any price is captured — but
+        // never walk back a later stage (completed/cancelled) or override a
+        // manual choice forward of quoting.
+        if (
+            touchedVendors.size &&
+            (rfq.status === ENUM_RFQ_STATUS.DRAFT ||
+                rfq.status === ENUM_RFQ_STATUS.SENT)
+        ) {
+            rfq.status = ENUM_RFQ_STATUS.QUOTING;
+            await this.rfqRepository.save(rfq);
         }
 
         // Persist the per-line export checkbox state when provided.
