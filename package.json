@@ -62,6 +62,7 @@
         "seed:contract-templates": "nestjs-command seed:contract-templates",
         "seed:hrm-all": "yarn remove:tools && yarn remove:hrm-plans && yarn seed:tools && yarn seed:hrm-plans && yarn update:role-permissions && yarn sync:custom-role-permissions && yarn seed:leave-types && yarn seed:contract-templates",
         "seed:production": "nestjs-command seed:production",
+        "seed:catalog": "nestjs-command seed:catalog",
         "seed:production-wipe": "nestjs-command seed:production-wipe"
     },
     "dependencies": {

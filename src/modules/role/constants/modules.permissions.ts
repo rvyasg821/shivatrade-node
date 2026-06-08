@@ -186,6 +186,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },
+        rfq: {
+            name: "RFQ",
+            description: "Manage Requests for Quotation - vendor price sourcing from lead requirement items",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
         pfi: {
             name: "PFI",
             description: "Manage Proforma Invoices created from approved quotations",
