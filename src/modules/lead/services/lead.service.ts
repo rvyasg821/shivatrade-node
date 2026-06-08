@@ -763,6 +763,11 @@ export class LeadService {
                 : null;
             dto.product_name = prod?.name;
             dto.product_code = prod?.code;
+            // Master sell rate so the lead detail can show an Estimated Sales
+            // Value (Σ qty × product_selling_price) from the requirements.
+            // Distinct from the line's own margin_pct (left untouched).
+            (dto as any).product_selling_price =
+                prod?.selling_price != null ? String(prod.selling_price) : null;
             const ven = r.vendor_id
                 ? vendorById.get(r.vendor_id.toString())
                 : null;

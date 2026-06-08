@@ -32,6 +32,7 @@ export class LeadLineResponseDto {
     // Enriched for display.
     @ApiProperty({ required: false, type: String }) product_name?: string;
     @ApiProperty({ required: false, type: String }) product_code?: string;
+    @ApiProperty({ required: false, type: String }) product_selling_price?: string;
     @ApiProperty({ required: false, type: String }) vendor_name?: string;
     @ApiProperty({ required: false, type: String }) vendor_code?: string;
 }
