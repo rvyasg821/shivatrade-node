@@ -927,15 +927,39 @@ export class LeadService {
         // Count requirement line items per lead so the listing can show how
         // many products each lead is interested in without fetching the lines.
         const lineItemCounts = new Map<string, number>();
+        // Estimated Sales Value per lead = Σ(qty × product master selling price)
+        // across its requirement lines. A pre-quotation possible-sales total.
+        const salesValue = new Map<string, number>();
         if (leadIds.length) {
-            const leadLines = await this.leadLineRepository.findAll({
+            const leadLines = (await this.leadLineRepository.findAll({
                 lead_id: { $in: leadIds },
                 soft_delete: false,
-            } as any);
-            for (const ln of leadLines as any[]) {
+            } as any)) as any[];
+            // Price lookup from the product master for the lines' products.
+            const prodIds = Array.from(
+                new Set(
+                    leadLines.map((l) => l.product_id?.toString()).filter(Boolean)
+                )
+            );
+            const priceById = new Map<string, number>();
+            if (prodIds.length) {
+                const prods = (await this.productRepository.findAll({
+                    _id: { $in: prodIds },
+                } as any)) as any[];
+                for (const p of prods) {
+                    priceById.set(
+                        p._id.toString(),
+                        Number(p.selling_price) || 0
+                    );
+                }
+            }
+            for (const ln of leadLines) {
                 const lid = ln.lead_id?.toString();
                 if (!lid) continue;
                 lineItemCounts.set(lid, (lineItemCounts.get(lid) || 0) + 1);
+                const price = priceById.get(ln.product_id?.toString()) || 0;
+                const amt = (Number(ln.qty) || 0) * price;
+                salesValue.set(lid, (salesValue.get(lid) || 0) + amt);
             }
         }
 
@@ -954,6 +978,8 @@ export class LeadService {
                 quotationCounts.get(l._id.toString()) || 0;
             (dtos[i] as any).line_items_count =
                 lineItemCounts.get(l._id.toString()) || 0;
+            (dtos[i] as any).estimated_sales_value =
+                salesValue.get(l._id.toString()) || 0;
             (dtos[i] as any).last_activity_at =
                 lastActivityMap.get(l._id.toString()) || null;
         });
