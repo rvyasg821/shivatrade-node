@@ -23,6 +23,20 @@ export class QuotationLineCreateDto {
     @IsOptional()
     vendor_id?: string;
 
+    // ── Source / traceability (auto-pick from price list) ──
+    @IsUUID()
+    @IsOptional()
+    price_list_id?: string;
+
+    @IsUUID()
+    @IsOptional()
+    source_rfq_id?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(60)
+    source_rfq_voucher_no?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(2000)

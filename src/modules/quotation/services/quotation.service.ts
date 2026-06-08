@@ -516,6 +516,9 @@ export class QuotationService {
                 quotation_id: quotationId,
                 product_id: pid,
                 vendor_id: l.vendor_id || null,
+                price_list_id: l.price_list_id || null,
+                source_rfq_id: l.source_rfq_id || null,
+                source_rfq_voucher_no: l.source_rfq_voucher_no || null,
                 description: l.description || null,
                 customer_reference:
                     (typeof l.customer_reference === 'string' &&
@@ -904,6 +907,9 @@ export class QuotationService {
                             vendor_code: (vendorMap.get(
                                 l.vendor_id?.toString()
                             ) as any)?.vendor_code,
+                            price_list_id: l.price_list_id?.toString(),
+                            source_rfq_id: l.source_rfq_id?.toString(),
+                            source_rfq_voucher_no: l.source_rfq_voucher_no,
                             description: l.description,
                             customer_reference: l.customer_reference,
                             qty: l.qty,

@@ -31,6 +31,12 @@ export class PriceListGetResponseDto {
     @ApiProperty({ type: String, required: false }) effective_until?: string;
     @ApiProperty({ type: String, required: false }) notes?: string;
 
+    // ── Source / traceability ──
+    @ApiProperty({ type: String, required: false }) source_type?: string;
+    @ApiProperty({ type: String, required: false }) source_rfq_id?: string;
+    @ApiProperty({ type: String, required: false }) source_rfq_line_id?: string;
+    @ApiProperty({ type: String, required: false }) source_rfq_voucher_no?: string;
+
     @ApiProperty({ type: Date }) createdAt: Date;
     @ApiProperty({ type: Date }) updatedAt: Date;
 }

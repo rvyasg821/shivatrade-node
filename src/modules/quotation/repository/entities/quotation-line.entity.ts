@@ -21,6 +21,21 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     vendor_id?: string;
 
+    // ── Source / traceability ──
+    /** Price-list row the unit_price/vendor were auto-picked from. */
+    @Column({ type: 'uuid', nullable: true })
+    price_list_id?: string;
+
+    /** RFQ that ultimately sourced this price (carried from the price-list
+     *  row's source_rfq_id). Completes the Lead → RFQ → Price → Quote trace. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    source_rfq_id?: string;
+
+    /** Denormalized RFQ voucher no for the "from RFQ …" badge on the line. */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    source_rfq_voucher_no?: string;
+
     /** Snapshot of product description at quote time. */
     @Column({ type: 'text', nullable: true })
     description?: string;

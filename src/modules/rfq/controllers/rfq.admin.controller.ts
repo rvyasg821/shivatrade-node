@@ -126,7 +126,8 @@ export class RfqAdminController {
         @AuthJwtPayload('user') userId: string,
         @UploadedFile() file: IFile,
         @Query('vendor_id') vendorId?: string,
-        @Query('preview') preview?: string
+        @Query('preview') preview?: string,
+        @Query('rfq_id') rfqId?: string
     ): Promise<IResponse<any>> {
         if (!file) throw new BadRequestException('No file provided');
         if (!vendorId) throw new BadRequestException('vendor_id is required');
@@ -135,7 +136,8 @@ export class RfqAdminController {
             vendorId,
             file.buffer,
             userId,
-            preview === 'true'
+            preview === 'true',
+            rfqId
         );
         return { data };
     }

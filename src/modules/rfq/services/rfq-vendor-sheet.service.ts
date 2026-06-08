@@ -12,6 +12,9 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { PriceListImportExportService } from '@modules/price-list/services/price-list.import-export.service';
 import { PriceListService } from '@modules/price-list/services/price-list.service';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
+import { ENUM_PRICE_LIST_SOURCE } from '@modules/price-list/enums/price-list.enum';
+import { RfqRepository } from '../repository/repositories/rfq.repository';
+import { RfqLineRepository } from '../repository/repositories/rfq-line.repository';
 
 // adm-zip ships no bundled type declarations; require it as `any`.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -55,7 +58,9 @@ export class RfqVendorSheetService {
         private readonly vendorRepository: VendorRepository,
         private readonly importExportService: PriceListImportExportService,
         private readonly priceListService: PriceListService,
-        private readonly priceListRepository: PriceListRepository
+        private readonly priceListRepository: PriceListRepository,
+        private readonly rfqRepository: RfqRepository,
+        private readonly rfqLineRepository: RfqLineRepository
     ) {}
 
     async buildVendorPriceSheets(
@@ -247,7 +252,8 @@ export class RfqVendorSheetService {
         vendorId: string,
         fileBuffer: Buffer,
         userId: string,
-        preview = false
+        preview = false,
+        rfqId?: string
     ): Promise<any> {
         if (!vendorId) throw new BadRequestException('vendor_id is required');
 
@@ -264,6 +270,31 @@ export class RfqVendorSheetService {
         if (preview) {
             return { summary, rows };
         }
+
+        // ── Source traceability: stamp each written price with its RFQ origin ──
+        // Resolve the RFQ voucher (for display) and a product_id → rfq_line_id
+        // map so each price row links back to the exact RFQ line. Falls back to
+        // 'import' when no rfqId is supplied (plain price-list upload path).
+        let rfqVoucherNo: string | undefined;
+        const rfqLineByProduct: Record<string, string> = {};
+        if (rfqId) {
+            const rfq: any = await this.rfqRepository.findOne({
+                _id: rfqId,
+                company_id: companyId,
+            } as any);
+            rfqVoucherNo = rfq?.voucher_no;
+            const rfqLines: any[] = await this.rfqLineRepository.findAll({
+                rfq_id: rfqId,
+            } as any);
+            for (const rl of rfqLines || []) {
+                if (rl?.product_id && !rfqLineByProduct[rl.product_id]) {
+                    rfqLineByProduct[rl.product_id] = rl._id.toString();
+                }
+            }
+        }
+        const sourceType = rfqId
+            ? ENUM_PRICE_LIST_SOURCE.RFQ
+            : ENUM_PRICE_LIST_SOURCE.IMPORT;
 
         const out: {
             rows: Array<{
@@ -310,12 +341,17 @@ export class RfqVendorSheetService {
                     product_id: d.product_id,
                     effective_date,
                 } as any);
+                const sourceRfqLineId = rfqLineByProduct[d.product_id];
                 if (existing) {
                     existing.unit_price = unit_price;
                     if (d.discount_pct != null) {
                         existing.discount_pct = discount_pct;
                     }
                     existing.valid_until = valid_until;
+                    existing.source_type = sourceType;
+                    existing.source_rfq_id = rfqId || null;
+                    existing.source_rfq_line_id = sourceRfqLineId || null;
+                    existing.source_rfq_voucher_no = rfqVoucherNo || null;
                     await this.priceListRepository.save(existing);
                 } else {
                     await this.priceListService.create(
@@ -328,6 +364,10 @@ export class RfqVendorSheetService {
                             discount_pct: discount_pct || undefined,
                             effective_date,
                             valid_until,
+                            source_type: sourceType,
+                            source_rfq_id: rfqId || undefined,
+                            source_rfq_line_id: sourceRfqLineId || undefined,
+                            source_rfq_voucher_no: rfqVoucherNo || undefined,
                         } as any,
                         userId
                     );
