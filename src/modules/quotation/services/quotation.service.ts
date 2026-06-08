@@ -231,6 +231,24 @@ export class QuotationService {
 
         await this.recompute(header._id.toString(), companyId);
 
+        // Auto-advance the source RFQ to "completed" — a quotation has been
+        // generated from it. Best-effort; never block quotation creation on it,
+        // and don't walk back a cancelled RFQ.
+        if (data.rfq_id) {
+            try {
+                const srcRfq: any = await this.rfqRepository.findOne({
+                    _id: data.rfq_id,
+                    company_id: companyId,
+                } as any);
+                if (srcRfq && srcRfq.status !== 'cancelled') {
+                    srcRfq.status = 'completed';
+                    await this.rfqRepository.save(srcRfq);
+                }
+            } catch {
+                /* non-fatal */
+            }
+        }
+
         this.logger.log(
             `Quotation created: ${header._id} (${voucher_no})`
         );
