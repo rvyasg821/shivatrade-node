@@ -15,6 +15,7 @@ import { PriceListRepository } from '@modules/price-list/repository/repositories
 import { ENUM_PRICE_LIST_SOURCE } from '@modules/price-list/enums/price-list.enum';
 import { RfqRepository } from '../repository/repositories/rfq.repository';
 import { RfqLineRepository } from '../repository/repositories/rfq-line.repository';
+import { RfqService } from './rfq.service';
 
 // adm-zip ships no bundled type declarations; require it as `any`.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -60,7 +61,8 @@ export class RfqVendorSheetService {
         private readonly priceListService: PriceListService,
         private readonly priceListRepository: PriceListRepository,
         private readonly rfqRepository: RfqRepository,
-        private readonly rfqLineRepository: RfqLineRepository
+        private readonly rfqLineRepository: RfqLineRepository,
+        private readonly rfqService: RfqService
     ) {}
 
     async buildVendorPriceSheets(
@@ -386,6 +388,31 @@ export class RfqVendorSheetService {
                     row: r.rowNum,
                     message: err?.message || 'Failed to save price',
                 });
+            }
+        }
+
+        // Persist the imported prices onto the RFQ itself (rfq_vendor_prices)
+        // so the comparison grid shows them on reload and the status advances
+        // to "quoting". Maps each imported product back to its rfq_line_id.
+        if (rfqId && out.rows.length) {
+            const rfqPrices = out.rows
+                .map((r) => ({
+                    rfq_line_id: rfqLineByProduct[r.product_id],
+                    vendor_id: vendorId,
+                    unit_price: r.unit_price,
+                    discount_pct: r.discount_pct || '0',
+                }))
+                .filter((p) => p.rfq_line_id);
+            if (rfqPrices.length) {
+                try {
+                    await this.rfqService.setPrices(companyId, rfqId, {
+                        prices: rfqPrices,
+                    } as any);
+                } catch (err: any) {
+                    this.logger.warn(
+                        `Imported to price list but failed to sync RFQ prices: ${err?.message || err}`
+                    );
+                }
             }
         }
 
