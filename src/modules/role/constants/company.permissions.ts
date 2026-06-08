@@ -282,6 +282,14 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: true,
     },
+    rfq: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
     pfi: {
         can_all: true,
         can_read: true,
