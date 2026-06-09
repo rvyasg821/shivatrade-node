@@ -156,7 +156,7 @@ export class RfqVendorSheetService {
                     unit_price: '', // vendor fills this
                     discount_pct: '',
                     effective_date: today,
-                    valid_until: today,
+                    valid_until: "", // open-ended unless the vendor sets an expiry
                 };
             });
 
@@ -272,7 +272,7 @@ export class RfqVendorSheetService {
                 unit_price: '',
                 discount_pct: '',
                 effective_date: today,
-                valid_until: today,
+                valid_until: "", // open-ended unless the vendor sets an expiry
             };
         });
 
@@ -386,7 +386,13 @@ export class RfqVendorSheetService {
             }
 
             const effective_date = d.effective_date || today;
-            const valid_until = d.valid_until || effective_date;
+            // Blank valid_until = OPEN-ENDED (no expiry). Don't fall back to
+            // effective_date, which would expire the price the same day it's
+            // imported and drop it from byProduct / bestPrices the next day.
+            const valid_until =
+                d.valid_until && d.valid_until !== effective_date
+                    ? d.valid_until
+                    : undefined;
             const unit_price = String(d.unit_price);
             const discount_pct =
                 d.discount_pct != null ? String(d.discount_pct) : '';
@@ -405,7 +411,7 @@ export class RfqVendorSheetService {
                     if (d.discount_pct != null) {
                         existing.discount_pct = discount_pct;
                     }
-                    existing.valid_until = valid_until;
+                    existing.valid_until = valid_until || null;
                     existing.source_type = sourceType;
                     existing.source_rfq_id = rfqId || null;
                     existing.source_rfq_line_id = sourceRfqLineId || null;
@@ -437,7 +443,7 @@ export class RfqVendorSheetService {
                     unit_price,
                     discount_pct,
                     effective_date,
-                    valid_until,
+                    valid_until: valid_until || '',
                 });
             } catch (err: any) {
                 out.errors.push({
