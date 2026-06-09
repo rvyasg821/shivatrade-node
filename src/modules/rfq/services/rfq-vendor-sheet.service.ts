@@ -16,6 +16,8 @@ import { ENUM_PRICE_LIST_SOURCE } from '@modules/price-list/enums/price-list.enu
 import { RfqRepository } from '../repository/repositories/rfq.repository';
 import { RfqLineRepository } from '../repository/repositories/rfq-line.repository';
 import { RfqService } from './rfq.service';
+import { LeadActivityService } from '@modules/lead/services/lead-activity.service';
+import { ENUM_LEAD_ACTIVITY_TYPE } from '@modules/lead/enums/lead-activity.enum';
 
 // adm-zip ships no bundled type declarations; require it as `any`.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -62,8 +64,32 @@ export class RfqVendorSheetService {
         private readonly priceListRepository: PriceListRepository,
         private readonly rfqRepository: RfqRepository,
         private readonly rfqLineRepository: RfqLineRepository,
-        private readonly rfqService: RfqService
+        private readonly rfqService: RfqService,
+        private readonly leadActivityService: LeadActivityService
     ) {}
+
+    /** Fire-and-forget lead timeline entry; never breaks the caller. */
+    private logLeadActivity(
+        companyId: string,
+        leadId: string | undefined,
+        type: ENUM_LEAD_ACTIVITY_TYPE,
+        body: string,
+        metadata?: Record<string, any>,
+        userId?: string
+    ): void {
+        if (!leadId) return;
+        this.leadActivityService
+            .addSystem(companyId, leadId, type, {
+                body,
+                metadata,
+                createdBy: userId,
+            })
+            .catch((err) =>
+                this.logger.warn(
+                    `Failed to log lead activity (${type}): ${err?.message || err}`
+                )
+            );
+    }
 
     async buildVendorPriceSheets(
         companyId: string,
@@ -151,6 +177,23 @@ export class RfqVendorSheetService {
         this.logger.log(
             `Built ${entries.length} vendor price sheet(s) for lead ${leadId}`
         );
+
+        // Lead timeline: which vendors the price request was exported for.
+        const vendorNames = ids
+            .map((vid) => vendorById.get(vid))
+            .filter(Boolean)
+            .map((v: any) => v.company_name || v.vendor_code)
+            .filter(Boolean);
+        this.logLeadActivity(
+            companyId,
+            leadId,
+            ENUM_LEAD_ACTIVITY_TYPE.RFQ_EXPORTED,
+            `Exported price request ${vendorNames.length > 1 ? 'sheets' : 'sheet'} for ${
+                vendorNames.join(', ') || `${ids.length} vendor(s)`
+            }`,
+            { vendor_ids: ids, vendor_names: vendorNames }
+        );
+
         return {
             filename: `RFQ-${leadVoucher}-price-requests.zip`,
             zip: zip.toBuffer(),
@@ -236,6 +279,17 @@ export class RfqVendorSheetService {
         const buffer = this.fileService.writeExcel([
             { data: rows, sheetName: SHEET_NAME },
         ]);
+
+        this.logLeadActivity(
+            companyId,
+            leadId,
+            ENUM_LEAD_ACTIVITY_TYPE.RFQ_EXPORTED,
+            `Exported price request sheet for ${
+                vendor.company_name || vendorCode
+            }`,
+            { vendor_ids: [vendorId], vendor_names: [vendor.company_name] }
+        );
+
         return {
             filename: `RFQ-${leadVoucher}-${sanitizeName(vendorCode)}.xlsx`,
             buffer,
@@ -278,6 +332,7 @@ export class RfqVendorSheetService {
         // map so each price row links back to the exact RFQ line. Falls back to
         // 'import' when no rfqId is supplied (plain price-list upload path).
         let rfqVoucherNo: string | undefined;
+        let rfqLeadId: string | undefined;
         const rfqLineByProduct: Record<string, string> = {};
         if (rfqId) {
             const rfq: any = await this.rfqRepository.findOne({
@@ -285,6 +340,7 @@ export class RfqVendorSheetService {
                 company_id: companyId,
             } as any);
             rfqVoucherNo = rfq?.voucher_no;
+            rfqLeadId = rfq?.lead_id ? rfq.lead_id.toString() : undefined;
             const rfqLines: any[] = await this.rfqLineRepository.findAll({
                 rfq_id: rfqId,
             } as any);
@@ -419,6 +475,31 @@ export class RfqVendorSheetService {
         this.logger.log(
             `Imported ${out.rows.length} price(s) for vendor ${vendorId} (${out.errors.length} error rows)`
         );
+
+        // Lead timeline: prices imported for this vendor (skip preview).
+        if (rfqLeadId && out.rows.length) {
+            const vendor: any = await this.vendorRepository.findOneById(vendorId);
+            const vName = vendor?.company_name || vendor?.vendor_code || 'vendor';
+            this.logLeadActivity(
+                companyId,
+                rfqLeadId,
+                ENUM_LEAD_ACTIVITY_TYPE.RFQ_PRICES_IMPORTED,
+                `Imported ${out.rows.length} price${
+                    out.rows.length === 1 ? '' : 's'
+                } from ${vName}${
+                    out.errors.length ? ` (${out.errors.length} skipped)` : ''
+                }`,
+                {
+                    rfq_id: rfqId,
+                    vendor_id: vendorId,
+                    vendor_name: vName,
+                    imported: out.rows.length,
+                    errors: out.errors.length,
+                },
+                userId
+            );
+        }
+
         return out;
     }
 }
