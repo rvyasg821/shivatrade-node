@@ -1,5 +1,6 @@
 {
     "list": "PO Vendors retrieved successfully.",
+    "stats": "PO Vendor stats retrieved successfully.",
     "get": "PO Vendor fetched successfully.",
     "createFromPo": "PO Vendor created from Purchase Order.",
     "update": "PO Vendor updated successfully.",
