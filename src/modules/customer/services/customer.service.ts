@@ -169,6 +169,19 @@ export class CustomerService {
      * user in the users table. The same customer's existing primary user is
      * exempt (it will be re-synced rather than re-created).
      */
+    /**
+     * True when `email` can be used for a new customer primary contact (no
+     * live user already owns it). Lets callers (e.g. auto-create-from-lead)
+     * decide to drop a colliding email rather than hard-fail.
+     */
+    async isPrimaryEmailAvailable(email?: string): Promise<boolean> {
+        if (!email || !email.trim()) return false;
+        const existingUser = await this.userService.findOneByEmail(
+            email.trim().toLowerCase()
+        );
+        return !existingUser || !!(existingUser as any).deleted;
+    }
+
     private async assertPrimaryEmailAvailable(
         email: string,
         customerId?: string
