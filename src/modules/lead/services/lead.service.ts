@@ -519,6 +519,28 @@ export class LeadService {
             lead.country ||
             lead.postcode
         );
+        // The lead's contact email may already belong to a user (customers,
+        // vendors and staff share one email-keyed login identity). Email is
+        // mandatory for a customer here, so we can't drop it — but we also
+        // must not block the quotation. When it collides, substitute a unique
+        // placeholder email so the customer is still created; it's flagged for
+        // the user to correct later.
+        const emailFree = await this.customerService.isPrimaryEmailAvailable(
+            lead.contact_email
+        );
+        let contactEmail = lead.contact_email;
+        if (!emailFree) {
+            const slug =
+                (lead.company_name || 'customer')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '')
+                    .slice(0, 30) || 'customer';
+            contactEmail = `${slug}.${leadId.slice(0, 8)}@placeholder.local`;
+            this.logger.warn(
+                `Lead ${leadId} contact email '${lead.contact_email}' already in use — customer created with placeholder '${contactEmail}'`
+            );
+        }
         const customer = await this.customerService.create(
             companyId,
             {
@@ -529,7 +551,7 @@ export class LeadService {
                 contacts: [
                     {
                         name: lead.contact_name,
-                        email: lead.contact_email,
+                        email: contactEmail,
                         phone: lead.contact_phone,
                         country_code: lead.country_code,
                         is_primary: true,
