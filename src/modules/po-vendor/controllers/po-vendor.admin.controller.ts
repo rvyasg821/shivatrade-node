@@ -159,6 +159,40 @@ export class PoVendorAdminController {
         };
     }
 
+    // ─── Stats (list tiles) ─────────────────────────────────────────────
+
+    @Response('poVendor.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('purchase_order_id') purchaseOrderId?: string,
+        @Query('vendor_id') vendorId?: string,
+        @Query('status') status?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
+    ): Promise<IResponse<{ total: number; by_status: Record<string, number> }>> {
+        // CSV status → array (the tiles pass comma-separated statuses).
+        let statusValue: string | string[] | undefined;
+        if (status) {
+            const parts = status
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+            statusValue = parts.length > 1 ? parts : parts[0];
+        }
+        const data = await this.povService.stats(companyId, {
+            purchase_order_id: purchaseOrderId,
+            vendor_id: vendorId,
+            status: statusValue,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchRaw,
+        });
+        return { data };
+    }
+
     // ─── Detail ─────────────────────────────────────────────────────────
 
     @Response('poVendor.get')
