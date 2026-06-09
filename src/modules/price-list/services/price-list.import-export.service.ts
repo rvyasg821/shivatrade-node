@@ -328,9 +328,23 @@ export class PriceListImportExportService {
         // Company "home" currency — used when currency_code is blank/unknown.
         const defaultCurrency = currencies.find((c) => c.is_default);
 
-        // Legacy data is preserved: every imported row creates a new
-        // price-list entry, even if the same vendor + product (+ effective
-        // date) already exists or appears again within the same file.
+        // Existing price-list rows → so the preview can mark each line as
+        // New vs Update (an import upserts the row for the same vendor +
+        // product + effective_date). Scoped to the vendor when known.
+        const existingFilter: any = { company_id: companyId };
+        if (scopedVendorId) existingFilter.vendor_id = scopedVendorId;
+        const existingRows = await this.priceListRepository.findAll(
+            existingFilter as any,
+        );
+        const dayKey = (vid: any, pid: any, eff: any) =>
+            `${vid}|${pid}|${String(eff).slice(0, 10)}`;
+        const existingByKey = new Map<string, string>();
+        for (const e of existingRows as any[]) {
+            existingByKey.set(
+                dayKey(e.vendor_id, e.product_id, e.effective_date),
+                e._id.toString(),
+            );
+        }
 
         const today = new Date().toISOString().slice(0, 10);
         const rows: PriceListImportRow[] = [];
@@ -377,6 +391,19 @@ export class PriceListImportExportService {
                     (v) => v._id.toString() === scopedVendorId,
                 );
                 vendorCode = vendorMatch?.vendor_code || '';
+                // Guard: a vendor-scoped sheet must not carry another vendor's
+                // rows. If the sheet's vendor_code is present and differs from
+                // the selected vendor, flag the row as an error (skipped).
+                const sheetVendorCode = (get('vendor_code') || '').trim();
+                if (
+                    sheetVendorCode &&
+                    vendorCode &&
+                    sheetVendorCode.toLowerCase() !== vendorCode.toLowerCase()
+                ) {
+                    errors.push(
+                        `Vendor code "${sheetVendorCode}" does not match the selected vendor "${vendorCode}" — row skipped`,
+                    );
+                }
             } else {
                 vendorCode = get('vendor_code');
                 if (!vendorCode) {
@@ -531,13 +558,23 @@ export class PriceListImportExportService {
                 errors.push('Notes must not exceed 2000 characters');
             }
 
-            // Every valid row imports as a new entry — duplicates against
-            // existing data or within the file are allowed by design so
-            // legacy price history is preserved.
+            // Decide the action: error (has problems) → otherwise update when a
+            // price-list row already exists for the same vendor + product +
+            // effective_date (the importer upserts it), else a new row.
             let rowStatus: 'valid_new' | 'valid_update' | 'error' =
                 'valid_new';
-            const existingId: string | undefined = undefined;
-            if (errors.length > 0) rowStatus = 'error';
+            let existingId: string | undefined;
+            if (errors.length > 0) {
+                rowStatus = 'error';
+            } else if (vendorId && productId) {
+                const ex = existingByKey.get(
+                    dayKey(vendorId, productId, effectiveDate),
+                );
+                if (ex) {
+                    rowStatus = 'valid_update';
+                    existingId = ex;
+                }
+            }
 
             rows.push({
                 rowNum,
