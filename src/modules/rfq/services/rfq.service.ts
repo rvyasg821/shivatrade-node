@@ -276,16 +276,16 @@ export class RfqService {
             await this.rfqRepository.save(rfq);
         }
 
-        // Persist the per-line export checkbox state when provided.
-        if (Array.isArray(dto.checked_line_ids)) {
-            const checkedSet = new Set(dto.checked_line_ids.map(String));
-            const allLines = await this.rfqLineRepository.findByRfqId(rfqId);
-            for (const ln of allLines as any[]) {
-                const want = checkedSet.has(ln._id.toString());
-                if (!!ln.checked !== want) {
-                    ln.checked = want;
-                    await this.rfqLineRepository.save(ln);
-                }
+        // Persist the export checkbox state per-vendor — scoped to the active
+        // comparison column (checked_vendor_id) so each vendor keeps its own
+        // ticked lines. Stored on the vendor row, not the shared per-line flag.
+        if (dto.checked_vendor_id && Array.isArray(dto.checked_line_ids)) {
+            const vendorRow: any = (vendors as any[]).find(
+                (v) => v.vendor_id?.toString() === dto.checked_vendor_id
+            );
+            if (vendorRow) {
+                vendorRow.checked_line_ids = dto.checked_line_ids.map(String);
+                await this.rfqVendorRepository.save(vendorRow);
             }
         }
     }
@@ -547,6 +547,9 @@ export class RfqService {
                 vendor_code: ven?.vendor_code,
                 status: v.status,
                 sent_at: v.sent_at,
+                checked_line_ids: Array.isArray(v.checked_line_ids)
+                    ? v.checked_line_ids.map(String)
+                    : [],
             };
         });
         dto.prices = (prices as any[]).map((p) => ({

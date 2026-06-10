@@ -28,6 +28,12 @@ export class RfqVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     notes?: string;
 
+    /** Per-vendor export checkbox state — the rfq_line_ids ticked for THIS
+     *  vendor's request sheet. Each vendor keeps its own selection (replaces the
+     *  single per-line `checked` flag, which could only hold one vendor). */
+    @Column({ type: 'simple-array', nullable: true })
+    checked_line_ids?: string[];
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;
