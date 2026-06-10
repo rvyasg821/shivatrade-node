@@ -22,6 +22,8 @@ export class RfqVendorResponseDto {
     @ApiProperty({ required: false }) vendor_code?: string;
     @ApiProperty() status: string;
     @ApiProperty({ required: false }) sent_at?: Date;
+    @ApiProperty({ required: false, type: [String] })
+    checked_line_ids?: string[];
 }
 
 export class RfqVendorPriceResponseDto {

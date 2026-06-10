@@ -53,12 +53,19 @@ export class RfqSetPricesDto {
     @Type(() => RfqPriceItemDto)
     prices: RfqPriceItemDto[];
 
-    // Per-line export checkbox state — the rfq_line_ids that are ticked. When
-    // provided, lines in the list are marked checked and all others unchecked.
+    // Per-vendor export checkbox state — the rfq_line_ids ticked for the vendor
+    // in `checked_vendor_id`. Stored on that vendor's row so each vendor keeps
+    // its own selection.
     @IsArray()
     @IsUUID('all', { each: true })
     @IsOptional()
     checked_line_ids?: string[];
+
+    // The vendor the `checked_line_ids` belong to (the active comparison
+    // column). Required for the checked set to persist per-vendor.
+    @IsUUID()
+    @IsOptional()
+    checked_vendor_id?: string;
 }
 
 export class RfqSelectPriceDto {
