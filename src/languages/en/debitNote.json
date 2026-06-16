@@ -1,0 +1,11 @@
+{
+    "create": "Debit Note created from the GRN.",
+    "list": "Debit Note list retrieved.",
+    "forGrn": "Debit Notes for the GRN retrieved.",
+    "get": "Debit Note retrieved.",
+    "update": "Debit Note updated.",
+    "delete": "Debit Note deleted.",
+    "error": {
+        "notFound": "Debit Note not found."
+    }
+}

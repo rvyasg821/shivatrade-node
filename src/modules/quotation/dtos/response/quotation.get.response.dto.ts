@@ -5,6 +5,7 @@ export class QuotationLineResponseDto {
     product_id?: string;
     product_code?: string;
     product_name?: string;
+    part_no?: string;
     vendor_id?: string;
     vendor_name?: string;
     vendor_code?: string;

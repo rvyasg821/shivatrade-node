@@ -1213,6 +1213,134 @@ export class PoVendorService {
         return this.povRepository.findOneById(row._id.toString());
     }
 
+    // ─── Action: Edit Dispatch (correct transport / qty after dispatch) ──
+
+    /**
+     * Re-edit a DISPATCHED POV's transport details and per-line
+     * `dispatched_qty`. `dispatched_qty` is kept within
+     * [received_qty, ordered_qty] — you cannot claim you shipped less than
+     * what has already been received via GRN, nor more than was ordered.
+     * Status stays `dispatched`; any change to the shortfall
+     * (`ordered − dispatched`) re-flows to the parent PO's pending qty
+     * automatically (pending is derived from dispatched_qty).
+     */
+    async editDispatch(
+        row: PoVendorDoc,
+        data: PoVendorDispatchRequestDto,
+        userId?: string
+    ): Promise<PoVendorDoc> {
+        if (row.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED) {
+            throw new BadRequestException(
+                `Only dispatched POVs can have their dispatch edited (current status: ${row.status}).`
+            );
+        }
+
+        const lines = await this.povLineRepository.findAll({
+            po_vendor_id: row._id.toString(),
+        } as any);
+        const lineById = new Map<string, any>();
+        for (const l of lines as any[]) lineById.set(l._id.toString(), l);
+
+        // Validate every provided line: dispatched_qty within
+        // [received_qty, ordered_qty], no duplicates, belongs to this POV.
+        const seen = new Set<string>();
+        for (const dl of data.lines) {
+            const ln = lineById.get(dl._id);
+            if (!ln) {
+                throw new BadRequestException(
+                    `Line ${dl._id} does not belong to this POV.`
+                );
+            }
+            if (seen.has(dl._id)) {
+                throw new BadRequestException(
+                    `Duplicate line in dispatch payload: ${dl._id}.`
+                );
+            }
+            seen.add(dl._id);
+            const req = num(dl.dispatched_qty);
+            const ordered = num(ln.ordered_qty);
+            const received = num(ln.received_qty);
+            if (req < 0) {
+                throw new BadRequestException(
+                    `dispatched_qty cannot be negative (line ${dl._id}).`
+                );
+            }
+            if (req > ordered + 1e-6) {
+                throw new BadRequestException(
+                    `dispatched_qty (${req}) exceeds ordered_qty (${round4(
+                        ordered
+                    )}) on line ${dl._id}.`
+                );
+            }
+            if (req < received - 1e-6) {
+                throw new BadRequestException(
+                    `dispatched_qty (${req}) cannot be less than already received (${round4(
+                        received
+                    )}) on line ${dl._id}.`
+                );
+            }
+        }
+
+        // Apply per-line dispatched_qty; track shortfall for the event.
+        let totalShort = 0;
+        let shortLineCount = 0;
+        for (const dl of data.lines) {
+            const ln = lineById.get(dl._id);
+            const dispatched = round4(num(dl.dispatched_qty));
+            const ordered = round4(num(ln.ordered_qty));
+            const short = round4(ordered - dispatched);
+            if (short > 1e-6) {
+                totalShort += short;
+                shortLineCount += 1;
+            }
+            ln.dispatched_qty = String(dispatched);
+            await this.povLineRepository.save(ln);
+        }
+
+        // Apply header fields — status stays DISPATCHED.
+        if (data.dispatch_date !== undefined)
+            row.dispatch_date = data.dispatch_date;
+        if (data.expected_arrival_date !== undefined)
+            row.expected_arrival_date = data.expected_arrival_date;
+        if (data.transporter_name !== undefined)
+            row.transporter_name = data.transporter_name;
+        if (data.vehicle_no !== undefined) row.vehicle_no = data.vehicle_no;
+        if (data.lr_no !== undefined) row.lr_no = data.lr_no;
+        if (data.lr_date !== undefined) row.lr_date = data.lr_date;
+        if (data.eway_bill_no !== undefined)
+            row.eway_bill_no = data.eway_bill_no;
+        if (data.eway_bill_date !== undefined)
+            row.eway_bill_date = data.eway_bill_date;
+        if (data.notes !== undefined) row.notes = data.notes;
+        if (data.internal_notes !== undefined)
+            row.internal_notes = data.internal_notes;
+
+        await this.povRepository.save(row);
+        this.logger.log(`POV dispatch edited: ${row._id}`);
+        if (userId) {
+            const parts: string[] = ['Dispatch details edited'];
+            const transportBits: string[] = [];
+            if (data.lr_no) transportBits.push(`LR# ${data.lr_no}`);
+            if (data.vehicle_no) transportBits.push(data.vehicle_no);
+            if (data.transporter_name)
+                transportBits.push(data.transporter_name);
+            if (transportBits.length) parts.push(transportBits.join(' · '));
+            if (totalShort > 0) {
+                parts.push(
+                    `Under-dispatched by ${round4(totalShort)} across ${shortLineCount} line(s) — returned to PO pending.`
+                );
+            }
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+                userId,
+                parts.join(' · ')
+            );
+        }
+        return this.povRepository.findOneById(row._id.toString());
+    }
+
     // ─── Action: Cancel (POV plan §15.4) ────────────────────────────────
 
     /**

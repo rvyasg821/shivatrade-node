@@ -2,10 +2,12 @@ import {
     Controller,
     Get,
     Param,
+    Query,
     NotFoundException,
     Res,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
+import { verifyPdfTicket } from '@common/pdf/pdf-ticket.util';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from '@common/response/decorators/response.decorator';
 import { IResponse } from '@common/response/interfaces/response.interface';
@@ -26,6 +28,29 @@ export class PurchaseOrderPublicController {
         private readonly poService: PurchaseOrderService,
         private readonly poPdfService: PoPdfService
     ) {}
+
+    /** Stream the PO PDF inline (new-tab open) for a valid short-lived ticket —
+     *  works in ANY status. Declared before `/:token` so the literal wins. */
+    @ApiOperation({ summary: 'Purchase Order PDF by short-lived ticket' })
+    @Get('/pdf')
+    async pdfByTicket(
+        @Query('t') ticket: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const id = verifyPdfTicket(ticket, 'purchase-order');
+        if (!id) throw new NotFoundException('Invalid or expired link');
+        const row = await this.poService.findOneById(id);
+        const dto = await this.poService.mapGet(row);
+        const buf = await this.poPdfService.render(
+            dto,
+            row.company_id.toString()
+        );
+        const filename = this.poPdfService.buildFilename(dto);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+        res.setHeader('Content-Length', String(buf.length));
+        res.end(buf);
+    }
 
     @Response('purchaseOrder.public')
     @ApiOperation({ summary: 'View a shared PO by public token' })

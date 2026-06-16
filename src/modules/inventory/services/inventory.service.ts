@@ -29,7 +29,8 @@ const ORDER_COLUMNS: Record<string, string> = {
     arrival_date: 'COALESCE(pv.actual_arrival_date, pv."updatedAt")',
     product_code: 'p.code',
     product_name: 'p.name',
-    received_qty: 'pvl.received_qty',
+    received_qty: 'COALESCE(acc.accepted_qty, 0)',
+    accepted_qty: 'COALESCE(acc.accepted_qty, 0)',
     vendor_name: 'v.company_name',
     po_voucher_no: 'po.voucher_no',
     pov_voucher_no: 'pv.voucher_no',
@@ -48,18 +49,31 @@ export class InventoryService {
 
     // The join chain shared by the count + page queries. Driving table is
     // po_vendor_lines (one row per received product per POV).
+    //
+    // `acc` sums the QC-accepted qty from CONFIRMED, non-deleted GRNs per POV
+    // line — this is the real on-hand stock (rejected goods are excluded).
     private readonly FROM_JOINS = `
         FROM po_vendor_lines pvl
         LEFT JOIN po_vendors pv      ON pv._id = pvl.po_vendor_id
         LEFT JOIN purchase_orders po ON po._id = pv.purchase_order_id
         LEFT JOIN products p         ON p._id = pvl.product_id
         LEFT JOIN categories c       ON c._id = p.category_id
-        LEFT JOIN vendors v          ON v._id = pv.vendor_id`;
+        LEFT JOIN vendors v          ON v._id = pv.vendor_id
+        LEFT JOIN (
+            SELECT gl.po_vendor_line_id AS pov_line_id,
+                   SUM(gl.accepted_qty)  AS accepted_qty,
+                   SUM(gl.rejected_qty)  AS rejected_qty
+            FROM grn_lines gl
+            JOIN grns g ON g._id = gl.grn_id
+            WHERE g.status = 'confirmed' AND g.soft_delete = false
+            GROUP BY gl.po_vendor_line_id
+        ) acc ON acc.pov_line_id = pvl._id`;
 
     /**
-     * Paginated received-goods register. Only CLOSED, non-deleted POV lines
-     * with received_qty > 0 qualify. Filters compose — only the WHERE
-     * clauses with values are appended.
+     * Paginated stock register. A POV line qualifies when its parent POV is
+     * non-cancelled and it has QC-accepted qty from confirmed GRNs (> 0) —
+     * so partial receipts on still-open POVs are included. Filters compose —
+     * only the WHERE clauses with values are appended.
      */
     async list(
         companyId: string,
@@ -67,9 +81,13 @@ export class InventoryService {
     ): Promise<{ rows: InventoryListResponseDto[]; total: number }> {
         const where: string[] = [
             'pv.company_id = $1',
-            "pv.status = 'closed'",
+            // Any non-cancelled POV with accepted stock — includes still-open
+            // (dispatched) POVs that have a confirmed GRN, so partial receipts
+            // are visible without waiting for the POV to fully close.
+            "pv.status <> 'cancelled'",
             'pv.soft_delete = false',
-            'pvl.received_qty > 0',
+            // Stock = QC-accepted qty from confirmed GRNs (not raw received).
+            'COALESCE(acc.accepted_qty, 0) > 0',
         ];
         const params: any[] = [companyId];
         let i = 2;
@@ -124,7 +142,7 @@ export class InventoryService {
             i++;
         }
         if (filters.min_qty != null && !Number.isNaN(filters.min_qty)) {
-            where.push(`pvl.received_qty >= $${i}`);
+            where.push(`COALESCE(acc.accepted_qty, 0) >= $${i}`);
             params.push(filters.min_qty);
             i++;
         }
@@ -149,7 +167,9 @@ export class InventoryService {
         const rows = await this.dataSource.query(
             `SELECT
                 pvl._id            AS pov_line_id,
-                pvl.received_qty   AS received_qty,
+                pvl.received_qty           AS received_qty,
+                COALESCE(acc.accepted_qty, 0) AS accepted_qty,
+                COALESCE(acc.rejected_qty, 0) AS rejected_qty,
                 p._id              AS product_id,
                 p.code             AS product_code,
                 p.name             AS product_name,
@@ -173,7 +193,7 @@ export class InventoryService {
 
     /**
      * Full receipt detail for the modal. Validates the line still belongs
-     * to a CLOSED POV in this company — a bookmarked link to a since-
+     * to a non-cancelled POV in this company — a bookmarked link to a since-
      * cancelled receipt 404s so the FE can show "no longer valid".
      */
     async getReceiptDetail(
@@ -202,6 +222,8 @@ export class InventoryService {
                 pvl.ordered_qty    AS ordered_qty,
                 pvl.dispatched_qty AS dispatched_qty,
                 pvl.received_qty   AS received_qty,
+                COALESCE(acc.accepted_qty, 0) AS accepted_qty,
+                COALESCE(acc.rejected_qty, 0) AS rejected_qty,
                 pvl.unit_price     AS unit_price,
                 pvl.line_total     AS line_total,
 
@@ -228,12 +250,23 @@ export class InventoryService {
              LEFT JOIN categories c       ON c._id = p.category_id
              LEFT JOIN vendors v          ON v._id = pv.vendor_id
              LEFT JOIN customers cust     ON cust._id = po.customer_id
+             LEFT JOIN (
+                SELECT gl.po_vendor_line_id AS pov_line_id,
+                       SUM(gl.accepted_qty)  AS accepted_qty,
+                       SUM(gl.rejected_qty)  AS rejected_qty
+                FROM grn_lines gl
+                JOIN grns g ON g._id = gl.grn_id
+                WHERE g.status = 'confirmed' AND g.soft_delete = false
+                GROUP BY gl.po_vendor_line_id
+             ) acc ON acc.pov_line_id = pvl._id
              WHERE pvl._id = $1 AND pv.company_id = $2`,
             [povLineId, companyId]
         );
 
         const row = rows?.[0];
-        if (!row || row.status !== 'closed') {
+        // Valid while the POV exists and isn't cancelled — a since-cancelled
+        // receipt 404s so the FE can show "no longer valid".
+        if (!row || row.status === 'cancelled') {
             throw new NotFoundException('inventory.receiptNotFound');
         }
 
@@ -278,6 +311,8 @@ export class InventoryService {
                 ordered_qty: row.ordered_qty,
                 dispatched_qty: row.dispatched_qty,
                 received_qty: row.received_qty,
+                accepted_qty: row.accepted_qty,
+                rejected_qty: row.rejected_qty,
                 short_qty: shortQty > 0 ? String(shortQty) : null,
                 short_reason: shortReason,
                 unit_price: row.unit_price,

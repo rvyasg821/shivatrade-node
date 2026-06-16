@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
+import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -25,44 +26,46 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
-import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 
-import { GrnService } from '../services/grn.service';
+import { DebitNoteService } from '../services/debit-note.service';
 import {
-    GrnCreateFromPovDto,
-    GrnUpdateDto,
-} from '../dtos/request/grn.request.dto';
+    DebitNoteCreateFromGrnDto,
+    DebitNoteUpdateDto,
+} from '../dtos/request/debit-note.request.dto';
 import {
-    GrnGetResponseDto,
-    GrnListResponseDto,
-    GrnSourcePovResponseDto,
-    GrnStatsResponseDto,
-} from '../dtos/response/grn.response.dto';
+    DebitNoteGetResponseDto,
+    DebitNoteListResponseDto,
+} from '../dtos/response/debit-note.response.dto';
 
-@ApiTags('admin.grn')
-@Controller({ version: '1', path: '/admin/grn' })
-export class GrnAdminController {
-    constructor(private readonly grnService: GrnService) {}
+@ApiTags('admin.debitNote')
+@Controller({ version: '1', path: '/admin/debit-note' })
+export class DebitNoteAdminController {
+    constructor(private readonly debitNoteService: DebitNoteService) {}
 
-    @Response('grn.create')
+    @Response('debitNote.create')
     @AuthJwtAccessProtected()
-    @Post('/from-pov/:povId')
-    async createFromPov(
+    @Post('/from-grn/:grnId')
+    async createFromGrn(
         @AuthJwtPayload('companyId') companyId: string,
         @AuthJwtPayload('user') userId: string,
-        @Param('povId') povId: string,
-        @Body() body: GrnCreateFromPovDto
-    ): Promise<IResponse<GrnGetResponseDto>> {
-        const grn = await this.grnService.createFromPov(
+        @Param('grnId') grnId: string,
+        @Body() body: DebitNoteCreateFromGrnDto
+    ): Promise<IResponse<DebitNoteGetResponseDto>> {
+        const dn = await this.debitNoteService.createFromGrn(
             companyId,
-            povId,
+            grnId,
             body,
             userId
         );
-        return { data: await this.grnService.mapGet(companyId, grn._id.toString()) };
+        return {
+            data: await this.debitNoteService.mapGet(
+                companyId,
+                dn._id.toString()
+            ),
+        };
     }
 
-    @ResponsePaging('grn.list')
+    @ResponsePaging('debitNote.list')
     @AuthJwtAccessProtected()
     @Get('/list')
     async list(
@@ -70,85 +73,73 @@ export class GrnAdminController {
         @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('vendor_id') vendorId?: string,
+        @Query('grn_id') grnId?: string,
         @Query('po_vendor_id') poVendorId?: string,
         @Query('search') search?: string
-    ): Promise<IResponsePaging<GrnListResponseDto>> {
+    ): Promise<IResponsePaging<DebitNoteListResponseDto>> {
         const filters = {
-            status: parseGrnStatusParam(status),
+            status: parseStatusParam(status),
             vendor_id: vendorId,
+            grn_id: grnId,
             po_vendor_id: poVendorId,
             search,
         };
-        const find = this.grnService.buildListFind(companyId, filters);
-        const data = await this.grnService.list(companyId, {
+        const find = this.debitNoteService.buildListFind(companyId, filters);
+        const data = await this.debitNoteService.list(companyId, {
             find,
             paging: { limit: _limit, offset: _offset },
             order: _order,
         });
-        const total = await this.grnService.count(companyId, filters);
+        const total = await this.debitNoteService.count(companyId, filters);
         return {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
         };
     }
 
-    @Response('grn.stats')
+    @Response('debitNote.forGrn')
     @AuthJwtAccessProtected()
-    @Get('/stats')
-    async stats(
+    @Get('/for-grn/:grnId')
+    async forGrn(
         @AuthJwtPayload('companyId') companyId: string,
-        @Query('status') status?: string,
-        @Query('vendor_id') vendorId?: string,
-        @Query('search') search?: string
-    ): Promise<IResponse<GrnStatsResponseDto>> {
-        const data = await this.grnService.stats(companyId, {
-            status: parseGrnStatusParam(status),
-            vendor_id: vendorId,
-            search,
-        });
-        return { data };
+        @Param('grnId') grnId: string
+    ): Promise<IResponse<DebitNoteListResponseDto[]>> {
+        return {
+            data: await this.debitNoteService.listByGrn(companyId, grnId),
+        };
     }
 
-    @Response('grn.sourcePovs')
-    @AuthJwtAccessProtected()
-    @Get('/source-povs')
-    async sourcePovs(
-        @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<GrnSourcePovResponseDto[]>> {
-        return { data: await this.grnService.sourcePovs(companyId) };
-    }
-
-    @Response('grn.get')
+    @Response('debitNote.get')
     @AuthJwtAccessProtected()
     @Get('/get/:id')
     async get(
         @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
-    ): Promise<IResponse<GrnGetResponseDto>> {
-        return { data: await this.grnService.mapGet(companyId, id) };
+    ): Promise<IResponse<DebitNoteGetResponseDto>> {
+        return { data: await this.debitNoteService.mapGet(companyId, id) };
     }
 
-    @Response('grn.update')
+    @Response('debitNote.update')
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
         @AuthJwtPayload('companyId') companyId: string,
         @AuthJwtPayload('user') userId: string,
         @Param('id') id: string,
-        @Body() body: GrnUpdateDto
-    ): Promise<IResponse<GrnGetResponseDto>> {
-        await this.grnService.update(companyId, id, body, userId);
-        return { data: await this.grnService.mapGet(companyId, id) };
+        @Body() body: DebitNoteUpdateDto
+    ): Promise<IResponse<DebitNoteGetResponseDto>> {
+        await this.debitNoteService.update(companyId, id, body, userId);
+        return { data: await this.debitNoteService.mapGet(companyId, id) };
     }
 
-    @Response('grn.delete')
+    @Response('debitNote.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async remove(
         @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<{ deleted: boolean }>> {
-        await this.grnService.softDelete(companyId, id);
+        await this.debitNoteService.softDelete(companyId, id);
         return { data: { deleted: true } };
     }
 
@@ -159,7 +150,7 @@ export class GrnAdminController {
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const { buffer, filename } = await this.grnService.generatePdf(
+        const { buffer, filename } = await this.debitNoteService.generatePdf(
             companyId,
             id
         );
@@ -172,28 +163,28 @@ export class GrnAdminController {
         res.end(buffer);
     }
 
-    /** Mint a short-lived ticket so the browser can open the GRN PDF inline in
-     *  a new tab (proper filename) via the no-auth public route. */
-    @Response('grn.get')
+    /** Mint a short-lived ticket so the browser can open the Debit Note PDF
+     *  inline in a new tab (proper filename) via the no-auth public route. */
+    @Response('debitNote.get')
     @AuthJwtAccessProtected()
     @Get('/:id/pdf-ticket')
     async pdfTicket(
         @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<{ ticket: string }>> {
-        // Ensure the GRN exists within the caller's company scope.
-        await this.grnService.mapGet(companyId, id);
-        return { data: { ticket: signPdfTicket('grn', id) } };
+        // Ensure the DN exists within the caller's company scope.
+        await this.debitNoteService.mapGet(companyId, id);
+        return { data: { ticket: signPdfTicket('debit-note', id) } };
     }
 }
 
 // `status` query param → undefined / single / array (comma-separated).
-function parseGrnStatusParam(status?: string): string | string[] | undefined {
+function parseStatusParam(status?: string): string | string[] | undefined {
     if (!status) return undefined;
     const parts = status
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-    if (parts.length === 0) return undefined;
+    if (!parts.length) return undefined;
     return parts.length === 1 ? parts[0] : parts;
 }
