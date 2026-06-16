@@ -8,6 +8,7 @@ export class GrnLineResponseDto {
     @ApiProperty({ required: false }) product_code?: string;
     @ApiProperty({ required: false }) description?: string;
     @ApiProperty({ required: false }) hsn_code?: string;
+    @ApiProperty({ required: false }) part_no?: string;
     @ApiProperty({ required: false }) unit?: string;
     @ApiProperty({ required: false }) ordered_qty?: string;
     @ApiProperty({ required: false }) dispatched_qty?: string;

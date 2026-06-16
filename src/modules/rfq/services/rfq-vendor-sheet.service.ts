@@ -32,6 +32,14 @@ function todayDDMMYYYY(): string {
     return `${d}/${m}/${y}`;
 }
 
+/** ISO `YYYY-MM-DD` (or Date) → `DD/MM/YYYY`; '' when empty. */
+function isoToDDMMYYYY(value: any): string {
+    if (!value) return '';
+    const iso = String(value).slice(0, 10);
+    const [y, m, d] = iso.split('-');
+    return y && m && d ? `${d}/${m}/${y}` : '';
+}
+
 /** Make a value safe for a zip-entry / file name. */
 function sanitizeName(s: string): string {
     return (
@@ -141,24 +149,35 @@ export class RfqVendorSheetService {
                 vendor.company_name ||
                 vendorId.slice(0, 6);
 
-            const rows = (leadLines as any[]).map((l) => {
-                const product = l.product_id
-                    ? productById.get(l.product_id.toString())
-                    : null;
-                return {
-                    vendor_code: vendorCode,
-                    product_code: product?.code || '',
-                    product_name: product?.name || l.description || '',
-                    hsn_code: product?.hsn_code || l.hs_code || '',
-                    qty: l.qty != null ? String(l.qty) : '',
-                    unit: l.unit || '',
-                    currency_code: 'INR',
-                    unit_price: '', // vendor fills this
-                    discount_pct: '',
-                    effective_date: today,
-                    valid_until: "", // open-ended unless the vendor sets an expiry
-                };
-            });
+            const rows = await Promise.all(
+                (leadLines as any[]).map(async (l) => {
+                    const product = l.product_id
+                        ? productById.get(l.product_id.toString())
+                        : null;
+                    // Prefill the vendor's last active price (+ its effective
+                    // date) so the sheet shows the known cost; vendor overwrites.
+                    const cur = l.product_id
+                        ? await this.priceListRepository.findCurrentPrice(
+                              companyId,
+                              vendorId,
+                              l.product_id.toString()
+                          )
+                        : null;
+                    return {
+                        vendor_code: vendorCode,
+                        product_code: product?.code || '',
+                        product_name: product?.name || l.description || '',
+                        hsn_code: product?.hsn_code || l.hs_code || '',
+                        qty: l.qty != null ? String(l.qty) : '',
+                        unit: l.unit || '',
+                        currency_code: 'INR',
+                        unit_price: cur?.unit_price != null ? String(cur.unit_price) : '',
+                        effective_date: cur?.effective_date
+                            ? isoToDDMMYYYY(cur.effective_date)
+                            : today,
+                    };
+                })
+            );
 
             const buf = this.fileService.writeExcel([
                 { data: rows, sheetName: SHEET_NAME },
@@ -257,24 +276,34 @@ export class RfqVendorSheetService {
         const vendorCode =
             vendor.vendor_code || vendor.company_name || vendorId.slice(0, 6);
 
-        const rows = filteredLines.map((l) => {
-            const product = l.product_id
-                ? productById.get(l.product_id.toString())
-                : null;
-            return {
-                vendor_code: vendorCode,
-                product_code: product?.code || '',
-                product_name: product?.name || l.description || '',
-                hsn_code: product?.hsn_code || l.hs_code || '',
-                qty: l.qty != null ? String(l.qty) : '',
-                unit: l.unit || '',
-                currency_code: 'INR',
-                unit_price: '',
-                discount_pct: '',
-                effective_date: today,
-                valid_until: "", // open-ended unless the vendor sets an expiry
-            };
-        });
+        const rows = await Promise.all(
+            filteredLines.map(async (l) => {
+                const product = l.product_id
+                    ? productById.get(l.product_id.toString())
+                    : null;
+                // Prefill the vendor's last active price + effective date.
+                const cur = l.product_id
+                    ? await this.priceListRepository.findCurrentPrice(
+                          companyId,
+                          vendorId,
+                          l.product_id.toString()
+                      )
+                    : null;
+                return {
+                    vendor_code: vendorCode,
+                    product_code: product?.code || '',
+                    product_name: product?.name || l.description || '',
+                    hsn_code: product?.hsn_code || l.hs_code || '',
+                    qty: l.qty != null ? String(l.qty) : '',
+                    unit: l.unit || '',
+                    currency_code: 'INR',
+                    unit_price: cur?.unit_price != null ? String(cur.unit_price) : '',
+                    effective_date: cur?.effective_date
+                        ? isoToDDMMYYYY(cur.effective_date)
+                        : today,
+                };
+            })
+        );
 
         const buffer = this.fileService.writeExcel([
             { data: rows, sheetName: SHEET_NAME },
@@ -359,9 +388,7 @@ export class RfqVendorSheetService {
                 product_id: string;
                 product_code: string;
                 unit_price: string;
-                discount_pct: string;
                 effective_date: string;
-                valid_until: string;
             }>;
             errors: Array<{ row: number; message: string }>;
         } = { rows: [], errors: [] };
@@ -386,64 +413,62 @@ export class RfqVendorSheetService {
             }
 
             const effective_date = d.effective_date || today;
-            // Blank valid_until = OPEN-ENDED (no expiry). Don't fall back to
-            // effective_date, which would expire the price the same day it's
-            // imported and drop it from byProduct / bestPrices the next day.
-            const valid_until =
-                d.valid_until && d.valid_until !== effective_date
-                    ? d.valid_until
-                    : undefined;
             const unit_price = String(d.unit_price);
-            const discount_pct =
-                d.discount_pct != null ? String(d.discount_pct) : '';
 
+            const sourceRfqLineId = rfqLineByProduct[d.product_id];
             try {
-                // Same-day upsert: one row per (vendor, product, effective_date).
-                const existing: any = await this.priceListRepository.findOne({
-                    company_id: companyId,
-                    vendor_id: vendorId,
-                    product_id: d.product_id,
-                    effective_date,
-                } as any);
-                const sourceRfqLineId = rfqLineByProduct[d.product_id];
-                if (existing) {
-                    existing.unit_price = unit_price;
-                    if (d.discount_pct != null) {
-                        existing.discount_pct = discount_pct;
-                    }
-                    existing.valid_until = valid_until || null;
-                    existing.source_type = sourceType;
-                    existing.source_rfq_id = rfqId || null;
-                    existing.source_rfq_line_id = sourceRfqLineId || null;
-                    existing.source_rfq_voucher_no = rfqVoucherNo || null;
-                    await this.priceListRepository.save(existing);
-                } else {
-                    await this.priceListService.create(
+                if (rfqId) {
+                    // RFQ round-trip: keep one price-list record per (vendor,
+                    // product, RFQ) — same upsert the inline RFQ save uses.
+                    await this.priceListService.upsertFromRfq(
                         companyId,
                         {
                             vendor_id: vendorId,
                             product_id: d.product_id,
                             currency_id: d.currency_id,
                             unit_price,
-                            discount_pct: discount_pct || undefined,
-                            effective_date,
-                            valid_until,
-                            source_type: sourceType,
-                            source_rfq_id: rfqId || undefined,
+                            source_rfq_id: rfqId,
                             source_rfq_line_id: sourceRfqLineId || undefined,
                             source_rfq_voucher_no: rfqVoucherNo || undefined,
-                        } as any,
+                        },
                         userId
                     );
+                } else {
+                    // Plain price-list upload: same-day upsert (one row per
+                    // vendor, product, effective_date).
+                    const existing: any = await this.priceListRepository.findOne(
+                        {
+                            company_id: companyId,
+                            vendor_id: vendorId,
+                            product_id: d.product_id,
+                            effective_date,
+                        } as any
+                    );
+                    if (existing) {
+                        existing.unit_price = unit_price;
+                        existing.source_type = sourceType;
+                        await this.priceListRepository.save(existing);
+                    } else {
+                        await this.priceListService.create(
+                            companyId,
+                            {
+                                vendor_id: vendorId,
+                                product_id: d.product_id,
+                                currency_id: d.currency_id,
+                                unit_price,
+                                effective_date,
+                                source_type: sourceType,
+                            } as any,
+                            userId
+                        );
+                    }
                 }
 
                 out.rows.push({
                     product_id: d.product_id,
                     product_code: d.product_code,
                     unit_price,
-                    discount_pct,
                     effective_date,
-                    valid_until: valid_until || '',
                 });
             } catch (err: any) {
                 out.errors.push({
@@ -462,7 +487,6 @@ export class RfqVendorSheetService {
                     rfq_line_id: rfqLineByProduct[r.product_id],
                     vendor_id: vendorId,
                     unit_price: r.unit_price,
-                    discount_pct: r.discount_pct || '0',
                 }))
                 .filter((p) => p.rfq_line_id);
             if (rfqPrices.length) {

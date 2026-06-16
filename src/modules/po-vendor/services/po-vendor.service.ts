@@ -12,7 +12,6 @@ import { ENUM_PO_VENDOR_STATUS } from '../enums/po-vendor.enum';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
-import { PoVendorReceiveRequestDto } from '../dtos/request/po-vendor.receive.request.dto';
 import {
     PoVendorGetResponseDto,
     PoVendorLineResponseDto,
@@ -783,6 +782,29 @@ export class PoVendorService {
         return row;
     }
 
+    /**
+     * Assemble a listing-ready country-code object for a vendor contact,
+     * mirroring vendor.service's primary_contact_country_code so the POV
+     * listing shows the dial code prefixed to the phone (e.g. "+91 98765…").
+     * Falls back to +91 when the contact has a phone but no saved code.
+     */
+    private buildContactCountryCode(vc: any) {
+        if (!vc) return undefined;
+        let cc: any = vc.country_code || null;
+        if (!cc && vc.phone) {
+            cc = { dial_code: '+91', phone: vc.phone };
+        }
+        if (cc && !cc.formatted) {
+            const dial = cc.dial_code || cc.dialCode || '';
+            const digits = cc.phone || vc.phone || '';
+            if (dial || digits) {
+                cc.formatted =
+                    dial && digits ? `${dial} ${digits}` : dial || digits;
+            }
+        }
+        return cc || undefined;
+    }
+
     async list(filters: {
         companyId: string;
         purchaseOrderId?: string;
@@ -1191,112 +1213,6 @@ export class PoVendorService {
         return this.povRepository.findOneById(row._id.toString());
     }
 
-    // ─── Action: Receive (POV plan §15.3) ───────────────────────────────
-
-    /**
-     * Records received quantities and transitions the POV
-     * `dispatched` → `closed`. Follow-up POVs for any remaining qty
-     * are created manually from the parent PO (industry-standard
-     * flat-siblings model — SAP / Tally / Zoho).
-     */
-    async receive(
-        row: PoVendorDoc,
-        data: PoVendorReceiveRequestDto,
-        userId: string
-    ): Promise<{ parent: PoVendorDoc }> {
-        if (row.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED) {
-            throw new BadRequestException(
-                `Only dispatched POVs can be received (current status: ${row.status}).`
-            );
-        }
-
-        const lines = await this.povLineRepository.findAll({
-            po_vendor_id: row._id.toString(),
-        } as any);
-        const lineById = new Map<string, any>();
-        for (const l of lines as any[]) lineById.set(l._id.toString(), l);
-
-        const seen = new Set<string>();
-        for (const rl of data.lines) {
-            const ln = lineById.get(rl._id);
-            if (!ln) {
-                throw new BadRequestException(
-                    `Line ${rl._id} does not belong to this POV.`
-                );
-            }
-            if (seen.has(rl._id)) {
-                throw new BadRequestException(
-                    `Duplicate line in receive payload: ${rl._id}.`
-                );
-            }
-            seen.add(rl._id);
-            const req = num(rl.received_qty);
-            const dispatched = num(ln.dispatched_qty);
-            if (req < 0) {
-                throw new BadRequestException(
-                    `received_qty cannot be negative (line ${rl._id}).`
-                );
-            }
-            if (req > dispatched + 1e-6) {
-                throw new BadRequestException(
-                    `received_qty (${req}) exceeds dispatched_qty (${round4(
-                        dispatched
-                    )}) on line ${rl._id}. Short receipts are losses; you cannot receive more than was dispatched.`
-                );
-            }
-        }
-
-        // Apply: write received_qty for each line. Track shortfall to
-        // include in the system tracking event body.
-        let totalShort = 0;
-        let shortLineCount = 0;
-        for (const rl of data.lines) {
-            const ln = lineById.get(rl._id);
-            const received = round4(num(rl.received_qty));
-            const dispatched = round4(num(ln.dispatched_qty));
-            const short = round4(dispatched - received);
-            if (short > 1e-6) {
-                totalShort += short;
-                shortLineCount += 1;
-            }
-            ln.received_qty = String(received);
-            await this.povLineRepository.save(ln);
-        }
-
-        // Apply: header + status flip → closed.
-        row.actual_arrival_date = data.actual_arrival_date;
-        if (data.notes !== undefined) row.notes = data.notes;
-        if (data.internal_notes !== undefined)
-            row.internal_notes = data.internal_notes;
-        row.status = ENUM_PO_VENDOR_STATUS.CLOSED;
-        await this.povRepository.save(row);
-        this.logger.log(`POV closed (received): ${row._id}`);
-
-        if (userId) {
-            const parts = [`Received on ${data.actual_arrival_date}`];
-            if (totalShort > 0) {
-                parts.push(
-                    `Short by ${round4(totalShort)} across ${shortLineCount} line(s) — returned to PO pending for re-procurement.`
-                );
-                if (data.short_reason) {
-                    parts.push(`Reason: ${data.short_reason}`);
-                }
-            }
-            await this.emitSystemEvent(
-                row.company_id.toString(),
-                row._id.toString(),
-                ENUM_TRACKING_EVENT_TYPE.POV_RECEIVED,
-                userId,
-                parts.join(' · ')
-            );
-        }
-
-        const parent = await this.povRepository.findOneById(
-            row._id.toString()
-        );
-        return { parent };
-    }
-
     // ─── Action: Cancel (POV plan §15.4) ────────────────────────────────
 
     /**
@@ -1426,7 +1342,8 @@ export class PoVendorService {
                     product_name: (product as any)?.name,
                     product_code: (product as any)?.code,
                     description: l.description || undefined,
-                    hsn_code: l.hsn_code || undefined,
+                    hsn_code: l.hsn_code || (product as any)?.hsn_code || undefined,
+                    part_no: (product as any)?.part_no || undefined,
                     unit: l.unit || undefined,
                     tax_pct: String(l.tax_pct ?? '0'),
                     unit_price: String(l.unit_price ?? '0'),
@@ -1452,6 +1369,7 @@ export class PoVendorService {
                 vendor_contact_name: vc?.name,
                 vendor_contact_email: vc?.email,
                 vendor_contact_phone: vc?.phone,
+                vendor_contact_country_code: this.buildContactCountryCode(vc),
                 vendor_address_id: r.vendor_address_id?.toString(),
 
                 dispatch_date: r.dispatch_date || undefined,

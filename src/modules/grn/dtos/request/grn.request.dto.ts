@@ -29,6 +29,10 @@ export class GrnLineUpdateDto {
     @IsNotEmpty()
     _id: string;
 
+    @IsNumberString({}, { message: 'received_qty must be a numeric string' })
+    @IsOptional()
+    received_qty?: string;
+
     @IsNumberString({}, { message: 'accepted_qty must be a numeric string' })
     @IsOptional()
     accepted_qty?: string;

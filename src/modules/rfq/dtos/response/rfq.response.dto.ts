@@ -6,6 +6,8 @@ export class RfqLineResponseDto {
     @ApiProperty({ required: false }) product_id?: string;
     @ApiProperty({ required: false }) product_name?: string;
     @ApiProperty({ required: false }) product_code?: string;
+    @ApiProperty({ required: false }) part_no?: string;
+    @ApiProperty({ required: false }) hsn_code?: string;
     @ApiProperty({ required: false }) description?: string;
     @ApiProperty({ required: false }) customer_reference?: string;
     @ApiProperty({ required: false }) qty?: string;

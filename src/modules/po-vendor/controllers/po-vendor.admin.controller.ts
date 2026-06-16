@@ -32,7 +32,6 @@ import { PoVendorRepository } from '../repository/repositories/po-vendor.reposit
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
-import { PoVendorReceiveRequestDto } from '../dtos/request/po-vendor.receive.request.dto';
 import { PoVendorCancelRequestDto } from '../dtos/request/po-vendor.cancel.request.dto';
 import { PoVendorRecoverRequestDto } from '../dtos/request/po-vendor.recover.request.dto';
 import { PoVendorGetResponseDto } from '../dtos/response/po-vendor.get.response.dto';
@@ -255,29 +254,6 @@ export class PoVendorAdminController {
         const row = await this.povService.findOneById(id);
         const updated = await this.povService.dispatch(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
-    }
-
-    // ─── Action: Receive ────────────────────────────────────────────────
-
-    @Response('poVendor.receive')
-    @AuthJwtAccessProtected()
-    @Post('/:id/receive')
-    async receive(
-        @AuthJwtPayload('user') userId: string,
-        @Param('id') id: string,
-        @Body() body: PoVendorReceiveRequestDto
-    ): Promise<
-        IResponse<{
-            parent: PoVendorGetResponseDto;
-        }>
-    > {
-        const row = await this.povService.findOneById(id);
-        const { parent } = await this.povService.receive(row, body, userId);
-        return {
-            data: {
-                parent: await this.povService.mapGet(parent),
-            },
-        };
     }
 
     // ─── Action: Cancel ─────────────────────────────────────────────────
