@@ -1,6 +1,7 @@
 import { DatabaseObjectIdEntityBase } from '@common/database/bases/database.object-id.entity';
 import { Entity, Column, Index } from 'typeorm';
 import { PRICE_LIST_COLLECTION_NAME } from '../../constants/price-list.entity.constant';
+import { ENUM_PRICE_LIST_SOURCE } from '../../enums/price-list.enum';
 
 @Entity(PRICE_LIST_COLLECTION_NAME)
 export class PriceListEntity extends DatabaseObjectIdEntityBase {
@@ -55,6 +56,32 @@ export class PriceListEntity extends DatabaseObjectIdEntityBase {
 
     @Column({ type: 'text', nullable: true })
     notes?: string;
+
+    // ── Source / traceability ──
+    /** Where this price row came from. Manual entry, bulk price-list Excel
+     *  import, or an RFQ vendor-price sheet import. Drives the "Source"
+     *  badge on the price-list grid and the quotation line trace. */
+    @Index()
+    @Column({
+        type: 'varchar',
+        length: 20,
+        nullable: false,
+        default: ENUM_PRICE_LIST_SOURCE.MANUAL,
+    })
+    source_type: ENUM_PRICE_LIST_SOURCE;
+
+    /** RFQ that produced this price (set only when source_type = 'rfq'). */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    source_rfq_id?: string;
+
+    /** Exact RFQ line behind this price row. */
+    @Column({ type: 'uuid', nullable: true })
+    source_rfq_line_id?: string;
+
+    /** Denormalized RFQ voucher no for display (e.g. STIPL/RFQ0001/2026-27). */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    source_rfq_voucher_no?: string;
 }
 
 export type PriceListDoc = PriceListEntity;

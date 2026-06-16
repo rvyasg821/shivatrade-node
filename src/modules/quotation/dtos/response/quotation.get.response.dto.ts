@@ -8,6 +8,9 @@ export class QuotationLineResponseDto {
     vendor_id?: string;
     vendor_name?: string;
     vendor_code?: string;
+    price_list_id?: string;
+    source_rfq_id?: string;
+    source_rfq_voucher_no?: string;
     description?: string;
     customer_reference?: string;
     qty?: string;

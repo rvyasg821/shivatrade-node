@@ -1740,6 +1740,18 @@ export class PurchaseOrderService {
             customerOrder?: CustomerOrderInput;
         }
     ) {
+        // Only an APPROVED quotation may generate vendor POs (Sales Orders).
+        const q: any = await this.quotationRepository.findOne({
+            _id: quotationId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!q) throw new NotFoundException('Source quotation not found');
+        if (q.status !== 'approved') {
+            throw new BadRequestException(
+                'Quotation must be approved before generating Sales Orders.'
+            );
+        }
         return this.createPoAndPovsFromSource({
             companyId,
             createdBy,

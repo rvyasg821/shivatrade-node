@@ -231,6 +231,24 @@ export class QuotationService {
 
         await this.recompute(header._id.toString(), companyId);
 
+        // Auto-advance the source RFQ to "completed" — a quotation has been
+        // generated from it. Best-effort; never block quotation creation on it,
+        // and don't walk back a cancelled RFQ.
+        if (data.rfq_id) {
+            try {
+                const srcRfq: any = await this.rfqRepository.findOne({
+                    _id: data.rfq_id,
+                    company_id: companyId,
+                } as any);
+                if (srcRfq && srcRfq.status !== 'cancelled') {
+                    srcRfq.status = 'completed';
+                    await this.rfqRepository.save(srcRfq);
+                }
+            } catch {
+                /* non-fatal */
+            }
+        }
+
         this.logger.log(
             `Quotation created: ${header._id} (${voucher_no})`
         );
@@ -516,6 +534,9 @@ export class QuotationService {
                 quotation_id: quotationId,
                 product_id: pid,
                 vendor_id: l.vendor_id || null,
+                price_list_id: l.price_list_id || null,
+                source_rfq_id: l.source_rfq_id || null,
+                source_rfq_voucher_no: l.source_rfq_voucher_no || null,
                 description: l.description || null,
                 customer_reference:
                     (typeof l.customer_reference === 'string' &&
@@ -904,6 +925,9 @@ export class QuotationService {
                             vendor_code: (vendorMap.get(
                                 l.vendor_id?.toString()
                             ) as any)?.vendor_code,
+                            price_list_id: l.price_list_id?.toString(),
+                            source_rfq_id: l.source_rfq_id?.toString(),
+                            source_rfq_voucher_no: l.source_rfq_voucher_no,
                             description: l.description,
                             customer_reference: l.customer_reference,
                             qty: l.qty,

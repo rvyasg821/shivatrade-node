@@ -583,6 +583,12 @@ export class UserAdminController {
                 targetRoleLevel
             );
 
+            // `created.password` is select:false, so the returned doc omits it
+            // and the password-history insert (password NOT NULL) would fail.
+            // Re-attach the freshly-created hash before recording history.
+            if (!created.password) {
+                (created as any).password = passwordHash.passwordHash;
+            }
             await this.passwordHistoryService.createByAdmin(created, {
                 by: createBy,
                 type: ENUM_PASSWORD_HISTORY_TYPE.SIGN_UP,
@@ -755,6 +761,12 @@ export class UserAdminController {
                 targetRoleLevel
             );
 
+            // `created.password` is select:false, so the returned doc omits it
+            // and the password-history insert (password NOT NULL) would fail.
+            // Re-attach the freshly-created hash before recording history.
+            if (!created.password) {
+                (created as any).password = passwordHash.passwordHash;
+            }
             await this.passwordHistoryService.createByAdmin(created, {
                 by: createBy,
                 type: ENUM_PASSWORD_HISTORY_TYPE.SIGN_UP,

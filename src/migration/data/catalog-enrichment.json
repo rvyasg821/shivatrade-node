@@ -1,0 +1,1826 @@
+{
+  "STIPL-P0001": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0002": {
+    "hsn_code": "85114000",
+    "tax_pct": 28,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0003": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0004": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0005": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0006": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0007": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0008": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0009": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0010": {
+    "hsn_code": "84313900",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0011": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0012": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0013": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0014": {
+    "hsn_code": "84133010",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0015": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0016": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  },
+  "STIPL-P0017": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 3450,
+    "margin_pct": 15
+  },
+  "STIPL-P0018": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 2750,
+    "margin_pct": 15
+  },
+  "STIPL-P0019": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 2050,
+    "margin_pct": 15
+  },
+  "STIPL-P0020": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 1350,
+    "margin_pct": 15
+  },
+  "STIPL-P0021": {
+    "hsn_code": "39241090",
+    "tax_pct": 18,
+    "selling_price": 650,
+    "margin_pct": 15
+  },
+  "STIPL-P0022": {
+    "hsn_code": "39241090",
+    "tax_pct": 18,
+    "selling_price": 4750,
+    "margin_pct": 15
+  },
+  "STIPL-P0023": {
+    "hsn_code": "85114000",
+    "tax_pct": 28,
+    "selling_price": 4050,
+    "margin_pct": 15
+  },
+  "STIPL-P0024": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 3350,
+    "margin_pct": 15
+  },
+  "STIPL-P0025": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 2650,
+    "margin_pct": 15
+  },
+  "STIPL-P0026": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1950,
+    "margin_pct": 15
+  },
+  "STIPL-P0027": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1250,
+    "margin_pct": 15
+  },
+  "STIPL-P0028": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 550,
+    "margin_pct": 15
+  },
+  "STIPL-P0029": {
+    "hsn_code": "84821011",
+    "tax_pct": 18,
+    "selling_price": 4650,
+    "margin_pct": 15
+  },
+  "STIPL-P0030": {
+    "hsn_code": "84821011",
+    "tax_pct": 18,
+    "selling_price": 3950,
+    "margin_pct": 15
+  },
+  "STIPL-P0031": {
+    "hsn_code": "84137099",
+    "tax_pct": 18,
+    "selling_price": 3250,
+    "margin_pct": 15
+  },
+  "STIPL-P0032": {
+    "hsn_code": "84137099",
+    "tax_pct": 18,
+    "selling_price": 2550,
+    "margin_pct": 15
+  },
+  "STIPL-P0033": {
+    "hsn_code": "84137099",
+    "tax_pct": 18,
+    "selling_price": 1850,
+    "margin_pct": 15
+  },
+  "STIPL-P0034": {
+    "hsn_code": "84137099",
+    "tax_pct": 18,
+    "selling_price": 1150,
+    "margin_pct": 15
+  },
+  "STIPL-P0035": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 450,
+    "margin_pct": 15
+  },
+  "STIPL-P0036": {
+    "hsn_code": "84821011",
+    "tax_pct": 18,
+    "selling_price": 4550,
+    "margin_pct": 15
+  },
+  "STIPL-P0037": {
+    "hsn_code": "84821011",
+    "tax_pct": 18,
+    "selling_price": 3850,
+    "margin_pct": 15
+  },
+  "STIPL-P0038": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 3150,
+    "margin_pct": 15
+  },
+  "STIPL-P0039": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 2450,
+    "margin_pct": 15
+  },
+  "STIPL-P0040": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1750,
+    "margin_pct": 15
+  },
+  "STIPL-P0041": {
+    "hsn_code": "48201090",
+    "tax_pct": 12,
+    "selling_price": 1050,
+    "margin_pct": 15
+  },
+  "STIPL-P0042": {
+    "hsn_code": "48201090",
+    "tax_pct": 12,
+    "selling_price": 350,
+    "margin_pct": 15
+  },
+  "STIPL-P0043": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4450,
+    "margin_pct": 15
+  },
+  "STIPL-P0044": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3750,
+    "margin_pct": 15
+  },
+  "STIPL-P0045": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3050,
+    "margin_pct": 15
+  },
+  "STIPL-P0046": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 2350,
+    "margin_pct": 15
+  },
+  "STIPL-P0047": {
+    "hsn_code": "48191010",
+    "tax_pct": 18,
+    "selling_price": 1650,
+    "margin_pct": 15
+  },
+  "STIPL-P0048": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 950,
+    "margin_pct": 15
+  },
+  "STIPL-P0049": {
+    "hsn_code": "48191010",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0050": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0051": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0052": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0053": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0054": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0055": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0056": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0057": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0058": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0059": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0060": {
+    "hsn_code": "84313900",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0061": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0062": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0063": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0064": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  },
+  "STIPL-P0065": {
+    "hsn_code": "48201090",
+    "tax_pct": 12,
+    "selling_price": 3450,
+    "margin_pct": 15
+  },
+  "STIPL-P0066": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 2750,
+    "margin_pct": 15
+  },
+  "STIPL-P0067": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2050,
+    "margin_pct": 15
+  },
+  "STIPL-P0068": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1350,
+    "margin_pct": 15
+  },
+  "STIPL-P0069": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 650,
+    "margin_pct": 15
+  },
+  "STIPL-P0070": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 4750,
+    "margin_pct": 15
+  },
+  "STIPL-P0071": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 4050,
+    "margin_pct": 15
+  },
+  "STIPL-P0072": {
+    "hsn_code": "90160010",
+    "tax_pct": 18,
+    "selling_price": 3350,
+    "margin_pct": 15
+  },
+  "STIPL-P0073": {
+    "hsn_code": "90160010",
+    "tax_pct": 18,
+    "selling_price": 2650,
+    "margin_pct": 15
+  },
+  "STIPL-P0074": {
+    "hsn_code": "90160010",
+    "tax_pct": 18,
+    "selling_price": 1950,
+    "margin_pct": 15
+  },
+  "STIPL-P0075": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1250,
+    "margin_pct": 15
+  },
+  "STIPL-P0076": {
+    "hsn_code": "84099190",
+    "tax_pct": 18,
+    "selling_price": 550,
+    "margin_pct": 15
+  },
+  "STIPL-P0077": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4650,
+    "margin_pct": 15
+  },
+  "STIPL-P0078": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 3950,
+    "margin_pct": 15
+  },
+  "STIPL-P0079": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 3250,
+    "margin_pct": 15
+  },
+  "STIPL-P0080": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2550,
+    "margin_pct": 15
+  },
+  "STIPL-P0081": {
+    "hsn_code": "35069190",
+    "tax_pct": 18,
+    "selling_price": 1850,
+    "margin_pct": 15
+  },
+  "STIPL-P0082": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1150,
+    "margin_pct": 15
+  },
+  "STIPL-P0083": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 450,
+    "margin_pct": 15
+  },
+  "STIPL-P0084": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 4550,
+    "margin_pct": 15
+  },
+  "STIPL-P0085": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 3850,
+    "margin_pct": 15
+  },
+  "STIPL-P0086": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 3150,
+    "margin_pct": 15
+  },
+  "STIPL-P0087": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 2450,
+    "margin_pct": 15
+  },
+  "STIPL-P0088": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 1750,
+    "margin_pct": 15
+  },
+  "STIPL-P0089": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1050,
+    "margin_pct": 15
+  },
+  "STIPL-P0090": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 350,
+    "margin_pct": 15
+  },
+  "STIPL-P0091": {
+    "hsn_code": "85444900",
+    "tax_pct": 18,
+    "selling_price": 4450,
+    "margin_pct": 15
+  },
+  "STIPL-P0092": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 3750,
+    "margin_pct": 15
+  },
+  "STIPL-P0093": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 3050,
+    "margin_pct": 15
+  },
+  "STIPL-P0094": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 2350,
+    "margin_pct": 15
+  },
+  "STIPL-P0095": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1650,
+    "margin_pct": 15
+  },
+  "STIPL-P0096": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 950,
+    "margin_pct": 15
+  },
+  "STIPL-P0097": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0098": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0099": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0100": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0101": {
+    "hsn_code": "84133010",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0102": {
+    "hsn_code": "48191010",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0103": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0104": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0105": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0106": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0107": {
+    "hsn_code": "84821011",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0108": {
+    "hsn_code": "84821011",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0109": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0110": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0111": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0112": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  },
+  "STIPL-P0113": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 3450,
+    "margin_pct": 15
+  },
+  "STIPL-P0114": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2750,
+    "margin_pct": 15
+  },
+  "STIPL-P0115": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2050,
+    "margin_pct": 15
+  },
+  "STIPL-P0116": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 1350,
+    "margin_pct": 15
+  },
+  "STIPL-P0117": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 650,
+    "margin_pct": 15
+  },
+  "STIPL-P0118": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4750,
+    "margin_pct": 15
+  },
+  "STIPL-P0119": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4050,
+    "margin_pct": 15
+  },
+  "STIPL-P0120": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3350,
+    "margin_pct": 15
+  },
+  "STIPL-P0121": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 2650,
+    "margin_pct": 15
+  },
+  "STIPL-P0122": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 1950,
+    "margin_pct": 15
+  },
+  "STIPL-P0123": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 1250,
+    "margin_pct": 15
+  },
+  "STIPL-P0124": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 550,
+    "margin_pct": 15
+  },
+  "STIPL-P0125": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 4650,
+    "margin_pct": 15
+  },
+  "STIPL-P0126": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 3950,
+    "margin_pct": 15
+  },
+  "STIPL-P0127": {
+    "hsn_code": "73269099",
+    "tax_pct": 18,
+    "selling_price": 3250,
+    "margin_pct": 15
+  },
+  "STIPL-P0128": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2550,
+    "margin_pct": 15
+  },
+  "STIPL-P0129": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 1850,
+    "margin_pct": 15
+  },
+  "STIPL-P0130": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1150,
+    "margin_pct": 15
+  },
+  "STIPL-P0131": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 450,
+    "margin_pct": 15
+  },
+  "STIPL-P0132": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4550,
+    "margin_pct": 15
+  },
+  "STIPL-P0133": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3850,
+    "margin_pct": 15
+  },
+  "STIPL-P0134": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3150,
+    "margin_pct": 15
+  },
+  "STIPL-P0135": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2450,
+    "margin_pct": 15
+  },
+  "STIPL-P0136": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1750,
+    "margin_pct": 15
+  },
+  "STIPL-P0137": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1050,
+    "margin_pct": 15
+  },
+  "STIPL-P0138": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 350,
+    "margin_pct": 15
+  },
+  "STIPL-P0139": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4450,
+    "margin_pct": 15
+  },
+  "STIPL-P0140": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3750,
+    "margin_pct": 15
+  },
+  "STIPL-P0141": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 3050,
+    "margin_pct": 15
+  },
+  "STIPL-P0142": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 2350,
+    "margin_pct": 15
+  },
+  "STIPL-P0143": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1650,
+    "margin_pct": 15
+  },
+  "STIPL-P0144": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 950,
+    "margin_pct": 15
+  },
+  "STIPL-P0145": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0146": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0147": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0148": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0149": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0150": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0151": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0152": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0153": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0154": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0155": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0156": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0157": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0158": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0159": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0160": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  },
+  "STIPL-P0161": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3450,
+    "margin_pct": 15
+  },
+  "STIPL-P0162": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2750,
+    "margin_pct": 15
+  },
+  "STIPL-P0163": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 2050,
+    "margin_pct": 15
+  },
+  "STIPL-P0164": {
+    "hsn_code": "84798999",
+    "tax_pct": 18,
+    "selling_price": 1350,
+    "margin_pct": 15
+  },
+  "STIPL-P0165": {
+    "hsn_code": "90160010",
+    "tax_pct": 18,
+    "selling_price": 650,
+    "margin_pct": 15
+  },
+  "STIPL-P0166": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4750,
+    "margin_pct": 15
+  },
+  "STIPL-P0167": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4050,
+    "margin_pct": 15
+  },
+  "STIPL-P0168": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 3350,
+    "margin_pct": 15
+  },
+  "STIPL-P0169": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 2650,
+    "margin_pct": 15
+  },
+  "STIPL-P0170": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 1950,
+    "margin_pct": 15
+  },
+  "STIPL-P0171": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 1250,
+    "margin_pct": 15
+  },
+  "STIPL-P0172": {
+    "hsn_code": "27101990",
+    "tax_pct": 18,
+    "selling_price": 550,
+    "margin_pct": 15
+  },
+  "STIPL-P0173": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4650,
+    "margin_pct": 15
+  },
+  "STIPL-P0174": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3950,
+    "margin_pct": 15
+  },
+  "STIPL-P0175": {
+    "hsn_code": "85395000",
+    "tax_pct": 18,
+    "selling_price": 3250,
+    "margin_pct": 15
+  },
+  "STIPL-P0176": {
+    "hsn_code": "85395000",
+    "tax_pct": 18,
+    "selling_price": 2550,
+    "margin_pct": 15
+  },
+  "STIPL-P0177": {
+    "hsn_code": "85395000",
+    "tax_pct": 18,
+    "selling_price": 1850,
+    "margin_pct": 15
+  },
+  "STIPL-P0178": {
+    "hsn_code": "85395000",
+    "tax_pct": 18,
+    "selling_price": 1150,
+    "margin_pct": 15
+  },
+  "STIPL-P0179": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 450,
+    "margin_pct": 15
+  },
+  "STIPL-P0180": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 4550,
+    "margin_pct": 15
+  },
+  "STIPL-P0181": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 3850,
+    "margin_pct": 15
+  },
+  "STIPL-P0182": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 3150,
+    "margin_pct": 15
+  },
+  "STIPL-P0183": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 2450,
+    "margin_pct": 15
+  },
+  "STIPL-P0184": {
+    "hsn_code": "85444900",
+    "tax_pct": 18,
+    "selling_price": 1750,
+    "margin_pct": 15
+  },
+  "STIPL-P0185": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 1050,
+    "margin_pct": 15
+  },
+  "STIPL-P0186": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 350,
+    "margin_pct": 15
+  },
+  "STIPL-P0187": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4450,
+    "margin_pct": 15
+  },
+  "STIPL-P0188": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3750,
+    "margin_pct": 15
+  },
+  "STIPL-P0189": {
+    "hsn_code": "39269099",
+    "tax_pct": 18,
+    "selling_price": 3050,
+    "margin_pct": 15
+  },
+  "STIPL-P0190": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2350,
+    "margin_pct": 15
+  },
+  "STIPL-P0191": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1650,
+    "margin_pct": 15
+  },
+  "STIPL-P0192": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 950,
+    "margin_pct": 15
+  },
+  "STIPL-P0193": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0194": {
+    "hsn_code": "39269099",
+    "tax_pct": 18,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0195": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0196": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0197": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0198": {
+    "hsn_code": "48191010",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0199": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0200": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0201": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0202": {
+    "hsn_code": "73269099",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0203": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0204": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0205": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0206": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0207": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0208": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  },
+  "STIPL-P0209": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3450,
+    "margin_pct": 15
+  },
+  "STIPL-P0210": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2750,
+    "margin_pct": 15
+  },
+  "STIPL-P0211": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2050,
+    "margin_pct": 15
+  },
+  "STIPL-P0212": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1350,
+    "margin_pct": 15
+  },
+  "STIPL-P0213": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 650,
+    "margin_pct": 15
+  },
+  "STIPL-P0214": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4750,
+    "margin_pct": 15
+  },
+  "STIPL-P0215": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4050,
+    "margin_pct": 15
+  },
+  "STIPL-P0216": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3350,
+    "margin_pct": 15
+  },
+  "STIPL-P0217": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2650,
+    "margin_pct": 15
+  },
+  "STIPL-P0218": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1950,
+    "margin_pct": 15
+  },
+  "STIPL-P0219": {
+    "hsn_code": "84313900",
+    "tax_pct": 18,
+    "selling_price": 1250,
+    "margin_pct": 15
+  },
+  "STIPL-P0220": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 550,
+    "margin_pct": 15
+  },
+  "STIPL-P0221": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4650,
+    "margin_pct": 15
+  },
+  "STIPL-P0222": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3950,
+    "margin_pct": 15
+  },
+  "STIPL-P0223": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3250,
+    "margin_pct": 15
+  },
+  "STIPL-P0224": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2550,
+    "margin_pct": 15
+  },
+  "STIPL-P0225": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1850,
+    "margin_pct": 15
+  },
+  "STIPL-P0226": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1150,
+    "margin_pct": 15
+  },
+  "STIPL-P0227": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 450,
+    "margin_pct": 15
+  },
+  "STIPL-P0228": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4550,
+    "margin_pct": 15
+  },
+  "STIPL-P0229": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3850,
+    "margin_pct": 15
+  },
+  "STIPL-P0230": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3150,
+    "margin_pct": 15
+  },
+  "STIPL-P0231": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 2450,
+    "margin_pct": 15
+  },
+  "STIPL-P0232": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1750,
+    "margin_pct": 15
+  },
+  "STIPL-P0233": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1050,
+    "margin_pct": 15
+  },
+  "STIPL-P0234": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 350,
+    "margin_pct": 15
+  },
+  "STIPL-P0235": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4450,
+    "margin_pct": 15
+  },
+  "STIPL-P0236": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3750,
+    "margin_pct": 15
+  },
+  "STIPL-P0237": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3050,
+    "margin_pct": 15
+  },
+  "STIPL-P0238": {
+    "hsn_code": "85071000",
+    "tax_pct": 28,
+    "selling_price": 2350,
+    "margin_pct": 15
+  },
+  "STIPL-P0239": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 1650,
+    "margin_pct": 15
+  },
+  "STIPL-P0240": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 950,
+    "margin_pct": 15
+  },
+  "STIPL-P0241": {
+    "hsn_code": "85444900",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0242": {
+    "hsn_code": "63059000",
+    "tax_pct": 5,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0243": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0244": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0245": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0246": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0247": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0248": {
+    "hsn_code": "84879000",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0249": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0250": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0251": {
+    "hsn_code": "48191010",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0252": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0253": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0254": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0255": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0256": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  },
+  "STIPL-P0257": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 3450,
+    "margin_pct": 15
+  },
+  "STIPL-P0258": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2750,
+    "margin_pct": 15
+  },
+  "STIPL-P0259": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2050,
+    "margin_pct": 15
+  },
+  "STIPL-P0260": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1350,
+    "margin_pct": 15
+  },
+  "STIPL-P0261": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 650,
+    "margin_pct": 15
+  },
+  "STIPL-P0262": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4750,
+    "margin_pct": 15
+  },
+  "STIPL-P0263": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4050,
+    "margin_pct": 15
+  },
+  "STIPL-P0264": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3350,
+    "margin_pct": 15
+  },
+  "STIPL-P0265": {
+    "hsn_code": "72142090",
+    "tax_pct": 18,
+    "selling_price": 2650,
+    "margin_pct": 15
+  },
+  "STIPL-P0266": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1950,
+    "margin_pct": 15
+  },
+  "STIPL-P0267": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 1250,
+    "margin_pct": 15
+  },
+  "STIPL-P0268": {
+    "hsn_code": "85444900",
+    "tax_pct": 18,
+    "selling_price": 550,
+    "margin_pct": 15
+  },
+  "STIPL-P0269": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4650,
+    "margin_pct": 15
+  },
+  "STIPL-P0270": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 3950,
+    "margin_pct": 15
+  },
+  "STIPL-P0271": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3250,
+    "margin_pct": 15
+  },
+  "STIPL-P0272": {
+    "hsn_code": "90160010",
+    "tax_pct": 18,
+    "selling_price": 2550,
+    "margin_pct": 15
+  },
+  "STIPL-P0273": {
+    "hsn_code": "85114000",
+    "tax_pct": 28,
+    "selling_price": 1850,
+    "margin_pct": 15
+  },
+  "STIPL-P0274": {
+    "hsn_code": "85444900",
+    "tax_pct": 18,
+    "selling_price": 1150,
+    "margin_pct": 15
+  },
+  "STIPL-P0275": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 450,
+    "margin_pct": 15
+  },
+  "STIPL-P0276": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 4550,
+    "margin_pct": 15
+  },
+  "STIPL-P0277": {
+    "hsn_code": "39241090",
+    "tax_pct": 18,
+    "selling_price": 3850,
+    "margin_pct": 15
+  },
+  "STIPL-P0278": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 3150,
+    "margin_pct": 15
+  },
+  "STIPL-P0279": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2450,
+    "margin_pct": 15
+  },
+  "STIPL-P0280": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 1750,
+    "margin_pct": 15
+  },
+  "STIPL-P0281": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1050,
+    "margin_pct": 15
+  },
+  "STIPL-P0282": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 350,
+    "margin_pct": 15
+  },
+  "STIPL-P0283": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 4450,
+    "margin_pct": 15
+  },
+  "STIPL-P0284": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 3750,
+    "margin_pct": 15
+  },
+  "STIPL-P0285": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3050,
+    "margin_pct": 15
+  },
+  "STIPL-P0286": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 2350,
+    "margin_pct": 15
+  },
+  "STIPL-P0287": {
+    "hsn_code": "35069190",
+    "tax_pct": 18,
+    "selling_price": 1650,
+    "margin_pct": 15
+  },
+  "STIPL-P0288": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 950,
+    "margin_pct": 15
+  },
+  "STIPL-P0289": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 250,
+    "margin_pct": 15
+  },
+  "STIPL-P0290": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 4350,
+    "margin_pct": 15
+  },
+  "STIPL-P0291": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3650,
+    "margin_pct": 15
+  },
+  "STIPL-P0292": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 2950,
+    "margin_pct": 15
+  },
+  "STIPL-P0293": {
+    "hsn_code": "84314990",
+    "tax_pct": 18,
+    "selling_price": 2250,
+    "margin_pct": 15
+  },
+  "STIPL-P0294": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 1550,
+    "margin_pct": 15
+  },
+  "STIPL-P0295": {
+    "hsn_code": "82054000",
+    "tax_pct": 18,
+    "selling_price": 850,
+    "margin_pct": 15
+  },
+  "STIPL-P0296": {
+    "hsn_code": "73269099",
+    "tax_pct": 18,
+    "selling_price": 4950,
+    "margin_pct": 15
+  },
+  "STIPL-P0297": {
+    "hsn_code": "73181500",
+    "tax_pct": 18,
+    "selling_price": 4250,
+    "margin_pct": 15
+  },
+  "STIPL-P0298": {
+    "hsn_code": "85365090",
+    "tax_pct": 18,
+    "selling_price": 3550,
+    "margin_pct": 15
+  },
+  "STIPL-P0299": {
+    "hsn_code": "84099990",
+    "tax_pct": 18,
+    "selling_price": 2850,
+    "margin_pct": 15
+  },
+  "STIPL-P0300": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 2150,
+    "margin_pct": 15
+  },
+  "STIPL-P0301": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 1450,
+    "margin_pct": 15
+  },
+  "STIPL-P0302": {
+    "hsn_code": "40103900",
+    "tax_pct": 18,
+    "selling_price": 750,
+    "margin_pct": 15
+  },
+  "STIPL-P0303": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4850,
+    "margin_pct": 15
+  },
+  "STIPL-P0304": {
+    "hsn_code": "38220090",
+    "tax_pct": 18,
+    "selling_price": 4150,
+    "margin_pct": 15
+  }
+}

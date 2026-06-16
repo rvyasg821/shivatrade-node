@@ -1494,6 +1494,78 @@ export class PoVendorService {
         const [mapped] = await this.mapList([row]);
         return mapped;
     }
+
+    /**
+     * Count-by-status stats for the POV list tiles. Count-only (POV has no
+     * header amount; value is line-summed) — mirrors the list filters.
+     */
+    async stats(
+        companyId: string,
+        filters: {
+            purchase_order_id?: string;
+            vendor_id?: string;
+            status?: string | string[];
+            date_from?: string;
+            date_to?: string;
+            search?: string;
+        }
+    ): Promise<{ total: number; by_status: Record<string, number> }> {
+        const rows = await this.povRepository.aggregate<{
+            status: string;
+            count: string;
+        }>((qb) => {
+            qb.andWhere('entity.soft_delete = :sd', { sd: false });
+            qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            if (filters.purchase_order_id) {
+                qb.andWhere('entity.purchase_order_id = :po', {
+                    po: filters.purchase_order_id,
+                });
+            }
+            if (filters.vendor_id) {
+                qb.andWhere('entity.vendor_id = :v', { v: filters.vendor_id });
+            }
+            if (filters.status) {
+                if (Array.isArray(filters.status)) {
+                    qb.andWhere('entity.status IN (:...st)', {
+                        st: filters.status,
+                    });
+                } else {
+                    qb.andWhere('entity.status = :st', { st: filters.status });
+                }
+            }
+            if (filters.date_from) {
+                qb.andWhere('entity.dispatch_date >= :df', {
+                    df: filters.date_from,
+                });
+            }
+            if (filters.date_to) {
+                qb.andWhere('entity.dispatch_date <= :dt', {
+                    dt: filters.date_to,
+                });
+            }
+            const searchTerm =
+                typeof filters.search === 'string' ? filters.search.trim() : '';
+            if (searchTerm) {
+                qb.andWhere(
+                    '(entity.voucher_no ILIKE :q OR entity.lr_no ILIKE :q OR entity.eway_bill_no ILIKE :q)',
+                    { q: `%${searchTerm}%` }
+                );
+            }
+            return qb
+                .select('entity.status', 'status')
+                .addSelect('COUNT(*)::int', 'count')
+                .groupBy('entity.status');
+        });
+
+        const by_status: Record<string, number> = {};
+        let total = 0;
+        for (const r of rows) {
+            const cnt = Number(r.count) || 0;
+            by_status[r.status] = cnt;
+            total += cnt;
+        }
+        return { total, by_status };
+    }
 }
 
 // ─── Module-private utilities ───────────────────────────────────────────

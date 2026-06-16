@@ -40,6 +40,12 @@ import { MigrationProductionSeed } from '@migration/seeds/migration.production.s
 import { MigrationTradeDataSeed } from '@migration/seeds/migration.trade-data.seed';
 import { MigrationPortMasterSeed } from '@migration/seeds/migration.port-master.seed';
 import { MigrationShivatradeTenantSeed } from '@migration/seeds/migration.shivatrade-tenant.seed';
+import { MigrationCatalogSeed } from '@migration/seeds/migration.catalog.seed';
+import { CategoryRepositoryModule } from '@modules/category/repository/category.repository.module';
+import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
+import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
+import { RebateRepositoryModule } from '@modules/rebate/repository/rebate.repository.module';
+import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 import { PortMasterModule } from '@modules/port-master/port-master.module';
 
 // Repository modules (no controllers)
@@ -124,6 +130,11 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         NotificationRepositoryModule,
         CompanyRepositoryModule,
         LocationRepositoryModule,
+        CategoryRepositoryModule,
+        ProductRepositoryModule,
+        VendorRepositoryModule,
+        RebateRepositoryModule,
+        ExpenseRepositoryModule,
 
         // Email module for templates
         EmailModule,
@@ -148,6 +159,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
 
         // Seeds
         MigrationUserSeed,
+        MigrationCatalogSeed,
         MigrationRoleSeed,
         MigrationRoleCategorySeed,
         MigrationFixAdminPermissionsSeed,

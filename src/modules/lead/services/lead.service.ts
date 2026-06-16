@@ -519,6 +519,28 @@ export class LeadService {
             lead.country ||
             lead.postcode
         );
+        // The lead's contact email may already belong to a user (customers,
+        // vendors and staff share one email-keyed login identity). Email is
+        // mandatory for a customer here, so we can't drop it — but we also
+        // must not block the quotation. When it collides, substitute a unique
+        // placeholder email so the customer is still created; it's flagged for
+        // the user to correct later.
+        const emailFree = await this.customerService.isPrimaryEmailAvailable(
+            lead.contact_email
+        );
+        let contactEmail = lead.contact_email;
+        if (!emailFree) {
+            const slug =
+                (lead.company_name || 'customer')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '')
+                    .slice(0, 30) || 'customer';
+            contactEmail = `${slug}.${leadId.slice(0, 8)}@placeholder.local`;
+            this.logger.warn(
+                `Lead ${leadId} contact email '${lead.contact_email}' already in use — customer created with placeholder '${contactEmail}'`
+            );
+        }
         const customer = await this.customerService.create(
             companyId,
             {
@@ -529,7 +551,7 @@ export class LeadService {
                 contacts: [
                     {
                         name: lead.contact_name,
-                        email: lead.contact_email,
+                        email: contactEmail,
                         phone: lead.contact_phone,
                         country_code: lead.country_code,
                         is_primary: true,
@@ -763,6 +785,11 @@ export class LeadService {
                 : null;
             dto.product_name = prod?.name;
             dto.product_code = prod?.code;
+            // Master sell rate so the lead detail can show an Estimated Sales
+            // Value (Σ qty × product_selling_price) from the requirements.
+            // Distinct from the line's own margin_pct (left untouched).
+            (dto as any).product_selling_price =
+                prod?.selling_price != null ? String(prod.selling_price) : null;
             const ven = r.vendor_id
                 ? vendorById.get(r.vendor_id.toString())
                 : null;
@@ -922,15 +949,39 @@ export class LeadService {
         // Count requirement line items per lead so the listing can show how
         // many products each lead is interested in without fetching the lines.
         const lineItemCounts = new Map<string, number>();
+        // Estimated Sales Value per lead = Σ(qty × product master selling price)
+        // across its requirement lines. A pre-quotation possible-sales total.
+        const salesValue = new Map<string, number>();
         if (leadIds.length) {
-            const leadLines = await this.leadLineRepository.findAll({
+            const leadLines = (await this.leadLineRepository.findAll({
                 lead_id: { $in: leadIds },
                 soft_delete: false,
-            } as any);
-            for (const ln of leadLines as any[]) {
+            } as any)) as any[];
+            // Price lookup from the product master for the lines' products.
+            const prodIds = Array.from(
+                new Set(
+                    leadLines.map((l) => l.product_id?.toString()).filter(Boolean)
+                )
+            );
+            const priceById = new Map<string, number>();
+            if (prodIds.length) {
+                const prods = (await this.productRepository.findAll({
+                    _id: { $in: prodIds },
+                } as any)) as any[];
+                for (const p of prods) {
+                    priceById.set(
+                        p._id.toString(),
+                        Number(p.selling_price) || 0
+                    );
+                }
+            }
+            for (const ln of leadLines) {
                 const lid = ln.lead_id?.toString();
                 if (!lid) continue;
                 lineItemCounts.set(lid, (lineItemCounts.get(lid) || 0) + 1);
+                const price = priceById.get(ln.product_id?.toString()) || 0;
+                const amt = (Number(ln.qty) || 0) * price;
+                salesValue.set(lid, (salesValue.get(lid) || 0) + amt);
             }
         }
 
@@ -949,6 +1000,8 @@ export class LeadService {
                 quotationCounts.get(l._id.toString()) || 0;
             (dtos[i] as any).line_items_count =
                 lineItemCounts.get(l._id.toString()) || 0;
+            (dtos[i] as any).estimated_sales_value =
+                salesValue.get(l._id.toString()) || 0;
             (dtos[i] as any).last_activity_at =
                 lastActivityMap.get(l._id.toString()) || null;
         });

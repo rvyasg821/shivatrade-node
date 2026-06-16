@@ -322,6 +322,84 @@ export class PriceListAdminController {
         return { data: results };
     }
 
+    // Cheapest ACTIVE price per product across all vendors. Powers the
+    // quotation-from-lead auto-pick: one winning (vendor, price) per line.
+    // "Cheapest" = lowest EFFECTIVE price (unit_price × (1 − discount_pct/100)).
+    // Tie-break: most recent effective_date, then shortest lead_time_days.
+    // Returns the source trace (source_type / source_rfq_* ) so the line can
+    // show a "from RFQ …" badge.
+    @AuthJwtAccessProtected()
+    @Get('/best-prices')
+    async bestPrices(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('product_ids') productIdsRaw?: string
+    ): Promise<IResponse<any[]>> {
+        const productIds = (productIdsRaw || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        if (!productIds.length) return { data: [] };
+
+        const today = new Date().toISOString().slice(0, 10);
+        const out: any[] = [];
+
+        for (const productId of productIds) {
+            const rows = await this.priceListRepository.findAll(
+                {
+                    company_id: companyId,
+                    product_id: productId,
+                    effective_date: { $lte: today },
+                } as any,
+                { order: { effective_date: 'desc' as any } }
+            );
+            const mapped = await this.priceListService.mapList(rows);
+            // Active window only.
+            const active = mapped.filter(
+                (r) => !(r as any).effective_until || (r as any).effective_until >= today
+            );
+            if (!active.length) continue;
+
+            const eff = (r: any) =>
+                Number(r.unit_price || 0) *
+                (1 - Number(r.discount_pct || 0) / 100);
+
+            active.sort((a: any, b: any) => {
+                const ea = eff(a);
+                const eb = eff(b);
+                if (ea !== eb) return ea - eb; // cheapest effective price
+                // tie-break: newest effective_date
+                const da = String(a.effective_date || '');
+                const db = String(b.effective_date || '');
+                if (da !== db) return da > db ? -1 : 1;
+                // then shortest lead time
+                return (
+                    Number(a.lead_time_days || 999999) -
+                    Number(b.lead_time_days || 999999)
+                );
+            });
+
+            const best: any = active[0];
+            out.push({
+                product_id: productId,
+                price_list_id: best._id,
+                vendor_id: best.vendor_id,
+                currency_id: best.currency_id,
+                unit_price: String(best.unit_price ?? '0'),
+                discount_pct:
+                    best.discount_pct != null ? String(best.discount_pct) : '0',
+                margin_pct:
+                    best.margin_pct != null ? String(best.margin_pct) : null,
+                effective_date: best.effective_date || null,
+                valid_until: best.effective_until || null,
+                source_type: best.source_type || 'manual',
+                source_rfq_id: best.source_rfq_id || null,
+                source_rfq_voucher_no: best.source_rfq_voucher_no || null,
+            });
+        }
+
+        return { data: out };
+    }
+
     @Response('priceList.get')
     @AuthJwtAccessProtected()
     @Get('/get/:priceListId')
