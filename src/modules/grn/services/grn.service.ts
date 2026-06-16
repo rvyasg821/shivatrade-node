@@ -75,7 +75,10 @@ export class GrnService {
         return grn;
     }
 
-    // ─── Create from a closed POV ────────────────────────────────────────
+    // ─── Create from a dispatched POV ────────────────────────────────────
+    // A GRN receives goods against a DISPATCHED Vendor PO. Multiple GRNs are
+    // allowed per POV (partial deliveries) — each new GRN seeds the qty still
+    // to be received = dispatched − Σ(received on other non-cancelled GRNs).
     async createFromPov(
         companyId: string,
         povId: string,
@@ -88,31 +91,37 @@ export class GrnService {
             soft_delete: false,
         } as any);
         if (!pov) throw new NotFoundException('Vendor PO not found');
-        if (pov.status !== ENUM_PO_VENDOR_STATUS.CLOSED) {
+        if (
+            pov.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED &&
+            pov.status !== ENUM_PO_VENDOR_STATUS.CLOSED
+        ) {
             throw new BadRequestException(
-                'A GRN can only be raised against a received (closed) Vendor PO.'
-            );
-        }
-
-        // One GRN per POV.
-        const existing = await this.grnRepository.findOne({
-            po_vendor_id: povId,
-            company_id: companyId,
-            soft_delete: false,
-        } as any);
-        if (existing) {
-            throw new BadRequestException(
-                'A GRN already exists for this Vendor PO.'
+                'A GRN can only be raised against a dispatched Vendor PO.'
             );
         }
 
         const povLines = (await this.povLineRepository.findAll({
             po_vendor_id: povId,
         } as any)) as any[];
-        const receivedLines = povLines.filter((l) => num(l.received_qty) > 0);
-        if (!receivedLines.length) {
+
+        // Qty already received on other (non-cancelled) GRNs for this POV.
+        const otherReceived = await this.receivedByPovLineExcluding(
+            companyId,
+            povId,
+            null
+        );
+        // Lines that still have something left to receive.
+        const pendingLines = povLines
+            .map((l) => {
+                const dispatched = round4(num(l.dispatched_qty));
+                const already = round4(otherReceived.get(l._id.toString()) || 0);
+                const remaining = round4(dispatched - already);
+                return { l, remaining };
+            })
+            .filter((x) => x.remaining > 1e-6);
+        if (!pendingLines.length) {
             throw new BadRequestException(
-                'This Vendor PO has no received quantity to receipt.'
+                'This Vendor PO is fully received — nothing left to receipt.'
             );
         }
 
@@ -150,11 +159,10 @@ export class GrnService {
         const grnId = grn._id.toString();
 
         let seq = 0;
-        for (const l of receivedLines.sort(
-            (a, b) => (a.seq || 0) - (b.seq || 0)
+        for (const { l, remaining } of pendingLines.sort(
+            (a, b) => (a.l.seq || 0) - (b.l.seq || 0)
         )) {
             seq += 1;
-            const received = round4(num(l.received_qty));
             await this.grnLineRepository.create({
                 company_id: companyId,
                 grn_id: grnId,
@@ -165,9 +173,10 @@ export class GrnService {
                 unit: l.unit || null,
                 ordered_qty: String(round4(num(l.ordered_qty))),
                 dispatched_qty: String(round4(num(l.dispatched_qty))),
-                received_qty: String(received),
-                // Default: everything received is accepted; operator adjusts.
-                accepted_qty: String(received),
+                // Default: receive the full remaining, all accepted; operator
+                // adjusts received / accepted / rejected before confirming.
+                received_qty: String(remaining),
+                accepted_qty: String(remaining),
                 rejected_qty: '0',
                 seq,
             } as any);
@@ -184,6 +193,9 @@ export class GrnService {
         dto: GrnUpdateDto
     ): Promise<GrnDoc> {
         const grn: any = await this.getOrThrow(companyId, grnId);
+        const prevStatus = grn.status;
+        const povId = grn.po_vendor_id?.toString();
+
         if (dto.grn_date !== undefined) grn.grn_date = dto.grn_date;
         if (dto.notes !== undefined) grn.notes = dto.notes;
         if (dto.internal_notes !== undefined)
@@ -193,31 +205,56 @@ export class GrnService {
 
         if (Array.isArray(dto.lines) && dto.lines.length) {
             const lines = await this.grnLineRepository.findByGrnId(grnId);
+            // Received on the OTHER non-cancelled GRNs of this POV — so the
+            // edited received qty can't push the POV over its dispatched qty.
+            const otherReceived = await this.receivedByPovLineExcluding(
+                companyId,
+                povId,
+                grnId
+            );
             const byId = new Map<string, any>(
                 lines.map((l: any) => [l._id.toString(), l])
             );
             for (const item of dto.lines) {
                 const row = byId.get(item._id);
                 if (!row) continue;
-                const received = num(row.received_qty);
+                const dispatched = round4(num(row.dispatched_qty));
+                const other = round4(
+                    otherReceived.get(row.po_vendor_line_id?.toString()) || 0
+                );
+                const received =
+                    item.received_qty !== undefined
+                        ? round4(num(item.received_qty))
+                        : round4(num(row.received_qty));
+                if (received < 0) {
+                    throw new BadRequestException(
+                        'Received quantity cannot be negative.'
+                    );
+                }
+                if (round4(received + other) > round4(dispatched) + 1e-6) {
+                    throw new BadRequestException(
+                        `Received (${received}) + already received on other GRNs (${other}) exceeds dispatched (${dispatched}) on a line.`
+                    );
+                }
                 let accepted =
                     item.accepted_qty !== undefined
                         ? round4(num(item.accepted_qty))
-                        : num(row.accepted_qty);
+                        : round4(num(row.accepted_qty));
                 let rejected =
                     item.rejected_qty !== undefined
                         ? round4(num(item.rejected_qty))
-                        : num(row.rejected_qty);
+                        : round4(num(row.rejected_qty));
                 if (accepted < 0 || rejected < 0) {
                     throw new BadRequestException(
                         'Accepted / rejected quantities cannot be negative.'
                     );
                 }
-                if (round4(accepted + rejected) > round4(received)) {
+                if (round4(accepted + rejected) > round4(received) + 1e-6) {
                     throw new BadRequestException(
                         `Accepted + rejected (${accepted + rejected}) exceeds received (${received}) on a line.`
                     );
                 }
+                row.received_qty = String(received);
                 row.accepted_qty = String(accepted);
                 row.rejected_qty = String(rejected);
                 if (item.batch_no !== undefined) row.batch_no = item.batch_no;
@@ -225,7 +262,124 @@ export class GrnService {
                 await this.grnLineRepository.save(row);
             }
         }
+
+        // Confirming or cancelling a confirmed GRN changes how much the POV
+        // has received → roll the receipt back into the POV (and close /
+        // re-open it accordingly). Inventory reads closed-POV received_qty.
+        const crossesConfirm =
+            dto.status !== undefined &&
+            dto.status !== prevStatus &&
+            (dto.status === ENUM_GRN_STATUS.CONFIRMED ||
+                prevStatus === ENUM_GRN_STATUS.CONFIRMED);
+        if (povId && crossesConfirm) {
+            await this.recomputePovFromGrns(companyId, povId);
+        }
+
         return this.grnRepository.findOneById(grnId);
+    }
+
+    /**
+     * Sum received_qty per POV line across this POV's non-cancelled GRNs,
+     * optionally excluding one GRN (when re-validating that GRN's own edit).
+     */
+    private async receivedByPovLineExcluding(
+        companyId: string,
+        povId: string | null,
+        excludeGrnId: string | null
+    ): Promise<Map<string, number>> {
+        const out = new Map<string, number>();
+        if (!povId) return out;
+        const grns = (await this.grnRepository.findAll({
+            po_vendor_id: povId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any)) as any[];
+        const grnIds = grns
+            .filter(
+                (g) =>
+                    g.status !== ENUM_GRN_STATUS.CANCELLED &&
+                    g._id.toString() !== excludeGrnId
+            )
+            .map((g) => g._id.toString());
+        if (!grnIds.length) return out;
+        const glines = (await this.grnLineRepository.findAll({
+            grn_id: { $in: grnIds },
+        } as any)) as any[];
+        for (const gl of glines) {
+            const k = gl.po_vendor_line_id?.toString();
+            if (!k) continue;
+            out.set(k, round4((out.get(k) || 0) + num(gl.received_qty)));
+        }
+        return out;
+    }
+
+    /**
+     * Recompute a POV's per-line received_qty from the sum of its CONFIRMED
+     * GRNs, then close the POV when every dispatched qty is fully received
+     * (or re-open it to dispatched if a confirmed GRN was later cancelled).
+     */
+    private async recomputePovFromGrns(
+        companyId: string,
+        povId: string
+    ): Promise<void> {
+        const pov: any = await this.povRepository.findOne({
+            _id: povId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!pov) return;
+
+        const grns = (await this.grnRepository.findAll({
+            po_vendor_id: povId,
+            company_id: companyId,
+            soft_delete: false,
+            status: ENUM_GRN_STATUS.CONFIRMED,
+        } as any)) as any[];
+        const grnIds = grns.map((g) => g._id.toString());
+        const glines = grnIds.length
+            ? ((await this.grnLineRepository.findAll({
+                  grn_id: { $in: grnIds },
+              } as any)) as any[])
+            : [];
+        const recvByPovLine = new Map<string, number>();
+        for (const gl of glines) {
+            const k = gl.po_vendor_line_id?.toString();
+            if (!k) continue;
+            recvByPovLine.set(
+                k,
+                round4((recvByPovLine.get(k) || 0) + num(gl.received_qty))
+            );
+        }
+
+        const povLines = (await this.povLineRepository.findAll({
+            po_vendor_id: povId,
+        } as any)) as any[];
+        let allFull = povLines.length > 0;
+        for (const pl of povLines) {
+            const dispatched = round4(num(pl.dispatched_qty));
+            const recv = round4(
+                Math.min(recvByPovLine.get(pl._id.toString()) || 0, dispatched)
+            );
+            pl.received_qty = String(recv);
+            await this.povLineRepository.save(pl);
+            if (recv < dispatched - 1e-6) allFull = false;
+        }
+
+        if (allFull && pov.status === ENUM_PO_VENDOR_STATUS.DISPATCHED) {
+            pov.status = ENUM_PO_VENDOR_STATUS.CLOSED;
+            if (!pov.actual_arrival_date) {
+                const latest = grns
+                    .map((g) => g.grn_date)
+                    .filter(Boolean)
+                    .sort()
+                    .pop();
+                if (latest) pov.actual_arrival_date = latest;
+            }
+            await this.povRepository.save(pov);
+        } else if (!allFull && pov.status === ENUM_PO_VENDOR_STATUS.CLOSED) {
+            pov.status = ENUM_PO_VENDOR_STATUS.DISPATCHED;
+            await this.povRepository.save(pov);
+        }
     }
 
     async softDelete(companyId: string, grnId: string): Promise<void> {
@@ -237,11 +391,17 @@ export class GrnService {
     // ─── List / count / stats ────────────────────────────────────────────
     buildListFind(
         companyId: string,
-        filters: { status?: string | string[]; vendor_id?: string; search?: string }
+        filters: {
+            status?: string | string[];
+            vendor_id?: string;
+            po_vendor_id?: string;
+            search?: string;
+        }
     ): Record<string, any> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
         if (filters.vendor_id) find.vendor_id = filters.vendor_id;
+        if (filters.po_vendor_id) find.po_vendor_id = filters.po_vendor_id;
         if (filters.status) find.status = filters.status;
         const searchTerm =
             typeof filters.search === 'string' ? filters.search.trim() : '';
@@ -262,7 +422,12 @@ export class GrnService {
 
     async count(
         companyId: string,
-        filters: { status?: string | string[]; vendor_id?: string; search?: string }
+        filters: {
+            status?: string | string[];
+            vendor_id?: string;
+            po_vendor_id?: string;
+            search?: string;
+        }
     ): Promise<number> {
         return this.grnRepository.getTotal(
             this.buildListFind(companyId, filters) as any
@@ -363,27 +528,16 @@ export class GrnService {
         return { total, by_status };
     }
 
-    // ─── Source-POV picker (closed POVs without a GRN) ───────────────────
+    // ─── Source-POV picker (dispatched POVs with qty still to receive) ───
     async sourcePovs(companyId: string): Promise<GrnSourcePovResponseDto[]> {
         const povs = (await this.povRepository.findAll({
             company_id: companyId,
-            status: ENUM_PO_VENDOR_STATUS.CLOSED,
+            status: ENUM_PO_VENDOR_STATUS.DISPATCHED,
             soft_delete: false,
         } as any)) as any[];
         if (!povs.length) return [];
 
-        const grns = (await this.grnRepository.findAll({
-            company_id: companyId,
-            soft_delete: false,
-        } as any)) as any[];
-        const usedPovIds = new Set(
-            grns.map((g) => g.po_vendor_id?.toString()).filter(Boolean)
-        );
-        const candidates = povs.filter(
-            (p) => !usedPovIds.has(p._id.toString())
-        );
-        if (!candidates.length) return [];
-
+        const candidates = povs;
         const povIds = candidates.map((p) => p._id.toString());
         const vendorIds = Array.from(
             new Set(candidates.map((p) => p.vendor_id?.toString()).filter(Boolean))
@@ -395,6 +549,30 @@ export class GrnService {
                     .filter(Boolean)
             )
         ) as string[];
+        // Received-so-far per POV line across non-cancelled GRNs, so we only
+        // surface POVs that still have dispatched qty left to receipt.
+        const grns = (await this.grnRepository.findAll({
+            po_vendor_id: { $in: povIds },
+            company_id: companyId,
+            soft_delete: false,
+        } as any)) as any[];
+        const liveGrnIds = grns
+            .filter((g) => g.status !== ENUM_GRN_STATUS.CANCELLED)
+            .map((g) => g._id.toString());
+        const grnLines = liveGrnIds.length
+            ? ((await this.grnLineRepository.findAll({
+                  grn_id: { $in: liveGrnIds },
+              } as any)) as any[])
+            : [];
+        const receivedByPovLine = new Map<string, number>();
+        for (const gl of grnLines) {
+            const k = gl.po_vendor_line_id?.toString();
+            if (!k) continue;
+            receivedByPovLine.set(
+                k,
+                round4((receivedByPovLine.get(k) || 0) + num(gl.received_qty))
+            );
+        }
         const [lines, vendors, pos] = await Promise.all([
             this.povLineRepository.findAll({
                 po_vendor_id: { $in: povIds },
@@ -410,13 +588,19 @@ export class GrnService {
                   } as any) as Promise<any[]>)
                 : Promise.resolve([] as any[]),
         ]);
+        // Count POV lines that still have qty pending to receive.
         const lineCount = new Map<string, number>();
-        for (const l of lines)
-            if (num(l.received_qty) > 0)
+        for (const l of lines) {
+            const pending = round4(
+                num(l.dispatched_qty) -
+                    (receivedByPovLine.get(l._id.toString()) || 0)
+            );
+            if (pending > 1e-6)
                 lineCount.set(
                     l.po_vendor_id.toString(),
                     (lineCount.get(l.po_vendor_id.toString()) || 0) + 1
                 );
+        }
         const vendorById = new Map<string, any>(
             vendors.map((v: any) => [v._id.toString(), v])
         );
@@ -476,7 +660,8 @@ export class GrnService {
                 product_name: prod?.name,
                 product_code: prod?.code,
                 description: l.description,
-                hsn_code: l.hsn_code,
+                hsn_code: l.hsn_code || prod?.hsn_code,
+                part_no: prod?.part_no,
                 unit: l.unit,
                 ordered_qty: l.ordered_qty,
                 dispatched_qty: l.dispatched_qty,

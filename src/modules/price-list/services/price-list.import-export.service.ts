@@ -11,16 +11,16 @@ const SHEET_NAME = 'Price List';
 
 // Column order mirrors the Price List Add form.
 // `vendor_code`, `product_code` and `unit_price` are the required inputs.
+// Cost-only sheet. valid_until / discount_pct / moq intentionally omitted —
+// the price list holds the net vendor cost; versioning is by effective_date (a
+// newer row auto-expires the previous). The DB columns stay for back-compat.
 const EXCEL_HEADERS = [
     'vendor_code',
     'product_code',
     'currency_code',
     'unit_price',
-    'moq',
-    'discount_pct',
     'lead_time_days',
     'effective_date',
-    'valid_until',
     'notes',
 ];
 
@@ -30,11 +30,8 @@ const SAMPLE_ROWS = [
         product_code: 'PRD-001',
         currency_code: 'INR',
         unit_price: '1250.00',
-        moq: '100',
-        discount_pct: '5',
         lead_time_days: '15',
         effective_date: '14/05/26',
-        valid_until: '',
         notes: 'Standard rate; FOB Mumbai',
     },
     {
@@ -42,11 +39,8 @@ const SAMPLE_ROWS = [
         product_code: 'PRD-002',
         currency_code: '',
         unit_price: '480',
-        moq: '',
-        discount_pct: '',
         lead_time_days: '30',
         effective_date: '',
-        valid_until: '',
         notes: '',
     },
 ];
@@ -125,11 +119,8 @@ export interface PriceListImportRow {
         currency_code: string;
         currency_id?: string;
         unit_price?: string;
-        moq?: number;
-        discount_pct?: string;
         lead_time_days?: number;
         effective_date?: string;
-        valid_until?: string;
         notes?: string;
     };
     status: 'valid_new' | 'valid_update' | 'error';
@@ -208,11 +199,8 @@ export class PriceListImportExportService {
                     ? currencyCodeById.get(r.currency_id.toString()) || ''
                     : '',
                 unit_price: r.unit_price ?? '',
-                moq: r.moq ?? '',
-                discount_pct: r.discount_pct ?? '',
                 lead_time_days: r.lead_time_days ?? '',
                 effective_date: formatDDMMYY(r.effective_date),
-                valid_until: formatDDMMYY(r.valid_until),
                 notes: r.notes || '',
             };
             if (!vendorId) {
@@ -507,49 +495,22 @@ export class PriceListImportExportService {
                 return n;
             };
 
-            const moq = num('moq', 'MOQ', { min: 1, integer: true });
-            const discountPct = num('discount_pct', 'Discount %', {
-                min: 0,
-                max: 100,
-            });
             const leadTimeDays = num('lead_time_days', 'Lead time (days)', {
                 min: 0,
                 integer: true,
             });
 
             // ── Effective date ──
-            // Blank defaults to today — UNLESS a valid_until is given, in
-            // which case effective_date must be provided explicitly.
+            // Blank defaults to today. Versioning is by effective_date — a
+            // newer row auto-expires the prior one, so there's no valid_until.
             let effectiveDate = today;
             const effParsed = parseDateCell(getRaw('effective_date'));
-            const effProvided = !!effParsed.iso || !!effParsed.error;
             if (effParsed.error) {
                 errors.push(
                     'Effective date is invalid (use DD/MM/YY or YYYY-MM-DD)',
                 );
             } else if (effParsed.iso) {
                 effectiveDate = effParsed.iso;
-            }
-
-            // ── Valid until — optional ──
-            let validUntil: string | undefined;
-            const vuParsed = parseDateCell(getRaw('valid_until'));
-            if (vuParsed.error) {
-                errors.push(
-                    'Valid until is invalid (use DD/MM/YY or YYYY-MM-DD)',
-                );
-            } else if (vuParsed.iso) {
-                validUntil = vuParsed.iso;
-            }
-            if (validUntil && !effProvided) {
-                errors.push(
-                    'Effective date is required when valid until is set — row skipped',
-                );
-            }
-            if (validUntil && validUntil < effectiveDate) {
-                errors.push(
-                    'Valid until must be on or after the effective date',
-                );
             }
 
             // ── Notes ──
@@ -586,14 +547,8 @@ export class PriceListImportExportService {
                     currency_code: currencyCode,
                     currency_id: currencyId,
                     unit_price: unitPrice,
-                    moq,
-                    discount_pct:
-                        discountPct !== undefined
-                            ? String(discountPct)
-                            : undefined,
                     lead_time_days: leadTimeDays,
                     effective_date: effectiveDate,
-                    valid_until: validUntil,
                     notes: notes || undefined,
                 },
                 status: rowStatus,
@@ -639,11 +594,8 @@ export class PriceListImportExportService {
                     product_id: d.product_id,
                     currency_id: d.currency_id,
                     unit_price: d.unit_price,
-                    moq: d.moq,
-                    discount_pct: d.discount_pct,
                     lead_time_days: d.lead_time_days,
                     effective_date: d.effective_date,
-                    valid_until: d.valid_until,
                     notes: d.notes,
                 };
 

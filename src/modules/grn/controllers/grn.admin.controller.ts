@@ -69,11 +69,13 @@ export class GrnAdminController {
         @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('vendor_id') vendorId?: string,
+        @Query('po_vendor_id') poVendorId?: string,
         @Query('search') search?: string
     ): Promise<IResponsePaging<GrnListResponseDto>> {
         const filters = {
             status: parseGrnStatusParam(status),
             vendor_id: vendorId,
+            po_vendor_id: poVendorId,
             search,
         };
         const find = this.grnService.buildListFind(companyId, filters);

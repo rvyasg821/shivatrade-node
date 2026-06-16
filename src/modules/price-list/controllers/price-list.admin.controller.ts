@@ -36,6 +36,7 @@ import { PriceListRepository } from '../repository/repositories/price-list.repos
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { PriceListCreateRequestDto } from '../dtos/request/price-list.create.request.dto';
+import { PriceListBulkCreateRequestDto } from '../dtos/request/price-list.bulk-create.request.dto';
 import { PriceListUpdateRequestDto } from '../dtos/request/price-list.update.request.dto';
 import { PriceListGetResponseDto } from '../dtos/response/price-list.get.response.dto';
 
@@ -161,6 +162,22 @@ export class PriceListAdminController {
         return { data: await this.priceListService.mapGet(row) };
     }
 
+    @Response('priceList.create')
+    @AuthJwtAccessProtected()
+    @Post('/bulk')
+    async bulkCreate(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: PriceListBulkCreateRequestDto
+    ): Promise<IResponse<{ created: number }>> {
+        const created = await this.priceListService.bulkCreate(
+            companyId,
+            body.items,
+            userId
+        );
+        return { data: { created } };
+    }
+
     @ResponsePaging('priceList.list')
     @AuthJwtAccessProtected()
     @Get('/list')
@@ -170,13 +187,21 @@ export class PriceListAdminController {
         @Query('vendor_id') vendorId?: string,
         @Query('product_id') productId?: string,
         @Query('currency_id') currencyId?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('current') current?: string
     ): Promise<IResponsePaging<PriceListGetResponseDto>> {
+        const currentOnly = current === '1' || current === 'true';
         const find: any = {};
         if (companyId) find.company_id = companyId;
         if (vendorId) find.vendor_id = vendorId;
         if (productId) find.product_id = productId;
         if (currencyId) find.currency_id = currencyId;
+        // Current-only: never look past today's effective rows.
+        if (currentOnly) {
+            find.effective_date = {
+                $lte: new Date().toISOString().slice(0, 10),
+            };
+        }
 
         // PaginationSearchPipe doesn't populate `_search` without an
         // `availableSearch` option — fall back to the raw `search` query.
@@ -224,6 +249,46 @@ export class PriceListAdminController {
                 orBranches.push({ product_id: { $in: productIds } });
             }
             find.$or = orBranches;
+        }
+
+        // Current-only mode: reduce to the latest price per (vendor, product),
+        // drop explicitly-expired rows, order by product (then vendor), and
+        // paginate in memory. Used by the product-centric price-list view.
+        if (currentOnly) {
+            const today = new Date().toISOString().slice(0, 10);
+            const allRows = await this.priceListRepository.findAll(find, {
+                order: {
+                    effective_date: 'desc' as any,
+                    createdAt: 'desc' as any,
+                },
+            });
+            // First occurrence per (vendor, product) wins (rows are desc by date).
+            const seen = new Set<string>();
+            const latest: any[] = [];
+            for (const r of allRows as any[]) {
+                const k = `${r.vendor_id?.toString()}|${r.product_id?.toString()}`;
+                if (seen.has(k)) continue;
+                seen.add(k);
+                if (r.valid_until && String(r.valid_until).slice(0, 10) < today) {
+                    continue; // explicitly expired
+                }
+                latest.push(r);
+            }
+            const mapped = await this.priceListService.mapList(latest);
+            mapped.sort((a, b) => {
+                const pa = (a.product_code || a.product_name || '').toLowerCase();
+                const pb = (b.product_code || b.product_name || '').toLowerCase();
+                if (pa !== pb) return pa < pb ? -1 : 1;
+                const va = (a.vendor_name || '').toLowerCase();
+                const vb = (b.vendor_name || '').toLowerCase();
+                return va < vb ? -1 : va > vb ? 1 : 0;
+            });
+            const total = mapped.length;
+            const data = mapped.slice(_offset, _offset + _limit);
+            return {
+                _pagination: { total, totalPage: Math.ceil(total / _limit) },
+                data,
+            };
         }
 
         const rows = await this.priceListRepository.findAll(find, {

@@ -47,11 +47,26 @@ export class RfqPriceItemDto {
     @IsString() @IsOptional() notes?: string;
 }
 
+export class RfqLineQtyDto {
+    @IsUUID() @IsNotEmpty() rfq_line_id: string;
+    @IsNumberString({}, { message: 'qty must be a numeric string' })
+    @IsNotEmpty()
+    qty: string;
+}
+
 export class RfqSetPricesDto {
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => RfqPriceItemDto)
     prices: RfqPriceItemDto[];
+
+    // Optional per-line requirement qty overrides (the editable Qty column on
+    // the price-collection grid). Updates the rfq_line.qty for all vendors.
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => RfqLineQtyDto)
+    @IsOptional()
+    line_qtys?: RfqLineQtyDto[];
 
     // Per-vendor export checkbox state — the rfq_line_ids ticked for the vendor
     // in `checked_vendor_id`. Stored on that vendor's row so each vendor keeps

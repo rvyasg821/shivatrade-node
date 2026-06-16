@@ -32,6 +32,7 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
+import { PriceListService } from '@modules/price-list/services/price-list.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
@@ -51,6 +52,7 @@ export class RfqService {
         private readonly vendorRepository: VendorRepository,
         private readonly companyRepository: CompanyRepository,
         private readonly priceListRepository: PriceListRepository,
+        private readonly priceListService: PriceListService,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
         private readonly leadActivityService: LeadActivityService
@@ -276,6 +278,57 @@ export class RfqService {
             await this.rfqRepository.save(rfq);
         }
 
+        // Sync each saved price into the price list (same as the vendor-sheet
+        // import). One record per (vendor, product, RFQ) — re-saving updates it.
+        if ((dto.prices || []).length) {
+            const lines = await this.rfqLineRepository.findByRfqId(rfqId);
+            const lineById = new Map<string, any>(
+                (lines as any[]).map((l) => [l._id.toString(), l])
+            );
+            const productIds = Array.from(
+                new Set(
+                    (lines as any[])
+                        .map((l) => l.product_id?.toString())
+                        .filter(Boolean)
+                )
+            );
+            const products = productIds.length
+                ? await this.productRepository.findAll({
+                      _id: { $in: productIds },
+                  } as any)
+                : [];
+            const currencyByProduct = new Map<string, string>();
+            for (const p of products as any[]) {
+                if (p.currency_id) {
+                    currencyByProduct.set(
+                        p._id.toString(),
+                        p.currency_id.toString()
+                    );
+                }
+            }
+            for (const item of dto.prices || []) {
+                const line = lineById.get(String(item.rfq_line_id));
+                const productId = line?.product_id?.toString();
+                if (!productId) continue;
+                // currency_id optional — upsertFromRfq falls back to the
+                // company's default currency when the product has none.
+                const currencyId = currencyByProduct.get(productId);
+                await this.priceListService.upsertFromRfq(
+                    companyId,
+                    {
+                        vendor_id: item.vendor_id,
+                        product_id: productId,
+                        currency_id: currencyId,
+                        unit_price: item.unit_price,
+                        source_rfq_id: rfqId,
+                        source_rfq_line_id: String(item.rfq_line_id),
+                        source_rfq_voucher_no: rfq.voucher_no || undefined,
+                    },
+                    rfq.created_by?.toString?.() || undefined
+                );
+            }
+        }
+
         // Persist the export checkbox state per-vendor — scoped to the active
         // comparison column (checked_vendor_id) so each vendor keeps its own
         // ticked lines. Stored on the vendor row, not the shared per-line flag.
@@ -286,6 +339,22 @@ export class RfqService {
             if (vendorRow) {
                 vendorRow.checked_line_ids = dto.checked_line_ids.map(String);
                 await this.rfqVendorRepository.save(vendorRow);
+            }
+        }
+
+        // Apply per-line requirement qty overrides (editable Qty column). One
+        // qty per rfq_line — shared across vendors.
+        if (Array.isArray(dto.line_qtys) && dto.line_qtys.length) {
+            const allLines = await this.rfqLineRepository.findByRfqId(rfqId);
+            const lineById = new Map<string, any>(
+                (allLines as any[]).map((l) => [l._id.toString(), l])
+            );
+            for (const lq of dto.line_qtys) {
+                const ln = lineById.get(String(lq.rfq_line_id));
+                if (ln && lq.qty != null && String(ln.qty) !== String(lq.qty)) {
+                    ln.qty = String(lq.qty);
+                    await this.rfqLineRepository.save(ln);
+                }
             }
         }
     }
@@ -529,6 +598,8 @@ export class RfqService {
                 product_id: l.product_id?.toString(),
                 product_name: prod?.name,
                 product_code: prod?.code,
+                part_no: prod?.part_no || null,
+                hsn_code: prod?.hsn_code || l.hs_code || null,
                 description: l.description,
                 customer_reference: l.customer_reference,
                 qty: l.qty,

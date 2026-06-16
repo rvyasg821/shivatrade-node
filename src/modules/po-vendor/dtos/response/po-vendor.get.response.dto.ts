@@ -9,6 +9,7 @@ export class PoVendorLineResponseDto {
     @ApiProperty({ required: false, type: String }) product_code?: string;
     @ApiProperty({ required: false, type: String }) description?: string;
     @ApiProperty({ required: false, type: String }) hsn_code?: string;
+    @ApiProperty({ required: false, type: String }) part_no?: string;
     @ApiProperty({ required: false, type: String }) unit?: string;
     @ApiProperty({ required: true, type: String }) tax_pct: string;
     @ApiProperty({ required: true, type: String }) unit_price: string;
@@ -36,6 +37,14 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: false, type: String }) vendor_contact_name?: string;
     @ApiProperty({ required: false, type: String }) vendor_contact_email?: string;
     @ApiProperty({ required: false, type: String }) vendor_contact_phone?: string;
+    @ApiProperty({ required: false, type: Object })
+    vendor_contact_country_code?: {
+        code?: string;
+        dial_code?: string;
+        dialCode?: string;
+        phone?: string;
+        formatted?: string;
+    };
     @ApiProperty({ required: false, type: String }) vendor_address_id?: string;
 
     @ApiProperty({ required: false, type: String }) dispatch_date?: string;

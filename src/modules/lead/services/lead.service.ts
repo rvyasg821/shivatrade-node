@@ -785,6 +785,10 @@ export class LeadService {
                 : null;
             dto.product_name = prod?.name;
             dto.product_code = prod?.code;
+            // Product Part No + HSN for the line-item table (HSN falls back to
+            // the line's own hs_code when the product carries none).
+            (dto as any).part_no = prod?.part_no || null;
+            (dto as any).hsn_code = prod?.hsn_code || r.hs_code || null;
             // Master sell rate so the lead detail can show an Estimated Sales
             // Value (Σ qty × product_selling_price) from the requirements.
             // Distinct from the line's own margin_pct (left untouched).

@@ -13,6 +13,7 @@ import { PriceListGetResponseDto } from '../dtos/response/price-list.get.respons
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { ENUM_PRICE_LIST_SOURCE } from '../enums/price-list.enum';
 
 @Injectable()
 export class PriceListService {
@@ -75,6 +76,105 @@ export class PriceListService {
             `Price list entry created: ${row._id} (vendor ${data.vendor_id}, product ${data.product_id})`
         );
         return row;
+    }
+
+    /**
+     * Bulk create — inserts several vendor price rows in one call (the Manage
+     * Vendor Pricing grid). Each row is a new versioned entry; old prices for
+     * the same (vendor, product) auto-expire via the effective_date logic.
+     */
+    async bulkCreate(
+        companyId: string,
+        items: PriceListCreateRequestDto[],
+        createdBy: string
+    ): Promise<number> {
+        let count = 0;
+        for (const item of items) {
+            await this.create(companyId, item, createdBy);
+            count += 1;
+        }
+        this.logger.log(`Bulk price list create: ${count} rows for company ${companyId}`);
+        return count;
+    }
+
+    /**
+     * Upsert a vendor price captured from an RFQ. One price-list record is
+     * maintained per (vendor, product, RFQ) — re-saving the RFQ updates that
+     * same row instead of stacking duplicates. Used by both the inline RFQ
+     * price save and the vendor-sheet import so they stay in sync.
+     */
+    async upsertFromRfq(
+        companyId: string,
+        data: {
+            vendor_id: string;
+            product_id: string;
+            currency_id?: string;
+            unit_price: string | number;
+            source_rfq_id?: string;
+            source_rfq_line_id?: string;
+            source_rfq_voucher_no?: string;
+        },
+        createdBy?: string
+    ): Promise<PriceListDoc | null> {
+        if (!data.vendor_id || !data.product_id) {
+            return null; // can't form a valid price-list row
+        }
+        // Most products carry no explicit currency — fall back to the company's
+        // default (base) currency so the row can still be written.
+        let currencyId = data.currency_id;
+        if (!currencyId) {
+            const def: any =
+                (await this.currencyRepository.findOne({
+                    company_id: companyId,
+                    is_default: true,
+                    soft_delete: false,
+                } as any)) ||
+                (await this.currencyRepository.findOne({
+                    company_id: companyId,
+                    code: 'INR',
+                    soft_delete: false,
+                } as any));
+            currencyId = def?._id?.toString();
+        }
+        if (!currencyId) return null; // no currency to attach
+        const today = new Date().toISOString().slice(0, 10);
+        const unit_price = String(data.unit_price);
+
+        // One record per (vendor, product, RFQ): match on the RFQ id when we
+        // have one, else fall back to the same-day (vendor, product) row.
+        const find: any = {
+            company_id: companyId,
+            vendor_id: data.vendor_id,
+            product_id: data.product_id,
+        };
+        if (data.source_rfq_id) find.source_rfq_id = data.source_rfq_id;
+        else find.effective_date = today;
+
+        const existing: any = await this.priceListRepository.findOne(find);
+        if (existing) {
+            existing.unit_price = unit_price;
+            existing.effective_date = today;
+            existing.source_type = ENUM_PRICE_LIST_SOURCE.RFQ;
+            if (data.source_rfq_id) existing.source_rfq_id = data.source_rfq_id;
+            if (data.source_rfq_line_id)
+                existing.source_rfq_line_id = data.source_rfq_line_id;
+            if (data.source_rfq_voucher_no)
+                existing.source_rfq_voucher_no = data.source_rfq_voucher_no;
+            return this.priceListRepository.save(existing);
+        }
+        return this.priceListRepository.create({
+            company_id: companyId,
+            vendor_id: data.vendor_id,
+            product_id: data.product_id,
+            currency_id: currencyId,
+            unit_price,
+            effective_date: today,
+            source_type: ENUM_PRICE_LIST_SOURCE.RFQ,
+            source_rfq_id: data.source_rfq_id || null,
+            source_rfq_line_id: data.source_rfq_line_id || null,
+            source_rfq_voucher_no: data.source_rfq_voucher_no || null,
+            created_by: createdBy,
+        } as any);
     }
 
     async findOneById(id: string): Promise<PriceListDoc> {
