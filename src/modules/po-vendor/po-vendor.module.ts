@@ -4,6 +4,7 @@ import { PoVendorService } from './services/po-vendor.service';
 import { PoCoverageService } from './services/po-coverage.service';
 import { PoVendorPdfService } from './services/po-vendor-pdf.service';
 import { PoVendorAdminController } from './controllers/po-vendor.admin.controller';
+import { PoVendorPublicController } from './controllers/po-vendor.public.controller';
 
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 import { VendorModule } from '@modules/vendor/vendor.module';
@@ -42,6 +43,6 @@ import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.rep
         PoCoverageService,
         PoVendorPdfService,
     ],
-    controllers: [PoVendorAdminController],
+    controllers: [PoVendorAdminController, PoVendorPublicController],
 })
 export class PoVendorModule {}

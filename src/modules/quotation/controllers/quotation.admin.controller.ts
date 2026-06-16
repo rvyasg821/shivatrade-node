@@ -7,7 +7,9 @@ import {
     Body,
     Param,
     Query,
+    Res,
 } from '@nestjs/common';
+import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import {
     AuthJwtAccessProtected,
@@ -23,6 +25,7 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 
 import { QuotationService } from '../services/quotation.service';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
@@ -187,6 +190,37 @@ export class QuotationAdminController {
     async publicPreview(@Param('id') id: string): Promise<IResponse<any>> {
         const row = await this.quotationService.findOneById(id);
         return { data: await this.quotationService.mapPublic(row) };
+    }
+
+    /** Mint a short-lived ticket so the browser can open the PDF inline in a
+     *  new tab (with the proper filename) via the no-auth public route. */
+    @Response('quotation.get')
+    @AuthJwtAccessProtected()
+    @Get('/:id/pdf-ticket')
+    async pdfTicket(
+        @Param('id') id: string
+    ): Promise<IResponse<{ ticket: string }>> {
+        // Make sure the quotation exists (and is in this company's scope).
+        await this.quotationService.findOneById(id);
+        return { data: { ticket: signPdfTicket('quotation', id) } };
+    }
+
+    /** Client-facing PDF (same sanitized projection as the preview). Streamed
+     *  inline so the FE can open it as a blob in a new tab. */
+    @AuthJwtAccessProtected()
+    @Get('/:id/pdf')
+    async pdf(
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const { buffer, filename } =
+            await this.quotationService.generatePdf(id);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `inline; filename="${filename}"`
+        );
+        res.end(buffer);
     }
 }
 

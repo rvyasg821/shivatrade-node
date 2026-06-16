@@ -8,8 +8,10 @@ import {
     Param,
     Query,
     Res,
+    NotFoundException,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
+import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import {
     AuthJwtAccessProtected,
@@ -226,6 +228,22 @@ export class PoVendorAdminController {
         res.end(buf);
     }
 
+    /** Mint a short-lived ticket so the browser can open the dispatch-advice
+     *  PDF inline in a new tab (proper filename) via the no-auth public route. */
+    @Response('poVendor.get')
+    @AuthJwtAccessProtected()
+    @Get('/:id/pdf-ticket')
+    async pdfTicket(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<{ ticket: string }>> {
+        const row = await this.povService.findOneById(id);
+        if (row.company_id.toString() !== companyId) {
+            throw new NotFoundException('Vendor PO not found');
+        }
+        return { data: { ticket: signPdfTicket('po-vendor', id) } };
+    }
+
     // ─── Update (status-locked field edits + status transitions) ────────
 
     @Response('poVendor.update')
@@ -253,6 +271,20 @@ export class PoVendorAdminController {
     ): Promise<IResponse<PoVendorGetResponseDto>> {
         const row = await this.povService.findOneById(id);
         const updated = await this.povService.dispatch(row, body, userId);
+        return { data: await this.povService.mapGet(updated) };
+    }
+
+    // Edit an already-dispatched POV's transport + per-line dispatched qty.
+    @Response('poVendor.dispatch')
+    @AuthJwtAccessProtected()
+    @Put('/:id/dispatch')
+    async editDispatch(
+        @AuthJwtPayload('user') userId: string,
+        @Param('id') id: string,
+        @Body() body: PoVendorDispatchRequestDto
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.findOneById(id);
+        const updated = await this.povService.editDispatch(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
     }
 

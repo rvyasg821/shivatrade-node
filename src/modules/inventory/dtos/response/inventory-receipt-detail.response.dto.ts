@@ -61,6 +61,12 @@ class InventoryReceiptReceiptDto {
     received_qty: string | null;
 
     @ApiProperty({ nullable: true })
+    accepted_qty: string | null;
+
+    @ApiProperty({ nullable: true })
+    rejected_qty: string | null;
+
+    @ApiProperty({ nullable: true })
     short_qty: string | null;
 
     @ApiProperty({ nullable: true })

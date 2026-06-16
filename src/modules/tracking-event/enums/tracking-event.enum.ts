@@ -25,6 +25,12 @@ export enum ENUM_TRACKING_EVENT_TYPE {
     POV_RECEIVED = 'pov_received',
     POV_CANCELLED = 'pov_cancelled',
     POV_UPDATED = 'pov_updated',
+    // GRN (Goods Receipt Note) lifecycle, surfaced on the parent POV timeline.
+    GRN_CONFIRMED = 'grn_confirmed',
+    GRN_CANCELLED = 'grn_cancelled',
+    // Debit Note (vendor return) lifecycle, surfaced on the parent POV timeline.
+    DEBIT_NOTE_ISSUED = 'debit_note_issued',
+    DEBIT_NOTE_CANCELLED = 'debit_note_cancelled',
 }
 
 /** Subset that are emitted by the system, not picked by users. */
@@ -34,6 +40,10 @@ export const SYSTEM_TRACKING_EVENT_TYPES: string[] = [
     ENUM_TRACKING_EVENT_TYPE.POV_RECEIVED,
     ENUM_TRACKING_EVENT_TYPE.POV_CANCELLED,
     ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+    ENUM_TRACKING_EVENT_TYPE.GRN_CONFIRMED,
+    ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
+    ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_ISSUED,
+    ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_CANCELLED,
 ];
 
 export const TRACKING_EVENT_TYPE_VALUES: string[] = Object.values(

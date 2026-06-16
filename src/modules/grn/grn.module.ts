@@ -1,12 +1,17 @@
 import { Module } from '@nestjs/common';
 import { GrnRepositoryModule } from './repository/grn.repository.module';
 import { GrnService } from './services/grn.service';
+import { DebitNoteService } from './services/debit-note.service';
 import { GrnAdminController } from './controllers/grn.admin.controller';
+import { GrnPublicController } from './controllers/grn.public.controller';
+import { DebitNoteAdminController } from './controllers/debit-note.admin.controller';
+import { DebitNotePublicController } from './controllers/debit-note.public.controller';
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
+import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
 
 @Module({
     imports: [
@@ -16,9 +21,15 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
         ProductRepositoryModule,
         VendorRepositoryModule,
         CompanyRepositoryModule,
+        TrackingEventRepositoryModule,
     ],
-    providers: [GrnService],
-    exports: [GrnService, GrnRepositoryModule],
-    controllers: [GrnAdminController],
+    providers: [GrnService, DebitNoteService],
+    exports: [GrnService, DebitNoteService, GrnRepositoryModule],
+    controllers: [
+        GrnAdminController,
+        GrnPublicController,
+        DebitNoteAdminController,
+        DebitNotePublicController,
+    ],
 })
 export class GrnModule {}

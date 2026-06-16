@@ -11,6 +11,7 @@ export enum ENUM_VOUCHER_DOC_TYPE {
     PURCHASE_ORDER = 'PURCHASE_ORDER',
     PO_VENDOR = 'PO_VENDOR',
     GRN = 'GRN',
+    DEBIT_NOTE = 'DEBIT_NOTE',
     INVOICE_EXPORT = 'INVOICE_EXPORT',
     SHIPPING = 'SHIPPING',
     RECEIPT = 'RECEIPT',
@@ -55,6 +56,8 @@ export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig>
     [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: { token: 'VPO', style: 'separated' },
     // Goods Receipt Note → STIPL/GRN0001/2026-27
     [ENUM_VOUCHER_DOC_TYPE.GRN]: { token: 'GRN', style: 'glued' },
+    // Debit Note (vendor return) → STIPL/DN/0001/2026-27
+    [ENUM_VOUCHER_DOC_TYPE.DEBIT_NOTE]: { token: 'DN', style: 'separated' },
     // Invoice → STIPL/INV/0001/2026-27 (separated, matches the SO/VPO family).
     // Existing compact numbers (e.g. STIPL007) keep their stored value; only
     // new invoices use the INV token.

@@ -5,6 +5,8 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
 import { QuotationDoc } from '../repository/entities/quotation.entity';
@@ -38,6 +40,7 @@ import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repo
 import { RfqRepository } from '@modules/rfq/repository/repositories/rfq.repository';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
+import { PdfService } from '@common/pdf/pdf.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
@@ -46,6 +49,17 @@ const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
 const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Embed the ShivaTrade logo once at module load (same asset the PO/PFI PDFs
+// use) so Puppeteer doesn't need network access.
+const QUOTATION_LOGO_DATA_URI = (() => {
+    try {
+        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
+        return `data:image/png;base64,${fs.readFileSync(p).toString('base64')}`;
+    } catch {
+        return '';
+    }
+})();
 
 @Injectable()
 export class QuotationService {
@@ -72,7 +86,8 @@ export class QuotationService {
         private readonly pfiRepository: PfiRepository,
         private readonly poRepository: PurchaseOrderRepository,
         private readonly rfqRepository: RfqRepository,
-        private readonly voucherService: VoucherService
+        private readonly voucherService: VoucherService,
+        private readonly pdfService: PdfService
     ) {}
 
     // ─── Reference validation ───────────────────────────────────────────
@@ -918,6 +933,9 @@ export class QuotationService {
                             product_name: (productMap.get(
                                 l.product_id?.toString()
                             ) as any)?.name,
+                            part_no: (productMap.get(
+                                l.product_id?.toString()
+                            ) as any)?.part_no,
                             vendor_id: l.vendor_id?.toString(),
                             vendor_name: (vendorMap.get(
                                 l.vendor_id?.toString()
@@ -1082,6 +1100,8 @@ export class QuotationService {
             grand_total_calc += lineTotal;
             return {
                 product_name: l.product_name,
+                part_no: (l as any).part_no,
+                hs_code: l.hs_code,
                 description: l.description,
                 qty: l.qty,
                 unit: l.unit,
@@ -1121,6 +1141,232 @@ export class QuotationService {
             gst_total: String(round2(gst_total)),
             grand_total: String(round2(grand_total_calc)),
         };
+    }
+
+    // ── Client-facing PDF — mirrors the Sales Order PDF layout (letterhead,
+    // seller/buyer grid, line table, grand total, signatory, page footer). ──
+    async generatePdf(
+        id: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const row = await this.findOneById(id);
+        const data = await this.mapPublic(row);
+        const full = await this.mapGet(row);
+
+        // Seller GSTIN + authorised signatory — same hydration as the SO PDF.
+        const companyId = (row as any).company_id?.toString();
+        let companyGstin = '';
+        let signatory = '';
+        try {
+            const company: any =
+                await this.companyService.findOneById(companyId);
+            signatory = company?.authorised_signatory_name || '';
+            const addresses =
+                await this.companyAddressRepository.findByCompanyId(companyId);
+            const corp: any =
+                (addresses || []).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a: any) => a.type === 'corporate') ||
+                (addresses || []).find((a: any) => a.is_default) ||
+                (addresses || [])[0];
+            companyGstin = corp?.gstin || company?.tax_number || '';
+        } catch {
+            // graceful — degrades to a name-only seller block
+        }
+
+        const sourceVoucher = full.rfq_voucher_no || full.lead_voucher_no || '';
+        const sourceLabel = full.rfq_voucher_no
+            ? 'Source RFQ'
+            : full.lead_voucher_no
+              ? 'Source Lead'
+              : '';
+
+        const html = this.renderQuotationHtml(data, {
+            companyGstin,
+            signatory,
+            sourceVoucher,
+            sourceLabel,
+        });
+        const buffer = await this.pdfService.generateFromHtml(html, {
+            format: 'A4',
+            margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
+            displayHeaderFooter: true,
+            headerTemplate: `<div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;display:flex;justify-content:space-between;align-items:center;"><span>${this.esc(data.company_name || '')}</span><span><strong style="color:#1f2937">QUOTATION</strong> · ${this.esc(data.voucher_no || '')}</span></div>`,
+            footerTemplate: `<div style="font-size:8px;width:100%;padding:0 12mm;color:#6b7280;display:flex;justify-content:space-between;align-items:center;"><span>${this.esc(data.voucher_no || '')}</span><span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
+        });
+        const safe = (data.voucher_no || id)
+            .replace(/[\\/]+/g, '_')
+            .replace(/[^A-Za-z0-9_\-.]/g, '');
+        return { buffer, filename: `${safe}.pdf` };
+    }
+
+    private esc(s: any): string {
+        return String(s ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    private renderQuotationHtml(
+        q: QuotationPublicResponseDto,
+        extras: {
+            companyGstin?: string;
+            signatory?: string;
+            sourceVoucher?: string;
+            sourceLabel?: string;
+        }
+    ): string {
+        const sym = q.currency_symbol || q.currency_code || '₹';
+        const fmtNum = (v: any) => {
+            const n = Number(v);
+            return isFinite(n)
+                ? n.toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                  })
+                : this.esc(v);
+        };
+        const money = (v: any) =>
+            v === null || v === undefined || v === ''
+                ? '-'
+                : `${sym}${fmtNum(v)}`;
+        const dateOnly = (iso?: string) =>
+            iso ? this.esc(String(iso).slice(0, 10)) : '-';
+        const preLine = (s: string) => this.esc(s).replace(/\n/g, '<br/>');
+
+        const rows = (q.lines || []).length
+            ? (q.lines || [])
+                  .map(
+                      (l, i) => `<tr>
+          <td class="muted">${i + 1}</td>
+          <td>
+            <div class="fw">${this.esc(l.product_name || '-')}</div>
+            ${l.hs_code ? `<div class="muted">HSN: ${this.esc(l.hs_code)}</div>` : ''}
+            ${l.description ? `<div class="muted">${this.esc(l.description)}</div>` : ''}
+          </td>
+          <td>${this.esc(l.part_no || '-')}</td>
+          <td class="num">${l.qty ? fmtNum(l.qty) : '-'}</td>
+          <td>${this.esc(l.unit || '-')}</td>
+          <td class="num">${money(l.unit_price)}</td>
+          <td class="num fw">${money(l.line_total)}</td>
+        </tr>`
+                  )
+                  .join('')
+            : `<tr><td colspan="7" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
+
+        const detailLines = [
+            q.valid_until
+                ? `<div class="party-line"><span class="party-muted">Valid Until:</span> ${dateOnly(q.valid_until)}</div>`
+                : '',
+            q.payment_terms
+                ? `<div class="party-line"><span class="party-muted">Payment:</span> ${this.esc(q.payment_terms)}</div>`
+                : '',
+            q.delivery_terms
+                ? `<div class="party-line"><span class="party-muted">Delivery:</span> ${this.esc(q.delivery_terms)}</div>`
+                : '',
+            q.delivery_location
+                ? `<div class="party-line"><span class="party-muted">Ship To:</span> ${this.esc(q.delivery_location)}</div>`
+                : '',
+        ].join('');
+
+        // Layout / CSS reuse the Sales Order PDF (po-pdf.service) so all
+        // sales-doc PDFs share one professional letterhead format.
+        return `<!DOCTYPE html><html><head><meta charset="utf-8" />
+<title>${this.esc(q.voucher_no || 'Quotation')}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10.5px; color: #1f2937; margin: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .doc { width: 100%; }
+  .qd-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #e5e7eb; padding-bottom: 14px; margin-bottom: 18px; }
+  .qd-title { font-size: 16px; font-weight: 600; letter-spacing: 2px; margin: 0; color: #1f2937; text-transform: uppercase; }
+  .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
+  .status-badge { display: inline-block; background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; padding: 2px 9px; border-radius: 999px; font-size: 9px; font-weight: 600; text-transform: capitalize; letter-spacing: 0.2px; margin-top: 5px; }
+  .party-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .label { text-transform: uppercase; color: #6b7280; font-weight: 600; font-size: 8.5px; letter-spacing: 0.6px; margin-bottom: 5px; }
+  .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
+  .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
+  .muted, .party-muted { color: #6b7280; }
+  .fw { font-weight: 600; color: #1f2937; }
+  table.items { width: 100%; border-collapse: collapse; margin: 6px 0 0; }
+  table.items thead th { background: #f9fafb; color: #4b5563; font-weight: 600; font-size: 8.5px; letter-spacing: 0.3px; text-transform: uppercase; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; padding: 8px 7px; text-align: left; }
+  table.items td { border-bottom: 1px solid #f1f2f4; padding: 8px 7px; font-size: 10px; vertical-align: top; page-break-inside: avoid; }
+  table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
+  table.items th.num, table.items td.num { text-align: right; }
+  .totals { width: 280px; margin-left: auto; margin-top: 14px; margin-bottom: 4px; }
+  .totals .row-grand { display: flex; justify-content: space-between; padding: 10px 0 4px; border-top: 2px solid #1f2937; font-weight: 700; font-size: 12px; color: #1f2937; }
+  .section { margin-top: 14px; }
+  .section .body { font-size: 10px; color: #4b5563; line-height: 1.55; white-space: pre-line; }
+  .signature { margin-top: 26px; display: flex; justify-content: flex-end; font-size: 9.5px; }
+  .signature .box { width: 200px; border-top: 1px solid #9ca3af; padding-top: 4px; text-align: center; color: #6b7280; }
+</style></head>
+<body>
+<div class="doc">
+  <div class="qd-header">
+    <div>${QUOTATION_LOGO_DATA_URI ? `<img src="${QUOTATION_LOGO_DATA_URI}" alt="logo" style="height:56px;display:block" />` : ''}</div>
+    <div style="text-align:right">
+      <div class="qd-title">Quotation</div>
+      <div class="voucher">#${this.esc(q.voucher_no || '-')}</div>
+      <div class="voucher">Date: <span class="fw">${dateOnly(q.quotation_date)}</span> · Currency: <span class="fw">${this.esc(sym)} ${this.esc(q.currency_code || '-')}</span></div>
+      ${extras.sourceVoucher ? `<div class="voucher">${this.esc(extras.sourceLabel || 'Source')}: <span class="fw">${this.esc(extras.sourceVoucher)}</span></div>` : ''}
+      ${q.status ? `<span class="status-badge">${this.esc(q.status)}</span>` : ''}
+    </div>
+  </div>
+
+  <div class="party-grid">
+    <div>
+      <div class="label">Seller</div>
+      <div class="party-name">${this.esc(q.company_name || '-')}</div>
+      ${q.company_address ? `<div class="party-line" style="white-space:pre-line">${preLine(q.company_address)}</div>` : ''}
+      ${q.company_phone ? `<div class="party-line">${this.esc(q.company_phone)}</div>` : ''}
+      ${q.company_email ? `<div class="party-line">${this.esc(q.company_email)}</div>` : ''}
+      ${q.company_iec ? `<div class="party-line muted">IEC: ${this.esc(q.company_iec)}</div>` : ''}
+      ${extras.companyGstin ? `<div class="party-line muted">GSTIN: ${this.esc(extras.companyGstin)}</div>` : ''}
+    </div>
+    <div>
+      <div class="label">Billed To</div>
+      <div class="party-name">${this.esc(q.customer_name || '-')}</div>
+      ${q.customer_contact_name ? `<div class="party-line">${this.esc(q.customer_contact_name)}</div>` : ''}
+      ${q.customer_address ? `<div class="party-line" style="white-space:pre-line">${preLine(q.customer_address)}</div>` : ''}
+      ${q.customer_phone ? `<div class="party-line">${this.esc(q.customer_phone)}</div>` : ''}
+      ${q.customer_email ? `<div class="party-line">${this.esc(q.customer_email)}</div>` : ''}
+    </div>
+    <div>
+      <div class="label">Details</div>
+      ${detailLines || `<div class="party-line muted">-</div>`}
+    </div>
+  </div>
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th style="width:24px">#</th>
+        <th>Product</th>
+        <th style="width:80px">Part No</th>
+        <th class="num" style="width:55px">Qty</th>
+        <th style="width:46px">Unit</th>
+        <th class="num" style="width:80px">Rate</th>
+        <th class="num" style="width:95px">Amount</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <div class="totals">
+    <div class="row-grand"><span>Grand Total</span><span>${money(q.grand_total)}</span></div>
+  </div>
+
+  ${q.notes_to_client ? `<div class="section"><div class="label">Notes</div><div class="body">${this.esc(q.notes_to_client)}</div></div>` : ''}
+
+  <div class="signature">
+    <div class="box">
+      For ${this.esc(q.company_name || '')}
+      <div style="height:30px"></div>
+      ${extras.signatory ? `<div class="fw" style="color:#1f2937;margin-bottom:2px">${this.esc(extras.signatory)}</div>` : ''}
+      <span style="color:#9ca3af">Authorised Signatory</span>
+    </div>
+  </div>
+</div>
+</body></html>`;
     }
 
     // ── Listing filter helper ────────────────────────────────────────────

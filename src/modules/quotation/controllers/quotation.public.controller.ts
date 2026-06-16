@@ -2,11 +2,15 @@ import {
     Controller,
     Get,
     Param,
+    Query,
+    Res,
     NotFoundException,
 } from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Response } from '@common/response/decorators/response.decorator';
 import { IResponse } from '@common/response/interfaces/response.interface';
+import { verifyPdfTicket } from '@common/pdf/pdf-ticket.util';
 
 import { QuotationService } from '../services/quotation.service';
 import { QuotationPublicResponseDto } from '../dtos/response/quotation.public.response.dto';
@@ -21,6 +25,27 @@ import { ENUM_QUOTATION_STATUS } from '../enums/quotation.enum';
 @Controller({ version: '1', path: '/public/quotation' })
 export class QuotationPublicController {
     constructor(private readonly quotationService: QuotationService) {}
+
+    /** Stream the quotation PDF inline (new-tab open) for a valid short-lived
+     *  ticket. Declared before `/:token` so the literal path wins. */
+    @ApiOperation({ summary: 'Quotation PDF by short-lived ticket' })
+    @Get('/pdf')
+    async pdf(
+        @Query('t') ticket: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const id = verifyPdfTicket(ticket, 'quotation');
+        if (!id) throw new NotFoundException('Invalid or expired link');
+        const { buffer, filename } =
+            await this.quotationService.generatePdf(id);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `inline; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buffer.length));
+        res.end(buffer);
+    }
 
     @Response('quotation.public')
     @ApiOperation({ summary: 'View a shared quotation by public token' })

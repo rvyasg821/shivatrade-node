@@ -9,6 +9,8 @@
 
 export class QuotationPublicLineDto {
     product_name?: string;
+    part_no?: string;
+    hs_code?: string;
     description?: string;
     qty?: string;
     unit?: string;

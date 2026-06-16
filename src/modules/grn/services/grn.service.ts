@@ -8,6 +8,8 @@ import { plainToInstance } from 'class-transformer';
 import { In } from 'typeorm';
 import { GrnRepository } from '../repository/repositories/grn.repository';
 import { GrnLineRepository } from '../repository/repositories/grn-line.repository';
+import { DebitNoteRepository } from '../repository/repositories/debit-note.repository';
+import { ENUM_DEBIT_NOTE_STATUS } from '../enums/debit-note.enum';
 import { GrnDoc } from '../repository/entities/grn.entity';
 import { ENUM_GRN_STATUS } from '../enums/grn.enum';
 import {
@@ -30,6 +32,8 @@ import { CompanyRepository } from '@modules/company/repository/repositories/comp
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
+import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
+import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -43,6 +47,7 @@ export class GrnService {
     constructor(
         private readonly grnRepository: GrnRepository,
         private readonly grnLineRepository: GrnLineRepository,
+        private readonly debitNoteRepository: DebitNoteRepository,
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly poRepository: PurchaseOrderRepository,
@@ -50,8 +55,42 @@ export class GrnService {
         private readonly vendorRepository: VendorRepository,
         private readonly companyRepository: CompanyRepository,
         private readonly voucherService: VoucherService,
-        private readonly pdfService: PdfService
+        private readonly pdfService: PdfService,
+        private readonly trackingEventRepository: PoVendorTrackingEventRepository
     ) {}
+
+    /**
+     * Emit a system tracking event onto a POV's timeline. Best-effort — a
+     * failure here never breaks the GRN action that triggered it.
+     */
+    private async emitPovEvent(
+        companyId: string,
+        povId: string,
+        eventType: ENUM_TRACKING_EVENT_TYPE,
+        userId?: string,
+        notes?: string
+    ): Promise<void> {
+        if (!povId || !userId) return;
+        try {
+            await this.trackingEventRepository.create({
+                company_id: companyId,
+                po_vendor_id: povId,
+                event_at: new Date(),
+                event_type: eventType,
+                location: null,
+                notes: notes || null,
+                is_post_closure: false,
+                is_system: true,
+                created_by: userId,
+            } as any);
+        } catch (err) {
+            this.logger.warn(
+                `emitPovEvent(${eventType}) failed for POV ${povId}: ${
+                    (err as any)?.message || err
+                }`
+            );
+        }
+    }
 
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
         const company: any = await this.companyRepository.findOneById(companyId);
@@ -190,7 +229,8 @@ export class GrnService {
     async update(
         companyId: string,
         grnId: string,
-        dto: GrnUpdateDto
+        dto: GrnUpdateDto,
+        userId?: string
     ): Promise<GrnDoc> {
         const grn: any = await this.getOrThrow(companyId, grnId);
         const prevStatus = grn.status;
@@ -273,6 +313,36 @@ export class GrnService {
                 prevStatus === ENUM_GRN_STATUS.CONFIRMED);
         if (povId && crossesConfirm) {
             await this.recomputePovFromGrns(companyId, povId);
+
+            // Surface the GRN lifecycle change on the parent POV's timeline.
+            if (dto.status === ENUM_GRN_STATUS.CONFIRMED) {
+                const glines = await this.grnLineRepository.findByGrnId(grnId);
+                let rcv = 0;
+                let acc = 0;
+                let rej = 0;
+                for (const l of glines as any[]) {
+                    rcv += num(l.received_qty);
+                    acc += num(l.accepted_qty);
+                    rej += num(l.rejected_qty);
+                }
+                const bits = [`received ${round4(rcv)}`, `accepted ${round4(acc)}`];
+                if (rej > 1e-6) bits.push(`rejected ${round4(rej)}`);
+                await this.emitPovEvent(
+                    companyId,
+                    povId,
+                    ENUM_TRACKING_EVENT_TYPE.GRN_CONFIRMED,
+                    userId,
+                    `GRN ${grn.voucher_no || grnId} confirmed — ${bits.join(', ')}.`
+                );
+            } else if (prevStatus === ENUM_GRN_STATUS.CONFIRMED) {
+                await this.emitPovEvent(
+                    companyId,
+                    povId,
+                    ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
+                    userId,
+                    `GRN ${grn.voucher_no || grnId} cancelled — its receipt was rolled back from the POV.`
+                );
+            }
         }
 
         return this.grnRepository.findOneById(grnId);
@@ -453,7 +523,7 @@ export class GrnService {
                 (rows as any[]).map((r) => r.vendor_id?.toString()).filter(Boolean)
             )
         ) as string[];
-        const [lines, vendors] = await Promise.all([
+        const [lines, vendors, dnotes] = await Promise.all([
             this.grnLineRepository.findAll({
                 grn_id: { $in: ids },
                 soft_delete: false,
@@ -463,19 +533,36 @@ export class GrnService {
                       _id: In(vendorIds),
                   } as any) as Promise<any[]>)
                 : Promise.resolve([] as any[]),
+            this.debitNoteRepository.findAll({
+                grn_id: { $in: ids },
+                soft_delete: false,
+            } as any) as Promise<any[]>,
         ]);
         const lineCount = new Map<string, number>();
-        for (const l of lines)
-            lineCount.set(
-                l.grn_id.toString(),
-                (lineCount.get(l.grn_id.toString()) || 0) + 1
-            );
+        const rejectedByGrn = new Map<string, number>();
+        for (const l of lines) {
+            const k = l.grn_id.toString();
+            lineCount.set(k, (lineCount.get(k) || 0) + 1);
+            rejectedByGrn.set(k, (rejectedByGrn.get(k) || 0) + num(l.rejected_qty));
+        }
+        // Active (non-cancelled) Debit Note per GRN — one per GRN by design.
+        const activeDnByGrn = new Map<string, string>();
+        for (const d of dnotes) {
+            if (d.status !== ENUM_DEBIT_NOTE_STATUS.CANCELLED) {
+                activeDnByGrn.set(d.grn_id.toString(), d._id.toString());
+            }
+        }
         const vendorById = new Map<string, any>(
             vendors.map((v: any) => [v._id.toString(), v])
         );
         return rows.map((r: any) => {
             const dto = plainToInstance(GrnListResponseDto, r);
-            dto.line_count = lineCount.get(r._id.toString()) || 0;
+            const k = r._id.toString();
+            dto.line_count = lineCount.get(k) || 0;
+            dto.rejected_qty = String(round4(rejectedByGrn.get(k) || 0));
+            const dnId = activeDnByGrn.get(k);
+            dto.debit_note_id = dnId || undefined;
+            dto.has_debit_note = !!dnId;
             dto.vendor_name = r.vendor_id
                 ? vendorById.get(r.vendor_id.toString())?.company_name
                 : undefined;
@@ -691,6 +778,16 @@ export class GrnService {
         return { buffer, filename: `GRN-${safe}.pdf` };
     }
 
+    /** Generate the PDF from the GRN id alone — resolves the company from the
+     *  GRN row. Used by the no-auth public ticket route (new-tab open). */
+    async generatePdfById(
+        grnId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const row: any = await this.grnRepository.findOneById(grnId);
+        if (!row) throw new NotFoundException('GRN not found');
+        return this.generatePdf(row.company_id.toString(), grnId);
+    }
+
     private esc(s: any): string {
         return String(s ?? '')
             .replace(/&/g, '&amp;')
@@ -708,11 +805,13 @@ export class GrnService {
                         ? `<br/><small style="color:#666">${this.esc(l.description)}</small>`
                         : ''
                 }</td>
+                <td>${this.esc(l.part_no || '-')}</td>
                 <td>${this.esc(l.hsn_code || '-')}</td>
                 <td style="text-align:right">${this.esc(l.received_qty || '0')} ${this.esc(l.unit || '')}</td>
                 <td style="text-align:right">${this.esc(l.accepted_qty || '0')}</td>
                 <td style="text-align:right">${this.esc(l.rejected_qty || '0')}</td>
                 <td>${this.esc(l.batch_no || '')}</td>
+                <td>${this.esc(l.remarks || '')}</td>
             </tr>`
             )
             .join('');
@@ -737,8 +836,8 @@ export class GrnService {
           </div>
           <table>
             <thead><tr>
-              <th>#</th><th>Item</th><th>HSN</th><th>Received</th>
-              <th>Accepted</th><th>Rejected</th><th>Batch</th>
+              <th>#</th><th>Item</th><th>Part No</th><th>HSN</th><th>Received</th>
+              <th>Accepted</th><th>Rejected</th><th>Batch</th><th>Remarks</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>
