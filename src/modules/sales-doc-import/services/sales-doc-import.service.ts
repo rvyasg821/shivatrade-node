@@ -28,7 +28,6 @@ import {
 const BASE_HEADERS = [
     'product_code',
     'vendor_code',
-    'customer_reference',
     'qty',
     'unit',
     'unit_price',
@@ -36,6 +35,8 @@ const BASE_HEADERS = [
     'tax_pct',
     'margin_pct',
 ];
+// customer_reference is placed last (after the export/shipping columns such as
+// package_count) — see the header/scalar assembly in buildWorkbook.
 // Carried by both Quotation and PFI line items. Quotation captures them
 // upfront so they ride into the PFI naturally on convert.
 const EXPORT_EXTRA_HEADERS = [
@@ -722,7 +723,33 @@ export class SalesDocImportService {
         const headers = [
             ...BASE_HEADERS,
             ...(includeExport ? EXPORT_EXTRA_HEADERS : []),
+            'customer_reference',
         ];
+
+        // Form lines carry product_id / vendor_id (not codes) — resolve the
+        // codes from those ids so the Product/Vendor code columns are never
+        // blank. (Leads have no vendor, so vendor_code legitimately stays empty.)
+        const exportLines = opts.lines || [];
+        const productCodeById = new Map<string, string>();
+        const vendorCodeById = new Map<string, string>();
+        if (exportLines.some((l) => !l.product_code && l.product_id)) {
+            const prods = await this.productRepository.findByCompanyId(companyId);
+            for (const p of prods as any[])
+                productCodeById.set(p._id.toString(), p.code || '');
+        }
+        if (exportLines.some((l) => !l.vendor_code && l.vendor_id)) {
+            const vens = await this.vendorRepository.findByCompanyId(companyId);
+            for (const v of vens as any[])
+                vendorCodeById.set(v._id.toString(), v.vendor_code || '');
+        }
+        const resolveProductCode = (l: SalesDocExportLineDto): string =>
+            l.product_code ||
+            (l.product_id ? productCodeById.get(String(l.product_id)) : '') ||
+            '';
+        const resolveVendorCode = (l: SalesDocExportLineDto): string =>
+            l.vendor_code ||
+            (l.vendor_id ? vendorCodeById.get(String(l.vendor_id)) : '') ||
+            '';
 
         // Convention (mirrors the product master sample sheet):
         //   header row has repeated literal "rebate" and "expense" columns.
@@ -771,9 +798,8 @@ export class SalesDocImportService {
 
         const dataAoa = (opts.lines || []).map((l, i) => {
             const scalars: any[] = [
-                l.product_code || '',
-                l.vendor_code || '',
-                (l as any).customer_reference || '',
+                resolveProductCode(l),
+                resolveVendorCode(l),
                 l.qty ?? '',
                 l.unit || '',
                 l.unit_price ?? '',
@@ -789,6 +815,9 @@ export class SalesDocImportService {
                     l.package_count ?? '',
                 );
             }
+            // customer_reference is the last scalar column — kept in lock-step
+            // with the header order above (after package_count).
+            scalars.push((l as any).customer_reference || '');
             const rebs = rebateCodesPerLine[i] || [];
             const exps = expenseCodesPerLine[i] || [];
             const rebCells = Array.from(

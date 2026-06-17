@@ -80,7 +80,7 @@ export class SalesDocImportAdminController {
             includeComputed: false,
             includeReadme: true,
         });
-        const fname = `${body.docType}-import-sample.xlsx`;
+        const fname = `${this.filenamePrefix(body.docType)}-import-sample.xlsx`;
         res.setHeader(
             'Content-Type',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -133,8 +133,9 @@ export class SalesDocImportAdminController {
                 return 'quotation';
             case ENUM_SALES_DOC_TYPE.PFI:
                 return 'pfi';
+            // The "po" doc type is the Sales Order module — name its files "so".
             case ENUM_SALES_DOC_TYPE.PO:
-                return 'po';
+                return 'so';
             default:
                 return 'sales-doc';
         }
