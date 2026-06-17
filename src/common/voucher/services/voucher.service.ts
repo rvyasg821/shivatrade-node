@@ -6,6 +6,20 @@ import {
     ENUM_VOUCHER_DOC_TYPE,
     VOUCHER_DOC_CONFIG,
 } from '../enums/voucher-doc-type.enum';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
+
+// Per-module voucher prefix override fields on company settings, keyed by
+// doc type. When set, replaces the leading company prefix for that document.
+const PREFIX_FIELD_BY_DOC: Partial<Record<ENUM_VOUCHER_DOC_TYPE, string>> = {
+    [ENUM_VOUCHER_DOC_TYPE.LEAD]: 'lead_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.RFQ]: 'rfq_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.QUOTATION]: 'quotation_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER]: 'sales_order_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT]: 'invoice_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: 'po_vendor_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.GRN]: 'grn_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.DEBIT_NOTE]: 'debit_note_voucher_prefix',
+};
 
 @Injectable()
 export class VoucherService {
@@ -13,8 +27,33 @@ export class VoucherService {
 
     constructor(
         @InjectDatabaseConnection()
-        private readonly dataSource: DataSource
+        private readonly dataSource: DataSource,
+        private readonly companySettingsRepository: CompanySettingsRepository
     ) {}
+
+    /**
+     * Company-configured per-module prefix override (the company-wide default
+     * settings row, location_id = null). Best-effort: any lookup failure falls
+     * back to the caller-supplied company prefix (current behaviour).
+     */
+    private async resolvePrefixOverride(
+        companyId: string,
+        docType: ENUM_VOUCHER_DOC_TYPE
+    ): Promise<string | null> {
+        const field = PREFIX_FIELD_BY_DOC[docType];
+        if (!field) return null;
+        try {
+            const rows: any[] = await this.companySettingsRepository.findAll({
+                company_id: companyId,
+            } as any);
+            const setting =
+                (rows || []).find((r) => !r.location_id) || (rows || [])[0];
+            const val = setting?.[field];
+            return val && String(val).trim() ? String(val).trim() : null;
+        } catch {
+            return null;
+        }
+    }
 
     /**
      * Returns a formatted voucher number per ShivaTrades sheet, e.g.
@@ -35,7 +74,12 @@ export class VoucherService {
     ): Promise<string> {
         const fy = this.getIndianFY(asOfDate || new Date());
         const cfg = VOUCHER_DOC_CONFIG[docType];
-        const cleanCompanyPrefix = (companyPrefix || '').trim().toUpperCase() || 'CO';
+        const overridePrefix = await this.resolvePrefixOverride(
+            companyId,
+            docType
+        );
+        const cleanCompanyPrefix =
+            (overridePrefix || companyPrefix || '').trim().toUpperCase() || 'CO';
 
         const counter = await this.dataSource.transaction(async (manager) => {
             const repo = manager.getRepository(VoucherSequenceEntity);

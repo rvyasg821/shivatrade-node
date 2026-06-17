@@ -454,8 +454,15 @@ export class GrnService {
 
     async softDelete(companyId: string, grnId: string): Promise<void> {
         const grn: any = await this.getOrThrow(companyId, grnId);
+        const wasConfirmed = grn.status === ENUM_GRN_STATUS.CONFIRMED;
+        const povId = grn.po_vendor_id ? grn.po_vendor_id.toString() : null;
         grn.soft_delete = true;
         await this.grnRepository.save(grn);
+        // Deleting a confirmed GRN un-receives its quantities → recompute the
+        // POV's received qty (and reopen it if it had been closed).
+        if (wasConfirmed && povId) {
+            await this.recomputePovFromGrns(companyId, povId);
+        }
     }
 
     // ─── List / count / stats ────────────────────────────────────────────
