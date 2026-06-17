@@ -144,6 +144,15 @@ export class CompanySettingsService {
             employee_code_mode: s.employee_code_mode || 'manual',
             employee_code_prefix: s.employee_code_prefix || '',
             employee_code_next_seq: s.employee_code_next_seq || 1,
+            // Per-module voucher prefixes
+            lead_voucher_prefix: s.lead_voucher_prefix || '',
+            rfq_voucher_prefix: s.rfq_voucher_prefix || '',
+            quotation_voucher_prefix: s.quotation_voucher_prefix || '',
+            sales_order_voucher_prefix: s.sales_order_voucher_prefix || '',
+            invoice_voucher_prefix: s.invoice_voucher_prefix || '',
+            po_vendor_voucher_prefix: s.po_vendor_voucher_prefix || '',
+            grn_voucher_prefix: s.grn_voucher_prefix || '',
+            debit_note_voucher_prefix: s.debit_note_voucher_prefix || '',
             // Branding
             logo_url: s.logo_url,
             company_display_name: s.company_display_name,

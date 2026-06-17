@@ -134,6 +134,47 @@ export class CompanySettingsRequestDto {
     @Min(1)
     employee_code_next_seq?: number;
 
+    // ── Document voucher prefixes (per-module) ──
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    lead_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    rfq_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    quotation_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    sales_order_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    invoice_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    po_vendor_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    grn_voucher_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    debit_note_voucher_prefix?: string;
+
     // ── Branding ──
     @ApiPropertyOptional()
     @IsOptional()

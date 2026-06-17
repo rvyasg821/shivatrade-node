@@ -88,6 +88,33 @@ export class CompanySettingsEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', default: 1 })
     employee_code_next_seq: number;
 
+    // ── Document voucher prefixes (per-module override of the company prefix) ──
+    // When set, replaces the leading company prefix for that document type's
+    // voucher number (e.g. "SHIVA/SO/0001/2026-27"). Resolved by VoucherService.
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    lead_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    rfq_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    quotation_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    sales_order_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    invoice_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    po_vendor_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    grn_voucher_prefix: string;
+
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    debit_note_voucher_prefix: string;
+
     // ── Branding ──
     @Column({ type: 'varchar', nullable: true })
     logo_url: string;

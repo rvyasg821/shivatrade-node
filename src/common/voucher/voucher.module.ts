@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { VoucherRepositoryModule } from './repository/voucher.repository.module';
 import { VoucherService } from './services/voucher.service';
+import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 
 /**
  * Global so any module (Quotation, PFI, PO, future Invoice/GRN/POV) can
@@ -8,7 +9,7 @@ import { VoucherService } from './services/voucher.service';
  */
 @Global()
 @Module({
-    imports: [VoucherRepositoryModule],
+    imports: [VoucherRepositoryModule, CompanySettingsRepositoryModule],
     providers: [VoucherService],
     exports: [VoucherService, VoucherRepositoryModule],
 })
