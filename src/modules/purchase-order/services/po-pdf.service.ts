@@ -421,10 +421,8 @@ function buildPoHtml(ctx: PoPdfContext): string {
             title: 'Sales Order',
             voucherNo: po.voucher_no || '-',
             metaLines: [
-                `Date: <span class="fw">${dateOnly(po.po_date) || '-'}</span> · Currency: <span class="fw">${esc(po.currency_symbol || po.currency_code || '₹')} ${esc(po.currency_code || '-')}</span>`,
-                sourceVoucher
-                    ? `${esc(sourceLabel)}: <span class="fw">${esc(sourceVoucher)}</span>`
-                    : '',
+                `Date: ${dateOnly(po.po_date) || '-'} · Currency: ${esc(po.currency_symbol || po.currency_code || '₹')} ${esc(po.currency_code || '-')}`,
+                sourceVoucher ? `${esc(sourceLabel)}: ${esc(sourceVoucher)}` : '',
             ].filter(Boolean),
             statusBadge: po.status || '',
         }
