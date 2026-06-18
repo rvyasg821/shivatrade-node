@@ -5,8 +5,6 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
 import { QuotationDoc } from '../repository/entities/quotation.entity';
@@ -41,6 +39,13 @@ import { RfqRepository } from '@modules/rfq/repository/repositories/rfq.reposito
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { PdfService } from '@common/pdf/pdf.service';
+import {
+    buildPdfLetterhead,
+    buildPdfHeaderTemplate,
+    buildPdfFooterTemplate,
+    loadCompanyLogoDataUri,
+} from '@common/pdf/pdf-letterhead.util';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
@@ -49,17 +54,6 @@ const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
 const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
-
-// Embed the ShivaTrade logo once at module load (same asset the PO/PFI PDFs
-// use) so Puppeteer doesn't need network access.
-const QUOTATION_LOGO_DATA_URI = (() => {
-    try {
-        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
-        return `data:image/png;base64,${fs.readFileSync(p).toString('base64')}`;
-    } catch {
-        return '';
-    }
-})();
 
 @Injectable()
 export class QuotationService {
@@ -87,7 +81,8 @@ export class QuotationService {
         private readonly poRepository: PurchaseOrderRepository,
         private readonly rfqRepository: RfqRepository,
         private readonly voucherService: VoucherService,
-        private readonly pdfService: PdfService
+        private readonly pdfService: PdfService,
+        private readonly companySettingsRepository: CompanySettingsRepository
     ) {}
 
     // ─── Reference validation ───────────────────────────────────────────
@@ -999,6 +994,12 @@ export class QuotationService {
         let company_phone: string | undefined;
         let company_iec: string | undefined;
         let company_address: string | undefined;
+        let company_gstin: string | undefined;
+        let company_pan: string | undefined;
+        let company_cin: string | undefined;
+        let company_website: string | undefined;
+        let company_footer_address: string | undefined;
+        let company_logo_url: string | undefined;
         try {
             const company: any = await this.companyService.findOneById(
                 row.company_id.toString()
@@ -1006,6 +1007,10 @@ export class QuotationService {
             company_name = company?.company_name;
             company_email = company?.email;
             company_iec = company?.iec;
+            company_pan = company?.pan || undefined;
+            company_cin = company?.cin || undefined;
+            company_website = company?.website || undefined;
+            company_footer_address = company?.footer_address || undefined;
             const ccc: any = company?.country_code;
             // Seller is India-based - if no dial code was stored, default to
             // +91 so the number never shows as bare digits.
@@ -1037,8 +1042,24 @@ export class QuotationService {
                     .filter(Boolean)
                     .join('\n');
             }
+            company_gstin =
+                (corp as any)?.gstin || company?.tax_number || undefined;
         } catch {
             // leave seller fields undefined - the header degrades gracefully
+        }
+
+        // Letterhead logo — from company-settings (same source as the PDF).
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: row.company_id.toString(),
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            company_logo_url = setting?.logo_url || undefined;
+        } catch {
+            company_logo_url = undefined;
         }
 
         // Resolve the bill-to address for the document header.
@@ -1127,6 +1148,12 @@ export class QuotationService {
             company_phone,
             company_iec,
             company_address,
+            company_gstin,
+            company_pan,
+            company_cin,
+            company_website,
+            company_footer_address,
+            company_logo_url,
             customer_name: full.customer_name,
             customer_contact_name: full.customer_contact_name,
             customer_email: full.customer_contact_email,
@@ -1156,10 +1183,29 @@ export class QuotationService {
         const companyId = (row as any).company_id?.toString();
         let companyGstin = '';
         let signatory = '';
+        let footerAddress = '';
+        // Footer identity line — GSTIN · PAN · CIN · IEC · website.
+        let footerIdLine = '';
+        // Company logo for the shared letterhead — from company-settings
+        // (falls back to the bundled brand logo when none is set).
+        let logoDataUri = '';
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: companyId,
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            logoDataUri = loadCompanyLogoDataUri(setting?.logo_url);
+        } catch {
+            logoDataUri = loadCompanyLogoDataUri();
+        }
         try {
             const company: any =
                 await this.companyService.findOneById(companyId);
             signatory = company?.authorised_signatory_name || '';
+            footerAddress = company?.footer_address || '';
             const addresses =
                 await this.companyAddressRepository.findByCompanyId(companyId);
             const corp: any =
@@ -1170,6 +1216,15 @@ export class QuotationService {
                 (addresses || []).find((a: any) => a.is_default) ||
                 (addresses || [])[0];
             companyGstin = corp?.gstin || company?.tax_number || '';
+            footerIdLine = [
+                companyGstin ? `GSTIN: ${companyGstin}` : '',
+                company?.pan ? `PAN: ${company.pan}` : '',
+                company?.cin ? `CIN: ${company.cin}` : '',
+                company?.iec ? `IEC: ${company.iec}` : '',
+                company?.website || '',
+            ]
+                .filter(Boolean)
+                .join('  ·  ');
         } catch {
             // graceful — degrades to a name-only seller block
         }
@@ -1186,13 +1241,22 @@ export class QuotationService {
             signatory,
             sourceVoucher,
             sourceLabel,
+            logoDataUri,
         });
         const buffer = await this.pdfService.generateFromHtml(html, {
             format: 'A4',
             margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
             displayHeaderFooter: true,
-            headerTemplate: `<div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;display:flex;justify-content:space-between;align-items:center;"><span>${this.esc(data.company_name || '')}</span><span><strong style="color:#1f2937">QUOTATION</strong> · ${this.esc(data.voucher_no || '')}</span></div>`,
-            footerTemplate: `<div style="font-size:8px;width:100%;padding:0 12mm;color:#6b7280;display:flex;justify-content:space-between;align-items:center;"><span>${this.esc(data.voucher_no || '')}</span><span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
+            headerTemplate: buildPdfHeaderTemplate({
+                companyName: data.company_name,
+                docLabel: 'QUOTATION',
+                voucherNo: data.voucher_no,
+            }),
+            footerTemplate: buildPdfFooterTemplate({
+                voucherNo: data.voucher_no,
+                addressLine: footerAddress,
+                idLine: footerIdLine,
+            }),
         });
         const safe = (data.voucher_no || id)
             .replace(/[\\/]+/g, '_')
@@ -1214,6 +1278,7 @@ export class QuotationService {
             signatory?: string;
             sourceVoucher?: string;
             sourceLabel?: string;
+            logoDataUri?: string;
         }
     ): string {
         const sym = q.currency_symbol || q.currency_code || '₹';
@@ -1269,6 +1334,32 @@ export class QuotationService {
                 : '',
         ].join('');
 
+        // Shared letterhead — logo + company identity (from the company
+        // profile) on the left, document meta on the right. Reused across
+        // sales-doc PDFs via @common/pdf/pdf-letterhead.util.
+        const letterhead = buildPdfLetterhead(
+            {
+                logoDataUri: extras.logoDataUri,
+                name: q.company_name,
+                // Address + tax IDs (GSTIN/PAN/CIN/IEC) + website now print
+                // in the PDF footer, so the header stays to logo + name +
+                // phone + email only.
+                phone: q.company_phone,
+                email: q.company_email,
+            },
+            {
+                title: 'Quotation',
+                voucherNo: q.voucher_no || '-',
+                metaLines: [
+                    `Date: <span class="fw">${dateOnly(q.quotation_date)}</span> · Currency: <span class="fw">${this.esc(sym)} ${this.esc(q.currency_code || '-')}</span>`,
+                    extras.sourceVoucher
+                        ? `${this.esc(extras.sourceLabel || 'Source')}: <span class="fw">${this.esc(extras.sourceVoucher)}</span>`
+                        : '',
+                ].filter(Boolean),
+                statusBadge: q.status || '',
+            }
+        );
+
         // Layout / CSS reuse the Sales Order PDF (po-pdf.service) so all
         // sales-doc PDFs share one professional letterhead format.
         return `<!DOCTYPE html><html><head><meta charset="utf-8" />
@@ -1281,7 +1372,7 @@ export class QuotationService {
   .qd-title { font-size: 16px; font-weight: 600; letter-spacing: 2px; margin: 0; color: #1f2937; text-transform: uppercase; }
   .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
   .status-badge { display: inline-block; background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; padding: 2px 9px; border-radius: 999px; font-size: 9px; font-weight: 600; text-transform: capitalize; letter-spacing: 0.2px; margin-top: 5px; }
-  .party-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .party-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
   .label { text-transform: uppercase; color: #6b7280; font-weight: 600; font-size: 8.5px; letter-spacing: 0.6px; margin-bottom: 5px; }
   .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
   .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
@@ -1301,27 +1392,9 @@ export class QuotationService {
 </style></head>
 <body>
 <div class="doc">
-  <div class="qd-header">
-    <div>${QUOTATION_LOGO_DATA_URI ? `<img src="${QUOTATION_LOGO_DATA_URI}" alt="logo" style="height:56px;display:block" />` : ''}</div>
-    <div style="text-align:right">
-      <div class="qd-title">Quotation</div>
-      <div class="voucher">#${this.esc(q.voucher_no || '-')}</div>
-      <div class="voucher">Date: <span class="fw">${dateOnly(q.quotation_date)}</span> · Currency: <span class="fw">${this.esc(sym)} ${this.esc(q.currency_code || '-')}</span></div>
-      ${extras.sourceVoucher ? `<div class="voucher">${this.esc(extras.sourceLabel || 'Source')}: <span class="fw">${this.esc(extras.sourceVoucher)}</span></div>` : ''}
-      ${q.status ? `<span class="status-badge">${this.esc(q.status)}</span>` : ''}
-    </div>
-  </div>
+  ${letterhead}
 
   <div class="party-grid">
-    <div>
-      <div class="label">Seller</div>
-      <div class="party-name">${this.esc(q.company_name || '-')}</div>
-      ${q.company_address ? `<div class="party-line" style="white-space:pre-line">${preLine(q.company_address)}</div>` : ''}
-      ${q.company_phone ? `<div class="party-line">${this.esc(q.company_phone)}</div>` : ''}
-      ${q.company_email ? `<div class="party-line">${this.esc(q.company_email)}</div>` : ''}
-      ${q.company_iec ? `<div class="party-line muted">IEC: ${this.esc(q.company_iec)}</div>` : ''}
-      ${extras.companyGstin ? `<div class="party-line muted">GSTIN: ${this.esc(extras.companyGstin)}</div>` : ''}
-    </div>
     <div>
       <div class="label">Billed To</div>
       <div class="party-name">${this.esc(q.customer_name || '-')}</div>

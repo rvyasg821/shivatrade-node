@@ -12,6 +12,8 @@ import { ProductRepositoryModule } from '@modules/product/repository/product.rep
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
+// Company logo for the shared PDF letterhead lives on company-settings.
+import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 
 @Module({
     imports: [
@@ -22,6 +24,7 @@ import { TrackingEventRepositoryModule } from '@modules/tracking-event/repositor
         VendorRepositoryModule,
         CompanyRepositoryModule,
         TrackingEventRepositoryModule,
+        CompanySettingsRepositoryModule,
     ],
     providers: [GrnService, DebitNoteService],
     exports: [GrnService, DebitNoteService, GrnRepositoryModule],

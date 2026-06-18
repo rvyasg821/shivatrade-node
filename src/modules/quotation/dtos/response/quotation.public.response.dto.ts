@@ -42,6 +42,14 @@ export class QuotationPublicResponseDto {
     company_iec?: string;
     /** Seller corporate address — newline-separated lines. */
     company_address?: string;
+    /** Letterhead logo (resolved URL) + footer identity fields, so the
+     *  web preview can render the same header/footer as the server PDF. */
+    company_logo_url?: string;
+    company_gstin?: string;
+    company_pan?: string;
+    company_cin?: string;
+    company_website?: string;
+    company_footer_address?: string;
 
     /** Buyer. */
     customer_name?: string;

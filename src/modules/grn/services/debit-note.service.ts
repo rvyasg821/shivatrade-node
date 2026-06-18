@@ -27,9 +27,17 @@ import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositori
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
+import {
+    buildPdfLetterhead,
+    buildPdfHeaderTemplate,
+    buildPdfFooterTemplate,
+    loadCompanyLogoDataUri,
+} from '@common/pdf/pdf-letterhead.util';
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 
@@ -65,6 +73,8 @@ export class DebitNoteService {
         private readonly productRepository: ProductRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly companyRepository: CompanyRepository,
+        private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository
@@ -589,9 +599,70 @@ export class DebitNoteService {
     ): Promise<{ buffer: Buffer; filename: string }> {
         const data = await this.mapGet(companyId, dnId);
         const company: any = await this.companyRepository.findOneById(companyId);
-        const html = this.renderHtml(data, company);
+
+        // Letterhead logo — from company-settings (same source as the other
+        // sales/purchase PDFs), falling back to the bundled brand logo.
+        let logoDataUri = '';
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: companyId,
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            logoDataUri = loadCompanyLogoDataUri(setting?.logo_url);
+        } catch {
+            logoDataUri = loadCompanyLogoDataUri();
+        }
+
+        // GSTIN — prefer the corporate address, fall back to tax number.
+        let gstin = company?.tax_number || '';
+        try {
+            const addresses =
+                await this.companyAddressRepository.findByCompanyId(companyId);
+            const corp: any =
+                (addresses || []).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a: any) => a.type === 'corporate') ||
+                (addresses || []).find((a: any) => a.is_default) ||
+                (addresses || [])[0];
+            gstin = corp?.gstin || company?.tax_number || '';
+        } catch {
+            /* graceful */
+        }
+
+        const idLine = [
+            gstin ? `GSTIN: ${gstin}` : '',
+            company?.pan ? `PAN: ${company.pan}` : '',
+            company?.cin ? `CIN: ${company.cin}` : '',
+            company?.iec ? `IEC: ${company.iec}` : '',
+            company?.website || '',
+        ]
+            .filter(Boolean)
+            .join('  ·  ');
+
+        const html = this.renderHtml(data, company, logoDataUri);
         const buffer = await this.pdfService.generateFromHtml(html, {
             format: 'A4',
+            margin: {
+                top: '18mm',
+                right: '12mm',
+                bottom: '18mm',
+                left: '12mm',
+            },
+            displayHeaderFooter: true,
+            headerTemplate: buildPdfHeaderTemplate({
+                companyName: company?.company_name,
+                docLabel: 'DEBIT NOTE',
+                voucherNo: data.voucher_no,
+            }),
+            footerTemplate: buildPdfFooterTemplate({
+                voucherNo: data.voucher_no,
+                addressLine: company?.footer_address || '',
+                idLine,
+            }),
         });
         const safe = (data.voucher_no || dnId).replace(/[^A-Za-z0-9_-]+/g, '_');
         return { buffer, filename: `DN-${safe}.pdf` };
@@ -614,7 +685,26 @@ export class DebitNoteService {
             .replace(/>/g, '&gt;');
     }
 
-    private renderHtml(dn: DebitNoteGetResponseDto, company: any): string {
+    private renderHtml(
+        dn: DebitNoteGetResponseDto,
+        company: any,
+        logoDataUri = ''
+    ): string {
+        // Shared letterhead — logo + company identity in the header; address
+        // + tax IDs print in the footer (via the running footer template).
+        const letterhead = buildPdfLetterhead(
+            {
+                logoDataUri,
+                name: company?.company_name,
+                phone: company?.mobile,
+                email: company?.email,
+            },
+            {
+                title: 'Debit Note',
+                voucherNo: dn.voucher_no || '-',
+                statusBadge: (dn as any).status || '',
+            }
+        );
         const cur = dn.currency_code ? ` ${this.esc(dn.currency_code)}` : '';
         const money = (v: any): string => {
             const n = Number(v);
@@ -651,8 +741,8 @@ export class DebitNoteService {
           tfoot td{font-weight:bold;}
           .muted{color:#666;}
         </style></head><body>
-          <h1>${this.esc(company?.company_name || 'Company')}</h1>
-          <div class="muted">Debit Note (Vendor Return)</div>
+          ${letterhead}
+          <div class="muted" style="margin-bottom:4px">Vendor Return</div>
           <div style="margin-top:8px">
             <strong>Debit Note No:</strong> ${this.esc(dn.voucher_no || '-')} &nbsp;
             <strong>Date:</strong> ${this.esc(dn.dn_date || '-')}<br/>

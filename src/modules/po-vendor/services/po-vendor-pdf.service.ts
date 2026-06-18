@@ -1,27 +1,24 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { Injectable } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
+import {
+    buildPdfLetterhead,
+    buildPdfHeaderTemplate,
+    buildPdfFooterTemplate,
+    loadCompanyLogoDataUri,
+} from '@common/pdf/pdf-letterhead.util';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { PoVendorGetResponseDto } from '../dtos/response/po-vendor.get.response.dto';
 
 /**
- * Renders the POV (PO Vendor / dispatch slip) PDF using the same
- * neutral / professional layout as the PO and PFI PDFs: white doc,
- * hairline borders, 3-column party grid, only Grand Total in totals.
+ * Renders the POV (PO Vendor / dispatch advice) PDF. Header/footer use the
+ * shared letterhead (logo + company name/phone/email in the header; address
+ * + GSTIN · PAN · CIN · IEC · website in the footer) so all sales/purchase
+ * doc PDFs match.
  */
-const LOGO_DATA_URI: string = (() => {
-    try {
-        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
-        const buf = fs.readFileSync(p);
-        return `data:image/png;base64,${buf.toString('base64')}`;
-    } catch {
-        return '';
-    }
-})();
 
 @Injectable()
 export class PoVendorPdfService {
@@ -29,6 +26,7 @@ export class PoVendorPdfService {
         private readonly pdfService: PdfService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly vendorAddressRepository: VendorAddressRepository,
         private readonly productRepository: ProductRepository
     ) {}
@@ -109,6 +107,22 @@ export class PoVendorPdfService {
         }
         if (!companyGstin && company?.tax_number) {
             companyGstin = company.tax_number;
+        }
+
+        // Letterhead logo — from company-settings (same source as the other
+        // sales/purchase PDFs), falling back to the bundled brand logo.
+        let logoDataUri = '';
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: companyId,
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            logoDataUri = loadCompanyLogoDataUri(setting?.logo_url);
+        } catch {
+            logoDataUri = loadCompanyLogoDataUri();
         }
 
         // Vendor address (preferred → vendor_address_id; fallback → default).
@@ -210,11 +224,17 @@ export class PoVendorPdfService {
 
         return {
             pov,
+            logoDataUri,
             company: {
                 name: company?.company_name || '',
                 email: company?.email || '',
                 phone: company?.mobile || '',
                 gstin: companyGstin,
+                iec: company?.iec || '',
+                pan: company?.pan || '',
+                cin: company?.cin || '',
+                website: company?.website || '',
+                footer_address: company?.footer_address || '',
                 address: companyAddress,
                 signatory: company?.authorised_signatory_name || '',
             },
@@ -238,11 +258,17 @@ export class PoVendorPdfService {
 
 interface PovPdfContext {
     pov: PoVendorGetResponseDto;
+    logoDataUri?: string;
     company: {
         name: string;
         email: string;
         phone: string;
         gstin?: string;
+        iec?: string;
+        pan?: string;
+        cin?: string;
+        website?: string;
+        footer_address?: string;
         address?: string;
         signatory?: string;
     };
@@ -308,26 +334,53 @@ function joinAddress(a: {
 }
 
 function buildHeaderTemplate(ctx: PovPdfContext): string {
-    return `
-    <div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;
-                display:flex;justify-content:space-between;align-items:center;">
-      <span>${esc(ctx.company.name)}</span>
-      <span><strong style="color:#1f2937">DISPATCH ADVICE</strong> · ${esc(ctx.pov.voucher_no || '')}</span>
-    </div>`;
+    return buildPdfHeaderTemplate({
+        companyName: ctx.company.name,
+        docLabel: 'DISPATCH ADVICE',
+        voucherNo: ctx.pov.voucher_no || '',
+    });
+}
+
+// Footer identity line — GSTIN · PAN · CIN · IEC · website.
+function buildFooterIdLine(ctx: PovPdfContext): string {
+    return [
+        ctx.company.gstin ? `GSTIN: ${ctx.company.gstin}` : '',
+        ctx.company.pan ? `PAN: ${ctx.company.pan}` : '',
+        ctx.company.cin ? `CIN: ${ctx.company.cin}` : '',
+        ctx.company.iec ? `IEC: ${ctx.company.iec}` : '',
+        ctx.company.website || '',
+    ]
+        .filter(Boolean)
+        .join('  ·  ');
 }
 
 function buildFooterTemplate(ctx: PovPdfContext): string {
-    return `
-    <div style="font-size:8px;width:100%;padding:0 12mm;color:#6b7280;
-                display:flex;justify-content:space-between;align-items:center;">
-      <span>${esc(ctx.pov.voucher_no || '')}</span>
-      <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
-    </div>`;
+    return buildPdfFooterTemplate({
+        voucherNo: ctx.pov.voucher_no || '',
+        addressLine: ctx.company.footer_address || '',
+        idLine: buildFooterIdLine(ctx),
+    });
 }
 
 function buildPovHtml(ctx: PovPdfContext): string {
     const { pov, company, vendor, inrTotal, gstInrTotal, chargesInrTotal, expensesSnapshot } = ctx;
     const lines = pov.lines || [];
+
+    // Shared letterhead — logo + company identity (name/phone/email) on the
+    // left, doc meta on the right. Address + tax IDs print in the footer.
+    const letterhead = buildPdfLetterhead(
+        {
+            logoDataUri: ctx.logoDataUri,
+            name: company.name,
+            phone: company.phone,
+            email: company.email,
+        },
+        {
+            title: 'Dispatch Advice',
+            voucherNo: pov.voucher_no || '-',
+            statusBadge: pov.status || '',
+        }
+    );
     const sym = pov.currency_symbol || pov.currency_code || '₹';
     const rate = Number(pov.exchange_rate) || 1;
     const subtotalCcy = inrTotal * rate;
@@ -434,7 +487,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
   .company-name { font-weight: 600; color: #1f2937; font-size: 11.5px; margin-top: 4px; }
   .party-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 22px;
     margin-bottom: 18px;
   }
@@ -536,26 +589,9 @@ function buildPovHtml(ctx: PovPdfContext): string {
 <body>
 <div class="doc">
 
-  <div class="qd-header">
-    <div>
-      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:56px;display:block" />` : ''}
-    </div>
-    <div style="text-align:right">
-      <div class="qd-title">Dispatch Advice</div>
-      <div class="voucher">#${esc(pov.voucher_no || '-')}</div>
-      ${pov.status ? `<span class="status-badge">${esc(pov.status)}</span>` : ''}
-    </div>
-  </div>
+  ${letterhead}
 
   <div class="party-grid">
-    <div>
-      <div class="label">Buyer</div>
-      <div class="party-name">${esc(company.name || '-')}</div>
-      ${company.address ? `<div class="party-line" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
-      ${company.phone ? `<div class="party-line">${esc(company.phone)}</div>` : ''}
-      ${company.email ? `<div class="party-line">${esc(company.email)}</div>` : ''}
-      ${company.gstin ? `<div class="party-line muted">GSTIN: ${esc(company.gstin)}</div>` : ''}
-    </div>
     <div>
       <div class="label">Vendor</div>
       <div class="party-name">${esc(vendor.name || '-')}</div>

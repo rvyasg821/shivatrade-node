@@ -19,6 +19,8 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 import { PfiRepositoryModule } from '@modules/pfi/repository/pfi.repository.module';
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 import { RfqRepositoryModule } from '@modules/rfq/repository/rfq.repository.module';
+// Company logo for the shared PDF letterhead lives on company-settings.
+import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 
 @Module({
     imports: [
@@ -35,6 +37,7 @@ import { RfqRepositoryModule } from '@modules/rfq/repository/rfq.repository.modu
         PfiRepositoryModule,
         PurchaseOrderRepositoryModule,
         RfqRepositoryModule,
+        CompanySettingsRepositoryModule,
     ],
     providers: [QuotationService],
     exports: [QuotationRepositoryModule, QuotationService],

@@ -14,6 +14,8 @@ import { QuotationModule } from '@modules/quotation/quotation.module';
 import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
+// Company logo for the shared PDF letterhead lives on company-settings.
+import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 
 @Module({
     imports: [
@@ -28,6 +30,7 @@ import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
         PfiModule,
         PriceListModule,
         PoVendorModule,
+        CompanySettingsRepositoryModule,
     ],
     providers: [PurchaseOrderService, PoPdfService],
     exports: [PurchaseOrderRepositoryModule, PurchaseOrderService, PoPdfService],

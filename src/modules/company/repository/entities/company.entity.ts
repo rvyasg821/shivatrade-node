@@ -107,6 +107,11 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 150, nullable: true })
     authorised_signatory_name?: string;
 
+    /** Single-line address printed in the footer of document PDFs
+     *  (Quotation / Invoice / etc.). Edited on the Company Profile page. */
+    @Column({ type: 'varchar', length: 255, nullable: true })
+    footer_address?: string;
+
     @Column({ type: 'varchar', length: 50, nullable: true })
     paye_reference?: string;
 

@@ -29,9 +29,17 @@ import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repo
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
+import {
+    buildPdfLetterhead,
+    buildPdfHeaderTemplate,
+    buildPdfFooterTemplate,
+    loadCompanyLogoDataUri,
+} from '@common/pdf/pdf-letterhead.util';
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 
@@ -54,6 +62,8 @@ export class GrnService {
         private readonly productRepository: ProductRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly companyRepository: CompanyRepository,
+        private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository
@@ -777,9 +787,70 @@ export class GrnService {
     ): Promise<{ buffer: Buffer; filename: string }> {
         const data = await this.mapGet(companyId, grnId);
         const company: any = await this.companyRepository.findOneById(companyId);
-        const html = this.renderHtml(data, company);
+
+        // Letterhead logo — from company-settings (same source as the other
+        // sales/purchase PDFs), falling back to the bundled brand logo.
+        let logoDataUri = '';
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: companyId,
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            logoDataUri = loadCompanyLogoDataUri(setting?.logo_url);
+        } catch {
+            logoDataUri = loadCompanyLogoDataUri();
+        }
+
+        // GSTIN — prefer the corporate address, fall back to tax number.
+        let gstin = company?.tax_number || '';
+        try {
+            const addresses =
+                await this.companyAddressRepository.findByCompanyId(companyId);
+            const corp: any =
+                (addresses || []).find(
+                    (a: any) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a: any) => a.type === 'corporate') ||
+                (addresses || []).find((a: any) => a.is_default) ||
+                (addresses || [])[0];
+            gstin = corp?.gstin || company?.tax_number || '';
+        } catch {
+            /* graceful */
+        }
+
+        const idLine = [
+            gstin ? `GSTIN: ${gstin}` : '',
+            company?.pan ? `PAN: ${company.pan}` : '',
+            company?.cin ? `CIN: ${company.cin}` : '',
+            company?.iec ? `IEC: ${company.iec}` : '',
+            company?.website || '',
+        ]
+            .filter(Boolean)
+            .join('  ·  ');
+
+        const html = this.renderHtml(data, company, logoDataUri);
         const buffer = await this.pdfService.generateFromHtml(html, {
             format: 'A4',
+            margin: {
+                top: '18mm',
+                right: '12mm',
+                bottom: '18mm',
+                left: '12mm',
+            },
+            displayHeaderFooter: true,
+            headerTemplate: buildPdfHeaderTemplate({
+                companyName: company?.company_name,
+                docLabel: 'GOODS RECEIPT NOTE',
+                voucherNo: data.voucher_no,
+            }),
+            footerTemplate: buildPdfFooterTemplate({
+                voucherNo: data.voucher_no,
+                addressLine: company?.footer_address || '',
+                idLine,
+            }),
         });
         const safe = (data.voucher_no || grnId).replace(/[^A-Za-z0-9_-]+/g, '_');
         return { buffer, filename: `GRN-${safe}.pdf` };
@@ -802,7 +873,26 @@ export class GrnService {
             .replace(/>/g, '&gt;');
     }
 
-    private renderHtml(grn: GrnGetResponseDto, company: any): string {
+    private renderHtml(
+        grn: GrnGetResponseDto,
+        company: any,
+        logoDataUri = ''
+    ): string {
+        // Shared letterhead — logo + company identity in the header; address
+        // + tax IDs print in the footer (via the running footer template).
+        const letterhead = buildPdfLetterhead(
+            {
+                logoDataUri,
+                name: company?.company_name,
+                phone: company?.mobile,
+                email: company?.email,
+            },
+            {
+                title: 'Goods Receipt Note',
+                voucherNo: grn.voucher_no || '-',
+                statusBadge: (grn as any).status || '',
+            }
+        );
         const rows = grn.lines
             .map(
                 (l, i) => `<tr>
@@ -831,8 +921,7 @@ export class GrnService {
           th{background:#f4f5f7;}
           .muted{color:#666;}
         </style></head><body>
-          <h1>${this.esc(company?.company_name || 'Company')}</h1>
-          <div class="muted">Goods Receipt Note</div>
+          ${letterhead}
           <div style="margin-top:8px">
             <strong>GRN No:</strong> ${this.esc(grn.voucher_no || '-')} &nbsp;
             <strong>Date:</strong> ${this.esc(grn.grn_date || '-')}<br/>
