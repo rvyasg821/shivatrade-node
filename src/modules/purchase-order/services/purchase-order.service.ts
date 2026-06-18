@@ -25,6 +25,7 @@ import { CustomerContactRepository } from '@modules/customer/repository/reposito
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
@@ -73,6 +74,7 @@ export class PurchaseOrderService {
         private readonly customerAddressRepository: CustomerAddressRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly locationRepository: LocationRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
@@ -2109,12 +2111,23 @@ export class PurchaseOrderService {
         let company_phone: string | undefined;
         let company_address: string | undefined;
         let company_gstin: string | undefined;
+        let company_iec: string | undefined;
+        let company_pan: string | undefined;
+        let company_cin: string | undefined;
+        let company_website: string | undefined;
+        let company_footer_address: string | undefined;
+        let company_logo_url: string | undefined;
         try {
             const company: any = await this.companyService.findOneById(
                 row.company_id.toString()
             );
             company_name = company?.company_name;
             company_email = company?.email;
+            company_iec = company?.iec || undefined;
+            company_pan = company?.pan || undefined;
+            company_cin = company?.cin || undefined;
+            company_website = company?.website || undefined;
+            company_footer_address = company?.footer_address || undefined;
             const ccc: any = company?.country_code;
             company_phone = company?.mobile
                 ? ccc?.formatted ||
@@ -2140,6 +2153,20 @@ export class PurchaseOrderService {
             }
         } catch {
             // graceful
+        }
+
+        // Letterhead logo — from company-settings (same source as the PDF).
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: row.company_id.toString(),
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            company_logo_url = setting?.logo_url || undefined;
+        } catch {
+            company_logo_url = undefined;
         }
 
         // ── Buyer (customer) address ──
@@ -2177,6 +2204,12 @@ export class PurchaseOrderService {
             company_phone,
             company_address,
             company_gstin,
+            company_iec,
+            company_pan,
+            company_cin,
+            company_website,
+            company_footer_address,
+            company_logo_url,
             customer_address,
         };
     }

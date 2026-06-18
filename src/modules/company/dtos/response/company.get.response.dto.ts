@@ -262,6 +262,7 @@ export class CompanyGetResponseDto {
     // `default_po_delivery_address` retired — see refactor plan.
     @ApiProperty({ required: false, type: String }) default_terms?: string;
     @ApiProperty({ required: false, type: String }) authorised_signatory_name?: string;
+    @ApiProperty({ required: false, type: String }) footer_address?: string;
 
     // ── Multi-address & multi-bank ──
     @ApiProperty({ required: false, type: [CompanyAddressResponseDto] })

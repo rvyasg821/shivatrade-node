@@ -79,6 +79,7 @@ export interface ICompanyCreate {
     default_declaration_text?: string;
     default_terms?: string;
     authorised_signatory_name?: string;
+    footer_address?: string;
 }
 
 @Injectable()
@@ -258,6 +259,8 @@ export class CompanyService {
             repository.default_terms = data.default_terms;
         if (data.authorised_signatory_name !== undefined)
             repository.authorised_signatory_name = data.authorised_signatory_name;
+        if (data.footer_address !== undefined)
+            repository.footer_address = data.footer_address;
 
         return this.companyRepository.save(repository, options);
     }
@@ -809,6 +812,8 @@ export class CompanyService {
                     (company as any)?.default_terms || undefined,
                 authorised_signatory_name:
                     (company as any)?.authorised_signatory_name || undefined,
+                footer_address:
+                    (company as any)?.footer_address || undefined,
                 createdAt: company.createdAt,
                 updatedAt: company.updatedAt,
                 deletedAt: company.deletedAt,
@@ -860,6 +865,8 @@ export class CompanyService {
                     (company as any)?.default_terms || undefined,
                 authorised_signatory_name:
                     (company as any)?.authorised_signatory_name || undefined,
+                footer_address:
+                    (company as any)?.footer_address || undefined,
                 createdAt: company.createdAt,
                 updatedAt: company.updatedAt,
                 deletedAt: company.deletedAt,

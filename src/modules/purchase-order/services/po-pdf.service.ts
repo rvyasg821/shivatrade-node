@@ -1,29 +1,24 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { Injectable } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
+import {
+    buildPdfLetterhead,
+    buildPdfHeaderTemplate,
+    buildPdfFooterTemplate,
+    loadCompanyLogoDataUri,
+} from '@common/pdf/pdf-letterhead.util';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
 
 /**
- * Renders the PO PDF using the same neutral / professional layout as the
- * PFI PDF (white doc, hairline borders, 3-column party grid, only Grand
- * Total in totals). PO is a vendor-facing document — line and total
- * amounts are shown in INR since the line_total is stored in INR.
+ * Renders the Sales Order PDF. Header/footer use the shared letterhead
+ * (logo + company name/phone/email in the header; address + GSTIN · PAN ·
+ * CIN · IEC · website in the footer) so all sales-doc PDFs match.
  */
-const LOGO_DATA_URI: string = (() => {
-    try {
-        const p = path.resolve(process.cwd(), 'public', 'shivatrade-logo.png');
-        const buf = fs.readFileSync(p);
-        return `data:image/png;base64,${buf.toString('base64')}`;
-    } catch {
-        return '';
-    }
-})();
 
 @Injectable()
 export class PoPdfService {
@@ -31,6 +26,7 @@ export class PoPdfService {
         private readonly pdfService: PdfService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly vendorAddressRepository: VendorAddressRepository,
         private readonly customerAddressRepository: CustomerAddressRepository
@@ -112,6 +108,22 @@ export class PoPdfService {
         }
         if (!companyGstin && company?.tax_number) {
             companyGstin = company.tax_number;
+        }
+
+        // Letterhead logo — from company-settings (same source as the
+        // quotation PDF), falling back to the bundled brand logo.
+        let logoDataUri = '';
+        try {
+            const settingsRows: any[] =
+                await this.companySettingsRepository.findAll({
+                    company_id: companyId,
+                } as any);
+            const setting =
+                (settingsRows || []).find((r) => !r.location_id) ||
+                (settingsRows || [])[0];
+            logoDataUri = loadCompanyLogoDataUri(setting?.logo_url);
+        } catch {
+            logoDataUri = loadCompanyLogoDataUri();
         }
 
         // PO is multi-vendor at line level. Build the unique vendor list,
@@ -239,12 +251,17 @@ export class PoPdfService {
 
         return {
             po,
+            logoDataUri,
             company: {
                 name: company?.company_name || '',
                 email: company?.email || '',
                 phone: company?.mobile || '',
                 iec: company?.iec || '',
                 gstin: companyGstin,
+                pan: company?.pan || '',
+                cin: company?.cin || '',
+                website: company?.website || '',
+                footer_address: company?.footer_address || '',
                 address: companyAddress,
                 // Terms removed 2026-05-27 — STIPL client spec has no
                 // Terms block on PO PDFs. The text was moved to Invoice.
@@ -274,12 +291,17 @@ interface VendorBlock {
 
 interface PoPdfContext {
     po: PurchaseOrderGetResponseDto;
+    logoDataUri?: string;
     company: {
         name: string;
         email: string;
         phone: string;
         iec?: string;
         gstin?: string;
+        pan?: string;
+        cin?: string;
+        website?: string;
+        footer_address?: string;
         address?: string;
         terms?: string;
         signatory?: string;
@@ -347,26 +369,66 @@ function kv(label: string, value: any, full = false): string {
 }
 
 function buildHeaderTemplate(ctx: PoPdfContext): string {
-    return `
-    <div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;
-                display:flex;justify-content:space-between;align-items:center;">
-      <span>${esc(ctx.company.name)}</span>
-      <span><strong style="color:#1f2937">SALES ORDER</strong> · ${esc(ctx.po.voucher_no || '')}</span>
-    </div>`;
+    return buildPdfHeaderTemplate({
+        companyName: ctx.company.name,
+        docLabel: 'SALES ORDER',
+        voucherNo: ctx.po.voucher_no || '',
+    });
+}
+
+// Footer identity line — GSTIN · PAN · CIN · IEC · website.
+function buildFooterIdLine(ctx: PoPdfContext): string {
+    return [
+        ctx.company.gstin ? `GSTIN: ${ctx.company.gstin}` : '',
+        ctx.company.pan ? `PAN: ${ctx.company.pan}` : '',
+        ctx.company.cin ? `CIN: ${ctx.company.cin}` : '',
+        ctx.company.iec ? `IEC: ${ctx.company.iec}` : '',
+        ctx.company.website || '',
+    ]
+        .filter(Boolean)
+        .join('  ·  ');
 }
 
 function buildFooterTemplate(ctx: PoPdfContext): string {
-    return `
-    <div style="font-size:8px;width:100%;padding:0 12mm;color:#6b7280;
-                display:flex;justify-content:space-between;align-items:center;">
-      <span>${esc(ctx.po.voucher_no || '')}</span>
-      <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
-    </div>`;
+    return buildPdfFooterTemplate({
+        voucherNo: ctx.po.voucher_no || '',
+        addressLine: ctx.company.footer_address || '',
+        idLine: buildFooterIdLine(ctx),
+    });
 }
 
 function buildPoHtml(ctx: PoPdfContext): string {
     const { po, company, vendors, customer, inrTotal } = ctx;
     const lines = po.lines || [];
+
+    // Shared letterhead — logo + company identity (name/phone/email) on the
+    // left, doc meta on the right. Address + tax IDs print in the footer.
+    const sourceVoucher =
+        (po as any).pfi_voucher_no || (po as any).quotation_voucher_no || '';
+    const sourceLabel = (po as any).pfi_voucher_no
+        ? 'Source PFI'
+        : (po as any).quotation_voucher_no
+          ? 'Source Quote'
+          : '';
+    const letterhead = buildPdfLetterhead(
+        {
+            logoDataUri: ctx.logoDataUri,
+            name: company.name,
+            phone: company.phone,
+            email: company.email,
+        },
+        {
+            title: 'Sales Order',
+            voucherNo: po.voucher_no || '-',
+            metaLines: [
+                `Date: <span class="fw">${dateOnly(po.po_date) || '-'}</span> · Currency: <span class="fw">${esc(po.currency_symbol || po.currency_code || '₹')} ${esc(po.currency_code || '-')}</span>`,
+                sourceVoucher
+                    ? `${esc(sourceLabel)}: <span class="fw">${esc(sourceVoucher)}</span>`
+                    : '',
+            ].filter(Boolean),
+            statusBadge: po.status || '',
+        }
+    );
     // PO line totals are stored in INR; convert to the PO's customer
     // currency so the vendor sees USD/EUR/etc. like the PFI PDF.
     const sym = po.currency_symbol || po.currency_code || '₹';
@@ -463,7 +525,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
   .company-name { font-weight: 600; color: #1f2937; font-size: 11.5px; margin-top: 4px; }
   .party-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 22px;
     margin-bottom: 18px;
   }
@@ -562,41 +624,9 @@ function buildPoHtml(ctx: PoPdfContext): string {
 <body>
 <div class="doc">
 
-  <div class="qd-header">
-    <div>
-      ${LOGO_DATA_URI ? `<img src="${LOGO_DATA_URI}" alt="ShivaTrade" style="height:56px;display:block" />` : ''}
-    </div>
-    <div style="text-align:right">
-      <div class="qd-title">Sales Order</div>
-      <div class="voucher">#${esc(po.voucher_no || '-')}</div>
-      <div class="voucher">
-        Date: <span class="fw">${dateOnly(po.po_date) || '-'}</span>
-        · Currency: <span class="fw">${esc(sym)} ${esc(po.currency_code || '-')}</span>
-      </div>
-      ${
-        (po as any).pfi_voucher_no || (po as any).quotation_voucher_no
-          ? `<div class="voucher">${
-              (po as any).pfi_voucher_no ? 'Source PFI' : 'Source Quote'
-            }: <span class="fw">${esc(
-              (po as any).pfi_voucher_no ||
-                (po as any).quotation_voucher_no ||
-                '',
-            )}</span></div>`
-          : ''
-      }
-      ${po.status ? `<span class="status-badge">${esc(po.status)}</span>` : ''}
-    </div>
-  </div>
+  ${letterhead}
 
   <div class="party-grid">
-    <div>
-      <div class="label">Seller</div>
-      <div class="party-name">${esc(company.name || '-')}</div>
-      ${company.address ? `<div class="party-line" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
-      ${company.phone ? `<div class="party-line">${esc(company.phone)}</div>` : ''}
-      ${company.email ? `<div class="party-line">${esc(company.email)}</div>` : ''}
-      ${company.gstin ? `<div class="party-line muted">GSTIN: ${esc(company.gstin)}</div>` : ''}
-    </div>
     <div>
       <div class="label">Buyer</div>
       <div class="party-name">${esc(customer.name || '-')}</div>
