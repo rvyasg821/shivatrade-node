@@ -130,6 +130,10 @@ export class SalesDocImportService {
         rawRows: Array<Record<string, any>>,
         existingKeys: SalesDocResolveExistingKeyDto[],
     ): Promise<SalesDocResolveResponseDto> {
+        // Leads are a simple requirement list — vendor / discount / margin /
+        // rebate / expense / weight columns are ignored even if the sheet has
+        // them (matches the reduced Lead import template).
+        const isLead = docType === ENUM_SALES_DOC_TYPE.LEAD;
         const [products, vendors, rebateMasters, expenseMasters] =
             await Promise.all([
                 this.productRepository.findByCompanyId(companyId),
@@ -524,13 +528,29 @@ export class SalesDocImportService {
             };
             if (docHasExportFields(docType)) {
                 line.hs_code = get('hs_code') || product.hsn_code || '';
-                line.net_weight_kg =
-                    numOrUndef(get('net_weight_kg')) ??
-                    num(product.net_weight_per_unit) * (qty || 0);
-                line.gross_weight_kg =
-                    numOrUndef(get('gross_weight_kg')) ??
-                    num(product.gross_weight_per_unit) * (qty || 0);
-                line.package_count = numOrUndef(get('package_count')) ?? 0;
+                if (!isLead) {
+                    line.package_count = numOrUndef(get('package_count')) ?? 0;
+                    line.net_weight_kg =
+                        numOrUndef(get('net_weight_kg')) ??
+                        num(product.net_weight_per_unit) * (qty || 0);
+                    line.gross_weight_kg =
+                        numOrUndef(get('gross_weight_kg')) ??
+                        num(product.gross_weight_per_unit) * (qty || 0);
+                }
+            }
+
+            // Lead: simple requirement line. Capture part_no; drop vendor /
+            // discount / margin / gst / package / rebate / expense so any values
+            // the user left in those (removed) columns are ignored.
+            if (isLead) {
+                (line as any).part_no = get('part_no') || product.part_no || '';
+                line.vendor_id = undefined;
+                line.vendor_code = undefined;
+                line.discount_pct = 0;
+                line.tax_pct = 0;
+                line.margin_pct = 0;
+                line.product_rebates_snapshot = [];
+                line.product_expenses_snapshot = [];
             }
 
             // ── Classify status ──
@@ -596,6 +616,8 @@ export class SalesDocImportService {
                     product_code: 'PRD-001',
                     vendor_code: 'VEN-001',
                     customer_reference: 'BUYER-REF-001',
+                    part_no: 'PART-001',
+                    description: 'Requirement note (optional)',
                     qty: 100,
                     unit: 'KG',
                     unit_price: 25,
@@ -604,7 +626,7 @@ export class SalesDocImportService {
                     margin_pct: 10,
                     product_rebates_snapshot: [],
                     product_expenses_snapshot: [],
-                },
+                } as any,
             ];
         }
 
@@ -685,6 +707,8 @@ export class SalesDocImportService {
                 product_code: product.code,
                 vendor_code: vendor.vendor_code,
                 product_name: product.name,
+                part_no: product.part_no || '',
+                description: product.description || '',
                 qty: 10,
                 unit: product.unit_of_measure || '',
                 unit_price: num(activePl.unit_price),
@@ -720,22 +744,42 @@ export class SalesDocImportService {
         },
     ): Promise<Buffer> {
         const includeExport = docHasExportFields(opts.docType);
-        const headers = [
-            ...BASE_HEADERS,
-            ...(includeExport ? EXPORT_EXTRA_HEADERS : []),
-            'customer_reference',
-        ];
+        // Leads are a simple requirement list — no vendor / discount / margin /
+        // rebate / expense / weight columns. Just the essentials + description.
+        const isLead = opts.docType === ENUM_SALES_DOC_TYPE.LEAD;
+        const headers = isLead
+            ? [
+                  'product_code',
+                  'qty',
+                  'unit',
+                  'unit_price',
+                  'hs_code',
+                  'part_no',
+                  'customer_reference',
+                  'description',
+              ]
+            : [
+                  ...BASE_HEADERS,
+                  ...(includeExport ? EXPORT_EXTRA_HEADERS : []),
+                  'customer_reference',
+              ];
 
         // Form lines carry product_id / vendor_id (not codes) — resolve the
         // codes from those ids so the Product/Vendor code columns are never
         // blank. (Leads have no vendor, so vendor_code legitimately stays empty.)
         const exportLines = opts.lines || [];
         const productCodeById = new Map<string, string>();
+        const partNoById = new Map<string, string>();
         const vendorCodeById = new Map<string, string>();
-        if (exportLines.some((l) => !l.product_code && l.product_id)) {
+        if (
+            exportLines.some((l) => !l.product_code && l.product_id) ||
+            (isLead && exportLines.some((l) => l.product_id))
+        ) {
             const prods = await this.productRepository.findByCompanyId(companyId);
-            for (const p of prods as any[])
+            for (const p of prods as any[]) {
                 productCodeById.set(p._id.toString(), p.code || '');
+                partNoById.set(p._id.toString(), p.part_no || '');
+            }
         }
         if (exportLines.some((l) => !l.vendor_code && l.vendor_id)) {
             const vens = await this.vendorRepository.findByCompanyId(companyId);
@@ -789,14 +833,32 @@ export class SalesDocImportService {
               ]
             : [];
 
-        const headerRow: string[] = [
-            ...headers,
-            ...Array(maxRebates).fill('rebate'),
-            ...Array(maxExpenses).fill('expense'),
-            ...computedHeaders,
-        ];
+        const headerRow: string[] = isLead
+            ? [...headers]
+            : [
+                  ...headers,
+                  ...Array(maxRebates).fill('rebate'),
+                  ...Array(maxExpenses).fill('expense'),
+                  ...computedHeaders,
+              ];
 
         const dataAoa = (opts.lines || []).map((l, i) => {
+            if (isLead) {
+                const partNo =
+                    (l as any).part_no ||
+                    (l.product_id ? partNoById.get(String(l.product_id)) : '') ||
+                    '';
+                return [
+                    resolveProductCode(l),
+                    l.qty ?? '',
+                    l.unit || '',
+                    l.unit_price ?? '',
+                    l.hs_code || '',
+                    partNo,
+                    (l as any).customer_reference || '',
+                    (l as any).description || '',
+                ];
+            }
             const scalars: any[] = [
                 resolveProductCode(l),
                 resolveVendorCode(l),
@@ -852,8 +914,8 @@ export class SalesDocImportService {
         const linesSheet = utils.aoa_to_sheet([headerRow, ...dataAoa]);
         utils.book_append_sheet(workbook, linesSheet, 'LineItems');
 
-        // Sheet 2: Totals (export-mode only)
-        if (opts.includeComputed) {
+        // Sheet 2: Totals (export-mode only; not for the simple Lead sheet)
+        if (opts.includeComputed && !isLead) {
             const totals = (opts.lines || []).reduce(
                 (acc, l) => {
                     const c = computeLineCosting(l);
@@ -893,8 +955,9 @@ export class SalesDocImportService {
             utils.book_append_sheet(workbook, totalsSheet, 'Totals');
         }
 
-        // Sheet 3 (sample only): _README
-        if (opts.includeReadme) {
+        // Sheet 3 (sample only): _README + _ProductsRef. Skipped for the
+        // simple Lead sheet — just the LineItems columns, no helper sheets.
+        if (opts.includeReadme && !isLead) {
             const readme = [
                 ['Sales Doc Line-Items — Import Sample'],
                 [],

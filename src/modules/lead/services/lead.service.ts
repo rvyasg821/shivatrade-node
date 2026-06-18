@@ -787,7 +787,7 @@ export class LeadService {
             dto.product_code = prod?.code;
             // Product Part No + HSN for the line-item table (HSN falls back to
             // the line's own hs_code when the product carries none).
-            (dto as any).part_no = prod?.part_no || null;
+            (dto as any).part_no = r.part_no || prod?.part_no || null;
             (dto as any).hsn_code = prod?.hsn_code || r.hs_code || null;
             // Master sell rate so the lead detail can show an Estimated Sales
             // Value (Σ qty × product_selling_price) from the requirements.
@@ -834,6 +834,7 @@ export class LeadService {
                 product_rebates_snapshot: l.product_rebates_snapshot ?? null,
                 product_expenses_snapshot: l.product_expenses_snapshot ?? null,
                 hs_code: l.hs_code || null,
+                part_no: l.part_no || null,
                 net_weight_kg: numOr(l.net_weight_kg, '0'),
                 gross_weight_kg: numOr(l.gross_weight_kg, '0'),
                 package_count:
