@@ -220,6 +220,7 @@ export class ProductAdminController {
                 tax_pct?: string;
                 currency_id?: string;
                 hsn_code?: string;
+                part_no?: string;
                 net_weight_per_unit?: string;
                 gross_weight_per_unit?: string;
                 pack_size?: number;
@@ -341,6 +342,7 @@ export class ProductAdminController {
                 currency_id: p.currency_id ? p.currency_id.toString() : undefined,
                 // Needed by PFI line auto-fill (HS code + per-unit weights).
                 hsn_code: (p as any).hsn_code,
+                part_no: (p as any).part_no,
                 net_weight_per_unit:
                     (p as any).net_weight_per_unit != null
                         ? String((p as any).net_weight_per_unit)

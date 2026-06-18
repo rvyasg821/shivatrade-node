@@ -65,6 +65,7 @@ export class LeadLineRequestDto {
     }>;
 
     @IsString() @IsOptional() @MaxLength(15) hs_code?: string;
+    @IsString() @IsOptional() @MaxLength(100) part_no?: string;
 
     @IsNumberString({}, { message: 'net_weight_kg must be a numeric string' })
     @IsOptional()

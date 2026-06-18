@@ -103,6 +103,9 @@ export class LeadLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 15, nullable: true })
     hs_code?: string;
 
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    part_no?: string;
+
     @Column({ type: 'numeric', precision: 14, scale: 3, nullable: false, default: 0 })
     net_weight_kg: string;
 

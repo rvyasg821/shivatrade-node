@@ -147,6 +147,7 @@ export class SalesDocExportLineDto {
     @IsOptional() @IsString() product_id?: string;
     @IsOptional() @IsString() product_code?: string;
     @IsOptional() @IsString() product_name?: string;
+    @IsOptional() @IsString() part_no?: string;
     @IsOptional() @IsString() description?: string;
     @IsOptional() @IsString() customer_reference?: string;
     @IsOptional() @IsString() vendor_id?: string;
