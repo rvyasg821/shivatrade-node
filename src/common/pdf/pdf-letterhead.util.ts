@@ -145,11 +145,13 @@ export function buildPdfHeaderTemplate(opts: {
     voucherNo?: string;
 }): string {
     const e = escapePdfHtml;
-    return `<div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;display:flex;justify-content:space-between;align-items:center;"><span>${e(
+    // Only the document label (Quotation / Sales Order / …) is bold; the
+    // company name and voucher number render in normal weight.
+    return `<div style="font-size:8.5px;width:100%;padding:0 12mm;color:#6b7280;font-weight:400;display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:400">${e(
         opts.companyName || ''
-    )}</span><span><strong style="color:#1f2937">${e(
+    )}</span><span style="font-weight:400"><span style="font-weight:700;color:#1f2937">${e(
         opts.docLabel
-    )}</strong> · ${e(opts.voucherNo || '')}</span></div>`;
+    )}</span> · ${e(opts.voucherNo || '')}</span></div>`;
 }
 
 /**

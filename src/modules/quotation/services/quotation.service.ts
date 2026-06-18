@@ -1351,9 +1351,9 @@ export class QuotationService {
                 title: 'Quotation',
                 voucherNo: q.voucher_no || '-',
                 metaLines: [
-                    `Date: <span class="fw">${dateOnly(q.quotation_date)}</span> · Currency: <span class="fw">${this.esc(sym)} ${this.esc(q.currency_code || '-')}</span>`,
+                    `Date: ${dateOnly(q.quotation_date)} · Currency: ${this.esc(sym)} ${this.esc(q.currency_code || '-')}`,
                     extras.sourceVoucher
-                        ? `${this.esc(extras.sourceLabel || 'Source')}: <span class="fw">${this.esc(extras.sourceVoucher)}</span>`
+                        ? `${this.esc(extras.sourceLabel || 'Source')}: ${this.esc(extras.sourceVoucher)}`
                         : '',
                 ].filter(Boolean),
                 statusBadge: q.status || '',
