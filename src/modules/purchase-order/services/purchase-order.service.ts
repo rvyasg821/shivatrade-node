@@ -249,6 +249,9 @@ export class PurchaseOrderService {
             customer_id: data.customer_id || null,
             customer_address_id: (data as any).customer_address_id || null,
             consignee_id: (data as any).consignee_id || null,
+            consignee_same_as_buyer:
+                (data as any).consignee_same_as_buyer ?? true,
+            consignee_address_id: (data as any).consignee_address_id || null,
             consignee_snapshot: (data as any).consignee_snapshot || null,
             quotation_id: data.quotation_id || null,
             pfi_id: data.pfi_id || null,
@@ -1723,26 +1726,26 @@ export class PurchaseOrderService {
         return { purchase_order: po, po_vendors: createdPovs };
     }
 
+    /**
+     * Generate a Sales Order from an approved Quotation — **SO only**.
+     *
+     * The old flow assigned vendors per line and spawned Vendor POs (POVs) in
+     * the same call. That's now split: this creates just the customer-facing
+     * Sales Order (mirroring every quotation line, no vendor assignment), in
+     * CONFIRMED status. Vendor POs are generated later from the SO detail via
+     * the recover-POV flow (which collects vendor assignments + charges).
+     */
     async createFromQuotation(
         companyId: string,
         quotationId: string,
         createdBy: string,
-        assignments: Array<{ source_line_id: string; vendor_id: string }>,
         opts?: {
             deliveryAddressId?: string;
             deliveryAddressText?: string;
-            vendorExpenses?: Record<
-                string,
-                Array<{
-                    expense_id: string;
-                    type?: 'percent' | 'fixed';
-                    value?: string;
-                }>
-            >;
             customerOrder?: CustomerOrderInput;
         }
     ) {
-        // Only an APPROVED quotation may generate vendor POs (Sales Orders).
+        // Only an APPROVED quotation may generate a Sales Order.
         const q: any = await this.quotationRepository.findOne({
             _id: quotationId,
             company_id: companyId,
@@ -1751,20 +1754,95 @@ export class PurchaseOrderService {
         if (!q) throw new NotFoundException('Source quotation not found');
         if (q.status !== 'approved') {
             throw new BadRequestException(
-                'Quotation must be approved before generating Sales Orders.'
+                'Quotation must be approved before generating a Sales Order.'
             );
         }
-        return this.createPoAndPovsFromSource({
-            companyId,
-            createdBy,
-            sourceType: 'quotation',
-            sourceId: quotationId,
-            assignments,
-            deliveryAddressId: opts?.deliveryAddressId,
-            deliveryAddressText: opts?.deliveryAddressText,
-            vendorExpenses: opts?.vendorExpenses,
-            customerOrder: opts?.customerOrder,
+
+        // One active Sales Order per quotation.
+        const existing = await this.poRepository.findAll({
+            company_id: companyId,
+            quotation_id: quotationId,
+            soft_delete: false,
+        } as any);
+        const activeExisting = (existing as any[]).filter(
+            p => p.status !== ENUM_PURCHASE_ORDER_STATUS.CANCELLED
+        );
+        if (activeExisting.length) {
+            throw new BadRequestException(
+                `A Sales Order already exists for this Quotation (${
+                    (activeExisting[0] as any).voucher_no
+                }). Cancel it before regenerating.`
+            );
+        }
+
+        // Mirror every quotation line onto the SO (customer-facing pricing).
+        const sourceLines: any[] = (await this.quotationLineRepository.findAll({
+            quotation_id: quotationId,
+        } as any)) as any[];
+        if (!sourceLines.length) {
+            throw new BadRequestException(
+                'This quotation has no line items to convert.'
+            );
+        }
+        const productIds = unique(
+            sourceLines.map(l => l.product_id?.toString())
+        );
+        const products = productIds.length
+            ? await this.productRepository.findAll({
+                  _id: { $in: productIds },
+              } as any)
+            : [];
+        const productMap = toMap(products as any[]);
+
+        const poLinePayload = sourceLines.map(l => {
+            const product: any = productMap.get(l.product_id?.toString());
+            return {
+                product_id: l.product_id?.toString(),
+                // Vendor is assigned later, at POV generation.
+                source_quotation_line_id: l._id.toString(),
+                description: l.description || product?.description || '',
+                customer_reference: l.customer_reference || undefined,
+                hsn_code: product?.hsn_code || l.hsn_code || '',
+                qty: String(l.qty || '0'),
+                unit: l.unit || product?.unit_of_measure || '',
+                unit_price: String(l.unit_price || '0'),
+                discount_pct: String(l.discount_pct ?? '0'),
+                tax_pct: String(l.tax_pct ?? product?.tax_pct ?? '0'),
+                net_weight_kg: l.net_weight_kg ?? undefined,
+                gross_weight_kg: l.gross_weight_kg ?? undefined,
+                package_count: l.package_count ?? undefined,
+            };
         });
+
+        const today = new Date().toISOString().slice(0, 10);
+        const po = await this.create(
+            companyId,
+            {
+                customer_id: q.customer_id?.toString(),
+                customer_address_id:
+                    q.customer_address_id?.toString() || undefined,
+                consignee_id: q.consignee_id?.toString() || undefined,
+                consignee_snapshot: q.consignee_snapshot || undefined,
+                quotation_id: quotationId,
+                po_date: today,
+                customer_po_number: opts?.customerOrder?.customer_po_number,
+                advance_amount: opts?.customerOrder?.advance_amount,
+                advance_date: opts?.customerOrder?.advance_date,
+                advance_notes: opts?.customerOrder?.advance_notes,
+                payment_terms: q.payment_terms || undefined,
+                delivery_terms: q.delivery_terms || undefined,
+                internal_notes: q.internal_notes || undefined,
+                delivery_address: opts?.deliveryAddressText || undefined,
+                delivery_address_id: opts?.deliveryAddressId || undefined,
+                currency_code: q.currency_code || 'INR',
+                exchange_rate: q.exchange_rate || '1',
+                status: ENUM_PURCHASE_ORDER_STATUS.CONFIRMED,
+                lines: poLinePayload,
+            } as any,
+            createdBy
+        );
+
+        return { purchase_order: po, po_vendors: [] };
     }
 
     // ─── Hydration ──────────────────────────────────────────────────────
@@ -1955,6 +2033,9 @@ export class PurchaseOrderService {
                 customer_id: r.customer_id?.toString(),
                 customer_address_id: (r as any).customer_address_id?.toString(),
                 consignee_id: (r as any).consignee_id?.toString(),
+                consignee_same_as_buyer:
+                    (r as any).consignee_same_as_buyer ?? true,
+                consignee_address_id: (r as any).consignee_address_id?.toString(),
                 consignee_snapshot: (r as any).consignee_snapshot,
                 customer_name: cust?.company_name,
                 customer_contact_name: custPrimary?.name,

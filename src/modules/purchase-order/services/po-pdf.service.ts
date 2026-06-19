@@ -473,6 +473,28 @@ function buildPoHtml(ctx: PoPdfContext): string {
               .join('')
         : `<div class="party-line muted">-</div>`;
 
+    // Consignee (Ship-to): always print the actual address (the frozen
+    // consignee snapshot), even when it's the same party as the buyer. Falls
+    // back to the buyer's name/address when no snapshot was captured.
+    const cs: any = (po as any).consignee_snapshot || {};
+    const consigneeAddr =
+        [
+            cs.address_line1,
+            cs.address_line2,
+            [cs.city, cs.state, cs.postcode].filter(Boolean).join(', '),
+            cs.country,
+        ]
+            .filter(Boolean)
+            .join('\n') || customer.address;
+    const consigneeName = cs.name || customer.name;
+    const consigneeBlock = `${
+        consigneeName ? `<div class="party-name">${esc(consigneeName)}</div>` : ''
+    }${
+        consigneeAddr
+            ? `<div class="party-line" style="white-space:pre-line">${esc(consigneeAddr)}</div>`
+            : `<div class="party-line muted">-</div>`
+    }`;
+
     return `<!DOCTYPE html>
 <html>
 <head>
@@ -634,8 +656,8 @@ function buildPoHtml(ctx: PoPdfContext): string {
       ${customer.email ? `<div class="party-line">${esc(customer.email)}</div>` : ''}
     </div>
     <div>
-      <div class="label">Ship To</div>
-      <div class="party-line" style="white-space:pre-line">${esc(po.delivery_address || customer.address || '-')}</div>
+      <div class="label">Consignee</div>
+      ${consigneeBlock}
       ${po.expected_delivery_date ? `<div class="party-line muted">Expected: ${dateOnly(po.expected_delivery_date)}</div>` : ''}
       ${po.payment_terms ? `<div class="party-line muted">Payment: ${esc(po.payment_terms)}</div>` : ''}
       ${po.delivery_terms ? `<div class="party-line muted">Delivery: ${esc(po.delivery_terms)}</div>` : ''}

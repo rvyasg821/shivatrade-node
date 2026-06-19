@@ -1,6 +1,7 @@
 import { Type, Transform } from 'class-transformer';
 import {
     IsArray,
+    IsBoolean,
     IsDateString,
     IsEnum,
     IsInt,
@@ -108,6 +109,14 @@ export class PurchaseOrderCreateRequestDto {
     @IsUUID()
     @IsOptional()
     consignee_id?: string;
+
+    @IsBoolean()
+    @IsOptional()
+    consignee_same_as_buyer?: boolean;
+
+    @IsUUID()
+    @IsOptional()
+    consignee_address_id?: string;
 
     @IsOptional()
     consignee_snapshot?: {

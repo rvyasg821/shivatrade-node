@@ -1,9 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
     IsArray,
+    IsIn,
     IsNotEmpty,
+    IsNumberString,
+    IsObject,
     IsOptional,
     IsString,
+    IsUUID,
     ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -23,6 +27,27 @@ export class PoVendorRecoverAssignmentDto {
     @IsString()
     @IsNotEmpty()
     vendor_id: string;
+}
+
+/**
+ * Per-vendor expense pick (charge) attached to the spawned POV. Mirrors the
+ * shape used by the quotation → SO generate flow.
+ */
+export class PoVendorRecoverExpensePickDto {
+    @ApiProperty({ required: true, type: String })
+    @IsUUID()
+    @IsNotEmpty()
+    expense_id: string;
+
+    @ApiProperty({ required: false, enum: ['percent', 'fixed'] })
+    @IsIn(['percent', 'fixed'])
+    @IsOptional()
+    type?: 'percent' | 'fixed';
+
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'value must be a numeric string' })
+    @IsOptional()
+    value?: string;
 }
 
 /**
@@ -56,4 +81,11 @@ export class PoVendorRecoverRequestDto {
     @IsOptional()
     @IsString()
     internal_notes?: string;
+
+    /** Optional per-vendor expense list applied to each spawned POV.
+     *  Key = vendor_id (UUID), value = array of expense picks. */
+    @ApiProperty({ required: false, type: Object })
+    @IsObject()
+    @IsOptional()
+    vendor_expenses?: Record<string, PoVendorRecoverExpensePickDto[]>;
 }

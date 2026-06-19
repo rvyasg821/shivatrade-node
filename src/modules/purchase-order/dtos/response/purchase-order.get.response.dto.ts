@@ -54,6 +54,9 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: false, type: String }) customer_id?: string;
     @ApiProperty({ required: false, type: String }) customer_address_id?: string;
     @ApiProperty({ required: false, type: String }) consignee_id?: string;
+    @ApiProperty({ required: false, type: Boolean })
+    consignee_same_as_buyer?: boolean;
+    @ApiProperty({ required: false, type: String }) consignee_address_id?: string;
     @ApiProperty({ required: false }) consignee_snapshot?: any;
     @ApiProperty({ required: false, type: String }) customer_name?: string;
     @ApiProperty({ required: false, type: String }) customer_contact_name?: string;

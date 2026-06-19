@@ -17,6 +17,7 @@ import { VoucherModule } from '@common/voucher/voucher.module';
 import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
 import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.repository.module';
+import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 
@@ -37,6 +38,7 @@ import { CompanySettingsRepositoryModule } from '@modules/company-settings/repos
         TrackingEventRepositoryModule,
         ExpenseRepositoryModule,
         InvoiceRepositoryModule,
+        PriceListRepositoryModule,
         CompanySettingsRepositoryModule,
     ],
     providers: [PoVendorService, PoCoverageService, PoVendorPdfService],

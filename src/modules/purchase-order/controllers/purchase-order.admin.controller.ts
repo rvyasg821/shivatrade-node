@@ -239,15 +239,16 @@ export class PurchaseOrderAdminController {
         @Param('quotationId') quotationId: string,
         @Body() body: PurchaseOrderAutoSplitRequestDto
     ): Promise<IResponse<any>> {
+        // SO-only generation — vendor assignment + charges now happen later
+        // at POV generation (assignments/vendor_expenses on the DTO are
+        // ignored here, kept optional for backward compatibility).
         const out = await this.poService.createFromQuotation(
             companyId,
             quotationId,
             userId,
-            body.assignments,
             {
                 deliveryAddressId: body.delivery_address_id,
                 deliveryAddressText: body.delivery_address,
-                vendorExpenses: body.vendor_expenses,
                 customerOrder: {
                     customer_po_number: body.customer_po_number,
                     advance_amount: body.advance_amount,

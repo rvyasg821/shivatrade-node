@@ -43,10 +43,13 @@ export class PurchaseOrderAssignmentDto {
 }
 
 export class PurchaseOrderAutoSplitRequestDto {
+    /** Legacy — SO generation no longer assigns vendors (that happens at POV
+     *  generation). Kept optional so old callers don't 400. */
     @IsArray()
+    @IsOptional()
     @ValidateNested({ each: true })
     @Type(() => PurchaseOrderAssignmentDto)
-    assignments: PurchaseOrderAssignmentDto[];
+    assignments?: PurchaseOrderAssignmentDto[];
 
     /** Optional company_addresses._id — applied to every PO generated
      *  in this batch. Falls back to manual text if not provided. */
