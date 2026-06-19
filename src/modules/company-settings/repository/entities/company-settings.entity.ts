@@ -88,6 +88,20 @@ export class CompanySettingsEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', default: 1 })
     employee_code_next_seq: number;
 
+    // Product codes are always auto-generated (e.g. PRD-0001).
+    @Column({ type: 'varchar', length: 10, default: 'PRD' })
+    product_code_prefix: string;
+
+    @Column({ type: 'int', default: 1 })
+    product_code_next_seq: number;
+
+    // Vendor codes are always auto-generated (e.g. VND-0001).
+    @Column({ type: 'varchar', length: 10, default: 'VND' })
+    vendor_code_prefix: string;
+
+    @Column({ type: 'int', default: 1 })
+    vendor_code_next_seq: number;
+
     // ── Document voucher prefixes (per-module override of the company prefix) ──
     // When set, replaces the leading company prefix for that document type's
     // voucher number (e.g. "SHIVA/SO/0001/2026-27"). Resolved by VoucherService.
