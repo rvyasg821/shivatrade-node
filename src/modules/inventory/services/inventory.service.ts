@@ -29,8 +29,8 @@ const ORDER_COLUMNS: Record<string, string> = {
     arrival_date: 'COALESCE(pv.actual_arrival_date, pv."updatedAt")',
     product_code: 'p.code',
     product_name: 'p.name',
-    received_qty: 'COALESCE(acc.accepted_qty, 0)',
-    accepted_qty: 'COALESCE(acc.accepted_qty, 0)',
+    received_qty: 'COALESCE(pvl.received_qty, 0)',
+    accepted_qty: 'COALESCE(pvl.received_qty, 0)',
     vendor_name: 'v.company_name',
     po_voucher_no: 'po.voucher_no',
     pov_voucher_no: 'pv.voucher_no',
@@ -50,8 +50,9 @@ export class InventoryService {
     // The join chain shared by the count + page queries. Driving table is
     // po_vendor_lines (one row per received product per POV).
     //
-    // `acc` sums the QC-accepted qty from CONFIRMED, non-deleted GRNs per POV
-    // line — this is the real on-hand stock (rejected goods are excluded).
+    // On-hand stock = `pvl.received_qty` (the good received qty, rejected
+    // excluded — same number the POV coverage shows). `acc` only sums the
+    // confirmed GRN accepted / rejected qty for the detail display.
     private readonly FROM_JOINS = `
         FROM po_vendor_lines pvl
         LEFT JOIN po_vendors pv      ON pv._id = pvl.po_vendor_id
@@ -86,8 +87,9 @@ export class InventoryService {
             // are visible without waiting for the POV to fully close.
             "pv.status <> 'cancelled'",
             'pv.soft_delete = false',
-            // Stock = QC-accepted qty from confirmed GRNs (not raw received).
-            'COALESCE(acc.accepted_qty, 0) > 0',
+            // Stock = the POV line's received (good) qty — the same number the
+            // POV coverage shows. Rejected goods are excluded from received_qty.
+            'COALESCE(pvl.received_qty, 0) > 0',
         ];
         const params: any[] = [companyId];
         let i = 2;
@@ -142,7 +144,7 @@ export class InventoryService {
             i++;
         }
         if (filters.min_qty != null && !Number.isNaN(filters.min_qty)) {
-            where.push(`COALESCE(acc.accepted_qty, 0) >= $${i}`);
+            where.push(`COALESCE(pvl.received_qty, 0) >= $${i}`);
             params.push(filters.min_qty);
             i++;
         }
