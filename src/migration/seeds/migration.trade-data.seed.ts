@@ -139,6 +139,128 @@ export class MigrationTradeDataSeed {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // trade:wipe-docs
+    //   Narrow wipe — only the transactional sales/procurement documents +
+    //   customers. KEEPS vendors, products, categories and masters
+    //   (currencies / exchange rates / expenses / rebates) intact.
+    //   Deletes: leads, RFQs, quotations, sales orders, invoices, vendor POs,
+    //   GRNs, debit notes, their tracking events, and customers (+ the
+    //   auto-created customer login users). Inventory is derived (no table).
+    //   PFI is intentionally NOT touched (retired / hide-only).
+    //   Also clears voucher_sequences so document numbering restarts fresh.
+    // ─────────────────────────────────────────────────────────────────
+    @Command({
+        command: 'trade:wipe-docs [company]',
+        describe:
+            'Delete sales docs (leads, rfq, quotation, sales orders, invoices), vendor POs, GRN, debit notes + customers — keeps vendors/products/masters. Optional [company] uuid scopes to one tenant.',
+    })
+    async wipeDocs(
+        @Positional({
+            name: 'company',
+            describe: 'Company UUID (optional)',
+            type: 'string',
+        })
+        company?: string
+    ): Promise<void> {
+        const scope = company ? `company_id = '${company}'` : '1=1';
+        this.banner(
+            'TRADE WIPE DOCS',
+            company
+                ? `Scoped to company ${company}`
+                : 'ALL companies (no company arg passed)'
+        );
+
+        await this.dataSource.transaction(async mgr => {
+            // Capture auto-created customer login users BEFORE deleting contacts.
+            const customerUsers: Array<{ user_id: string }> = await mgr.query(
+                `SELECT DISTINCT user_id FROM customer_contacts
+                 WHERE user_id IS NOT NULL AND ${scope}`
+            );
+            const customerUserIds = customerUsers
+                .map(r => r.user_id)
+                .filter(Boolean);
+            this.logger.log(
+                `  Found ${customerUserIds.length} customer-linked users to clean up`
+            );
+
+            // ── Invoices (+ payments / events / lines) ──
+            this.logger.log('━━━ Invoices ━━━');
+            await this.del(mgr, 'invoice_payments', scope);
+            await this.del(mgr, 'invoice_events', scope);
+            await this.del(mgr, 'invoice_lines', scope);
+            await this.del(mgr, 'invoices', scope);
+
+            // ── Debit Notes ──
+            this.logger.log('━━━ Debit Notes ━━━');
+            await this.del(mgr, 'debit_note_lines', scope);
+            await this.del(mgr, 'debit_notes', scope);
+
+            // ── GRNs ──
+            this.logger.log('━━━ GRNs ━━━');
+            await this.del(mgr, 'grn_lines', scope);
+            await this.del(mgr, 'grns', scope);
+
+            // ── Vendor POs (+ tracking events) ──
+            this.logger.log('━━━ Vendor POs ━━━');
+            await this.del(mgr, 'po_vendor_tracking_events', scope);
+            await this.del(mgr, 'po_vendor_lines', scope);
+            await this.del(mgr, 'po_vendors', scope);
+
+            // ── Sales Orders ──
+            this.logger.log('━━━ Sales Orders ━━━');
+            await this.del(mgr, 'purchase_order_lines', scope);
+            await this.del(mgr, 'purchase_orders', scope);
+
+            // ── Quotations ──
+            this.logger.log('━━━ Quotations ━━━');
+            await this.del(mgr, 'quotation_rebates', scope);
+            await this.del(mgr, 'quotation_expenses', scope);
+            await this.del(mgr, 'quotation_lines', scope);
+            await this.del(mgr, 'quotations', scope);
+
+            // ── RFQs ──
+            this.logger.log('━━━ RFQs ━━━');
+            await this.del(mgr, 'rfq_vendor_prices', scope);
+            await this.del(mgr, 'rfq_vendors', scope);
+            await this.del(mgr, 'rfq_lines', scope);
+            await this.del(mgr, 'rfqs', scope);
+
+            // ── Leads ──
+            this.logger.log('━━━ Leads ━━━');
+            await this.del(mgr, 'lead_activities', scope);
+            await this.del(mgr, 'lead_lines', scope);
+            await this.del(mgr, 'leads', scope);
+
+            // ── Customers ──
+            this.logger.log('━━━ Customers ━━━');
+            await this.del(mgr, 'customer_addresses', scope);
+            await this.del(mgr, 'customer_contacts', scope);
+            await this.del(mgr, 'customers', scope);
+
+            // ── Document numbering — reset so new docs start fresh ──
+            this.logger.log('━━━ Voucher sequences ━━━');
+            await this.del(mgr, 'voucher_sequences', scope);
+
+            // ── Auto-created customer login users ──
+            if (customerUserIds.length) {
+                this.logger.log('━━━ Auto-created customer users ━━━');
+                const placeholders = customerUserIds
+                    .map((_, i) => `$${i + 1}`)
+                    .join(',');
+                const r = await mgr.query(
+                    `DELETE FROM users WHERE _id IN (${placeholders})`,
+                    customerUserIds
+                );
+                this.logger.log(
+                    `  ✅ users (auto-created): ${r?.[1] ?? customerUserIds.length}`
+                );
+            }
+        });
+
+        this.logger.log('✅ Trade docs wipe complete');
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // trade:seed-masters
     // ─────────────────────────────────────────────────────────────────
     @Command({
