@@ -119,7 +119,7 @@ export function buildPdfLetterhead(
 
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e5e7eb;padding-bottom:14px;margin-bottom:18px">
   <div style="max-width:60%">
-    ${company.logoDataUri ? `<img src="${company.logoDataUri}" alt="logo" style="max-height:48px;max-width:170px;width:auto;height:auto;object-fit:contain;display:block;margin-bottom:8px" />` : ''}
+    ${company.logoDataUri ? `<img src="${company.logoDataUri}" alt="logo" style="height:50px;max-width:200px;width:auto;object-fit:contain;display:block;margin-bottom:8px" />` : ''}
     ${company.name ? `<div style="font-weight:600;color:#1f2937;font-size:11.5px;margin-bottom:3px">${e(company.name)}</div>` : ''}
     ${addressHtml}
     ${phoneHtml}

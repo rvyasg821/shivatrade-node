@@ -193,9 +193,9 @@ export class PurchaseOrderService {
                 `delivery_address_id ${providedAddressId} not found in locations or company addresses.`
             );
         }
-        throw new BadRequestException(
-            'delivery_address_id is required. Pick a location or supply delivery_address text.'
-        );
+        // Delivery address is optional — the SO form no longer collects it
+        // (vendor delivery is set later at POV generation). Return empty.
+        return { text: '' };
     }
 
     // ─── CRUD ───────────────────────────────────────────────────────────
