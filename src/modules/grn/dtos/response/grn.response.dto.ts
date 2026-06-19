@@ -50,6 +50,8 @@ export class GrnListResponseDto {
     @ApiProperty({ required: false }) grn_date?: string;
     @ApiProperty() status: string;
     @ApiProperty({ required: false }) line_count?: number;
+    // Σ good (accepted) qty across this GRN's lines — shown as "Received".
+    @ApiProperty({ required: false }) received_qty?: string;
     // Σ rejected qty across this GRN's lines + the active Debit Note (if any),
     // driving the "Create / View Debit Note" action on the POV GRNs tab.
     @ApiProperty({ required: false }) rejected_qty?: string;

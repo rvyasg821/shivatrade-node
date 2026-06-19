@@ -313,29 +313,32 @@ export class GrnService {
             }
         }
 
-        // Confirming or cancelling a confirmed GRN changes how much the POV
-        // has received → roll the receipt back into the POV (and close /
-        // re-open it accordingly). Inventory reads closed-POV received_qty.
+        // Any GRN edit (draft save, confirm, or cancel) can change the POV's
+        // received qty → roll it into the POV (and close / re-open it).
+        // recompute counts draft + confirmed receipts, so a saved draft already
+        // shows on the POV Line Items tab.
+        if (povId) {
+            await this.recomputePovFromGrns(companyId, povId);
+        }
+
+        // Surface only the confirm / un-confirm transition on the POV timeline.
         const crossesConfirm =
             dto.status !== undefined &&
             dto.status !== prevStatus &&
             (dto.status === ENUM_GRN_STATUS.CONFIRMED ||
                 prevStatus === ENUM_GRN_STATUS.CONFIRMED);
         if (povId && crossesConfirm) {
-            await this.recomputePovFromGrns(companyId, povId);
-
             // Surface the GRN lifecycle change on the parent POV's timeline.
             if (dto.status === ENUM_GRN_STATUS.CONFIRMED) {
                 const glines = await this.grnLineRepository.findByGrnId(grnId);
-                let rcv = 0;
                 let acc = 0;
                 let rej = 0;
                 for (const l of glines as any[]) {
-                    rcv += num(l.received_qty);
                     acc += num(l.accepted_qty);
                     rej += num(l.rejected_qty);
                 }
-                const bits = [`received ${round4(rcv)}`, `accepted ${round4(acc)}`];
+                // "Received" = the good (accepted) qty, matching the UI.
+                const bits = [`received ${round4(acc)}`];
                 if (rej > 1e-6) bits.push(`rejected ${round4(rej)}`);
                 await this.emitPovEvent(
                     companyId,
@@ -409,26 +412,51 @@ export class GrnService {
         } as any);
         if (!pov) return;
 
-        const grns = (await this.grnRepository.findAll({
-            po_vendor_id: povId,
-            company_id: companyId,
-            soft_delete: false,
-            status: ENUM_GRN_STATUS.CONFIRMED,
-        } as any)) as any[];
+        // All non-cancelled GRNs (draft + confirmed). Draft receipts already
+        // update the POV line (so the Line Items tab reflects a saved GRN
+        // immediately); only CONFIRMED receipts decide when the POV closes.
+        const grns = (
+            (await this.grnRepository.findAll({
+                po_vendor_id: povId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any)) as any[]
+        ).filter((g) => g.status !== ENUM_GRN_STATUS.CANCELLED);
+        const confirmedIds = new Set(
+            grns
+                .filter((g) => g.status === ENUM_GRN_STATUS.CONFIRMED)
+                .map((g) => g._id.toString())
+        );
         const grnIds = grns.map((g) => g._id.toString());
         const glines = grnIds.length
             ? ((await this.grnLineRepository.findAll({
                   grn_id: { $in: grnIds },
               } as any)) as any[])
             : [];
-        const recvByPovLine = new Map<string, number>();
+
+        // received_qty on the POV line = good (accepted) qty across all
+        // non-cancelled GRNs, so it matches the GRN tab's "Received". A POV
+        // line is "accounted" (and the POV closes) once its CONFIRMED receipts
+        // cover the dispatch as good + rejected (rejected → Debit Note).
+        const goodByPovLine = new Map<string, number>();
+        const accountedByPovLine = new Map<string, number>();
         for (const gl of glines) {
             const k = gl.po_vendor_line_id?.toString();
             if (!k) continue;
-            recvByPovLine.set(
+            goodByPovLine.set(
                 k,
-                round4((recvByPovLine.get(k) || 0) + num(gl.received_qty))
+                round4((goodByPovLine.get(k) || 0) + num(gl.accepted_qty))
             );
+            if (confirmedIds.has(gl.grn_id.toString())) {
+                accountedByPovLine.set(
+                    k,
+                    round4(
+                        (accountedByPovLine.get(k) || 0) +
+                            num(gl.accepted_qty) +
+                            num(gl.rejected_qty)
+                    )
+                );
+            }
         }
 
         const povLines = (await this.povLineRepository.findAll({
@@ -437,18 +465,20 @@ export class GrnService {
         let allFull = povLines.length > 0;
         for (const pl of povLines) {
             const dispatched = round4(num(pl.dispatched_qty));
-            const recv = round4(
-                Math.min(recvByPovLine.get(pl._id.toString()) || 0, dispatched)
+            const good = round4(
+                Math.min(goodByPovLine.get(pl._id.toString()) || 0, dispatched)
             );
-            pl.received_qty = String(recv);
+            const accounted = round4(accountedByPovLine.get(pl._id.toString()) || 0);
+            pl.received_qty = String(good);
             await this.povLineRepository.save(pl);
-            if (recv < dispatched - 1e-6) allFull = false;
+            if (accounted < dispatched - 1e-6) allFull = false;
         }
 
         if (allFull && pov.status === ENUM_PO_VENDOR_STATUS.DISPATCHED) {
             pov.status = ENUM_PO_VENDOR_STATUS.CLOSED;
             if (!pov.actual_arrival_date) {
                 const latest = grns
+                    .filter((g) => confirmedIds.has(g._id.toString()))
                     .map((g) => g.grn_date)
                     .filter(Boolean)
                     .sort()
@@ -464,13 +494,13 @@ export class GrnService {
 
     async softDelete(companyId: string, grnId: string): Promise<void> {
         const grn: any = await this.getOrThrow(companyId, grnId);
-        const wasConfirmed = grn.status === ENUM_GRN_STATUS.CONFIRMED;
         const povId = grn.po_vendor_id ? grn.po_vendor_id.toString() : null;
         grn.soft_delete = true;
         await this.grnRepository.save(grn);
-        // Deleting a confirmed GRN un-receives its quantities → recompute the
-        // POV's received qty (and reopen it if it had been closed).
-        if (wasConfirmed && povId) {
+        // Deleting any non-cancelled GRN (draft or confirmed) un-receives its
+        // quantities → recompute the POV's received qty (and reopen it if it
+        // had been closed).
+        if (povId) {
             await this.recomputePovFromGrns(companyId, povId);
         }
     }
@@ -557,10 +587,13 @@ export class GrnService {
         ]);
         const lineCount = new Map<string, number>();
         const rejectedByGrn = new Map<string, number>();
+        // "Received" shown on the GRN list = the good qty (accepted).
+        const receivedByGrn = new Map<string, number>();
         for (const l of lines) {
             const k = l.grn_id.toString();
             lineCount.set(k, (lineCount.get(k) || 0) + 1);
             rejectedByGrn.set(k, (rejectedByGrn.get(k) || 0) + num(l.rejected_qty));
+            receivedByGrn.set(k, (receivedByGrn.get(k) || 0) + num(l.accepted_qty));
         }
         // Active (non-cancelled) Debit Note per GRN — one per GRN by design.
         const activeDnByGrn = new Map<string, string>();
@@ -576,6 +609,7 @@ export class GrnService {
             const dto = plainToInstance(GrnListResponseDto, r);
             const k = r._id.toString();
             dto.line_count = lineCount.get(k) || 0;
+            dto.received_qty = String(round4(receivedByGrn.get(k) || 0));
             dto.rejected_qty = String(round4(rejectedByGrn.get(k) || 0));
             const dnId = activeDnByGrn.get(k);
             dto.debit_note_id = dnId || undefined;
@@ -904,9 +938,8 @@ export class GrnService {
                 }</td>
                 <td>${this.esc(l.part_no || '-')}</td>
                 <td>${this.esc(l.hsn_code || '-')}</td>
-                <td style="text-align:right">${this.esc(l.received_qty || '0')} ${this.esc(l.unit || '')}</td>
-                <td style="text-align:right">${this.esc(l.accepted_qty || '0')}</td>
-                <td style="text-align:right">${this.esc(l.rejected_qty || '0')}</td>
+                <td style="text-align:right">${num(l.accepted_qty).toFixed(2)} ${this.esc(l.unit || '')}</td>
+                <td style="text-align:right">${num(l.rejected_qty).toFixed(2)}</td>
                 <td>${this.esc(l.batch_no || '')}</td>
                 <td>${this.esc(l.remarks || '')}</td>
             </tr>`
@@ -933,7 +966,7 @@ export class GrnService {
           <table>
             <thead><tr>
               <th>#</th><th>Item</th><th>Part No</th><th>HSN</th><th>Received</th>
-              <th>Accepted</th><th>Rejected</th><th>Batch</th><th>Remarks</th>
+              <th>Rejected</th><th>Batch</th><th>Remarks</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>

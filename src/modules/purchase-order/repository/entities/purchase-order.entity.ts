@@ -46,6 +46,16 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     consignee_id?: string;
 
+    /** True when the consignee is the same party as the buyer (customer).
+     *  Drives the "Same as Buyer" text on the PDF; the consignee FK/snapshot
+     *  still mirror the customer for downstream Invoice generation. */
+    @Column({ type: 'boolean', default: true })
+    consignee_same_as_buyer: boolean;
+
+    /** Consignee customer's selected address. Snapshot below freezes it. */
+    @Column({ type: 'uuid', nullable: true })
+    consignee_address_id?: string;
+
     @Column({ type: 'jsonb', nullable: true })
     consignee_snapshot?: {
         name?: string;

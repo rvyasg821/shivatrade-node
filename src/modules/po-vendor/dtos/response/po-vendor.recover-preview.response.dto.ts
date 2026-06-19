@@ -40,6 +40,19 @@ export class PoVendorRecoverPreviewLineDto {
 
     @ApiProperty({ required: false, type: String })
     current_vendor_name?: string;
+
+    /** Price-list candidate vendors for this product, cheapest-first. Lets the
+     *  Generate-POV modal show ₹ rates + a "Cheapest" pick. */
+    @ApiProperty({ required: false, type: Array })
+    candidate_vendors?: Array<{
+        vendor_id: string;
+        vendor_name: string;
+        unit_price: string;
+    }>;
+
+    /** Pre-selected vendor: the line's current vendor, else cheapest candidate. */
+    @ApiProperty({ required: false, type: String })
+    suggested_vendor_id?: string;
 }
 
 export class PoVendorRecoverPreviewVendorDto {

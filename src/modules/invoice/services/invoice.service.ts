@@ -266,11 +266,30 @@ export class InvoiceService {
             )
         );
 
+        // First source Sales Order that carries a consignee — used to inherit
+        // the Consignee (Ship-to) onto the invoice when not supplied.
+        const srcConsigneePo: any = (source.pos || []).find(
+            (p: any) => p?.consignee_snapshot || p?.consignee_id
+        );
+
+        // Assign the invoice number up-front so the DRAFT already carries a
+        // stable voucher (e.g. STIPL/INV/0001/2026-27). voucher_prefix always
+        // resolves (falls back to the company name), so this never blocks
+        // draft creation; issue() reuses this number rather than minting a new
+        // one. Mirrors how Sales Order / Vendor PO number their drafts.
+        const draftVoucherNo = await this.voucherService.getNext(
+            companyId,
+            ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT,
+            ctx.voucher_prefix,
+            new Date(data.invoice_date)
+        );
+
         const header = await this.invoiceRepository.create({
             company_id: companyId,
             created_by: userId,
             invoice_type: data.invoice_type || ENUM_INVOICE_TYPE.EXPORT,
             status: ENUM_INVOICE_STATUS.DRAFT,
+            voucher_no: draftVoucherNo,
             invoice_date: data.invoice_date,
             due_date: data.due_date,
             purchase_order_id: data.purchase_order_id,
@@ -289,9 +308,20 @@ export class InvoiceService {
             country_of_origin: data.country_of_origin || 'India',
             customer_id: data.customer_id,
             customer_address_id: data.customer_address_id,
-            consignee_id: data.consignee_id || null,
-            consignee_address_id: data.consignee_address_id || null,
-            consignee_snapshot: (data as any).consignee_snapshot || null,
+            // Inherit the consignee from the source Sales Order when the
+            // invoice payload doesn't carry one (operator can still override).
+            consignee_id:
+                data.consignee_id ||
+                srcConsigneePo?.consignee_id?.toString() ||
+                null,
+            consignee_address_id:
+                data.consignee_address_id ||
+                srcConsigneePo?.consignee_address_id?.toString() ||
+                null,
+            consignee_snapshot:
+                (data as any).consignee_snapshot ||
+                srcConsigneePo?.consignee_snapshot ||
+                null,
             notify_party_id: data.notify_party_id,
             notify_party_snapshot: (data as any).notify_party_snapshot || null,
             company_address_id: companyAddr.id,
@@ -507,13 +537,18 @@ export class InvoiceService {
         (row as any).company_address_id = frozen.id;
         (row as any).company_address_snapshot = frozen.snapshot;
 
-        // Assign voucher (compact format e.g. STIPL001/2026-27)
-        row.voucher_no = await this.voucherService.getNext(
-            row.company_id.toString(),
-            ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT,
-            ctx.voucher_prefix,
-            new Date(row.invoice_date)
-        );
+        // Voucher is normally minted at draft creation (STIPL/INV/0001/2026-27)
+        // and carried through to issue. Only mint here as a backstop for legacy
+        // drafts created before voucher-at-draft, so issue() never consumes a
+        // second number for an invoice that already has one.
+        if (!row.voucher_no) {
+            row.voucher_no = await this.voucherService.getNext(
+                row.company_id.toString(),
+                ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT,
+                ctx.voucher_prefix,
+                new Date(row.invoice_date)
+            );
+        }
 
         // Seed the upfront advance (carried from the Sales Order) as the first
         // payment receipt. Otherwise the header `advance_received` gets

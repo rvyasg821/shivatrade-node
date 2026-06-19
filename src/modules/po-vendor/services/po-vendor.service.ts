@@ -25,6 +25,7 @@ import { VendorAddressRepository } from '@modules/vendor/repository/repositories
 import { VendorContactRepository } from '@modules/vendor/repository/repositories/vendor-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
+import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
@@ -60,6 +61,7 @@ export class PoVendorService {
         private readonly vendorContactRepository: VendorContactRepository,
         private readonly productRepository: ProductRepository,
         private readonly expenseRepository: ExpenseRepository,
+        private readonly priceListRepository: PriceListRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly locationRepository: LocationRepository,
@@ -562,6 +564,99 @@ export class PoVendorService {
     // line's current `vendor_id`, the PO line is reassigned (po_line.vendor_id
     // updated).
 
+    /**
+     * For each PO line, list the active price-list candidate vendors for that
+     * product (cheapest-first) so the Generate-POV modal can show ₹ rates and a
+     * "Cheapest" suggestion. Returns a Map keyed by purchase_order_line_id.
+     */
+    private async buildCandidateVendorsByLine(
+        companyId: string,
+        poLines: any[]
+    ): Promise<
+        Map<
+            string,
+            {
+                candidate_vendors: Array<{
+                    vendor_id: string;
+                    vendor_name: string;
+                    unit_price: string;
+                }>;
+                suggested_vendor_id?: string;
+            }
+        >
+    > {
+        const out = new Map<string, any>();
+        const productIds = unique(
+            poLines.map(l => l.product_id?.toString())
+        );
+        if (!productIds.length) return out;
+
+        const today = new Date().toISOString().slice(0, 10);
+        const priceRows = (await this.priceListRepository.findAll({
+            company_id: companyId,
+            product_id: { $in: productIds },
+        } as any)) as any[];
+        const activeRows = priceRows.filter(
+            r =>
+                (!r.effective_date || r.effective_date <= today) &&
+                (!r.valid_until || r.valid_until >= today)
+        );
+
+        // product → (vendor → cheapest price row).
+        const byProduct = new Map<string, Map<string, any>>();
+        for (const r of activeRows) {
+            const pid = r.product_id?.toString();
+            const vid = r.vendor_id?.toString();
+            if (!pid || !vid) continue;
+            if (!byProduct.has(pid)) byProduct.set(pid, new Map());
+            const inner = byProduct.get(pid)!;
+            const existing = inner.get(vid);
+            if (
+                !existing ||
+                Number(r.unit_price) < Number(existing.unit_price)
+            ) {
+                inner.set(vid, r);
+            }
+        }
+
+        const vendorIds = unique(
+            activeRows.map(r => r.vendor_id?.toString())
+        );
+        const vendors = vendorIds.length
+            ? await this.vendorRepository.findAll({
+                  _id: { $in: vendorIds },
+              } as any)
+            : [];
+        const vendorMap = new Map<string, any>();
+        for (const v of vendors as any[]) {
+            vendorMap.set(v._id.toString(), v);
+        }
+
+        for (const l of poLines) {
+            const pid = l.product_id?.toString();
+            const candidates = Array.from(
+                (byProduct.get(pid) || new Map()).values()
+            )
+                .map((r: any) => {
+                    const v: any = vendorMap.get(r.vendor_id?.toString());
+                    return {
+                        vendor_id: r.vendor_id?.toString(),
+                        vendor_name: v?.company_name || v?.name || '',
+                        unit_price: String(r.unit_price || '0'),
+                    };
+                })
+                .filter(c => !!c.vendor_id)
+                .sort(
+                    (a, b) => Number(a.unit_price) - Number(b.unit_price)
+                );
+            out.set(l._id.toString(), {
+                candidate_vendors: candidates,
+                suggested_vendor_id: candidates[0]?.vendor_id || undefined,
+            });
+        }
+        return out;
+    }
+
     async recoverPreviewByPoId(
         companyId: string,
         purchaseOrderId: string
@@ -612,6 +707,14 @@ export class PoVendorService {
             productMap.set(p._id.toString(), p);
         }
 
+        // Price-list candidate vendors per PO line (cheapest-first), mirroring
+        // the quotation → SO preview so the Generate-POV modal can show ₹ rates
+        // + a "Cheapest" pick. Keyed by purchase_order_line_id.
+        const candidateByLine = await this.buildCandidateVendorsByLine(
+            companyId,
+            poLines as any[]
+        );
+
         const lines = (poLines as any[]).map((l: any) => {
             const k = l._id.toString();
             const orderedQty = num(l.qty);
@@ -622,6 +725,7 @@ export class PoVendorService {
             const product: any = l.product_id
                 ? productMap.get(l.product_id.toString())
                 : null;
+            const cand = candidateByLine.get(k);
             return {
                 purchase_order_line_id: k,
                 product_id: l.product_id?.toString(),
@@ -634,6 +738,12 @@ export class PoVendorService {
                 fully_covered: pendingQty <= 1e-6,
                 current_vendor_id: l.vendor_id?.toString(),
                 current_vendor_name: vendor?.company_name,
+                // Cheapest-first price-list candidates for this product.
+                candidate_vendors: cand?.candidate_vendors || [],
+                suggested_vendor_id:
+                    l.vendor_id?.toString() ||
+                    cand?.suggested_vendor_id ||
+                    undefined,
             };
         });
 
@@ -665,6 +775,15 @@ export class PoVendorService {
             delivery_address?: string;
             notes?: string;
             internal_notes?: string;
+            /** Per-vendor expense picks (charges). Key = vendor_id. */
+            vendor_expenses?: Record<
+                string,
+                Array<{
+                    expense_id: string;
+                    type?: 'percent' | 'fixed';
+                    value?: string;
+                }>
+            >;
         },
         createdBy: string
     ): Promise<{ created: PoVendorDoc[] }> {
@@ -740,14 +859,38 @@ export class PoVendorService {
 
         // For each vendor group, spawn one POV via the existing createFromPo
         // path (re-uses voucher numbering, snapshot logic, system events).
+        // The POV line carries the vendor's INR price-list price (procurement
+        // side); per-vendor charges flow through as `expenses`.
         const created: PoVendorDoc[] = [];
         for (const [vendorId, lineIds] of byVendor.entries()) {
-            const linesPayload = lineIds.map(lid => ({
-                purchase_order_line_id: lid,
-                ordered_qty: String(
-                    round4(pending.get(lid) || 0)
-                ),
-            }));
+            const linesPayload = await Promise.all(
+                lineIds.map(async lid => {
+                    const pl = poLineById.get(lid);
+                    let unitPrice = String(pl?.unit_price || '0');
+                    const productId = pl?.product_id?.toString();
+                    if (productId) {
+                        let priceRow: any = null;
+                        try {
+                            priceRow =
+                                await this.priceListRepository.findCurrentPrice(
+                                    companyId,
+                                    vendorId,
+                                    productId
+                                );
+                        } catch {
+                            priceRow = null;
+                        }
+                        if (priceRow) {
+                            unitPrice = String(priceRow.unit_price || '0');
+                        }
+                    }
+                    return {
+                        purchase_order_line_id: lid,
+                        ordered_qty: String(round4(pending.get(lid) || 0)),
+                        unit_price: unitPrice,
+                    };
+                })
+            );
             const body: any = {
                 vendor_id: vendorId,
                 lines: linesPayload,
@@ -755,6 +898,7 @@ export class PoVendorService {
                 internal_notes: data.internal_notes,
                 delivery_address: data.delivery_address,
                 delivery_address_id: data.delivery_address_id,
+                expenses: data.vendor_expenses?.[vendorId] || [],
             };
             const row = await this.createFromPo(
                 companyId,
