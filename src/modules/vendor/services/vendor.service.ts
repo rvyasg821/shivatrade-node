@@ -34,6 +34,7 @@ import { AuthService } from '@modules/auth/services/auth.service';
 import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_GENDER, ENUM_USER_SIGN_UP_FROM, ENUM_USER_STATUS } from '@modules/user/enums/user.enum';
 import { HelperDateService } from '@common/helper/services/helper.date.service';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import {
     IDatabaseFindAllOptions,
     IDatabaseFindOneOptions,
@@ -55,7 +56,8 @@ export class VendorService {
         private readonly roleService: RoleService,
         private readonly authService: AuthService,
         private readonly configService: ConfigService,
-        private readonly helperDateService: HelperDateService
+        private readonly helperDateService: HelperDateService,
+        private readonly companySettingsService: CompanySettingsService
     ) {}
 
     /**
@@ -225,9 +227,9 @@ export class VendorService {
             );
         }
 
-        // Vendor code is optional, but when provided it must be unique
-        // (case-insensitive) within the company.
-        const vendorCode = data.vendor_code?.trim();
+        // Vendor code is auto-generated (VND-0001) when not supplied; a
+        // supplied code must be unique (case-insensitive) within the company.
+        let vendorCode = data.vendor_code?.trim();
         if (vendorCode) {
             const codeExists = await this.vendorRepository.isVendorCodeExists(
                 companyId,
@@ -238,6 +240,16 @@ export class VendorService {
                     `Vendor code '${vendorCode}' already exists for this company`
                 );
             }
+        } else {
+            const existing =
+                await this.vendorRepository.findByCompanyId(companyId);
+            const existingCodes = (existing as any[])
+                .map(v => v.vendor_code)
+                .filter(Boolean);
+            vendorCode = await this.companySettingsService.generateVendorCode(
+                companyId,
+                existingCodes
+            );
         }
 
         await this.assertCategoriesValid(companyId, data.category_ids);
@@ -260,6 +272,7 @@ export class VendorService {
 
         const vendor = await this.vendorRepository.create({
             ...vendorFields,
+            vendor_code: vendorCode,
             company_name: name,
             company_id: companyId,
             created_by: createdBy,

@@ -25,6 +25,7 @@ import { CategoryRepository } from '@modules/category/repository/repositories/ca
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import {
     IDatabaseCreateOptions,
     IDatabaseFindAllOptions,
@@ -43,8 +44,30 @@ export class ProductService {
         private readonly rebateRepository: RebateRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly productRebateRepository: ProductRebateRepository,
-        private readonly productExpenseRepository: ProductExpenseRepository
+        private readonly productExpenseRepository: ProductExpenseRepository,
+        private readonly companySettingsService: CompanySettingsService
     ) {}
+
+    /**
+     * Resolve the product code: use the supplied one, or auto-generate the
+     * next sequential code (PRD-0001) from company settings.
+     */
+    async resolveProductCode(
+        companyId: string,
+        supplied?: string
+    ): Promise<string> {
+        const code = (supplied || '').trim();
+        if (code) return code;
+        const existing = (await this.productRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any)) as any[];
+        const existingCodes = existing.map(p => p.code).filter(Boolean);
+        return this.companySettingsService.generateProductCode(
+            companyId,
+            existingCodes
+        );
+    }
 
     async create(
         companyId: string,
@@ -52,7 +75,8 @@ export class ProductService {
         createdBy: string,
         options?: IDatabaseCreateOptions
     ): Promise<ProductDoc> {
-        const code = data.code.trim();
+        // Code is auto-generated (PRD-0001) when not supplied.
+        const code = await this.resolveProductCode(companyId, data.code);
 
         const codeExists = await this.productRepository.isCodeExists(companyId, code);
         if (codeExists) {

@@ -13,20 +13,18 @@ import {
 
 // Scalar column order mirrors the Product Add form, section by section:
 //   Basic → Pricing → Logistics → Descriptions.
-// `code`, `name` and `category_name` are the only required inputs.
-// After these come repeated `rebates` columns then repeated `expenses`
-// columns — one master CODE per cell (e.g. DBK). Add as many of each
-// column as a product needs.
+// Product `code` is auto-generated (PRD-0001) — it is NOT an import column;
+// any `code` column in an uploaded file is ignored. `name` and `category_name`
+// are the only required inputs. Rebates / expenses are not imported.
 const BASE_HEADERS = [
     // ── Basic ──
     'name',
-    'code',
     'category_name',
     'unit_of_measure',
     'status',
     // ── Pricing ──
     'hsn_code',
-    'tax_pct',
+    'gst',
     'selling_price',
     'margin_pct',
     'currency_code',
@@ -45,19 +43,16 @@ const BASE_HEADERS = [
 
 interface SampleRow {
     [key: string]: any;
-    rebates: string[];
-    expenses: string[];
 }
 
 const SAMPLE_ROWS: SampleRow[] = [
     {
         name: 'Steel Rod 12mm',
-        code: 'PRD-001',
         category_name: 'Raw Material',
         unit_of_measure: 'KG',
         status: 'active',
         hsn_code: '72142090',
-        tax_pct: '18',
+        gst: '18',
         selling_price: '65.50',
         margin_pct: '12',
         currency_code: 'INR',
@@ -70,17 +65,14 @@ const SAMPLE_ROWS: SampleRow[] = [
         specifications: 'Grade: Fe500; Length: 12m',
         packaging_details: 'Bundled, 10 rods per bundle',
         quality_parameters: 'IS 1786:2008 compliant',
-        rebates: ['DBK', 'RODTEP'],
-        expenses: ['PACKING', 'CHA'],
     },
     {
         name: 'Packaging Box Large',
-        code: 'PRD-002',
         category_name: 'Packaging',
         unit_of_measure: 'Box',
         status: 'inactive',
         hsn_code: '48191010',
-        tax_pct: '12',
+        gst: '12',
         selling_price: '',
         margin_pct: '',
         currency_code: '',
@@ -93,21 +85,12 @@ const SAMPLE_ROWS: SampleRow[] = [
         specifications: 'Size: 60x40x40 cm',
         packaging_details: 'Flat-packed',
         quality_parameters: '5-ply corrugation',
-        rebates: [],
-        expenses: [],
     },
 ];
 
-/**
- * Build a sheet header row: the scalar columns followed by `count`
- * repeated `rebates` columns and `count` repeated `expenses` columns.
- */
-function buildHeaderRow(maxRebates: number, maxExpenses: number): string[] {
-    return [
-        ...BASE_HEADERS,
-        ...Array(maxRebates).fill('rebates'),
-        ...Array(maxExpenses).fill('expenses'),
-    ];
+/** Build the sheet header row — just the scalar columns. */
+function buildHeaderRow(): string[] {
+    return [...BASE_HEADERS];
 }
 
 // Canonical UOM lookup — accepts any casing, stores the canonical enum value.
@@ -121,7 +104,6 @@ const UOM_BY_LOWER: Record<string, string> = Object.values(
 export interface ProductImportRow {
     rowNum: number;
     data: {
-        code: string;
         name: string;
         category_name: string;
         category_id?: string;
@@ -143,8 +125,6 @@ export interface ProductImportRow {
         net_weight_per_unit?: number;
         gross_weight_per_unit?: number;
         country_of_origin?: string;
-        rebates: { rebate_id: string; pct?: number }[];
-        expenses: { expense_id: string; value?: number }[];
     };
     status: 'valid_new' | 'valid_update' | 'error';
     existingId?: string;
@@ -168,29 +148,11 @@ export class ProductImportExportService {
         private readonly expenseRepository: ExpenseRepository,
     ) {}
 
-    /** Sample Excel — every column, with two filled example rows. */
+    /** Sample Excel — the scalar columns with two filled example rows. */
     generateSampleExcel(): Buffer {
-        const maxRebates = Math.max(
-            1,
-            ...SAMPLE_ROWS.map((r) => r.rebates.length),
-        );
-        const maxExpenses = Math.max(
-            1,
-            ...SAMPLE_ROWS.map((r) => r.expenses.length),
-        );
-        const aoa: any[][] = [buildHeaderRow(maxRebates, maxExpenses)];
+        const aoa: any[][] = [buildHeaderRow()];
         for (const r of SAMPLE_ROWS) {
-            aoa.push([
-                ...BASE_HEADERS.map((h) => r[h] ?? ''),
-                ...Array.from(
-                    { length: maxRebates },
-                    (_, j) => r.rebates[j] || '',
-                ),
-                ...Array.from(
-                    { length: maxExpenses },
-                    (_, j) => r.expenses[j] || '',
-                ),
-            ]);
+            aoa.push(BASE_HEADERS.map((h) => r[h] ?? ''));
         }
         return this.fileService.writeExcelFromArray(aoa);
     }
@@ -202,11 +164,9 @@ export class ProductImportExportService {
             { order: { code: 'asc' as any } },
         );
 
-        const [categories, currencies, hydrated] = await Promise.all([
+        const [categories, currencies] = await Promise.all([
             this.categoryRepository.findByCompanyId(companyId),
             this.currencyRepository.findByCompanyId(companyId),
-            // Reuse the service's hydration for rebate/expense codes.
-            this.productService.mapListWithRelations(products),
         ]);
         const catNameById = new Map<string, string>(
             categories.map((c) => [c._id.toString(), c.name]),
@@ -215,26 +175,16 @@ export class ProductImportExportService {
             currencies.map((c) => [c._id.toString(), c.code]),
         );
 
-        // `mapListWithRelations` preserves input order — zip by index.
-        const rebateCodesPerRow = products.map((_, i) =>
-            ((hydrated[i] as any)?.rebates || []).map((r: any) => r.code),
-        );
-        const expenseCodesPerRow = products.map((_, i) =>
-            ((hydrated[i] as any)?.expenses || []).map((e: any) => e.code),
-        );
-        // Always keep at least one rebates + one expenses column so the
-        // structure is visible even when no product has any links.
-        const maxRebates = Math.max(
-            1,
-            ...rebateCodesPerRow.map((a) => a.length),
-        );
-        const maxExpenses = Math.max(
-            1,
-            ...expenseCodesPerRow.map((a) => a.length),
-        );
-
-        const aoa: any[][] = [buildHeaderRow(maxRebates, maxExpenses)];
-        products.forEach((p, i) => {
+        // Export includes the (auto-generated) product code after name — handy
+        // for reference. It's NOT in the sample/import template; the importer
+        // ignores it on re-upload (codes are always auto-generated).
+        const exportHeaders = [
+            BASE_HEADERS[0],
+            'code',
+            ...BASE_HEADERS.slice(1),
+        ];
+        const aoa: any[][] = [exportHeaders];
+        products.forEach((p) => {
             aoa.push([
                 p.name || '',
                 p.code || '',
@@ -261,14 +211,6 @@ export class ProductImportExportService {
                 p.specifications || '',
                 p.packaging_details || '',
                 p.quality_parameters || '',
-                ...Array.from(
-                    { length: maxRebates },
-                    (_, j) => rebateCodesPerRow[i][j] || '',
-                ),
-                ...Array.from(
-                    { length: maxExpenses },
-                    (_, j) => expenseCodesPerRow[i][j] || '',
-                ),
             ]);
         });
 
@@ -300,30 +242,20 @@ export class ProductImportExportService {
         const headerKeys = Object.keys(rawRows[0]).map((k) =>
             k.trim().toLowerCase(),
         );
-        const requiredCols = ['code', 'name', 'category_name'];
+        const requiredCols = ['name', 'category_name'];
         const missing = requiredCols.filter((c) => !headerKeys.includes(c));
         if (missing.length > 0) {
             throw new BadRequestException(
                 `Missing required column(s): ${missing.join(
                     ', ',
-                )}. Expected columns: ${BASE_HEADERS.join(
-                    ', ',
-                )}, then one or more "rebates" and "expenses" columns.`,
+                )}. Expected columns: ${BASE_HEADERS.join(', ')}.`,
             );
         }
 
         // Relationship lookups — case-insensitive name/code → id.
-        const [
-            categories,
-            currencies,
-            rebates,
-            expenses,
-            existingProducts,
-        ] = await Promise.all([
+        const [categories, currencies, existingProducts] = await Promise.all([
             this.categoryRepository.findByCompanyId(companyId),
             this.currencyRepository.findByCompanyId(companyId),
-            this.rebateRepository.findByCompanyId(companyId),
-            this.expenseRepository.findByCompanyId(companyId),
             this.productRepository.findByCompanyId(companyId),
         ]);
         const categoryIdByName = new Map<string, string>(
@@ -338,28 +270,15 @@ export class ProductImportExportService {
                 c._id.toString(),
             ]),
         );
-        const rebateIdByCode = new Map<string, string>(
-            rebates.map((r) => [
-                r.code.trim().toLowerCase(),
-                r._id.toString(),
-            ]),
-        );
-        const expenseIdByCode = new Map<string, string>(
-            expenses.map((e) => [
-                e.code.trim().toLowerCase(),
-                e._id.toString(),
-            ]),
-        );
-        const existingProductByCode = new Map<string, any>(
-            existingProducts.map((p) => [
-                p.code.trim().toLowerCase(),
-                p,
-            ]),
+        // Code is auto-generated, so an existing product is matched by NAME
+        // (case-insensitive) to decide new-vs-update on re-import.
+        const existingProductByName = new Map<string, any>(
+            existingProducts.map((p) => [p.name.trim().toLowerCase(), p]),
         );
         // Company "home" currency — used when a row leaves currency_code blank.
         const defaultCurrency = currencies.find((c) => c.is_default);
 
-        const seenCodes = new Set<string>();
+        const seenNames = new Set<string>();
         const rows: ProductImportRow[] = [];
 
         for (let i = 0; i < rawRows.length; i++) {
@@ -375,32 +294,12 @@ export class ProductImportExportService {
                 return key ? String(raw[key] ?? '').trim() : '';
             };
 
-            // Repeated columns: xlsx de-dupes duplicate headers as
-            // `rebates`, `rebates_1`, `rebates_2`… — collect every non-empty
-            // cell whose header is `<col>` or `<col>` + a numeric suffix.
-            const getMulti = (col: string): string[] => {
-                const re = new RegExp(`^${col}(_?\\d+)?$`, 'i');
-                const out: string[] = [];
-                for (const k of Object.keys(raw)) {
-                    if (re.test(k.trim())) {
-                        const v = String(raw[k] ?? '').trim();
-                        if (v) out.push(v);
-                    }
-                }
-                return out;
-            };
-
-            const code = get('code');
             const name = get('name');
             const categoryName = get('category_name');
             const currencyCodeRaw = get('currency_code');
             const statusRaw = get('status').toLowerCase();
 
-            // ── Required fields ──
-            if (!code) errors.push('Code / SKU is required');
-            else if (code.length > 50)
-                errors.push('Code / SKU must not exceed 50 characters');
-
+            // ── Required fields (code is auto-generated, never imported) ──
             if (!name) errors.push('Name is required');
             else if (name.length < 2)
                 errors.push('Name must be at least 2 characters');
@@ -500,7 +399,7 @@ export class ProductImportExportService {
                 return n;
             };
 
-            const taxPct = num('tax_pct', 'Tax %', {
+            const taxPct = num('gst', 'GST %', {
                 min: 0,
                 max: 100,
                 maxDecimals: 2,
@@ -567,66 +466,21 @@ export class ProductImportExportService {
                 );
             }
 
-            // ── Rebates / Expenses (one master CODE per repeated column) ──
-            // Each non-empty `rebates` / `expenses` cell holds a single master
-            // code (e.g. DBK). An unknown or duplicate code is skipped with a
-            // non-blocking warning — only that link is dropped, the row still
-            // imports. An empty set clears the product's links on update.
-            const resolveLinks = (
-                codes: string[],
-                kind: 'rebate' | 'expense',
-                idByCode: Map<string, string>,
-            ): string[] => {
-                const label = kind === 'rebate' ? 'Rebate' : 'Expense';
-                const out: string[] = [];
-                const seen = new Set<string>();
-                for (const rawCode of codes) {
-                    const codePart = rawCode.trim();
-                    if (!codePart) continue;
-                    const id = idByCode.get(codePart.toLowerCase());
-                    if (!id) {
-                        warnings.push(
-                            `${label} code "${codePart}" does not exist for this company — skipped`,
-                        );
-                        continue;
-                    }
-                    if (seen.has(id)) {
-                        warnings.push(
-                            `Duplicate ${kind} "${codePart}" — skipped`,
-                        );
-                        continue;
-                    }
-                    seen.add(id);
-                    out.push(id);
-                }
-                return out;
-            };
-
-            const rebateIds = resolveLinks(
-                getMulti('rebates'),
-                'rebate',
-                rebateIdByCode,
-            );
-            const expenseIds = resolveLinks(
-                getMulti('expenses'),
-                'expense',
-                expenseIdByCode,
-            );
-
-            // ── Duplicate code within the file ──
-            const codeKey = code.toLowerCase();
-            if (code && seenCodes.has(codeKey)) {
-                errors.push('Duplicate code / SKU in file');
+            // ── Duplicate name within the file ──
+            const nameKey = name.toLowerCase();
+            if (name && seenNames.has(nameKey)) {
+                errors.push('Duplicate product name in file');
             }
-            if (code) seenCodes.add(codeKey);
+            if (name) seenNames.add(nameKey);
 
-            // ── New vs update (matched on code, case-insensitive) ──
+            // ── New vs update (matched on name, case-insensitive — code is
+            //     auto-generated, so name is the import identity) ──
             let rowStatus: 'valid_new' | 'valid_update' | 'error' =
                 'valid_new';
             let existingId: string | undefined;
-            if (code && existingProductByCode.has(codeKey)) {
-                existingId = existingProductByCode
-                    .get(codeKey)
+            if (name && existingProductByName.has(nameKey)) {
+                existingId = existingProductByName
+                    .get(nameKey)
                     ._id.toString();
                 rowStatus = 'valid_update';
             }
@@ -635,7 +489,6 @@ export class ProductImportExportService {
             rows.push({
                 rowNum,
                 data: {
-                    code,
                     name,
                     category_name: categoryName,
                     category_id: categoryId,
@@ -658,10 +511,6 @@ export class ProductImportExportService {
                     net_weight_per_unit: netWeight,
                     gross_weight_per_unit: grossWeight,
                     country_of_origin: countryOfOrigin || undefined,
-                    rebates: rebateIds.map((id) => ({ rebate_id: id })),
-                    expenses: expenseIds.map((id) => ({
-                        expense_id: id,
-                    })),
                 },
                 status: rowStatus,
                 existingId,
@@ -701,10 +550,10 @@ export class ProductImportExportService {
 
             try {
                 const d = row.data;
-                // `rebates` / `expenses` are always sent — they fully replace
-                // the product's existing links (an empty cell clears them).
+                // Code is omitted → auto-generated on create, preserved on
+                // update. Rebates / expenses are not imported, so they're left
+                // untouched on existing products.
                 const payload: any = {
-                    code: d.code,
                     name: d.name,
                     category_id: d.category_id,
                     status: d.status,
@@ -724,8 +573,6 @@ export class ProductImportExportService {
                     net_weight_per_unit: d.net_weight_per_unit,
                     gross_weight_per_unit: d.gross_weight_per_unit,
                     country_of_origin: d.country_of_origin,
-                    rebates: d.rebates,
-                    expenses: d.expenses,
                 };
 
                 if (row.status === 'valid_update' && row.existingId) {

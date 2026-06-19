@@ -40,7 +40,8 @@ export class ProductExpenseLinkDto {
 }
 
 export class ProductCreateRequestDto {
-    @IsString() @IsNotEmpty() @MaxLength(50) code: string;
+    // Code is auto-generated (e.g. PRD-0001) when omitted.
+    @IsString() @IsOptional() @MaxLength(50) code?: string;
     @IsString() @IsNotEmpty() @MaxLength(200) name: string;
 
     @IsUUID() @IsNotEmpty() category_id: string;

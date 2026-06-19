@@ -7,6 +7,7 @@ import { CategoryModule } from '@modules/category/category.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { RebateModule } from '@modules/rebate/rebate.module';
 import { ExpenseModule } from '@modules/expense/expense.module';
+import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 
 @Module({
     imports: [
@@ -15,6 +16,7 @@ import { ExpenseModule } from '@modules/expense/expense.module';
         CurrencyModule,
         RebateModule,
         ExpenseModule,
+        CompanySettingsModule,
     ],
     providers: [ProductService, ProductImportExportService],
     exports: [

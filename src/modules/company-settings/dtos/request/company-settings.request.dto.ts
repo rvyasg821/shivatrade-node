@@ -134,6 +134,28 @@ export class CompanySettingsRequestDto {
     @Min(1)
     employee_code_next_seq?: number;
 
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    product_code_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsNumber()
+    @Min(1)
+    product_code_next_seq?: number;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    vendor_code_prefix?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsNumber()
+    @Min(1)
+    vendor_code_next_seq?: number;
+
     // ── Document voucher prefixes (per-module) ──
     @ApiPropertyOptional()
     @IsOptional()

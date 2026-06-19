@@ -144,6 +144,10 @@ export class CompanySettingsService {
             employee_code_mode: s.employee_code_mode || 'manual',
             employee_code_prefix: s.employee_code_prefix || '',
             employee_code_next_seq: s.employee_code_next_seq || 1,
+            product_code_prefix: s.product_code_prefix || 'PRD',
+            product_code_next_seq: s.product_code_next_seq || 1,
+            vendor_code_prefix: s.vendor_code_prefix || 'VND',
+            vendor_code_next_seq: s.vendor_code_next_seq || 1,
             // Per-module voucher prefixes
             lead_voucher_prefix: s.lead_voucher_prefix || '',
             rfq_voucher_prefix: s.rfq_voucher_prefix || '',
@@ -209,6 +213,93 @@ export class CompanySettingsService {
 
         // Update the stored sequence to the next value
         await this.settingsRepository.update(settings, { [seqField]: seq + 1 } as any);
+
+        return code;
+    }
+
+    /**
+     * Generate the next product code (always auto), e.g. PRD-0001. Robust
+     * against existing data: derives the next sequence from both the stored
+     * counter and the highest existing `PREFIX-####` code, and bumps past any
+     * collision with the supplied existing codes.
+     * @param existingCodes all current product codes for the company.
+     */
+    async generateProductCode(
+        companyId: string,
+        existingCodes: string[] = []
+    ): Promise<string> {
+        const settings = await this.getCompanyDefaults(companyId);
+        const prefix = (
+            (settings.product_code_prefix as string) || 'PRD'
+        ).toUpperCase();
+        let seq = (settings.product_code_next_seq as number) || 1;
+
+        const used = new Set<string>();
+        let maxSeq = 0;
+        const re = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+        for (const c of existingCodes) {
+            if (!c) continue;
+            const trimmed = c.trim();
+            used.add(trimmed.toUpperCase());
+            const m = trimmed.match(re);
+            if (m) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxSeq) maxSeq = n;
+            }
+        }
+        if (maxSeq >= seq) seq = maxSeq + 1;
+
+        let code = `${prefix}-${String(seq).padStart(4, '0')}`;
+        while (used.has(code.toUpperCase())) {
+            seq += 1;
+            code = `${prefix}-${String(seq).padStart(4, '0')}`;
+        }
+
+        await this.settingsRepository.update(settings, {
+            product_code_next_seq: seq + 1,
+        } as any);
+
+        return code;
+    }
+
+    /**
+     * Generate the next vendor code (always auto), e.g. VND-0001. Same robust
+     * logic as `generateProductCode`.
+     */
+    async generateVendorCode(
+        companyId: string,
+        existingCodes: string[] = []
+    ): Promise<string> {
+        const settings = await this.getCompanyDefaults(companyId);
+        const prefix = (
+            (settings.vendor_code_prefix as string) || 'VND'
+        ).toUpperCase();
+        let seq = (settings.vendor_code_next_seq as number) || 1;
+
+        const used = new Set<string>();
+        let maxSeq = 0;
+        const re = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+        for (const c of existingCodes) {
+            if (!c) continue;
+            const trimmed = c.trim();
+            used.add(trimmed.toUpperCase());
+            const m = trimmed.match(re);
+            if (m) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxSeq) maxSeq = n;
+            }
+        }
+        if (maxSeq >= seq) seq = maxSeq + 1;
+
+        let code = `${prefix}-${String(seq).padStart(4, '0')}`;
+        while (used.has(code.toUpperCase())) {
+            seq += 1;
+            code = `${prefix}-${String(seq).padStart(4, '0')}`;
+        }
+
+        await this.settingsRepository.update(settings, {
+            vendor_code_next_seq: seq + 1,
+        } as any);
 
         return code;
     }
