@@ -484,8 +484,53 @@ export class PurchaseOrderService {
         for (const e of existing as any[])
             existingById.set(e._id.toString(), e);
 
+        // Resolve each incoming line to an existing line. Prefer _id; when the
+        // payload omits it (older clients / stale builds), fall back to the
+        // stable source quotation/PFI line id, then product — so a line that
+        // lost its _id in the round-trip is UPDATED in place instead of being
+        // treated as a remove+create (which would orphan / block POV-linked
+        // lines and surface as "Cannot remove PO line(s) … linked to a POV").
+        const bySrcQuo = new Map<string, string>();
+        const bySrcPfi = new Map<string, string>();
+        const byProduct = new Map<string, string>();
+        for (const e of existing as any[]) {
+            const eid = e._id.toString();
+            const sq = e.source_quotation_line_id?.toString();
+            const sp = e.source_pfi_line_id?.toString();
+            const pk = e.product_id?.toString();
+            if (sq && !bySrcQuo.has(sq)) bySrcQuo.set(sq, eid);
+            if (sp && !bySrcPfi.has(sp)) bySrcPfi.set(sp, eid);
+            if (pk && !byProduct.has(pk)) byProduct.set(pk, eid);
+        }
+        const claimed = new Set<string>();
+        const resolvedLines = (lines || []).map(l => {
+            const direct = l._id ? String(l._id) : null;
+            if (direct && existingById.has(direct)) {
+                claimed.add(direct);
+                return { ...l, _id: direct };
+            }
+            const sq = l.source_quotation_line_id
+                ? String(l.source_quotation_line_id)
+                : null;
+            const sp = l.source_pfi_line_id
+                ? String(l.source_pfi_line_id)
+                : null;
+            const pk = l.product_id ? String(l.product_id) : null;
+            let match: string | undefined;
+            if (sq && bySrcQuo.has(sq) && !claimed.has(bySrcQuo.get(sq)!))
+                match = bySrcQuo.get(sq);
+            else if (sp && bySrcPfi.has(sp) && !claimed.has(bySrcPfi.get(sp)!))
+                match = bySrcPfi.get(sp);
+            else if (pk && byProduct.has(pk) && !claimed.has(byProduct.get(pk)!))
+                match = byProduct.get(pk);
+            if (match) {
+                claimed.add(match);
+                return { ...l, _id: match };
+            }
+            return { ...l, _id: undefined };
+        });
         const incomingIds = new Set<string>(
-            (lines || [])
+            resolvedLines
                 .map(l => (l._id ? String(l._id) : null))
                 .filter((v): v is string => !!v)
         );
@@ -512,10 +557,10 @@ export class PurchaseOrderService {
             }
         }
 
-        if (!lines?.length) return;
+        if (!resolvedLines.length) return;
 
         let seq = 0;
-        for (const l of lines) {
+        for (const l of resolvedLines) {
             seq += 1;
             const payload: any = {
                 company_id: companyId,
