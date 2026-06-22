@@ -96,8 +96,12 @@ export interface ResolvedLine {
     discount_pct: number;
     tax_pct: number;
     margin_pct: number;
-    // PFI-only
+    // Product-master sourced; carried for display + import round-trip.
+    part_no?: string;
+    // hs_code (quotation/PFI key) + hsn_code (Sales Order key) — both set so
+    // either form picks up the imported value.
     hs_code?: string;
+    hsn_code?: string;
     net_weight_kg?: number;
     gross_weight_kg?: number;
     package_count?: number;

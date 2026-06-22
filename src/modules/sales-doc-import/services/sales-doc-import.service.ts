@@ -134,6 +134,12 @@ export class SalesDocImportService {
         // rebate / expense / weight columns are ignored even if the sheet has
         // them (matches the reduced Lead import template).
         const isLead = docType === ENUM_SALES_DOC_TYPE.LEAD;
+        // Quotation & Sales Order use the new costing-worksheet sheet (aliased
+        // headers + per-code expense/rebate value columns). PFI / Lead keep the
+        // legacy parsing untouched.
+        const isNewLayout =
+            docType === ENUM_SALES_DOC_TYPE.QUOTATION ||
+            docType === ENUM_SALES_DOC_TYPE.PO;
         const [products, vendors, rebateMasters, expenseMasters] =
             await Promise.all([
                 this.productRepository.findByCompanyId(companyId),
@@ -227,13 +233,29 @@ export class SalesDocImportService {
             const errors: string[] = [];
             const warnings: string[] = [];
 
-            // Header-insensitive cell access.
+            // Header-insensitive cell access with new-layout aliases so a sheet
+            // using either the legacy header (product_code) or the new costing
+            // header (productcode / rate(inr) / disc(%) / margin(%) / hsncode /
+            // partno) resolves the same field. Legacy names are listed first,
+            // so PFI / Lead sheets resolve exactly as before.
+            const COL_ALIASES: Record<string, string[]> = {
+                product_code: ['product_code', 'productcode'],
+                vendor_code: ['vendor_code', 'vendorcode'],
+                unit_price: ['unit_price', 'rate(inr)', 'rate'],
+                discount_pct: ['discount_pct', 'disc(%)', 'disc'],
+                margin_pct: ['margin_pct', 'margin(%)', 'margin'],
+                hs_code: ['hs_code', 'hsncode', 'hsn_code'],
+                part_no: ['part_no', 'partno'],
+            };
             const get = (col: string): string => {
-                const key = Object.keys(raw).find(
-                    (k) => k.trim().toLowerCase() === col.toLowerCase(),
-                );
-                if (!key) return '';
-                return String(raw[key] ?? '').trim();
+                const cands = COL_ALIASES[col] || [col];
+                for (const c of cands) {
+                    const key = Object.keys(raw).find(
+                        (k) => k.trim().toLowerCase() === c.toLowerCase(),
+                    );
+                    if (key) return String(raw[key] ?? '').trim();
+                }
+                return '';
             };
 
             const productCode = get('product_code');
@@ -508,6 +530,74 @@ export class SalesDocImportService {
                 expensesSnapshot.push(...filtered);
             }
 
+            // ── New layout (quotation / sales order): per-code value columns ──
+            // Each expense/rebate master code is its own column (header may have
+            // a trailing "(%)"). A non-blank cell applies that code to the line
+            // using the TYPED value (per-line override); a blank cell skips it.
+            // The presence of any such column means the row fully specifies its
+            // expenses / rebates, so master defaults are replaced.
+            if (isNewLayout) {
+                const stripPct = (h: string) =>
+                    h.trim().replace(/\(%\)\s*$/, '').trim();
+                const expHdrs: Array<{ key: string; master: any }> = [];
+                const rebHdrs: Array<{ key: string; master: any }> = [];
+                for (const key of Object.keys(raw)) {
+                    const codeKey = lc(stripPct(key));
+                    if (!codeKey) continue;
+                    const em = expenseByCode.get(codeKey);
+                    if (em) {
+                        expHdrs.push({ key, master: em });
+                        continue;
+                    }
+                    const rm = rebateByCode.get(codeKey);
+                    if (rm) rebHdrs.push({ key, master: rm });
+                }
+                if (expHdrs.length > 0) {
+                    const next: ResolvedExpenseSnapshot[] = [];
+                    for (const { key, master } of expHdrs) {
+                        const cell = numOrUndef(raw[key]);
+                        if (cell === undefined) continue; // blank → skip
+                        const fromProduct = expensesSnapshot.find(
+                            (s) => lc(s.code) === lc(master.code),
+                        );
+                        next.push({
+                            expense_id: master._id.toString(),
+                            code: master.code,
+                            name: master.name,
+                            type: ((fromProduct?.type ||
+                                master.type) as string).toLowerCase() as
+                                | 'percent'
+                                | 'fixed',
+                            value: cell,
+                        });
+                    }
+                    expensesSnapshot.length = 0;
+                    expensesSnapshot.push(...next);
+                }
+                if (rebHdrs.length > 0) {
+                    const next: ResolvedRebateSnapshot[] = [];
+                    for (const { key, master } of rebHdrs) {
+                        const cell = numOrUndef(raw[key]);
+                        if (cell === undefined) continue; // blank → skip
+                        const fromProduct = rebatesSnapshot.find(
+                            (s) => lc(s.code) === lc(master.code),
+                        );
+                        next.push({
+                            rebate_id: master._id.toString(),
+                            code: master.code,
+                            name: master.name,
+                            type: ((fromProduct?.type ||
+                                master.type) as string).toLowerCase() as
+                                | 'percent'
+                                | 'fixed',
+                            pct: cell,
+                        });
+                    }
+                    rebatesSnapshot.length = 0;
+                    rebatesSnapshot.push(...next);
+                }
+            }
+
             const line: ResolvedLine = {
                 product_id: productId,
                 product_code: product.code,
@@ -537,6 +627,17 @@ export class SalesDocImportService {
                         numOrUndef(get('gross_weight_kg')) ??
                         num(product.gross_weight_per_unit) * (qty || 0);
                 }
+            }
+
+            // partno / hsncode columns (Quotation & Sales Order new layout).
+            // Set both hs_code (quotation key) and hsn_code (Sales Order key) so
+            // either form picks up the imported value; part_no defaults from the
+            // product master when the cell is blank.
+            if (isNewLayout) {
+                const hsnVal = get('hs_code') || product.hsn_code || '';
+                line.hs_code = hsnVal;
+                line.hsn_code = hsnVal;
+                line.part_no = get('part_no') || product.part_no || '';
             }
 
             // Lead: simple requirement line. Capture part_no; drop vendor /
@@ -731,6 +832,270 @@ export class SalesDocImportService {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // Costing-worksheet workbook — Quotation & Sales Order (po) ONLY.
+    // PFI / Lead never reach here (see buildWorkbook dispatch), so their
+    // existing layout/behaviour is untouched.
+    //   Sample (includeComputed=false) → input columns only.
+    //   Export (includeComputed=true)  → adds price/disc, value, total+exp,
+    //     grand total and (foreign only) rate/amt currency columns + Totals.
+    // ──────────────────────────────────────────────────────────────────
+    private async buildCostingWorkbook(
+        companyId: string,
+        opts: {
+            docType: ENUM_SALES_DOC_TYPE;
+            lines: SalesDocExportLineDto[];
+            currencyCode?: string;
+            exchangeRate?: number | string;
+            includeComputed: boolean;
+            includeReadme: boolean;
+        },
+    ): Promise<Buffer> {
+        const exportLines = opts.lines || [];
+        const includeComputed = opts.includeComputed;
+        const rate = num(opts.exchangeRate) || 1;
+        const cur = (opts.currencyCode || '').trim();
+        // exchange_rate is stored foreign-per-₹1; foreign docs carry a non-1 rate.
+        const isForeign =
+            !!cur && cur.toUpperCase() !== 'INR' && rate > 0 && rate !== 1;
+        const r2 = (n: number) =>
+            Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
+
+        // Resolve code / part_no / hsn from ids when the line omits them.
+        const productCodeById = new Map<string, string>();
+        const partNoById = new Map<string, string>();
+        const hsnById = new Map<string, string>();
+        const vendorCodeById = new Map<string, string>();
+        if (exportLines.some((l) => l.product_id)) {
+            const prods = await this.productRepository.findByCompanyId(companyId);
+            for (const p of prods as any[]) {
+                productCodeById.set(p._id.toString(), p.code || '');
+                partNoById.set(p._id.toString(), p.part_no || '');
+                hsnById.set(p._id.toString(), p.hsn_code || '');
+            }
+        }
+        if (exportLines.some((l) => !l.vendor_code && l.vendor_id)) {
+            const vens = await this.vendorRepository.findByCompanyId(companyId);
+            for (const v of vens as any[])
+                vendorCodeById.set(v._id.toString(), v.vendor_code || '');
+        }
+        const pCode = (l: SalesDocExportLineDto) =>
+            l.product_code ||
+            (l.product_id ? productCodeById.get(String(l.product_id)) : '') ||
+            '';
+        const vCode = (l: SalesDocExportLineDto) =>
+            l.vendor_code ||
+            (l.vendor_id ? vendorCodeById.get(String(l.vendor_id)) : '') ||
+            '';
+        const pPart = (l: SalesDocExportLineDto) =>
+            (l as any).part_no ||
+            (l.product_id ? partNoById.get(String(l.product_id)) : '') ||
+            '';
+        const pHsn = (l: SalesDocExportLineDto) =>
+            l.hs_code ||
+            (l as any).hsn_code ||
+            (l.product_id ? hsnById.get(String(l.product_id)) : '') ||
+            '';
+
+        // Active expense / rebate masters → columns, unioned with any code
+        // already on a line so a deactivated-but-used code is never dropped.
+        const [expenseMasters, rebateMasters] = await Promise.all([
+            this.expenseRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+            this.rebateRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+        ]);
+        const isActiveMaster = (m: any): boolean =>
+            m?.is_active !== false &&
+            String(m?.status ?? '').toUpperCase() !== 'INACTIVE';
+        const expenseColTypes = new Map<string, string>();
+        for (const m of expenseMasters as any[])
+            if (isActiveMaster(m) && m.code)
+                expenseColTypes.set(m.code, lc(m.type) || 'fixed');
+        const rebateColTypes = new Map<string, string>();
+        for (const m of rebateMasters as any[])
+            if (isActiveMaster(m) && m.code)
+                rebateColTypes.set(m.code, lc(m.type) || 'percent');
+        for (const l of exportLines) {
+            for (const e of (l.product_expenses_snapshot || []) as any[])
+                if (e?.code && !expenseColTypes.has(e.code))
+                    expenseColTypes.set(e.code, lc(e.type) || 'fixed');
+            for (const r of (l.product_rebates_snapshot || []) as any[])
+                if (r?.code && !rebateColTypes.has(r.code))
+                    rebateColTypes.set(r.code, lc(r.type) || 'percent');
+        }
+        const expenseCols = Array.from(expenseColTypes.keys()).sort();
+        const rebateCols = Array.from(rebateColTypes.keys()).sort();
+        // Percent codes get a "(%)" header suffix; flat codes stay bare.
+        const colHeader = (code: string, type?: string): string =>
+            lc(type) === 'percent' ? `${code}(%)` : code;
+
+        // ── Header row ──
+        const headerRow: string[] = [
+            'productcode',
+            'vendorcode',
+            'partno',
+            'hsncode',
+            'qty',
+            'rate(inr)',
+            'disc(%)',
+        ];
+        if (includeComputed) headerRow.push('price/disc', 'value');
+        for (const code of expenseCols)
+            headerRow.push(colHeader(code, expenseColTypes.get(code)));
+        if (includeComputed) headerRow.push('total+exp');
+        for (const code of rebateCols)
+            headerRow.push(colHeader(code, rebateColTypes.get(code)));
+        headerRow.push('margin(%)');
+        if (includeComputed) {
+            headerRow.push('grand total');
+            if (isForeign) headerRow.push(`rate(${cur})`, `amt(${cur})`);
+        }
+
+        // ── Data rows ──
+        const dataAoa = exportLines.map((l) => {
+            const expByCode = new Map<string, number>();
+            for (const e of (l.product_expenses_snapshot || []) as any[])
+                if (e?.code) expByCode.set(e.code, num(e.value));
+            const rebByCode = new Map<string, number>();
+            for (const r of (l.product_rebates_snapshot || []) as any[])
+                if (r?.code) rebByCode.set(r.code, num(r.pct));
+
+            const row: any[] = [
+                pCode(l),
+                vCode(l),
+                pPart(l),
+                pHsn(l),
+                l.qty ?? '',
+                l.unit_price ?? '',
+                l.discount_pct ?? '',
+            ];
+            // GST excluded — quotations & SOs carry no tax in these totals.
+            const c = computeLineCosting(l);
+            if (includeComputed) {
+                const priceDisc = r2(
+                    num(l.unit_price) * (1 - num(l.discount_pct) / 100),
+                );
+                row.push(priceDisc, c.taxable);
+            }
+            for (const code of expenseCols)
+                row.push(expByCode.has(code) ? expByCode.get(code) : '');
+            if (includeComputed) row.push(r2(c.taxable + c.expense_total));
+            for (const code of rebateCols)
+                row.push(rebByCode.has(code) ? rebByCode.get(code) : '');
+            row.push(l.margin_pct ?? '');
+            if (includeComputed) {
+                const grand = r2(
+                    c.taxable - c.rebate_total + c.expense_total + c.margin_amt,
+                );
+                row.push(grand);
+                if (isForeign) {
+                    const q = num(l.qty);
+                    const amtCur = r2(grand * rate);
+                    row.push(q ? r2(amtCur / q) : 0, amtCur);
+                }
+            }
+            return row;
+        });
+
+        const workbook = utils.book_new();
+        utils.book_append_sheet(
+            workbook,
+            utils.aoa_to_sheet([headerRow, ...dataAoa]),
+            'LineItems',
+        );
+
+        // Totals sheet (export only) — GST-excluded, mirrors the costing card.
+        if (includeComputed) {
+            const t = exportLines.reduce(
+                (acc, l) => {
+                    const c = computeLineCosting(l);
+                    acc.taxable += c.taxable;
+                    acc.expense += c.expense_total;
+                    acc.rebate += c.rebate_total;
+                    acc.margin += c.margin_amt;
+                    acc.grand += r2(
+                        c.taxable -
+                            c.rebate_total +
+                            c.expense_total +
+                            c.margin_amt,
+                    );
+                    return acc;
+                },
+                { taxable: 0, expense: 0, rebate: 0, margin: 0, grand: 0 },
+            );
+            const rows: any[] = [
+                ['Metric', 'Amount (INR)'],
+                ['Value (Taxable)', r2(t.taxable)],
+                ['Expenses', r2(t.expense)],
+                ['Rebates', r2(t.rebate)],
+                ['Margin', r2(t.margin)],
+                ['Grand Total', r2(t.grand)],
+            ];
+            if (isForeign) {
+                rows[0].push(`Amount (${cur})`);
+                rows[1].push(r2(t.taxable * rate));
+                rows[2].push(r2(t.expense * rate));
+                rows[3].push(r2(t.rebate * rate));
+                rows[4].push(r2(t.margin * rate));
+                rows[5].push(r2(t.grand * rate));
+            }
+            utils.book_append_sheet(
+                workbook,
+                utils.aoa_to_sheet(rows),
+                'Totals',
+            );
+        }
+
+        // _README (sample only).
+        if (opts.includeReadme) {
+            const readme = [
+                ['Sales Doc Line-Items — Import Sample'],
+                [],
+                ['Sheet "LineItems" — one row per line item.'],
+                ['Required columns: productcode (must exist) and qty (> 0).'],
+                [
+                    'vendorcode is optional — if blank, the cheapest active vendor from the product price list is used.',
+                ],
+                [
+                    'rate(inr) / disc(%) fall back to the resolved vendor row when blank.',
+                ],
+                [
+                    'margin(%) falls back to the product master when blank. partno / hsncode auto-fill from the product when blank.',
+                ],
+                [],
+                ['Expense & rebate columns'],
+                [
+                    'Each expense/rebate code is its own column (e.g. PKC, TPC(%), DBK). A "(%)" suffix means the value is a percentage; otherwise it is a flat amount.',
+                ],
+                [
+                    'Type an amount in a code cell to apply that expense/rebate to the line — the typed value overrides the master default. Leave the cell blank to skip that code for the row.',
+                ],
+                [
+                    'Computed columns (price/disc, value, total+exp, grand total, currency) appear on exports only and are ignored on import.',
+                ],
+                [],
+                ['Status meaning on the preview screen'],
+                ['New      → product/vendor not in current form lines'],
+                ['Updated  → product/vendor already present (will overwrite)'],
+                ['Skipped  → duplicate of an earlier row in this sheet'],
+                ['Warning  → imported with a fallback (vendor auto-pick, etc.)'],
+                ['Error    → cannot import (blocked)'],
+            ];
+            utils.book_append_sheet(
+                workbook,
+                utils.aoa_to_sheet(readme),
+                '_README',
+            );
+        }
+
+        return write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // 2. Build sample/export workbook
     // ──────────────────────────────────────────────────────────────────
     async buildWorkbook(
@@ -739,10 +1104,20 @@ export class SalesDocImportService {
             docType: ENUM_SALES_DOC_TYPE;
             lines: SalesDocExportLineDto[];
             currencyCode?: string;
+            exchangeRate?: number | string; // foreign-per-₹1; drives currency cols
             includeComputed: boolean; // export mode adds computed cols + Totals sheet
             includeReadme: boolean; // sample mode adds _README + _ProductsRef
         },
     ): Promise<Buffer> {
+        // Quotation & Sales Order (po) use the costing-worksheet layout. PFI and
+        // Lead keep their existing layout/behaviour below — scoped change so
+        // other docs' import/export are unaffected.
+        if (
+            opts.docType === ENUM_SALES_DOC_TYPE.QUOTATION ||
+            opts.docType === ENUM_SALES_DOC_TYPE.PO
+        ) {
+            return this.buildCostingWorkbook(companyId, opts);
+        }
         const includeExport = docHasExportFields(opts.docType);
         // Leads are a simple requirement list — no vendor / discount / margin /
         // rebate / expense / weight columns. Just the essentials + description.
