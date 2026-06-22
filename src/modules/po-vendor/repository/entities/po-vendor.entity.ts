@@ -17,10 +17,13 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
-    /** Source PO — must be `confirmed` (or `in_process`) at create time. */
+    /** Source PO — must be `confirmed` (or `in_process`) at create time.
+     *  Nullable since 2026-06: a POV can be raised standalone (no parent
+     *  Sales Order). Null = standalone POV; it does not participate in any
+     *  PO coverage roll-up. */
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    purchase_order_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    purchase_order_id?: string;
 
     /** Snapshot of vendor at POV creation — inherited from PO header. */
     @Index()

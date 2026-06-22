@@ -3,6 +3,7 @@
     "stats": "PO Vendor stats retrieved successfully.",
     "get": "PO Vendor fetched successfully.",
     "createFromPo": "PO Vendor created from Purchase Order.",
+    "createStandalone": "PO Vendor created.",
     "update": "PO Vendor updated successfully.",
     "dispatch": "PO Vendor marked as dispatched.",
     "receive": "PO Vendor closed (goods received).",
