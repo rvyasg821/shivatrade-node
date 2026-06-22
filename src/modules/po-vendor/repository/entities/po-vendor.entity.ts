@@ -1,6 +1,9 @@
 import { DatabaseObjectIdEntityBase } from '@common/database/bases/database.object-id.entity';
 import { Entity, Column, Index } from 'typeorm';
-import { ENUM_PO_VENDOR_STATUS } from '../../enums/po-vendor.enum';
+import {
+    ENUM_PO_VENDOR_STATUS,
+    ENUM_PO_VENDOR_PAYMENT_STATUS,
+} from '../../enums/po-vendor.enum';
 import { PO_VENDOR_COLLECTION_NAME } from '../../constants/po-vendor.entity.constant';
 
 @Entity(PO_VENDOR_COLLECTION_NAME)
@@ -135,6 +138,30 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
         value: string;
         amount: string;
     }>;
+
+    /** Cached sum of active (non-voided) vendor payments. Derived from the
+     *  po_vendor_payments table on every record/void — never set directly.
+     *  Independent of the dispatch `status`. */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
+    amount_paid: string;
+
+    /** Vendor payment status — unpaid / partially_paid / paid. Derived from
+     *  amount_paid vs the live order value (payable). Runs independently of
+     *  the dispatch `status`. */
+    @Index()
+    @Column({
+        type: 'varchar',
+        length: 20,
+        nullable: false,
+        default: ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID,
+    })
+    payment_status: ENUM_PO_VENDOR_PAYMENT_STATUS;
 
     @Index()
     @Column({ type: 'boolean', default: false })

@@ -15,3 +15,15 @@ export enum ENUM_PO_VENDOR_STATUS {
     CLOSED = 'closed',
     CANCELLED = 'cancelled',
 }
+
+/**
+ * Vendor payment status — runs INDEPENDENTLY of the dispatch `status`
+ * above (a POV can be paid while still a draft, and dispatching never
+ * changes this). Derived from the sum of active payments vs the live
+ * order value (payable), never set directly by the user.
+ */
+export enum ENUM_PO_VENDOR_PAYMENT_STATUS {
+    UNPAID = 'unpaid',
+    PARTIALLY_PAID = 'partially_paid',
+    PAID = 'paid',
+}

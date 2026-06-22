@@ -15,6 +15,7 @@ export enum ENUM_VOUCHER_DOC_TYPE {
     INVOICE_EXPORT = 'INVOICE_EXPORT',
     SHIPPING = 'SHIPPING',
     RECEIPT = 'RECEIPT',
+    PAYMENT_VOUCHER = 'PAYMENT_VOUCHER',
 }
 
 /**
@@ -65,4 +66,6 @@ export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig>
     [ENUM_VOUCHER_DOC_TYPE.SHIPPING]: { token: 'SHP', style: 'glued' },
     // Customer payment receipt voucher → STIPL/RCP/0001/2026-27
     [ENUM_VOUCHER_DOC_TYPE.RECEIPT]: { token: 'RCP', style: 'separated' },
+    // Vendor payment voucher → STIPL/PV/0001/2026-27
+    [ENUM_VOUCHER_DOC_TYPE.PAYMENT_VOUCHER]: { token: 'PV', style: 'separated' },
 };

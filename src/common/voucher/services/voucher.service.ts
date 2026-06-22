@@ -19,6 +19,7 @@ const PREFIX_FIELD_BY_DOC: Partial<Record<ENUM_VOUCHER_DOC_TYPE, string>> = {
     [ENUM_VOUCHER_DOC_TYPE.PO_VENDOR]: 'po_vendor_voucher_prefix',
     [ENUM_VOUCHER_DOC_TYPE.GRN]: 'grn_voucher_prefix',
     [ENUM_VOUCHER_DOC_TYPE.DEBIT_NOTE]: 'debit_note_voucher_prefix',
+    [ENUM_VOUCHER_DOC_TYPE.PAYMENT_VOUCHER]: 'payment_voucher_prefix',
 };
 
 @Injectable()

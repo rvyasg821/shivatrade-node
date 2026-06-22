@@ -9,6 +9,10 @@
     "receive": "PO Vendor closed (goods received).",
     "cancel": "PO Vendor cancelled.",
     "revertDraft": "PO Vendor reverted to draft.",
+    "payment": {
+        "create": "Vendor payment recorded.",
+        "void": "Vendor payment voided."
+    },
     "delete": "PO Vendor deleted successfully.",
     "error": {
         "notFound": "Sorry, we couldn't find the requested PO Vendor."

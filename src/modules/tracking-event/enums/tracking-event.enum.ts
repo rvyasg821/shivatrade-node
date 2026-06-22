@@ -25,6 +25,9 @@ export enum ENUM_TRACKING_EVENT_TYPE {
     POV_RECEIVED = 'pov_received',
     POV_CANCELLED = 'pov_cancelled',
     POV_UPDATED = 'pov_updated',
+    // Vendor payment lifecycle, surfaced on the parent POV timeline.
+    POV_PAYMENT_RECORDED = 'pov_payment_recorded',
+    POV_PAYMENT_VOIDED = 'pov_payment_voided',
     // GRN (Goods Receipt Note) lifecycle, surfaced on the parent POV timeline.
     GRN_CONFIRMED = 'grn_confirmed',
     GRN_CANCELLED = 'grn_cancelled',
@@ -40,6 +43,8 @@ export const SYSTEM_TRACKING_EVENT_TYPES: string[] = [
     ENUM_TRACKING_EVENT_TYPE.POV_RECEIVED,
     ENUM_TRACKING_EVENT_TYPE.POV_CANCELLED,
     ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+    ENUM_TRACKING_EVENT_TYPE.POV_PAYMENT_RECORDED,
+    ENUM_TRACKING_EVENT_TYPE.POV_PAYMENT_VOIDED,
     ENUM_TRACKING_EVENT_TYPE.GRN_CONFIRMED,
     ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_ISSUED,

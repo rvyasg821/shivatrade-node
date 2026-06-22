@@ -11,7 +11,10 @@ import { CompanyAddressRepository } from '@modules/company/repository/repositori
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
-import { PoVendorGetResponseDto } from '../dtos/response/po-vendor.get.response.dto';
+import {
+    PoVendorGetResponseDto,
+    PoVendorPaymentResponseDto,
+} from '../dtos/response/po-vendor.get.response.dto';
 
 /**
  * Renders the POV (PO Vendor / dispatch advice) PDF. Header/footer use the
@@ -53,6 +56,35 @@ export class PoVendorPdfService {
 
     buildFilename(pov: PoVendorGetResponseDto): string {
         const safe = (pov.voucher_no || 'POV')
+            .replace(/[\\/]+/g, '-')
+            .replace(/[^A-Za-z0-9_\-.]/g, '');
+        return `${safe}.pdf`;
+    }
+
+    /** Printable Payment Voucher (STIPL/PV/…) for a single vendor payment. */
+    async renderPayment(
+        pov: PoVendorGetResponseDto,
+        payment: PoVendorPaymentResponseDto,
+        companyId: string
+    ): Promise<Buffer> {
+        const ctx = await this.buildContext(pov, companyId);
+        const html = buildPaymentVoucherHtml(ctx, payment);
+        return this.pdfService.generateFromHtml(html, {
+            format: 'A4',
+            margin: {
+                top: '18mm',
+                right: '12mm',
+                bottom: '18mm',
+                left: '12mm',
+            },
+            displayHeaderFooter: true,
+            headerTemplate: buildPaymentHeaderTemplate(ctx, payment),
+            footerTemplate: buildPaymentFooterTemplate(ctx),
+        });
+    }
+
+    buildPaymentFilename(payment: PoVendorPaymentResponseDto): string {
+        const safe = (payment.payment_voucher_no || 'PV')
             .replace(/[\\/]+/g, '-')
             .replace(/[^A-Za-z0-9_\-.]/g, '');
         return `${safe}.pdf`;
@@ -360,6 +392,165 @@ function buildFooterTemplate(ctx: PovPdfContext): string {
         addressLine: ctx.company.footer_address || '',
         idLine: buildFooterIdLine(ctx),
     });
+}
+
+// ─── Payment voucher (STIPL/PV/…) ───────────────────────────────────────
+
+function buildPaymentHeaderTemplate(
+    ctx: PovPdfContext,
+    payment: PoVendorPaymentResponseDto
+): string {
+    return buildPdfHeaderTemplate({
+        companyName: ctx.company.name,
+        docLabel: 'PAYMENT VOUCHER',
+        voucherNo: payment.payment_voucher_no || '',
+    });
+}
+
+function buildPaymentFooterTemplate(ctx: PovPdfContext): string {
+    return buildPdfFooterTemplate({
+        voucherNo: ctx.pov.voucher_no || '',
+        addressLine: ctx.company.footer_address || '',
+        idLine: buildFooterIdLine(ctx),
+    });
+}
+
+function buildPaymentVoucherHtml(
+    ctx: PovPdfContext,
+    payment: PoVendorPaymentResponseDto
+): string {
+    const { pov, company, vendor } = ctx;
+    const voided = !!payment.voided_at;
+    const letterhead = buildPdfLetterhead(
+        {
+            logoDataUri: ctx.logoDataUri,
+            name: company.name,
+            phone: company.phone,
+            email: company.email,
+        },
+        {
+            title: 'Payment Voucher',
+            voucherNo: payment.payment_voucher_no || '-',
+            statusBadge: voided ? 'VOIDED' : 'PAID',
+        }
+    );
+    const sym = pov.currency_symbol || pov.currency_code || '₹';
+
+    const detailRows: Array<[string, string]> = [
+        ['Vendor PO', esc(pov.voucher_no || '-')],
+        ['Vendor Invoice No.', esc(payment.invoice_number || '-')],
+        ['Payment Date', dateOnly(payment.payment_date) || '-'],
+    ];
+
+    const summaryRows: Array<[string, string]> = [
+        ['Order Value (Payable)', ccyMoney(sym, pov.order_value || 0)],
+        ['Total Paid', ccyMoney(sym, pov.amount_paid || 0)],
+        ['Balance Payable', ccyMoney(sym, pov.balance_payable || 0)],
+    ];
+
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${esc(payment.payment_voucher_no || 'PV')}</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 10.5px; color: #1f2937; margin: 0; background: #fff;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .doc { width: 100%; }
+  .section { margin-top: 16px; }
+  .label { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #6b7280; margin-bottom: 6px; }
+  .party { white-space: pre-line; line-height: 1.5; }
+  .party .nm { font-weight: 700; font-size: 11.5px; color: #111827; }
+  table.kv { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  table.kv td { padding: 7px 10px; border: 1px solid #e5e7eb; }
+  table.kv td.k { width: 38%; background: #f9fafb; font-weight: 600; color: #374151; }
+  .amount-box {
+    margin-top: 18px; border: 1.5px solid #111827; border-radius: 8px;
+    padding: 14px 18px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .amount-box .lbl { font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #374151; }
+  .amount-box .val { font-size: 20px; font-weight: 800; color: #111827; }
+  .summary { margin-top: 18px; width: 60%; margin-left: auto; }
+  .summary table { width: 100%; border-collapse: collapse; }
+  .summary td { padding: 6px 10px; }
+  .summary td.k { color: #6b7280; }
+  .summary td.v { text-align: right; font-weight: 600; }
+  .summary tr.grand td { border-top: 1px solid #d1d5db; font-weight: 800; color: #111827; }
+  .voided-banner {
+    margin-top: 14px; padding: 8px 14px; border: 1px solid #fecaca; background: #fef2f2;
+    color: #b91c1c; font-weight: 700; border-radius: 6px; text-align: center; letter-spacing: 1px;
+  }
+  .sign { margin-top: 48px; text-align: right; }
+  .sign .line { display: inline-block; border-top: 1px solid #9ca3af; padding-top: 4px; min-width: 200px; text-align: center; color: #374151; }
+</style>
+</head>
+<body>
+<div class="doc">
+  ${letterhead}
+
+  ${
+      voided
+          ? `<div class="voided-banner">VOIDED — ${esc(
+                payment.voided_reason || 'this payment has been voided'
+            )}</div>`
+          : ''
+  }
+
+  <div class="section">
+    <div class="label">Paid To</div>
+    <div class="party"><span class="nm">${esc(vendor.name || '-')}</span>${
+        vendor.address ? `\n${esc(vendor.address)}` : ''
+    }${vendor.gstin ? `\nGSTIN: ${esc(vendor.gstin)}` : ''}</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Payment Details</div>
+    <table class="kv">
+      ${detailRows
+          .map(
+              ([k, v]) =>
+                  `<tr><td class="k">${k}</td><td>${v}</td></tr>`
+          )
+          .join('')}
+    </table>
+  </div>
+
+  <div class="amount-box">
+    <span class="lbl">Amount Paid</span>
+    <span class="val">${ccyMoney(sym, payment.amount || 0)}</span>
+  </div>
+
+  <div class="summary">
+    <table>
+      ${summaryRows
+          .map(
+              ([k, v], i) =>
+                  `<tr class="${
+                      i === summaryRows.length - 1 ? 'grand' : ''
+                  }"><td class="k">${k}</td><td class="v">${v}</td></tr>`
+          )
+          .join('')}
+    </table>
+  </div>
+
+  ${
+      payment.notes
+          ? `<div class="section"><div class="label">Notes</div><div>${esc(
+                payment.notes
+            )}</div></div>`
+          : ''
+  }
+
+  <div class="sign"><div class="line">${esc(
+      company.signatory || 'Authorised Signatory'
+  )}</div></div>
+</div>
+</body>
+</html>`;
 }
 
 function buildPovHtml(ctx: PovPdfContext): string {

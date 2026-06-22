@@ -36,6 +36,10 @@ import { PoVendorStandaloneCreateRequestDto } from '../dtos/request/po-vendor.st
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
 import { PoVendorCancelRequestDto } from '../dtos/request/po-vendor.cancel.request.dto';
+import {
+    PoVendorPaymentCreateRequestDto,
+    PoVendorPaymentVoidRequestDto,
+} from '../dtos/request/po-vendor-payment.request.dto';
 import { PoVendorRecoverRequestDto } from '../dtos/request/po-vendor.recover.request.dto';
 import { PoVendorGetResponseDto } from '../dtos/response/po-vendor.get.response.dto';
 import { PoVendorRecoverPreviewResponseDto } from '../dtos/response/po-vendor.recover-preview.response.dto';
@@ -334,6 +338,89 @@ export class PoVendorAdminController {
         const row = await this.povService.findOneById(id);
         const updated = await this.povService.revertToDraft(row, userId);
         return { data: await this.povService.mapGet(updated) };
+    }
+
+    // ─── Vendor payments ────────────────────────────────────────────────
+
+    @Response('poVendor.payment.create')
+    @AuthJwtAccessProtected()
+    @Post('/payments/:id')
+    async recordPayment(
+        @AuthJwtPayload('user') userId: string,
+        @Param('id') id: string,
+        @Body() body: PoVendorPaymentCreateRequestDto
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.findOneById(id);
+        await this.povService.recordPayment(row, body, userId);
+        const fresh = await this.povService.findOneById(id);
+        return { data: await this.povService.mapGet(fresh) };
+    }
+
+    @Response('poVendor.payment.void')
+    @AuthJwtAccessProtected()
+    @Post('/payments/:id/void/:paymentId')
+    async voidPayment(
+        @AuthJwtPayload('user') userId: string,
+        @Param('id') id: string,
+        @Param('paymentId') paymentId: string,
+        @Body() body: PoVendorPaymentVoidRequestDto
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        await this.povService.findOneById(id);
+        await this.povService.voidPayment(id, paymentId, userId, body?.reason);
+        const fresh = await this.povService.findOneById(id);
+        return { data: await this.povService.mapGet(fresh) };
+    }
+
+    /** Download the Payment Voucher (STIPL/PV/…) PDF for one payment. */
+    @AuthJwtAccessProtected()
+    @Get('/:id/payment-pdf/:paymentId')
+    async paymentPdf(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Param('paymentId') paymentId: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const row = await this.povService.findOneById(id);
+        if (row.company_id.toString() !== companyId) {
+            throw new NotFoundException('Vendor PO not found');
+        }
+        const dto = await this.povService.mapGet(row);
+        const payment = (dto.payments || []).find((p) => p._id === paymentId);
+        if (!payment) throw new NotFoundException('Payment not found');
+        const buf = await this.povPdfService.renderPayment(
+            dto,
+            payment,
+            companyId
+        );
+        const filename = this.povPdfService.buildPaymentFilename(payment);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buf.length));
+        res.end(buf);
+    }
+
+    /** Mint a short-lived ticket to open the Payment Voucher PDF inline. */
+    @Response('poVendor.get')
+    @AuthJwtAccessProtected()
+    @Get('/:id/payment-pdf-ticket/:paymentId')
+    async paymentPdfTicket(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Param('paymentId') paymentId: string
+    ): Promise<IResponse<{ ticket: string }>> {
+        const row = await this.povService.findOneById(id);
+        if (row.company_id.toString() !== companyId) {
+            throw new NotFoundException('Vendor PO not found');
+        }
+        // verifyPdfTicket splits the id on ':', so join the two ids with '~'.
+        return {
+            data: {
+                ticket: signPdfTicket('po-vendor-payment', `${id}~${paymentId}`),
+            },
+        };
     }
 
     // ─── Soft delete (draft only) ───────────────────────────────────────

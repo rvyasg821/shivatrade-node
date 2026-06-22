@@ -1,5 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ENUM_PO_VENDOR_STATUS } from '../../enums/po-vendor.enum';
+import {
+    ENUM_PO_VENDOR_STATUS,
+    ENUM_PO_VENDOR_PAYMENT_STATUS,
+} from '../../enums/po-vendor.enum';
+
+export class PoVendorPaymentResponseDto {
+    @ApiProperty({ required: true, type: String }) _id: string;
+    @ApiProperty({ required: true, type: String }) payment_date: string;
+    @ApiProperty({ required: true, type: String }) amount: string;
+    @ApiProperty({ required: false, type: String }) currency_code?: string;
+    @ApiProperty({ required: false, type: String }) invoice_number?: string;
+    @ApiProperty({ required: false, type: String }) notes?: string;
+    @ApiProperty({ required: false, type: String }) payment_voucher_no?: string;
+    @ApiProperty({ required: false, type: Date }) voided_at?: Date;
+    @ApiProperty({ required: false, type: String }) voided_reason?: string;
+    @ApiProperty({ required: false, type: Date }) createdAt?: Date;
+}
 
 export class PoVendorLineResponseDto {
     @ApiProperty({ required: true, type: String }) _id: string;
@@ -88,4 +104,16 @@ export class PoVendorGetResponseDto {
         value: string;
         amount: string;
     }>;
+
+    // ── Vendor payments ──────────────────────────────────────────────────
+    /** Live "Order Value (Payable)" = lines (incl tax) + vendor charges. */
+    @ApiProperty({ required: false, type: String }) order_value?: string;
+    /** Sum of active (non-voided) payments. */
+    @ApiProperty({ required: false, type: String }) amount_paid?: string;
+    /** order_value − amount_paid. */
+    @ApiProperty({ required: false, type: String }) balance_payable?: string;
+    @ApiProperty({ enum: ENUM_PO_VENDOR_PAYMENT_STATUS, required: false })
+    payment_status?: ENUM_PO_VENDOR_PAYMENT_STATUS;
+    @ApiProperty({ required: false, type: [PoVendorPaymentResponseDto] })
+    payments?: PoVendorPaymentResponseDto[];
 }
