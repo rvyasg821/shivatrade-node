@@ -10,6 +10,7 @@ import { PoVendorLineRepository } from '../repository/repositories/po-vendor-lin
 import { PoVendorDoc } from '../repository/entities/po-vendor.entity';
 import { ENUM_PO_VENDOR_STATUS } from '../enums/po-vendor.enum';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
+import { PoVendorStandaloneCreateRequestDto } from '../dtos/request/po-vendor.standalone-create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
 import {
@@ -547,6 +548,174 @@ export class PoVendorService {
             ENUM_TRACKING_EVENT_TYPE.POV_CREATED,
             createdBy,
             `Created from PO ${po.voucher_no}`
+        );
+        return this.povRepository.findOneById(header._id.toString());
+    }
+
+    /**
+     * Creates a standalone POV — no source Sales Order. The lines carry
+     * their own product + qty + vendor (INR) price; descriptive fields
+     * fall back to the product master. `purchase_order_id` and each line's
+     * `purchase_order_line_id` are null, so it never appears in any PO
+     * coverage roll-up.
+     */
+    async createStandalone(
+        companyId: string,
+        data: PoVendorStandaloneCreateRequestDto,
+        createdBy: string
+    ): Promise<PoVendorDoc> {
+        const vendorId = data.vendor_id;
+        if (!vendorId) throw new BadRequestException('vendor_id is required.');
+
+        // ── Resolve delivery address (no PO to inherit from) ───────────
+        let delivery_address = '';
+        let delivery_address_id: string | null = null;
+        if (data.delivery_address && data.delivery_address.trim()) {
+            delivery_address = data.delivery_address.trim();
+        } else if (data.delivery_address_id) {
+            const locId = data.delivery_address_id;
+            const loc: any = await this.locationRepository.findOne({
+                _id: locId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (loc) {
+                delivery_address = formatLocationAddress(loc);
+                delivery_address_id = locId;
+            } else {
+                const addr: any = await this.companyAddressRepository.findOne({
+                    _id: locId,
+                    company_id: companyId,
+                    soft_delete: false,
+                } as any);
+                if (!addr) {
+                    throw new BadRequestException(
+                        `delivery_address_id ${locId} not found in locations or company addresses.`
+                    );
+                }
+                delivery_address = formatCompanyAddress(addr);
+                delivery_address_id = locId;
+            }
+        }
+        if (!delivery_address) {
+            throw new BadRequestException('delivery_address is required.');
+        }
+
+        // ── Load product master snapshots for all requested lines ──────
+        const productIds = Array.from(
+            new Set((data.lines || []).map(l => l.product_id))
+        );
+        const products = await this.productRepository.findAll({
+            _id: { $in: productIds },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        const productById = new Map<string, any>();
+        for (const p of products as any[])
+            productById.set(p._id.toString(), p);
+        for (const ln of data.lines) {
+            if (!productById.has(ln.product_id)) {
+                throw new BadRequestException(
+                    `Product ${ln.product_id} not found.`
+                );
+            }
+            if (num(ln.ordered_qty) <= 0) {
+                throw new BadRequestException(
+                    'Each line ordered_qty must be > 0.'
+                );
+            }
+        }
+
+        // ── Vendor address — request value or the vendor's default ─────
+        let vendorAddressId = data.vendor_address_id || null;
+        if (!vendorAddressId) {
+            try {
+                const defaultAddr: any =
+                    await this.vendorAddressRepository.findOne({
+                        vendor_id: vendorId,
+                        is_default: true,
+                        soft_delete: false,
+                    } as any);
+                if (defaultAddr) vendorAddressId = defaultAddr._id?.toString();
+            } catch {
+                // non-fatal — leave null
+            }
+        }
+
+        // ── Voucher + currency + expense snapshot ──────────────────────
+        const prefix = await this.resolveCompanyPrefix(companyId);
+        const voucher_no = await this.voucherService.getNext(
+            companyId,
+            ENUM_VOUCHER_DOC_TYPE.PO_VENDOR,
+            prefix
+        );
+        const homeCurrency = await this.currencyService
+            .getDefaultCurrency(companyId)
+            .catch(() => null);
+        const currency_code = homeCurrency?.code || 'INR';
+
+        let preSubtotal = 0;
+        for (const ln of data.lines) {
+            preSubtotal += num(ln.ordered_qty) * num(ln.unit_price);
+        }
+        const expenses_snapshot = await this.buildExpensesSnapshot(
+            companyId,
+            (data as any).expenses || [],
+            preSubtotal
+        );
+
+        // ── Header (purchase_order_id = null) ──────────────────────────
+        const header = await this.povRepository.create({
+            company_id: companyId,
+            created_by: createdBy,
+            voucher_no,
+            purchase_order_id: null,
+            vendor_id: vendorId,
+            vendor_address_id: vendorAddressId,
+            delivery_address,
+            delivery_address_id,
+            notes: data.notes || null,
+            internal_notes: data.internal_notes || null,
+            currency_code,
+            exchange_rate: '1',
+            status: ENUM_PO_VENDOR_STATUS.DRAFT,
+            expenses_snapshot,
+        } as any);
+
+        // ── Lines (own snapshot; purchase_order_line_id = null) ────────
+        let seq = 0;
+        for (const ln of data.lines) {
+            seq += 1;
+            const prod = productById.get(ln.product_id);
+            const ordered = num(ln.ordered_qty);
+            const unitPrice = num(ln.unit_price);
+            await this.povLineRepository.create({
+                company_id: companyId,
+                po_vendor_id: header._id.toString(),
+                purchase_order_line_id: null,
+                product_id: ln.product_id,
+                description: ln.description || prod?.description || prod?.name || null,
+                hsn_code: ln.hsn_code || prod?.hsn_code || null,
+                unit: ln.unit || prod?.unit_of_measure || null,
+                tax_pct: String(ln.tax_pct ?? prod?.tax_pct ?? '0'),
+                unit_price: String(ln.unit_price),
+                ordered_qty: String(ordered),
+                dispatched_qty: '0',
+                received_qty: '0',
+                line_total: String(round2(ordered * unitPrice)),
+                seq: ln.seq != null ? Number(ln.seq) : seq,
+            } as any);
+        }
+
+        this.logger.log(
+            `Standalone POV created: ${header._id} (${voucher_no})`
+        );
+        await this.emitSystemEvent(
+            companyId,
+            header._id.toString(),
+            ENUM_TRACKING_EVENT_TYPE.POV_CREATED,
+            createdBy,
+            'Created standalone (no Sales Order)'
         );
         return this.povRepository.findOneById(header._id.toString());
     }

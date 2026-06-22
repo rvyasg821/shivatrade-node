@@ -22,10 +22,12 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     po_vendor_id: string;
 
-    /** Hard link back to PO line. Drives pending_qty arithmetic. */
+    /** Hard link back to PO line. Drives pending_qty arithmetic.
+     *  Nullable since 2026-06: standalone POV lines have no parent PO line,
+     *  so they carry their own product/qty/price snapshot below. */
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    purchase_order_line_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    purchase_order_line_id?: string;
 
     @Index()
     @Column({ type: 'uuid', nullable: false })

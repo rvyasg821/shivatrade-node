@@ -32,6 +32,7 @@ import { PoVendorService } from '../services/po-vendor.service';
 import { PoVendorPdfService } from '../services/po-vendor-pdf.service';
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
+import { PoVendorStandaloneCreateRequestDto } from '../dtos/request/po-vendor.standalone-create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
 import { PoVendorCancelRequestDto } from '../dtos/request/po-vendor.cancel.request.dto';
@@ -103,6 +104,24 @@ export class PoVendorAdminController {
         const row = await this.povService.createFromPo(
             companyId,
             poId,
+            body,
+            userId
+        );
+        return { data: await this.povService.mapGet(row) };
+    }
+
+    // ─── Create standalone (no source Sales Order) ──────────────────────
+
+    @Response('poVendor.createStandalone')
+    @AuthJwtAccessProtected()
+    @Post('/create')
+    async createStandalone(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: PoVendorStandaloneCreateRequestDto
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.createStandalone(
+            companyId,
             body,
             userId
         );
