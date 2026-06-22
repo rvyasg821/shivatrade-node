@@ -2093,22 +2093,25 @@ export class PurchaseOrderService {
                         const prod: any = productMap.get(
                             l.product_id?.toString()
                         );
+                        // Fall back to the source quotation/PFI line's vendor
+                        // when the PO line itself was saved without one (older
+                        // generation / legacy rows) so the edit form's vendor
+                        // dropdown isn't blank. The worksheet resolves the
+                        // proper label from its own price-list fetch.
+                        const lineVendorId =
+                            l.vendor_id?.toString() ||
+                            src?.vendor_id?.toString();
+                        const lineVendor: any = lineVendorId
+                            ? vendorMap.get(lineVendorId)
+                            : null;
                         return {
                             _id: l._id?.toString(),
                             product_id: l.product_id?.toString(),
                             product_name: prod?.name,
                             product_code: prod?.code,
-                            vendor_id: l.vendor_id?.toString(),
-                            vendor_name: l.vendor_id
-                                ? (vendorMap.get(
-                                      l.vendor_id?.toString()
-                                  ) as any)?.company_name
-                                : undefined,
-                            vendor_code: l.vendor_id
-                                ? (vendorMap.get(
-                                      l.vendor_id?.toString()
-                                  ) as any)?.vendor_code
-                                : undefined,
+                            vendor_id: lineVendorId,
+                            vendor_name: lineVendor?.company_name,
+                            vendor_code: lineVendor?.vendor_code,
                             source_quotation_line_id:
                                 l.source_quotation_line_id?.toString(),
                             source_pfi_line_id:
