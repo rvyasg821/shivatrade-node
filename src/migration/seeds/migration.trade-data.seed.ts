@@ -200,8 +200,9 @@ export class MigrationTradeDataSeed {
             await this.del(mgr, 'grn_lines', scope);
             await this.del(mgr, 'grns', scope);
 
-            // ── Vendor POs (+ tracking events) ──
+            // ── Vendor POs (+ payments + tracking events) ──
             this.logger.log('━━━ Vendor POs ━━━');
+            await this.del(mgr, 'po_vendor_payments', scope);
             await this.del(mgr, 'po_vendor_tracking_events', scope);
             await this.del(mgr, 'po_vendor_lines', scope);
             await this.del(mgr, 'po_vendors', scope);
