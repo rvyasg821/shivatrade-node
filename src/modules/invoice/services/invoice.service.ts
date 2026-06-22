@@ -1452,4 +1452,98 @@ export class InvoiceService {
             return dto;
         });
     }
+
+    // ── KPI tiles for the listing page (VoucherStatsTiles) ──────────────
+    // Returns { total, by_status, total_amount_inr } honouring the same
+    // filters the list uses. total_amount_inr converts each non-cancelled
+    // invoice's grand_total back to ₹ via its exchange_rate (foreign per ₹1).
+    async stats(
+        companyId: string,
+        filters: {
+            customer_id?: string;
+            purchase_order_id?: string;
+            status?: string | string[];
+            date_from?: string;
+            date_to?: string;
+            search?: string;
+        }
+    ): Promise<{
+        total: number;
+        total_amount_inr: string;
+        by_status: Record<string, number>;
+    }> {
+        const rows = await this.invoiceRepository.aggregate<{
+            status: string;
+            count: string;
+            amount_inr: string;
+        }>((qb) => {
+            qb.andWhere('entity.soft_delete = :sd', { sd: false });
+            qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            if (filters.customer_id) {
+                qb.andWhere('entity.customer_id = :cust', {
+                    cust: filters.customer_id,
+                });
+            }
+            if (filters.purchase_order_id) {
+                qb.andWhere('entity.purchase_order_id = :poid', {
+                    poid: filters.purchase_order_id,
+                });
+            }
+            if (filters.status) {
+                if (Array.isArray(filters.status)) {
+                    qb.andWhere('entity.status IN (:...st)', {
+                        st: filters.status,
+                    });
+                } else {
+                    qb.andWhere('entity.status = :st', { st: filters.status });
+                }
+            }
+            if (filters.date_from) {
+                qb.andWhere('entity.invoice_date >= :df', {
+                    df: filters.date_from,
+                });
+            }
+            if (filters.date_to) {
+                qb.andWhere('entity.invoice_date <= :dt', {
+                    dt: filters.date_to,
+                });
+            }
+            const searchTerm =
+                typeof filters.search === 'string' ? filters.search.trim() : '';
+            if (searchTerm) {
+                qb.andWhere(
+                    '(entity.voucher_no ILIKE :q OR entity.purchase_order_voucher_no ILIKE :q)',
+                    { q: `%${searchTerm}%` }
+                );
+            }
+            return qb
+                .select('entity.status', 'status')
+                .addSelect('COUNT(*)::int', 'count')
+                .addSelect(
+                    `COALESCE(SUM(
+                        CASE
+                            WHEN entity.status = '${ENUM_INVOICE_STATUS.CANCELLED}' THEN 0
+                            ELSE entity.grand_total / COALESCE(NULLIF(entity.exchange_rate, 0), 1)
+                        END
+                    ), 0)::text`,
+                    'amount_inr'
+                )
+                .groupBy('entity.status');
+        });
+
+        const by_status: Record<string, number> = {};
+        let total = 0;
+        let total_amount_inr = 0;
+        for (const r of rows) {
+            const cnt = Number(r.count) || 0;
+            by_status[r.status] = cnt;
+            total += cnt;
+            total_amount_inr += Number(r.amount_inr) || 0;
+        }
+        return {
+            total,
+            total_amount_inr: total_amount_inr.toFixed(2),
+            by_status,
+        };
+    }
 }

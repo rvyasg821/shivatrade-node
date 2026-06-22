@@ -303,6 +303,20 @@ export class PoVendorAdminController {
         return { data: await this.povService.mapGet(updated) };
     }
 
+    // ─── Revert to draft (cancelled only) ───────────────────────────────
+
+    @Response('poVendor.revertDraft')
+    @AuthJwtAccessProtected()
+    @Post('/:id/revert-draft')
+    async revertDraft(
+        @AuthJwtPayload('user') userId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.findOneById(id);
+        const updated = await this.povService.revertToDraft(row, userId);
+        return { data: await this.povService.mapGet(updated) };
+    }
+
     // ─── Soft delete (draft only) ───────────────────────────────────────
 
     @Response('poVendor.delete')

@@ -6,6 +6,7 @@
     "delete": "Invoice deleted successfully.",
     "issue": "Invoice issued successfully.",
     "cancel": "Invoice cancelled.",
+    "stats": "Invoice stats retrieved successfully.",
     "po-addable": "Addable Sales Order lines loaded.",
     "customer-invoiceable": "Invoiceable Sales Orders loaded.",
     "payment": {

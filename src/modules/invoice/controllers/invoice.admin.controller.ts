@@ -105,7 +105,10 @@ export class InvoiceAdminController {
         @Query('date_to') dateTo?: string
     ): Promise<IResponsePaging<InvoiceListResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
-        if (status) find.status = status;
+        // status may be a single value or a CSV (tile clicks send
+        // "issued,partially_paid"); an array is translated to an IN clause.
+        const statusValue = parseStatusParam(status);
+        if (statusValue) find.status = statusValue;
         if (customerId) find.customer_id = customerId;
         if (purchaseOrderId) find.purchase_order_id = purchaseOrderId;
         if (dateFrom || dateTo) {
@@ -131,6 +134,29 @@ export class InvoiceAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
         };
+    }
+
+    @Response('invoice.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('customer_id') customerId?: string,
+        @Query('purchase_order_id') purchaseOrderId?: string,
+        @Query('status') status?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
+    ): Promise<IResponse<any>> {
+        const data = await this.invoiceService.stats(companyId, {
+            customer_id: customerId,
+            purchase_order_id: purchaseOrderId,
+            status: parseStatusParam(status),
+            date_from: dateFrom,
+            date_to: dateTo,
+            search: searchRaw,
+        });
+        return { data };
     }
 
     @Response('invoice.po-addable')
@@ -459,4 +485,21 @@ export class InvoiceAdminController {
             body.reason
         );
     }
+}
+
+// Parse a `status` query param that may be a single value or a CSV
+// (e.g. tile clicks send "issued,partially_paid") into the shape the
+// service expects.
+function parseStatusParam(raw?: string): string | string[] | undefined {
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    if (!trimmed.includes(',')) return trimmed;
+    const parts = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (parts.length === 0) return undefined;
+    if (parts.length === 1) return parts[0];
+    return parts;
 }
