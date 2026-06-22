@@ -1525,6 +1525,78 @@ export class PoVendorService {
         return this.povRepository.findOneById(row._id.toString());
     }
 
+    /**
+     * Revert a CANCELLED POV back to DRAFT. Only permitted when the POV had
+     * no dispatch/receipt activity and its ordered quantities still fit the
+     * PO line pending (i.e. they weren't re-issued on another POV after the
+     * cancel). Symmetric to cancel(): pending is computed dynamically, so no
+     * PO recompute is needed.
+     */
+    async revertToDraft(
+        row: PoVendorDoc,
+        userId?: string
+    ): Promise<PoVendorDoc> {
+        if (row.status !== ENUM_PO_VENDOR_STATUS.CANCELLED) {
+            throw new BadRequestException(
+                `Only a cancelled POV can be reverted to draft (current: ${row.status}).`
+            );
+        }
+        const lines = (await this.povLineRepository.findAll({
+            po_vendor_id: row._id.toString(),
+        } as any)) as any[];
+
+        // Block if the POV ever had dispatch/receipt activity — those qty
+        // movements are part of the immutable audit trail.
+        const hadActivity = lines.some(
+            l => num(l.dispatched_qty) > 0 || num(l.received_qty) > 0
+        );
+        if (hadActivity) {
+            throw new BadRequestException(
+                'This POV had dispatch or receipt activity and cannot be reverted to draft.'
+            );
+        }
+
+        // Re-validate availability. computePendingByPoLineId already excludes
+        // cancelled POVs (including this one), so the returned pending is the
+        // headroom available if we re-activate this POV's lines.
+        const pending = await this.computePendingByPoLineId(
+            row.purchase_order_id.toString()
+        );
+        const over: string[] = [];
+        for (const ln of lines) {
+            const req = num(ln.ordered_qty);
+            const avail = pending.get(ln.purchase_order_line_id) || 0;
+            if (req > avail + 1e-6) {
+                over.push(
+                    `${ln.product_name || ln.purchase_order_line_id} ` +
+                        `(need ${round4(req)}, available ${round4(avail)})`
+                );
+            }
+        }
+        if (over.length) {
+            throw new BadRequestException(
+                'Cannot revert to draft — these quantities have been ' +
+                    `re-issued on other POVs: ${over.join('; ')}.`
+            );
+        }
+
+        row.status = ENUM_PO_VENDOR_STATUS.DRAFT;
+        row.internal_notes =
+            (row.internal_notes || '') + '\n[Reverted to draft]';
+        await this.povRepository.save(row);
+        this.logger.log(`POV reverted to draft: ${row._id}`);
+        if (userId) {
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+                userId,
+                'Reverted to draft'
+            );
+        }
+        return this.povRepository.findOneById(row._id.toString());
+    }
+
     // ─── Hydration / mappers ────────────────────────────────────────────
 
     async mapList(rows: PoVendorDoc[]): Promise<PoVendorGetResponseDto[]> {
