@@ -77,6 +77,7 @@ export class SalesDocImportAdminController {
             docType: body.docType,
             lines,
             currencyCode: body.currencyCode,
+            exchangeRate: body.exchangeRate,
             includeComputed: false,
             includeReadme: true,
         });
@@ -103,13 +104,17 @@ export class SalesDocImportAdminController {
         @Body() body: SalesDocExportRequestDto,
         @Res() res: ExpressResponse,
     ) {
+        // Quotation & Sales Order export as a costing report (computed columns +
+        // Totals); other docs keep the round-trip schema (no derived columns).
+        const isCosting =
+            body.docType === ENUM_SALES_DOC_TYPE.QUOTATION ||
+            body.docType === ENUM_SALES_DOC_TYPE.PO;
         const buffer = await this.importService.buildWorkbook(companyId, {
             docType: body.docType,
             lines: body.lines || [],
             currencyCode: body.currencyCode,
-            // Export now mirrors the import schema 1-for-1 (no derived totals)
-            // so a re-import of the exported file is a perfect round-trip.
-            includeComputed: false,
+            exchangeRate: body.exchangeRate,
+            includeComputed: isCosting,
             includeReadme: false,
         });
         const datePart = new Date().toISOString().slice(0, 10);
