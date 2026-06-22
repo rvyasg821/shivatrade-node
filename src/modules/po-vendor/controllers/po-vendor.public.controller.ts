@@ -45,4 +45,30 @@ export class PoVendorPublicController {
         res.setHeader('Content-Length', String(buf.length));
         res.end(buf);
     }
+
+    @ApiOperation({ summary: 'Vendor payment voucher PDF by short-lived ticket' })
+    @Get('/payment-pdf')
+    async paymentPdf(
+        @Query('t') ticket: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const combined = verifyPdfTicket(ticket, 'po-vendor-payment');
+        if (!combined) throw new NotFoundException('Invalid or expired link');
+        const [id, paymentId] = combined.split('~');
+        if (!id || !paymentId) throw new NotFoundException('Invalid link');
+        const row = await this.povService.findOneById(id);
+        const dto = await this.povService.mapGet(row);
+        const payment = (dto.payments || []).find((p) => p._id === paymentId);
+        if (!payment) throw new NotFoundException('Payment not found');
+        const buf = await this.povPdfService.renderPayment(
+            dto,
+            payment,
+            row.company_id.toString()
+        );
+        const filename = this.povPdfService.buildPaymentFilename(payment);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+        res.setHeader('Content-Length', String(buf.length));
+        res.end(buf);
+    }
 }

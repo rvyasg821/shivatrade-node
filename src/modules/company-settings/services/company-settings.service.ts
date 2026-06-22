@@ -157,6 +157,7 @@ export class CompanySettingsService {
             po_vendor_voucher_prefix: s.po_vendor_voucher_prefix || '',
             grn_voucher_prefix: s.grn_voucher_prefix || '',
             debit_note_voucher_prefix: s.debit_note_voucher_prefix || '',
+            payment_voucher_prefix: s.payment_voucher_prefix || '',
             // Branding
             logo_url: s.logo_url,
             company_display_name: s.company_display_name,

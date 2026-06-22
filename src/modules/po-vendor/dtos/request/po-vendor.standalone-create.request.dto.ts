@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
     ArrayMinSize,
     IsArray,
+    IsDateString,
     IsInt,
     IsNotEmpty,
     IsNumberString,
@@ -14,6 +15,32 @@ import {
 } from 'class-validator';
 
 import { PoVendorExpenseInputDto } from './po-vendor.create.request.dto';
+
+/**
+ * Optional advance payment recorded against the new standalone POV at
+ * creation time (advance paid to the vendor). Mirrors the Payments tab
+ * fields; recorded as a normal vendor payment so it appears in the
+ * Payments tab + timeline with a PV voucher.
+ */
+export class PoVendorAdvanceInputDto {
+    @IsDateString()
+    @IsOptional()
+    payment_date?: string;
+
+    @IsNumberString({}, { message: 'amount must be a numeric string' })
+    @IsOptional()
+    amount?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(120)
+    invoice_number?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(2000)
+    notes?: string;
+}
 
 /**
  * Standalone POV line — not tied to any PO line. Carries its own
@@ -106,4 +133,10 @@ export class PoVendorStandaloneCreateRequestDto {
     @ValidateNested({ each: true })
     @Type(() => PoVendorExpenseInputDto)
     expenses?: PoVendorExpenseInputDto[];
+
+    /** Optional advance paid to the vendor, recorded as a payment on create. */
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => PoVendorAdvanceInputDto)
+    advance?: PoVendorAdvanceInputDto;
 }

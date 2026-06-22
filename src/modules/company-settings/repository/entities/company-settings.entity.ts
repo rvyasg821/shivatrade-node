@@ -129,6 +129,9 @@ export class CompanySettingsEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 15, nullable: true })
     debit_note_voucher_prefix: string;
 
+    @Column({ type: 'varchar', length: 15, nullable: true })
+    payment_voucher_prefix: string;
+
     // ── Branding ──
     @Column({ type: 'varchar', nullable: true })
     logo_url: string;

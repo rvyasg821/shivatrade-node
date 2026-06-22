@@ -197,6 +197,11 @@ export class CompanySettingsRequestDto {
     @IsString()
     debit_note_voucher_prefix?: string;
 
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    payment_voucher_prefix?: string;
+
     // ── Branding ──
     @ApiPropertyOptional()
     @IsOptional()

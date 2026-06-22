@@ -7,8 +7,14 @@ import {
 
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
 import { PoVendorLineRepository } from '../repository/repositories/po-vendor-line.repository';
+import { PoVendorPaymentRepository } from '../repository/repositories/po-vendor-payment.repository';
 import { PoVendorDoc } from '../repository/entities/po-vendor.entity';
-import { ENUM_PO_VENDOR_STATUS } from '../enums/po-vendor.enum';
+import { PoVendorPaymentDoc } from '../repository/entities/po-vendor-payment.entity';
+import {
+    ENUM_PO_VENDOR_STATUS,
+    ENUM_PO_VENDOR_PAYMENT_STATUS,
+} from '../enums/po-vendor.enum';
+import { PoVendorPaymentCreateRequestDto } from '../dtos/request/po-vendor-payment.request.dto';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
 import { PoVendorStandaloneCreateRequestDto } from '../dtos/request/po-vendor.standalone-create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
@@ -55,6 +61,7 @@ export class PoVendorService {
     constructor(
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
+        private readonly povPaymentRepository: PoVendorPaymentRepository,
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly vendorRepository: VendorRepository,
@@ -717,6 +724,28 @@ export class PoVendorService {
             createdBy,
             'Created standalone (no Sales Order)'
         );
+
+        // Optional advance paid to the vendor — recorded as a normal vendor
+        // payment so it shows in the Payments tab + timeline with a PV voucher.
+        const advance = data.advance;
+        if (advance && num(advance.amount) > 0) {
+            const created = await this.povRepository.findOneById(
+                header._id.toString()
+            );
+            await this.recordPayment(
+                created,
+                {
+                    payment_date:
+                        advance.payment_date ||
+                        new Date().toISOString().slice(0, 10),
+                    amount: String(advance.amount),
+                    invoice_number: advance.invoice_number,
+                    notes: advance.notes,
+                },
+                createdBy
+            );
+        }
+
         return this.povRepository.findOneById(header._id.toString());
     }
 
@@ -953,6 +982,16 @@ export class PoVendorService {
                     value?: string;
                 }>
             >;
+            /** Per-vendor advance paid, recorded on the spawned POV. */
+            vendor_advances?: Record<
+                string,
+                {
+                    payment_date?: string;
+                    amount?: string;
+                    invoice_number?: string;
+                    notes?: string;
+                }
+            >;
         },
         createdBy: string
     ): Promise<{ created: PoVendorDoc[] }> {
@@ -1075,7 +1114,28 @@ export class PoVendorService {
                 body,
                 createdBy
             );
-            created.push(row);
+
+            // Optional advance paid to this vendor → record on the spawned POV.
+            const adv = data.vendor_advances?.[vendorId];
+            if (adv && num(adv.amount) > 0) {
+                await this.recordPayment(
+                    row,
+                    {
+                        payment_date:
+                            adv.payment_date ||
+                            new Date().toISOString().slice(0, 10),
+                        amount: String(adv.amount),
+                        invoice_number: adv.invoice_number,
+                        notes: adv.notes,
+                    },
+                    createdBy
+                );
+                created.push(
+                    await this.povRepository.findOneById(row._id.toString())
+                );
+            } else {
+                created.push(row);
+            }
         }
 
         this.logger.log(
@@ -1766,6 +1826,183 @@ export class PoVendorService {
         return this.povRepository.findOneById(row._id.toString());
     }
 
+    // ─── Vendor payments ────────────────────────────────────────────────
+
+    /**
+     * Live "Order Value (Payable)" for a POV in its own currency, matching the
+     * vendor PO total on the PDF: Σ line_total + vendor charges
+     * (expenses_snapshot) + GST (per product tax_pct, charges sharing GST
+     * proportionally). Rounded to a whole unit like the PDF grand total.
+     * Keep in sync with po-vendor-pdf.service buildContext().
+     */
+    async computeOrderValue(row: PoVendorDoc): Promise<number> {
+        const lines = (await this.povLineRepository.findAll({
+            po_vendor_id: row._id.toString(),
+        } as any)) as any[];
+        const linesInr = lines.reduce((s, l) => s + num(l.line_total), 0);
+        const expensesSnapshot: any[] = Array.isArray(
+            (row as any).expenses_snapshot
+        )
+            ? (row as any).expenses_snapshot
+            : [];
+        const chargesInr = expensesSnapshot.reduce(
+            (s, e) => s + num(e.amount),
+            0
+        );
+        const productIds = unique(lines.map((l) => l.product_id?.toString()));
+        const taxByProduct = new Map<string, number>();
+        if (productIds.length) {
+            const products: any[] = await this.productRepository.findAll({
+                _id: { $in: productIds },
+            } as any);
+            for (const p of products)
+                taxByProduct.set(p._id.toString(), num(p.tax_pct));
+        }
+        const chargesPct = linesInr > 0 ? chargesInr / linesInr : 0;
+        let gstInr = 0;
+        for (const l of lines) {
+            const taxPct = taxByProduct.get(l.product_id?.toString()) || 0;
+            gstInr += (num(l.line_total) * (1 + chargesPct) * taxPct) / 100;
+        }
+        // POV is in home currency (exchange_rate = 1); round to a whole unit to
+        // match the PDF grand total.
+        return Math.round(linesInr + chargesInr + gstInr);
+    }
+
+    async listPayments(poVendorId: string): Promise<PoVendorPaymentDoc[]> {
+        return this.povPaymentRepository.findActiveByPoVendorId(poVendorId);
+    }
+
+    /**
+     * Record a vendor payment (advance or part-payment). Allowed in any
+     * non-cancelled status (incl. draft). Blocks over-payment beyond the
+     * current outstanding balance. Stamps a stable PV voucher number.
+     */
+    async recordPayment(
+        row: PoVendorDoc,
+        data: PoVendorPaymentCreateRequestDto,
+        userId: string
+    ): Promise<PoVendorPaymentDoc> {
+        if (row.status === ENUM_PO_VENDOR_STATUS.CANCELLED) {
+            throw new BadRequestException(
+                'Cannot record a payment on a cancelled vendor PO.'
+            );
+        }
+        const amount = num(data.amount);
+        if (amount <= 0) {
+            throw new BadRequestException('Payment amount must be > 0.');
+        }
+        const priorPaid =
+            await this.povPaymentRepository.sumActiveByPoVendorId(
+                row._id.toString()
+            );
+        const orderValue = await this.computeOrderValue(row);
+        // 1-paise slack for FP rounding.
+        if (priorPaid + amount > orderValue + 1e-2) {
+            throw new BadRequestException(
+                `Payment ${round2(amount)} exceeds outstanding balance ${round2(
+                    orderValue - priorPaid
+                )}.`
+            );
+        }
+
+        // Stable payment voucher number (STIPL/PV/0001/FY) at creation, so the
+        // printable voucher keeps a fixed reference even if later voided.
+        const prefix = await this.resolveCompanyPrefix(
+            row.company_id.toString()
+        );
+        const paymentVoucherNo = await this.voucherService.getNext(
+            row.company_id.toString(),
+            ENUM_VOUCHER_DOC_TYPE.PAYMENT_VOUCHER,
+            prefix,
+            new Date(data.payment_date)
+        );
+
+        const payment = await this.povPaymentRepository.create({
+            po_vendor_id: row._id.toString(),
+            company_id: row.company_id.toString(),
+            payment_date: data.payment_date,
+            amount: data.amount,
+            currency_code: row.currency_code,
+            invoice_number: data.invoice_number,
+            notes: data.notes,
+            payment_voucher_no: paymentVoucherNo,
+            created_by: userId,
+        } as any);
+
+        await this.applyPaymentDerived(row);
+        this.logger.log(`POV ${row._id} payment recorded: ${data.amount}`);
+        await this.emitSystemEvent(
+            row.company_id.toString(),
+            row._id.toString(),
+            ENUM_TRACKING_EVENT_TYPE.POV_PAYMENT_RECORDED,
+            userId,
+            `${row.currency_code || 'INR'} ${round2(
+                amount
+            )} recorded (${paymentVoucherNo})${
+                data.invoice_number
+                    ? ` against invoice ${data.invoice_number}`
+                    : ''
+            }`
+        );
+        return payment;
+    }
+
+    /** Soft-void a payment (kept for audit) and recompute the POV balance. */
+    async voidPayment(
+        poVendorId: string,
+        paymentId: string,
+        userId: string,
+        reason?: string
+    ): Promise<void> {
+        const p: any = await this.povPaymentRepository.findOneById(paymentId);
+        if (!p || p.soft_delete || p.po_vendor_id?.toString() !== poVendorId) {
+            throw new NotFoundException('Payment not found');
+        }
+        if (p.voided_at) {
+            throw new BadRequestException('Payment is already voided.');
+        }
+        p.voided_at = new Date();
+        p.voided_by = userId;
+        p.voided_reason = reason;
+        await this.povPaymentRepository.save(p);
+
+        const pov = await this.povRepository.findOneById(poVendorId);
+        if (pov) {
+            await this.applyPaymentDerived(pov);
+            await this.emitSystemEvent(
+                pov.company_id.toString(),
+                pov._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_PAYMENT_VOIDED,
+                userId,
+                reason
+                    ? `${p.payment_voucher_no} voided: ${reason}`
+                    : `${p.payment_voucher_no} voided`
+            );
+        }
+    }
+
+    /**
+     * Refresh amount_paid + payment_status from the current sum of active
+     * payments vs the live order value. Runs independently of the dispatch
+     * `status`; never touches it.
+     */
+    private async applyPaymentDerived(row: PoVendorDoc): Promise<void> {
+        const paid = await this.povPaymentRepository.sumActiveByPoVendorId(
+            row._id.toString()
+        );
+        const orderValue = await this.computeOrderValue(row);
+        row.amount_paid = String(round2(paid));
+        if (paid <= 1e-2) {
+            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID;
+        } else if (orderValue - paid <= 1e-2) {
+            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.PAID;
+        } else {
+            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
+        }
+        await this.povRepository.save(row);
+    }
+
     // ─── Hydration / mappers ────────────────────────────────────────────
 
     async mapList(rows: PoVendorDoc[]): Promise<PoVendorGetResponseDto[]> {
@@ -1777,6 +2014,11 @@ export class PoVendorService {
 
         const allLines = await this.povLineRepository.findAll({
             po_vendor_id: { $in: povIds },
+        } as any);
+
+        const allPayments = await this.povPaymentRepository.findAll({
+            po_vendor_id: { $in: povIds },
+            soft_delete: false,
         } as any);
 
         const productIds = unique(
@@ -1825,6 +2067,13 @@ export class PoVendorService {
             if (!linesByPov.has(k)) linesByPov.set(k, []);
             linesByPov.get(k).push(l);
         }
+        const paymentsByPov = new Map<string, any[]>();
+        for (const p of allPayments as any[]) {
+            const k = p.po_vendor_id?.toString();
+            if (!k) continue;
+            if (!paymentsByPov.has(k)) paymentsByPov.set(k, []);
+            paymentsByPov.get(k).push(p);
+        }
 
         const out: PoVendorGetResponseDto[] = [];
         for (const r of rows as any[]) {
@@ -1869,6 +2118,53 @@ export class PoVendorService {
                     seq: Number(l.seq || 0),
                 };
             });
+
+            // ── Live payable (matches the PDF grand total) + payment roll-up ──
+            const expensesSnap: any[] = Array.isArray(r.expenses_snapshot)
+                ? r.expenses_snapshot
+                : [];
+            const linesInr = linesRaw.reduce(
+                (s, l) => s + num(l.line_total),
+                0
+            );
+            const chargesInr = expensesSnap.reduce(
+                (s, e) => s + num(e.amount),
+                0
+            );
+            const chargesPct = linesInr > 0 ? chargesInr / linesInr : 0;
+            let gstInr = 0;
+            for (const l of linesRaw) {
+                const taxPct = num(
+                    (productMap.get(l.product_id?.toString()) as any)?.tax_pct
+                );
+                gstInr += (num(l.line_total) * (1 + chargesPct) * taxPct) / 100;
+            }
+            const orderValue = Math.round(linesInr + chargesInr + gstInr);
+            const amountPaid = round2(num(r.amount_paid));
+            const balancePayable = round2(orderValue - amountPaid);
+            const paymentStatus =
+                amountPaid <= 1e-2
+                    ? ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID
+                    : orderValue - amountPaid <= 1e-2
+                      ? ENUM_PO_VENDOR_PAYMENT_STATUS.PAID
+                      : ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
+            const payments = (paymentsByPov.get(r._id.toString()) || [])
+                .slice()
+                .sort((a, b) =>
+                    String(a.payment_date).localeCompare(String(b.payment_date))
+                )
+                .map((p: any) => ({
+                    _id: p._id.toString(),
+                    payment_date: p.payment_date,
+                    amount: String(p.amount ?? '0'),
+                    currency_code: p.currency_code || undefined,
+                    invoice_number: p.invoice_number || undefined,
+                    notes: p.notes || undefined,
+                    payment_voucher_no: p.payment_voucher_no || undefined,
+                    voided_at: p.voided_at || undefined,
+                    voided_reason: p.voided_reason || undefined,
+                    createdAt: p.createdAt,
+                }));
 
             out.push({
                 _id: r._id.toString(),
@@ -1916,6 +2212,12 @@ export class PoVendorService {
                     Array.isArray((r as any).expenses_snapshot)
                         ? (r as any).expenses_snapshot
                         : [],
+
+                order_value: String(orderValue),
+                amount_paid: String(amountPaid),
+                balance_payable: String(balancePayable),
+                payment_status: paymentStatus,
+                payments,
             });
         }
         return out;

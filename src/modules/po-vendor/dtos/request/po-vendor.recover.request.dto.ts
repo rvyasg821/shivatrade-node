@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
     IsArray,
+    IsDateString,
     IsIn,
     IsNotEmpty,
     IsNumberString,
@@ -51,6 +52,32 @@ export class PoVendorRecoverExpensePickDto {
 }
 
 /**
+ * Optional advance paid to a vendor, recorded against that vendor's spawned
+ * POV at creation. Mirrors the Payments tab fields.
+ */
+export class PoVendorRecoverAdvanceDto {
+    @ApiProperty({ required: false, type: String })
+    @IsDateString()
+    @IsOptional()
+    payment_date?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'amount must be a numeric string' })
+    @IsOptional()
+    amount?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    invoice_number?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    notes?: string;
+}
+
+/**
  * Batch recover request — used by `POST /admin/po-vendor/recover/:poId`.
  * Groups assignments by vendor_id and spawns one POV per vendor in a
  * single logical operation.
@@ -88,4 +115,11 @@ export class PoVendorRecoverRequestDto {
     @IsObject()
     @IsOptional()
     vendor_expenses?: Record<string, PoVendorRecoverExpensePickDto[]>;
+
+    /** Optional per-vendor advance paid, recorded on each spawned POV.
+     *  Key = vendor_id (UUID). */
+    @ApiProperty({ required: false, type: Object })
+    @IsObject()
+    @IsOptional()
+    vendor_advances?: Record<string, PoVendorRecoverAdvanceDto>;
 }
