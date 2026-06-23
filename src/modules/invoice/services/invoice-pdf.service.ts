@@ -569,6 +569,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <tr>
                 <td class="center">${i + 1}</td>
                 <td class="center">${esc(l.hsn_code)}</td>
+                <td class="center">${esc(l.part_no)}</td>
                 <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${sym}${fmt(num(l.qty) > 0 ? (num(l.line_total) * erMul) / num(l.qty) : num(l.unit_price) * erMul, 2)}</td>
@@ -637,6 +638,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         <tr>
             <th style="width:32px;">SR NO</th>
             <th style="width:64px;">HSN CODE</th>
+            <th style="width:70px;">PART NO</th>
             <th>DESCRIPTION OF GOODS</th>
             <th style="width:74px;">QTY</th>
             <th style="width:86px;">PRICE / UNIT</th>
@@ -646,20 +648,20 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         </tr>
         ${linesHtml}
         <tr>
-            <td colspan="${showIgst ? 7 : 5}" class="right lbl">Subtotal</td>
+            <td colspan="${showIgst ? 8 : 6}" class="right lbl">Subtotal</td>
             <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
         </tr>
-        ${num(inv.discount_total) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        ${num(inv.discount_total) > 0 ? `<tr><td colspan="${showIgst ? 8 : 6}" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="${showIgst ? 7 : 5}" class="right lbl">FOB Value</td>
+            <td colspan="${showIgst ? 8 : 6}" class="right lbl">FOB Value</td>
             <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
         </tr>
-        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
-        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
-        ${num(inv.other_charges) > 0 ? `<tr><td colspan="${showIgst ? 7 : 5}" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
-        ${showIgst ? `<tr><td colspan="7" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
+        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="${showIgst ? 8 : 6}" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
+        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="${showIgst ? 8 : 6}" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
+        ${num(inv.other_charges) > 0 ? `<tr><td colspan="${showIgst ? 8 : 6}" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${showIgst ? `<tr><td colspan="8" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="${showIgst ? 7 : 5}" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
+            <td colspan="${showIgst ? 8 : 6}" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
         </tr>
     </table>
@@ -735,6 +737,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
             <tr>
                 <td class="center">${i + 1}</td>
                 <td class="center">${esc(l.hsn_code)}</td>
+                <td class="center">${esc(l.part_no)}</td>
                 <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
                 <td style="white-space:nowrap;">${esc(l.customer_reference)}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
@@ -781,6 +784,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
         <tr>
             <th style="width:32px;">SR NO</th>
             <th style="width:64px;">HSN CODE</th>
+            <th style="width:70px;">PART NO</th>
             <th>DESCRIPTION OF GOODS</th>
             <th style="width:150px; white-space:nowrap;">REQUIREMENT #</th>
             <th style="width:74px;">QTY</th>
@@ -789,27 +793,27 @@ function buildExportInvoiceHtml(d: RenderData): string {
         </tr>
         ${linesHtml}
         <tr>
-            <td colspan="6" class="right lbl">Subtotal</td>
+            <td colspan="7" class="right lbl">Subtotal</td>
             <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
         </tr>
-        ${num(inv.discount_total) > 0 ? `<tr><td colspan="6" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        ${num(inv.discount_total) > 0 ? `<tr><td colspan="7" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="6" class="right lbl">FOB Value</td>
+            <td colspan="7" class="right lbl">FOB Value</td>
             <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
         </tr>
-        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
-        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
-        ${num(inv.other_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
+        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
+        ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="6" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
+            <td colspan="7" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
         </tr>
         <tr>
-            <td colspan="6" class="right lbl">Advance Received</td>
+            <td colspan="7" class="right lbl">Advance Received</td>
             <td class="right">${sym}${fmt(inv.advance_received, 2)}</td>
         </tr>
         <tr>
-            <td colspan="6" class="right strong">Balance Receivable</td>
+            <td colspan="7" class="right strong">Balance Receivable</td>
             <td class="right strong">${sym}${fmt(inv.balance_receivable, 2)}</td>
         </tr>
     </table>
@@ -973,6 +977,7 @@ function buildPackingListHtml(d: RenderData): string {
             (l, i) => `
             <tr>
                 <td class="center">${i + 1}</td>
+                <td class="center">${esc(l.part_no)}</td>
                 <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${l.packages != null && l.packages !== '' ? esc(String(l.packages)) : '-'}</td>
@@ -1002,6 +1007,7 @@ function buildPackingListHtml(d: RenderData): string {
     <table style="margin-top: 0;">
         <tr>
             <th style="width:36px;">SR NO</th>
+            <th style="width:70px;">PART NO</th>
             <th>DESCRIPTION OF GOODS</th>
             <th style="width:120px;">QTY / UNIT</th>
             <th style="width:90px;">NO. OF PKGS</th>
@@ -1010,7 +1016,7 @@ function buildPackingListHtml(d: RenderData): string {
         </tr>
         ${linesHtml}
         <tr>
-            <td colspan="3" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
+            <td colspan="4" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
             <td class="right strong" style="background:#f0f0f0;">${
                 inv.total_packages != null
                     ? esc(String(inv.total_packages))
