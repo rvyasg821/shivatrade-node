@@ -133,6 +133,7 @@ export class RfqService {
                 qty: l.qty != null ? String(l.qty) : '0',
                 unit: l.unit || null,
                 hs_code: l.hs_code || null,
+                part_no: l.part_no || null,
                 seq,
             } as any);
         }
@@ -598,7 +599,7 @@ export class RfqService {
                 product_id: l.product_id?.toString(),
                 product_name: prod?.name,
                 product_code: prod?.code,
-                part_no: prod?.part_no || null,
+                part_no: prod?.part_no || l.part_no || null,
                 hsn_code: prod?.hsn_code || l.hs_code || null,
                 description: l.description,
                 customer_reference: l.customer_reference,

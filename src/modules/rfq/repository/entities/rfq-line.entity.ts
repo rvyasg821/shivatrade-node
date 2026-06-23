@@ -40,6 +40,9 @@ export class RfqLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 15, nullable: true })
     hs_code?: string;
 
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    part_no?: string;
+
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 
