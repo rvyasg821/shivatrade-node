@@ -202,6 +202,11 @@ export class CompanySettingsRequestDto {
     @IsString()
     payment_voucher_prefix?: string;
 
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    receipt_voucher_prefix?: string;
+
     // ── Branding ──
     @ApiPropertyOptional()
     @IsOptional()

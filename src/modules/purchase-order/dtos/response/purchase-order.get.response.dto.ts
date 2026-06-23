@@ -6,6 +6,7 @@ export class PurchaseOrderLineResponseDto {
     @ApiProperty({ required: true, type: String }) product_id: string;
     @ApiProperty({ required: false, type: String }) product_name?: string;
     @ApiProperty({ required: false, type: String }) product_code?: string;
+    @ApiProperty({ required: false, type: String }) part_no?: string;
     @ApiProperty({ required: false, type: String }) vendor_id?: string;
     @ApiProperty({ required: false, type: String }) vendor_name?: string;
     @ApiProperty({ required: false, type: String }) vendor_code?: string;
