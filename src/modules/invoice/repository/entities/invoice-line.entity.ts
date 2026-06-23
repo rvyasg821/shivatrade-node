@@ -43,6 +43,9 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: true })
     product_code?: string;
 
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    part_no?: string;
+
     @Column({ type: 'text', nullable: true })
     description?: string;
 

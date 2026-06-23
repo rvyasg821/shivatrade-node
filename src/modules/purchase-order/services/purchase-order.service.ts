@@ -2154,6 +2154,10 @@ export class PurchaseOrderService {
                             product_id: l.product_id?.toString(),
                             product_name: prod?.name,
                             product_code: prod?.code,
+                            // part_no isn't stored on the PO line (same as the
+                            // quotation) — derive it from the product master so
+                            // the worksheet's Part No column isn't blank.
+                            part_no: (l as any).part_no || prod?.part_no,
                             vendor_id: lineVendorId,
                             vendor_name: lineVendor?.company_name,
                             vendor_code: lineVendor?.vendor_code,

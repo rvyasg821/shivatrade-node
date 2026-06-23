@@ -440,10 +440,11 @@ export class PoVendorService {
             delivery_address_id =
                 po.delivery_address_id?.toString() || null;
         }
+        // Delivery address is optional — a Sales Order may have none, and the
+        // Generate POV flow shouldn't force one. Default to empty (the column
+        // is non-null) so creation proceeds; it can be filled later.
         if (!delivery_address) {
-            throw new BadRequestException(
-                'delivery_address is required (PO had no delivery_address and none provided).'
-            );
+            delivery_address = '';
         }
 
         // Vendor comes from the request body (PO is multi-vendor at line

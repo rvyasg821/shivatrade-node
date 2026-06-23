@@ -58,6 +58,11 @@ export class InvoiceLineDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(120)
+    part_no?: string;
+
+    @IsString()
+    @IsOptional()
     description?: string;
 
     @IsString()

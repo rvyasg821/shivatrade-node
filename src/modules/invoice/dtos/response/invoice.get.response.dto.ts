@@ -14,6 +14,7 @@ export class InvoiceLineResponseDto {
     product_id?: string;
     product_name?: string;
     product_code?: string;
+    part_no?: string;
     description?: string;
     hsn_code?: string;
     customer_reference?: string;
