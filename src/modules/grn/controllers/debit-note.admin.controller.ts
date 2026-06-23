@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
-import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -163,19 +162,6 @@ export class DebitNoteAdminController {
         res.end(buffer);
     }
 
-    /** Mint a short-lived ticket so the browser can open the Debit Note PDF
-     *  inline in a new tab (proper filename) via the no-auth public route. */
-    @Response('debitNote.get')
-    @AuthJwtAccessProtected()
-    @Get('/:id/pdf-ticket')
-    async pdfTicket(
-        @AuthJwtPayload('companyId') companyId: string,
-        @Param('id') id: string
-    ): Promise<IResponse<{ ticket: string }>> {
-        // Ensure the DN exists within the caller's company scope.
-        await this.debitNoteService.mapGet(companyId, id);
-        return { data: { ticket: signPdfTicket('debit-note', id) } };
-    }
 }
 
 // `status` query param → undefined / single / array (comma-separated).

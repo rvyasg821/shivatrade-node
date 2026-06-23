@@ -25,7 +25,6 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
-import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 
 import { QuotationService } from '../services/quotation.service';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
@@ -192,18 +191,6 @@ export class QuotationAdminController {
         return { data: await this.quotationService.mapPublic(row) };
     }
 
-    /** Mint a short-lived ticket so the browser can open the PDF inline in a
-     *  new tab (with the proper filename) via the no-auth public route. */
-    @Response('quotation.get')
-    @AuthJwtAccessProtected()
-    @Get('/:id/pdf-ticket')
-    async pdfTicket(
-        @Param('id') id: string
-    ): Promise<IResponse<{ ticket: string }>> {
-        // Make sure the quotation exists (and is in this company's scope).
-        await this.quotationService.findOneById(id);
-        return { data: { ticket: signPdfTicket('quotation', id) } };
-    }
 
     /** Client-facing PDF (same sanitized projection as the preview). Streamed
      *  inline so the FE can open it as a blob in a new tab. */

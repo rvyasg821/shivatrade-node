@@ -11,7 +11,6 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
-import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import {
     AuthJwtAccessProtected,
@@ -251,22 +250,6 @@ export class PoVendorAdminController {
         res.end(buf);
     }
 
-    /** Mint a short-lived ticket so the browser can open the dispatch-advice
-     *  PDF inline in a new tab (proper filename) via the no-auth public route. */
-    @Response('poVendor.get')
-    @AuthJwtAccessProtected()
-    @Get('/:id/pdf-ticket')
-    async pdfTicket(
-        @AuthJwtPayload('companyId') companyId: string,
-        @Param('id') id: string
-    ): Promise<IResponse<{ ticket: string }>> {
-        const row = await this.povService.findOneById(id);
-        if (row.company_id.toString() !== companyId) {
-            throw new NotFoundException('Vendor PO not found');
-        }
-        return { data: { ticket: signPdfTicket('po-vendor', id) } };
-    }
-
     // ─── Update (status-locked field edits + status transitions) ────────
 
     @Response('poVendor.update')
@@ -400,27 +383,6 @@ export class PoVendorAdminController {
         );
         res.setHeader('Content-Length', String(buf.length));
         res.end(buf);
-    }
-
-    /** Mint a short-lived ticket to open the Payment Voucher PDF inline. */
-    @Response('poVendor.get')
-    @AuthJwtAccessProtected()
-    @Get('/:id/payment-pdf-ticket/:paymentId')
-    async paymentPdfTicket(
-        @AuthJwtPayload('companyId') companyId: string,
-        @Param('id') id: string,
-        @Param('paymentId') paymentId: string
-    ): Promise<IResponse<{ ticket: string }>> {
-        const row = await this.povService.findOneById(id);
-        if (row.company_id.toString() !== companyId) {
-            throw new NotFoundException('Vendor PO not found');
-        }
-        // verifyPdfTicket splits the id on ':', so join the two ids with '~'.
-        return {
-            data: {
-                ticket: signPdfTicket('po-vendor-payment', `${id}~${paymentId}`),
-            },
-        };
     }
 
     // ─── Soft delete (draft only) ───────────────────────────────────────

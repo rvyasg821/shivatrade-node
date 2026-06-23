@@ -3,9 +3,7 @@ import { GrnRepositoryModule } from './repository/grn.repository.module';
 import { GrnService } from './services/grn.service';
 import { DebitNoteService } from './services/debit-note.service';
 import { GrnAdminController } from './controllers/grn.admin.controller';
-import { GrnPublicController } from './controllers/grn.public.controller';
 import { DebitNoteAdminController } from './controllers/debit-note.admin.controller';
-import { DebitNotePublicController } from './controllers/debit-note.public.controller';
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
@@ -28,11 +26,6 @@ import { CompanySettingsRepositoryModule } from '@modules/company-settings/repos
     ],
     providers: [GrnService, DebitNoteService],
     exports: [GrnService, DebitNoteService, GrnRepositoryModule],
-    controllers: [
-        GrnAdminController,
-        GrnPublicController,
-        DebitNoteAdminController,
-        DebitNotePublicController,
-    ],
+    controllers: [GrnAdminController, DebitNoteAdminController],
 })
 export class GrnModule {}

@@ -25,7 +25,6 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
-import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 
 import { GrnService } from '../services/grn.service';
 import {
@@ -172,19 +171,6 @@ export class GrnAdminController {
         res.end(buffer);
     }
 
-    /** Mint a short-lived ticket so the browser can open the GRN PDF inline in
-     *  a new tab (proper filename) via the no-auth public route. */
-    @Response('grn.get')
-    @AuthJwtAccessProtected()
-    @Get('/:id/pdf-ticket')
-    async pdfTicket(
-        @AuthJwtPayload('companyId') companyId: string,
-        @Param('id') id: string
-    ): Promise<IResponse<{ ticket: string }>> {
-        // Ensure the GRN exists within the caller's company scope.
-        await this.grnService.mapGet(companyId, id);
-        return { data: { ticket: signPdfTicket('grn', id) } };
-    }
 }
 
 // `status` query param → undefined / single / array (comma-separated).
