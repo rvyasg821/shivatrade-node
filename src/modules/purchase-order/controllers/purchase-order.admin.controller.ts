@@ -25,7 +25,6 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
-import { signPdfTicket } from '@common/pdf/pdf-ticket.util';
 
 import { PurchaseOrderService } from '../services/purchase-order.service';
 import { PoPdfService } from '../services/po-pdf.service';
@@ -264,18 +263,6 @@ export class PurchaseOrderAdminController {
                 po_vendors: out.po_vendors,
             },
         };
-    }
-
-    /** Mint a short-lived ticket so the browser can open the PO PDF inline in
-     *  a new tab (proper filename) via the no-auth public route. */
-    @Response('purchaseOrder.get')
-    @AuthJwtAccessProtected()
-    @Get('/:id/pdf-ticket')
-    async pdfTicket(
-        @Param('id') id: string
-    ): Promise<IResponse<{ ticket: string }>> {
-        await this.poService.findOneById(id);
-        return { data: { ticket: signPdfTicket('purchase-order', id) } };
     }
 
     /** Admin PDF download — streams the file directly (bypasses the standard
