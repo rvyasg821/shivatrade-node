@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 
 import { InventoryService } from './services/inventory.service';
+import { StockLedgerService } from './services/stock-ledger.service';
 import { InventoryAdminController } from './controllers/inventory.admin.controller';
+import { InventoryRepositoryModule } from './repository/inventory.repository.module';
 
 /**
  * Inventory (Received-Goods Register) — read-only view over existing POV /
@@ -15,9 +17,10 @@ import { InventoryAdminController } from './controllers/inventory.admin.controll
  * with an extra '/admin', producing a stray /admin/admin/inventory route.
  */
 @Module({
-    imports: [],
-    providers: [InventoryService],
+    imports: [InventoryRepositoryModule],
+    providers: [InventoryService, StockLedgerService],
     controllers: [InventoryAdminController],
-    exports: [InventoryService],
+    // StockLedgerService is consumed by GRN (in) and Invoice (out) modules.
+    exports: [InventoryService, StockLedgerService, InventoryRepositoryModule],
 })
 export class InventoryModule {}

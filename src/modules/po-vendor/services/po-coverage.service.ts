@@ -13,6 +13,7 @@ import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repo
 import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
+import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -33,7 +34,8 @@ export class PoCoverageService {
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly productRepository: ProductRepository,
-        private readonly invoiceRepository: InvoiceRepository
+        private readonly invoiceRepository: InvoiceRepository,
+        private readonly stockLedger: StockLedgerService
     ) {}
 
     async getCoverage(
@@ -133,6 +135,16 @@ export class PoCoverageService {
             : [];
         const productMap = toMap(products as any[]);
 
+        // ── Current on-hand stock per product (single ledger pool) ─────
+        // Lets the Coverage tab flag pending qty that can be served straight
+        // from stock instead of raising a new POV. `stockRemaining` is
+        // decremented as we allocate across lines so a product appearing on
+        // multiple PO lines never double-counts its shared pool.
+        const onHandMap = productIds.length
+            ? await this.stockLedger.onHandMap(companyId, productIds)
+            : new Map<string, number>();
+        const stockRemaining = new Map<string, number>(onHandMap);
+
         // ── Per-PO-line invoiced totals (drives Generate Invoice gate).
         // sumQtyByPoLineId already excludes CANCELLED invoices. We can
         // safely subtract `invoiced` from `dispatched` to get what's still
@@ -156,6 +168,7 @@ export class PoCoverageService {
             pending: '0',
             invoiced: '0',
             invoiceable: '0',
+            from_stock: '0',
         };
         let totOrd = 0,
             totCov = 0,
@@ -165,7 +178,8 @@ export class PoCoverageService {
             totShort = 0,
             totPend = 0,
             totInv = 0,
-            totInvoiceable = 0;
+            totInvoiceable = 0,
+            totFromStock = 0;
 
         for (const pol of poLines as any[]) {
             const k = pol._id.toString();
@@ -193,6 +207,15 @@ export class PoCoverageService {
             const invoiced = invoicedByPoLine.get(k) || 0;
             const invoiceable = Math.max(0, round4(a.dispatched - invoiced));
 
+            // Stock that can cover this line's pending demand, capped by the
+            // remaining shared pool for this product.
+            const pid = pol.product_id ? pol.product_id.toString() : null;
+            const inStock = pid ? Math.max(0, num(onHandMap.get(pid))) : 0;
+            const avail = pid ? Math.max(0, num(stockRemaining.get(pid))) : 0;
+            const fromStock = round4(Math.min(Math.max(0, pending), avail));
+            if (pid && fromStock > 0)
+                stockRemaining.set(pid, round4(avail - fromStock));
+
             lines.push({
                 purchase_order_line_id: k,
                 vendor_id: pol.vendor_id?.toString(),
@@ -210,6 +233,8 @@ export class PoCoverageService {
                 pending: String(pending),
                 invoiced: String(round4(invoiced)),
                 invoiceable: String(invoiceable),
+                in_stock: String(round4(inStock)),
+                from_stock: String(fromStock),
             });
 
             totOrd += ordered;
@@ -221,6 +246,7 @@ export class PoCoverageService {
             totPend += pending;
             totInv += invoiced;
             totInvoiceable += invoiceable;
+            totFromStock += fromStock;
         }
 
         totals.ordered = String(round4(totOrd));
@@ -232,6 +258,7 @@ export class PoCoverageService {
         totals.pending = String(round4(totPend));
         totals.invoiced = String(round4(totInv));
         totals.invoiceable = String(round4(totInvoiceable));
+        totals.from_stock = String(round4(totFromStock));
 
         return {
             purchase_order_id: purchaseOrderId,

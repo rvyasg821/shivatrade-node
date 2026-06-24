@@ -46,6 +46,8 @@ import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { In } from 'typeorm';
+import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
+import { ENUM_STOCK_MOVEMENT_TYPE } from '@modules/inventory/enums/stock-movement.enum';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -107,7 +109,8 @@ export class InvoiceService {
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly quotationRepository: QuotationRepository,
-        private readonly invoicePaymentRepository: InvoicePaymentRepository
+        private readonly invoicePaymentRepository: InvoicePaymentRepository,
+        private readonly stockLedger: StockLedgerService
     ) {}
 
     // ─── Company snapshot ───────────────────────────────────────────────
@@ -599,11 +602,81 @@ export class InvoiceService {
             row.igst_refund_amount = '0';
         }
 
+        // ── Pre-issue stock check (Goods Out) ──────────────────────────────
+        // Block the issue if any product is short. On-hand is a single pool
+        // per product (location = null → SUM across all GRN-in), since invoices
+        // carry no location in single-tenant.
+        const stockCompanyId = row.company_id.toString();
+        const needByProduct = new Map<string, number>();
+        for (const l of lines as any[]) {
+            if (!l.product_id) continue;
+            needByProduct.set(
+                l.product_id,
+                (needByProduct.get(l.product_id) || 0) + num(l.qty)
+            );
+        }
+        if (needByProduct.size > 0) {
+            const productIds = [...needByProduct.keys()];
+            const have = await this.stockLedger.onHandMap(
+                stockCompanyId,
+                productIds,
+                null
+            );
+            const short = [...needByProduct.entries()].filter(
+                ([pid, need]) => (have.get(pid) || 0) < need - 1e-6
+            );
+            if (short.length > 0) {
+                const products = await this.productRepository.findAll({
+                    _id: { $in: short.map(([pid]) => pid) },
+                });
+                const nameById = new Map(
+                    (products as any[]).map((p: any) => [
+                        p._id.toString(),
+                        p.code || p.name,
+                    ])
+                );
+                throw new BadRequestException(
+                    `Not enough stock to issue: ${short
+                        .map(
+                            ([pid, need]) =>
+                                `${nameById.get(pid) || pid} (available ${round2(
+                                    have.get(pid) || 0
+                                )}, required ${round2(need)})`
+                        )
+                        .join('; ')}`
+                );
+            }
+        }
+
         row.status = ENUM_INVOICE_STATUS.ISSUED;
         row.issued_by = userId;
         row.issued_at = new Date();
 
         await this.invoiceRepository.save(row);
+
+        // ── Goods Out — deduct stock now that the invoice is ISSUED ─────────
+        try {
+            for (const l of lines as any[]) {
+                const q = num(l.qty);
+                if (!l.product_id || q <= 0) continue;
+                await this.stockLedger.post(stockCompanyId, {
+                    product_id: l.product_id,
+                    location_id: null,
+                    qty: -q,
+                    movement_type: ENUM_STOCK_MOVEMENT_TYPE.SALE_OUT,
+                    source_type: 'invoice',
+                    source_id: row._id.toString(),
+                    source_line_id: l._id.toString(),
+                    source_voucher_no: row.voucher_no,
+                    created_by: userId,
+                });
+            }
+        } catch (e: any) {
+            this.logger.error(
+                `[Invoice ${row._id}] stock deduct failed: ${e?.message}`
+            );
+        }
+
         await this.recompute(row._id.toString());
 
         this.logger.log(`Invoice issued: ${row._id} (${row.voucher_no})`);
@@ -628,6 +701,24 @@ export class InvoiceService {
         row.cancelled_reason = reason;
 
         await this.invoiceRepository.save(row);
+
+        // ── Restore stock — reverse the sale_out rows (no-op for a draft that
+        // was never issued, since it posted none). ─────────────────────────
+        try {
+            await this.stockLedger.reverse(
+                row.company_id.toString(),
+                'invoice',
+                row._id.toString(),
+                ENUM_STOCK_MOVEMENT_TYPE.SALE_REVERSAL,
+                reason,
+                userId
+            );
+        } catch (e: any) {
+            this.logger.error(
+                `[Invoice ${row._id}] stock restore failed: ${e?.message}`
+            );
+        }
+
         this.logger.log(`Invoice cancelled: ${row._id}`);
         return row;
     }
@@ -865,13 +956,14 @@ export class InvoiceService {
     // ─── Qty guard ──────────────────────────────────────────────────────
 
     /**
-     * Rule A (plan §8 #148):
-     *   per PO line:
-     *     requested + already_invoiced ≤ Σ POV.dispatched_qty
-     *     where POV.status IN ('dispatched','closed')
+     * Sell-from-stock gate (plan §7.5):
+     *   per SO (PO) line:
+     *     requested + already_invoiced ≤ ordered_qty
      *
-     * Commercial Invoice can only ship qty the vendor has already
-     * dispatched. Operator may invoice partial lines as POVs land.
+     * The invoice can bill any SO-line qty not yet invoiced — a dispatched
+     * Vendor PO is NO LONGER required (you can sell what you hold). On-hand
+     * stock is enforced at ISSUE time (assertQtyGuardForLines runs on
+     * draft/edit; the pre-issue stock check in issue() is the real guard).
      */
     private async assertQtyGuardForLines(
         lines: InvoiceLineDto[],
@@ -885,43 +977,14 @@ export class InvoiceService {
         }
         if (!requested.size) return;
 
-        // Pre-load dispatched qty per PO line from POV lines whose parent
-        // POV is dispatched/closed.
+        // Available to invoice = the SO line's ordered qty (not dispatched).
         const poLineIds = Array.from(requested.keys());
-        const povLinesAll = (await this.povLineRepository.findAll({
-            purchase_order_line_id: { $in: poLineIds },
+        const poLines = (await this.poLineRepository.findAll({
+            _id: { $in: poLineIds },
         } as any)) as any[];
-        const povIds = Array.from(
-            new Set(
-                povLinesAll
-                    .map((pl: any) => pl.po_vendor_id?.toString())
-                    .filter((v): v is string => !!v)
-            )
-        );
-        const povs = povIds.length
-            ? ((await this.povRepository.findAll({
-                  _id: { $in: povIds },
-                  soft_delete: false,
-              } as any)) as any[])
-            : [];
-        const allowedPovIds = new Set(
-            povs
-                .filter(
-                    (p: any) =>
-                        p.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
-                        p.status === ENUM_PO_VENDOR_STATUS.CLOSED
-                )
-                .map((p: any) => p._id.toString())
-        );
-        const dispatchedByPoLine = new Map<string, number>();
-        for (const pl of povLinesAll) {
-            if (!allowedPovIds.has(pl.po_vendor_id?.toString())) continue;
-            const k = pl.purchase_order_line_id?.toString();
-            if (!k) continue;
-            dispatchedByPoLine.set(
-                k,
-                (dispatchedByPoLine.get(k) || 0) + num(pl.dispatched_qty)
-            );
+        const orderedByPoLine = new Map<string, number>();
+        for (const pl of poLines) {
+            orderedByPoLine.set(pl._id.toString(), num(pl.qty));
         }
 
         for (const [poLineId, reqQty] of requested.entries()) {
@@ -952,10 +1015,10 @@ export class InvoiceService {
                     `Qty guard inconsistency on PO line ${poLineId}.`
                 );
             }
-            const dispatched = dispatchedByPoLine.get(poLineId) || 0;
-            if (reqQty + availableHistorical > dispatched + 1e-6) {
+            const ordered = orderedByPoLine.get(poLineId) || 0;
+            if (reqQty + availableHistorical > ordered + 1e-6) {
                 throw new BadRequestException(
-                    `Invoice qty (${reqQty}) exceeds dispatched qty (${dispatched}) on PO line ${poLineId}. Wait for POV dispatch or reduce qty.`
+                    `Invoice qty (${reqQty}) exceeds the Sales Order line qty (${ordered}) on PO line ${poLineId}. Reduce qty.`
                 );
             }
         }
@@ -1304,11 +1367,13 @@ export class InvoiceService {
         const result: any[] = [];
         for (const l of poLines as any[]) {
             const k = l._id.toString();
+            const ordered = num(l.qty);
+            // Dispatched is now informational only — no longer the gate.
             const dispatched = dispatchedByPoLine.get(k) || 0;
-            if (dispatched <= 0) continue;
             const invoicedAll = await this.invoiceRepository.sumQtyByPoLineId(k);
             const invoicedOthers = invoicedAll - (selfQtyByPoLine.get(k) || 0);
-            const available = dispatched - invoicedOthers - (selfQtyByPoLine.get(k) || 0);
+            // Sell-from-stock: available = SO-line ordered qty − already invoiced.
+            const available = ordered - invoicedOthers - (selfQtyByPoLine.get(k) || 0);
             if (available <= 1e-6) continue;
             const prod = productById.get(l.product_id?.toString());
             result.push({

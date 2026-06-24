@@ -30,6 +30,19 @@ export type InventoryStatsFilters = Omit<
     'limit' | 'offset' | 'orderBy' | 'orderDirection'
 >;
 
+// Ledger-driven per-product on-hand summary.
+export interface StockSummaryFilters {
+    search?: string;
+    category_id?: string;
+    location_id?: string;
+    in_stock_only?: boolean; // on-hand > 0
+    non_positive_only?: boolean; // on-hand <= 0 (negative/zero)
+    limit: number;
+    offset: number;
+    orderBy?: string;
+    orderDirection?: string;
+}
+
 // Whitelist of sortable columns → real SQL expressions. Prevents SQL
 // injection via the orderBy query param.
 const ORDER_COLUMNS: Record<string, string> = {
@@ -395,5 +408,129 @@ export class InventoryService {
                 lead_name: row.lead_name,
             },
         };
+    }
+
+    // ─── Stock summary — per-product on-hand from the ledger ────────────
+    //
+    // The new source-of-truth for stock: `SUM(stock_movements.qty)` grouped by
+    // product (the receipts register stays as vendor-side traceability only).
+    async stockSummary(
+        companyId: string,
+        filters: StockSummaryFilters
+    ): Promise<{ rows: any[]; total: number }> {
+        const where: string[] = ['sm.company_id = $1', 'sm.deleted = false'];
+        const params: any[] = [companyId];
+        let i = 2;
+
+        if (filters.location_id) {
+            where.push(`sm.location_id = $${i}`);
+            params.push(filters.location_id);
+            i++;
+        }
+        if (filters.search) {
+            where.push(`(p.code ILIKE $${i} OR p.name ILIKE $${i})`);
+            params.push(`%${filters.search}%`);
+            i++;
+        }
+        if (filters.category_id) {
+            where.push(`p.category_id = $${i}`);
+            params.push(filters.category_id);
+            i++;
+        }
+        const whereSql = where.join(' AND ');
+
+        const having: string[] = [];
+        if (filters.in_stock_only) having.push('COALESCE(SUM(sm.qty), 0) > 0');
+        if (filters.non_positive_only)
+            having.push('COALESCE(SUM(sm.qty), 0) <= 0');
+        const havingSql = having.length ? `HAVING ${having.join(' AND ')}` : '';
+
+        const fromGroup = `
+            FROM stock_movements sm
+            JOIN products p ON p._id = sm.product_id
+            LEFT JOIN categories c ON c._id = p.category_id
+            WHERE ${whereSql}
+            GROUP BY p._id, p.code, p.name, p.unit_of_measure, c.name
+            ${havingSql}`;
+
+        const countRows = await this.dataSource.query(
+            `SELECT COUNT(*)::int AS total FROM (SELECT p._id ${fromGroup}) t`,
+            params
+        );
+        const total = countRows?.[0]?.total || 0;
+
+        const ORDER: Record<string, string> = {
+            on_hand: 'on_hand',
+            product_name: 'product_name',
+            last_movement: 'last_movement',
+        };
+        const orderCol = ORDER[filters.orderBy] || 'product_name';
+        const orderDir =
+            (filters.orderDirection || 'ASC').toUpperCase() === 'DESC'
+                ? 'DESC'
+                : 'ASC';
+
+        const limitIdx = params.length + 1;
+        const offsetIdx = params.length + 2;
+        const rows = await this.dataSource.query(
+            `SELECT
+                p._id             AS product_id,
+                p.code            AS product_code,
+                p.name            AS product_name,
+                p.unit_of_measure AS uom,
+                c.name            AS category_name,
+                COALESCE(SUM(sm.qty), 0)::float8 AS on_hand,
+                MAX(sm."createdAt")              AS last_movement
+             ${fromGroup}
+             ORDER BY ${orderCol} ${orderDir}, p.code ASC
+             LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+            [...params, filters.limit, filters.offset]
+        );
+        return { rows, total };
+    }
+
+    // ─── Movement history for one product (with running balance) ────────
+    async movementHistory(
+        companyId: string,
+        productId: string,
+        locationId?: string
+    ): Promise<{ product: any; movements: any[] }> {
+        const params: any[] = [companyId, productId];
+        let locClause = '';
+        if (locationId) {
+            params.push(locationId);
+            locClause = 'AND sm.location_id = $3';
+        }
+        const rows = await this.dataSource.query(
+            `SELECT
+                sm._id              AS _id,
+                sm.qty::float8      AS qty,
+                sm.movement_type    AS movement_type,
+                sm.source_type      AS source_type,
+                sm.source_id        AS source_id,
+                sm.source_voucher_no AS source_voucher_no,
+                sm.notes            AS notes,
+                sm."createdAt"      AS created_at
+             FROM stock_movements sm
+             WHERE sm.company_id = $1 AND sm.deleted = false
+               AND sm.product_id = $2 ${locClause}
+             ORDER BY sm."createdAt" ASC, sm._id ASC`,
+            params
+        );
+
+        let balance = 0;
+        const movements = rows.map((r: any) => {
+            balance = Math.round((balance + num(r.qty)) * 1e4) / 1e4;
+            return { ...r, balance };
+        });
+
+        const ph = await this.dataSource.query(
+            `SELECT p.code AS product_code, p.name AS product_name,
+                    p.unit_of_measure AS uom
+             FROM products p WHERE p._id = $1`,
+            [productId]
+        );
+
+        return { product: ph?.[0] || null, movements };
     }
 }

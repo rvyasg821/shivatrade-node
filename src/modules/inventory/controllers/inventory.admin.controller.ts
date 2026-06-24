@@ -73,6 +73,65 @@ export class InventoryAdminController {
     }
 
     /**
+     * Ledger-driven per-product on-hand summary (the real stock number).
+     * Paginated + filterable (search / category / location / in-stock toggle).
+     */
+    @ResponsePaging('inventory.stock')
+    @AuthJwtAccessProtected()
+    @Get('/stock')
+    async stock(
+        @AuthJwtPayload('companyId') companyId: string,
+        @PaginationQuery() { _limit, _offset }: PaginationListDto,
+        @Query('search') search?: string,
+        @Query('category_id') categoryId?: string,
+        @Query('location_id') locationId?: string,
+        @Query('in_stock_only') inStockOnly?: string,
+        @Query('non_positive_only') nonPositiveOnly?: string,
+        @Query('orderBy') orderBy?: string,
+        @Query('orderDirection') orderDirection?: string
+    ): Promise<IResponsePaging<any>> {
+        const { rows, total } = await this.inventoryService.stockSummary(
+            companyId,
+            {
+                search: search?.trim() || undefined,
+                category_id: categoryId || undefined,
+                location_id: locationId || undefined,
+                in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
+                non_positive_only:
+                    nonPositiveOnly === 'true' || nonPositiveOnly === '1',
+                limit: _limit,
+                offset: _offset,
+                orderBy,
+                orderDirection,
+            }
+        );
+        return {
+            _pagination: { total, totalPage: Math.ceil(total / _limit) },
+            data: rows,
+        };
+    }
+
+    /**
+     * Full movement history for one product (signed qty + running balance),
+     * for the Inventory drill-in modal.
+     */
+    @Response('inventory.movements')
+    @AuthJwtAccessProtected()
+    @Get('/movements/:productId')
+    async movements(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('productId') productId: string,
+        @Query('location_id') locationId?: string
+    ): Promise<IResponse<any>> {
+        const data = await this.inventoryService.movementHistory(
+            companyId,
+            productId,
+            locationId || undefined
+        );
+        return { data };
+    }
+
+    /**
      * KPI aggregates (stock value / lines / products / vendors) for the
      * listing header cards. Honours the same filters as `/list`.
      */

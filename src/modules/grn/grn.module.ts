@@ -12,6 +12,8 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
+// Stock ledger (Goods In) — GRN confirm posts grn_in movements.
+import { InventoryModule } from '@modules/inventory/inventory.module';
 
 @Module({
     imports: [
@@ -23,6 +25,7 @@ import { CompanySettingsRepositoryModule } from '@modules/company-settings/repos
         CompanyRepositoryModule,
         TrackingEventRepositoryModule,
         CompanySettingsRepositoryModule,
+        InventoryModule,
     ],
     providers: [GrnService, DebitNoteService],
     exports: [GrnService, DebitNoteService, GrnRepositoryModule],

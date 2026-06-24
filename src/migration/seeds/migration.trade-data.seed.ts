@@ -72,6 +72,10 @@ export class MigrationTradeDataSeed {
                 `  Found ${customerUserIds.length} customer-linked + ${vendorUserIds.length} vendor-linked users to clean up`
             );
 
+            // ── 0. STOCK LEDGER - reset on-hand (refs products) ──
+            this.logger.log('━━━ Stock movements ━━━');
+            await this.del(mgr, 'stock_movements', scope);
+
             // ── 1. SALES GROUP - clear first (refs customers/vendors/products) ──
             this.logger.log('━━━ Sales group ━━━');
             await this.del(mgr, 'pfi_rebates', scope);
@@ -145,7 +149,8 @@ export class MigrationTradeDataSeed {
     //   (currencies / exchange rates / expenses / rebates) intact.
     //   Deletes: leads, RFQs, quotations, sales orders, invoices, vendor POs,
     //   GRNs, debit notes, their tracking events, and customers (+ the
-    //   auto-created customer login users). Inventory is derived (no table).
+    //   auto-created customer login users). Also clears the stock_movements
+    //   ledger so on-hand / Coverage "In Stock" resets to zero.
     //   PFI is intentionally NOT touched (retired / hide-only).
     //   Also clears voucher_sequences so document numbering restarts fresh.
     // ─────────────────────────────────────────────────────────────────
@@ -199,6 +204,10 @@ export class MigrationTradeDataSeed {
             this.logger.log('━━━ GRNs ━━━');
             await this.del(mgr, 'grn_lines', scope);
             await this.del(mgr, 'grns', scope);
+
+            // ── Stock ledger — reset on-hand (sourced from GRN/invoice) ──
+            this.logger.log('━━━ Stock movements ━━━');
+            await this.del(mgr, 'stock_movements', scope);
 
             // ── Vendor POs (+ payments + tracking events) ──
             this.logger.log('━━━ Vendor POs ━━━');
@@ -335,8 +344,17 @@ export class MigrationTradeDataSeed {
         table: string,
         whereClause: string
     ): Promise<void> {
-        const r = await mgr.query(`DELETE FROM ${table} WHERE ${whereClause}`);
-        this.logger.log(`  ✅ ${table}: ${r?.[1] ?? 0}`);
+        // Use the query builder so we get a reliable affected-row count.
+        // A raw `mgr.query('DELETE …')` returns an empty rows array for a
+        // DELETE (no RETURNING), so the old `r?.[1]` read was always
+        // undefined → logged 0 even when rows were removed.
+        const res = await mgr
+            .createQueryBuilder()
+            .delete()
+            .from(table)
+            .where(whereClause)
+            .execute();
+        this.logger.log(`  ✅ ${table}: ${res?.affected ?? 0}`);
     }
 
     private banner(title: string, sub: string) {

@@ -19,6 +19,8 @@ import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.rep
 import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
+// Stock ledger — Generate POV reads on-hand for In Stock / To Procure.
+import { InventoryModule } from '@modules/inventory/inventory.module';
 
 /**
  * POV (PO Vendor) module — Phase 5: admin controller wired in.
@@ -39,6 +41,7 @@ import { CompanySettingsRepositoryModule } from '@modules/company-settings/repos
         InvoiceRepositoryModule,
         PriceListRepositoryModule,
         CompanySettingsRepositoryModule,
+        InventoryModule,
     ],
     providers: [PoVendorService, PoCoverageService, PoVendorPdfService],
     exports: [
