@@ -1,0 +1,14 @@
+{
+    "list": "Employees retrieved successfully.",
+    "get": "Employee details fetched successfully.",
+    "create": "Employee created successfully.",
+    "update": "Employee updated successfully.",
+    "delete": "Employee deleted successfully.",
+    "checkCode": "Code availability checked.",
+    "checkEmail": "Email availability checked.",
+    "capacity": "Employee capacity loaded.",
+    "locationAssignments": "Location assignments loaded.",
+    "addLocationAssignment": "Location assigned successfully.",
+    "updateLocationAssignment": "Location assignment updated successfully.",
+    "removeLocationAssignment": "Location assignment removed successfully."
+}
