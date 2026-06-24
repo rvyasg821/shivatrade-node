@@ -4,6 +4,7 @@ import { InjectDatabaseConnection } from '@common/database/decorators/database.d
 
 import { InventoryListResponseDto } from '../dtos/response/inventory-list.response.dto';
 import { InventoryReceiptDetailResponseDto } from '../dtos/response/inventory-receipt-detail.response.dto';
+import { InventoryStatsResponseDto } from '../dtos/response/inventory-stats.response.dto';
 
 export interface InventoryListFilters {
     search?: string;
@@ -22,6 +23,12 @@ export interface InventoryListFilters {
     orderBy?: string;
     orderDirection?: string;
 }
+
+// Stats use the same filter set as the list, minus paging/sorting.
+export type InventoryStatsFilters = Omit<
+    InventoryListFilters,
+    'limit' | 'offset' | 'orderBy' | 'orderDirection'
+>;
 
 // Whitelist of sortable columns → real SQL expressions. Prevents SQL
 // injection via the orderBy query param.
@@ -71,15 +78,16 @@ export class InventoryService {
         ) acc ON acc.pov_line_id = pvl._id`;
 
     /**
-     * Paginated stock register. A POV line qualifies when its parent POV is
-     * non-cancelled and it has QC-accepted qty from confirmed GRNs (> 0) —
-     * so partial receipts on still-open POVs are included. Filters compose —
-     * only the WHERE clauses with values are appended.
+     * Builds the shared WHERE clause + positional params for the stock
+     * register. Used by both the paginated list and the KPI stats so they
+     * always describe the exact same filtered set. Returns `whereSql` and the
+     * params array (companyId is always $1); callers append their own params
+     * (limit/offset) starting at `params.length + 1`.
      */
-    async list(
+    private buildWhere(
         companyId: string,
-        filters: InventoryListFilters
-    ): Promise<{ rows: InventoryListResponseDto[]; total: number }> {
+        filters: InventoryStatsFilters
+    ): { whereSql: string; params: any[] } {
         const where: string[] = [
             'pv.company_id = $1',
             // Any non-cancelled POV with accepted stock — includes still-open
@@ -149,7 +157,20 @@ export class InventoryService {
             i++;
         }
 
-        const whereSql = where.join(' AND ');
+        return { whereSql: where.join(' AND '), params };
+    }
+
+    /**
+     * Paginated stock register. A POV line qualifies when its parent POV is
+     * non-cancelled and it has QC-accepted qty from confirmed GRNs (> 0) —
+     * so partial receipts on still-open POVs are included. Filters compose —
+     * only the WHERE clauses with values are appended.
+     */
+    async list(
+        companyId: string,
+        filters: InventoryListFilters
+    ): Promise<{ rows: InventoryListResponseDto[]; total: number }> {
+        const { whereSql, params } = this.buildWhere(companyId, filters);
 
         const countRows = await this.dataSource.query(
             `SELECT COUNT(*)::int AS total ${this.FROM_JOINS} WHERE ${whereSql}`,
@@ -164,8 +185,8 @@ export class InventoryService {
                 ? 'ASC'
                 : 'DESC';
 
-        const limitIdx = i;
-        const offsetIdx = i + 1;
+        const limitIdx = params.length + 1;
+        const offsetIdx = params.length + 2;
         const rows = await this.dataSource.query(
             `SELECT
                 pvl._id            AS pov_line_id,
@@ -191,6 +212,44 @@ export class InventoryService {
         );
 
         return { rows, total };
+    }
+
+    /**
+     * KPI aggregates for the listing header cards, over the SAME filtered set
+     * as `list` (location / category / vendor / date / search all apply).
+     *
+     * - stock_value   = Σ(received_qty × unit_price), in INR (vendor purchase
+     *   price). A goods-inward valuation — what has been received & accepted,
+     *   not yet net of invoiced-out qty (the stock-movement ledger handles
+     *   that once built).
+     * - line_count    = number of receipt lines (matches the list total).
+     * - product_count = distinct products (SKUs) in stock.
+     * - vendor_count  = distinct vendors supplying the current stock.
+     */
+    async stats(
+        companyId: string,
+        filters: InventoryStatsFilters
+    ): Promise<InventoryStatsResponseDto> {
+        const { whereSql, params } = this.buildWhere(companyId, filters);
+
+        const rows = await this.dataSource.query(
+            `SELECT
+                COALESCE(SUM(COALESCE(pvl.received_qty, 0) * COALESCE(pvl.unit_price, 0)), 0) AS stock_value,
+                COUNT(*)::int                  AS line_count,
+                COUNT(DISTINCT p._id)::int     AS product_count,
+                COUNT(DISTINCT pv.vendor_id)::int AS vendor_count
+             ${this.FROM_JOINS}
+             WHERE ${whereSql}`,
+            params
+        );
+
+        const r = rows?.[0] || {};
+        return {
+            stock_value: String(r.stock_value ?? '0'),
+            line_count: r.line_count ?? 0,
+            product_count: r.product_count ?? 0,
+            vendor_count: r.vendor_count ?? 0,
+        };
     }
 
     /**
