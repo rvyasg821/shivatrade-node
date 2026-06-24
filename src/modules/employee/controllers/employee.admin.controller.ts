@@ -256,35 +256,26 @@ export class EmployeeAdminController {
             employeeCode = employeeCode.toUpperCase();
         }
 
-        // Update user with employee-specific fields
+        // Apply the FULL employee payload onto the entity (shared with update),
+        // then persist. The create endpoint now accepts every wizard step's
+        // fields — address, salary, bank, emergency, immigration, RTW, etc.
         try {
-            const employeeUpdateData: any = {
+            this.applyEmployeeFields(user, body);
+            user.employee_code = employeeCode;
+            if (faceDescriptor) user.face_descriptor = faceDescriptor;
+            if (faceReferencePhoto) user.face_reference_photo = faceReferencePhoto;
+
+            // userService.update saves the (now fully-populated) entity. Pass the
+            // identity fields it would otherwise reset, plus the auto code +
+            // primary location for proper ObjectId conversion.
+            await this.userService.update(user, {
+                country_code: body.country_code,
+                mobile: body.mobile,
                 employee_code: employeeCode,
-                designation: body.designation || undefined,
-                department: body.department || undefined,
-                employment_type: (body.employment_type && body.employment_type.trim()) ? body.employment_type : undefined,
-                date_of_joining: body.date_of_joining ? String(body.date_of_joining) : undefined,
-                date_of_birth: body.date_of_birth ? String(body.date_of_birth) : undefined,
-                address_line1: body.address_1,
-                address_line2: body.address_2,
-                city: body.city,
-                state: body.state,
-                country: body.country,
-                postcode: body.zip_code,
                 location_id: body.location_id,
-                ni_number: body.ni_number || undefined,
-                nationality: body.nationality || undefined,
-                marital_status: body.marital_status || undefined,
-                middle_name: body.middle_name || undefined,
-                home_telephone: body.home_telephone || undefined,
-            };
-
-            if (faceDescriptor) employeeUpdateData.face_descriptor = faceDescriptor;
-            if (faceReferencePhoto) employeeUpdateData.face_reference_photo = faceReferencePhoto;
-
-            await this.userService.update(user, employeeUpdateData);
+            });
         } catch (e) {
-            this.logger.warn(`[Employee Create] Update employee fields failed: ${e?.message}`);
+            this.logger.warn(`[Employee Create] Persist employee fields failed: ${e?.message}`);
         }
 
         // Persist additional location assignments (multi-location support)
@@ -660,105 +651,14 @@ export class EmployeeAdminController {
             ...(body.password ? { password: body.password } : {}),
         };
 
-        // Add employee-specific fields directly to user document
-        if (body.employee_code !== undefined) user.employee_code = body.employee_code;
-        if (body.designation !== undefined) user.designation = body.designation;
-        if (body.department !== undefined) user.department = body.department;
-        if (body.employment_type !== undefined) {
-            user.employment_type = (body.employment_type && body.employment_type.trim()) ? body.employment_type : null;
-        }
-        if (body.date_of_joining !== undefined) user.date_of_joining = body.date_of_joining;
-        if (body.date_of_birth !== undefined) user.date_of_birth = body.date_of_birth;
-        if (body.address_1 !== undefined) user.address_line1 = body.address_1;
-        if (body.address_2 !== undefined) user.address_line2 = body.address_2;
-        if (body.city !== undefined) user.city = body.city;
-        if (body.state !== undefined) user.state = body.state;
-        if (body.country !== undefined) user.country = body.country;
-        if (body.zip_code !== undefined) user.postcode = body.zip_code;
+        // Active flag drives the user status (update-only side-effect).
         if (body.is_active !== undefined) {
-            user.is_active = body.is_active;
             updateData.status = body.is_active ? ENUM_USER_STATUS.ACTIVE : ENUM_USER_STATUS.INACTIVE;
         }
-        if (body.location_id !== undefined) {
-            user.location_id = body.location_id;
-            user.locationId = body.location_id;
-        }
 
-        // Extended personal fields
-        if (body.middle_name !== undefined) user.middle_name = body.middle_name;
-        if (body.marital_status !== undefined) user.marital_status = body.marital_status;
-        if (body.home_telephone !== undefined) user.home_telephone = body.home_telephone;
-        if (body.ni_number !== undefined) user.ni_number = body.ni_number;
-        if (body.nationality !== undefined) user.nationality = body.nationality;
-
-        // Salary & working hours (annual_salary / hourly_rate / weekly_working_hours / pay_type
-        // are re-applied with explicit Number() coercion right before the final save — see below)
-        if (body.working_hours_pattern !== undefined) user.working_hours_pattern = body.working_hours_pattern;
-        if (body.payroll_frequency !== undefined) user.payroll_frequency = body.payroll_frequency;
-        if (body.mode_of_transfer !== undefined) user.mode_of_transfer = body.mode_of_transfer;
-        if (body.sick_leaves_allowed !== undefined) user.sick_leaves_allowed = body.sick_leaves_allowed;
-        if (body.annual_leaves_allowed !== undefined) user.annual_leaves_allowed = body.annual_leaves_allowed;
-
-        // Bank / financial details
-        if (body.bank_name !== undefined) user.bank_name = body.bank_name;
-        if (body.account_holder_name !== undefined) user.account_holder_name = body.account_holder_name;
-        if (body.sort_code !== undefined) user.sort_code = body.sort_code;
-        if (body.account_number !== undefined) user.account_number = body.account_number;
-        if (body.pension_opt_in !== undefined) user.pension_opt_in = body.pension_opt_in;
-        if (body.pension_provider !== undefined) user.pension_provider = body.pension_provider;
-        if (body.pension_employee_contribution !== undefined) user.pension_employee_contribution = body.pension_employee_contribution;
-        if (body.pension_employer_contribution !== undefined) user.pension_employer_contribution = body.pension_employer_contribution;
-        if (body.tax_code !== undefined) user.tax_code = body.tax_code;
-        if (body.ni_category !== undefined) user.ni_category = body.ni_category;
-
-        // Next of kin / emergency contact
-        if (body.kin_name !== undefined) user.kin_name = body.kin_name;
-        if (body.kin_relationship !== undefined) user.kin_relationship = body.kin_relationship;
-        if (body.kin_address !== undefined) user.kin_address = body.kin_address;
-        if (body.kin_postcode !== undefined) user.kin_postcode = body.kin_postcode;
-        if (body.kin_phone !== undefined) user.kin_phone = body.kin_phone;
-        if (body.kin_email !== undefined) user.kin_email = body.kin_email;
-
-        // Immigration / passport
-        if (body.passport_number !== undefined) user.passport_number = body.passport_number;
-        if (body.passport_country_of_issue !== undefined) user.passport_country_of_issue = body.passport_country_of_issue;
-        if (body.passport_expiry !== undefined) user.passport_expiry = body.passport_expiry;
-        if (body.visa_category !== undefined) user.visa_category = body.visa_category;
-        if (body.visa_valid_from !== undefined) user.visa_valid_from = body.visa_valid_from;
-        if (body.visa_valid_to !== undefined) user.visa_valid_to = body.visa_valid_to;
-        if (body.brp_number !== undefined) user.brp_number = body.brp_number;
-        if (body.cos_number !== undefined) user.cos_number = body.cos_number;
-        if (body.visa_restriction !== undefined) user.visa_restriction = body.visa_restriction;
-        if (body.share_code !== undefined) user.share_code = body.share_code;
-
-        // Right to work
-        if (body.rtw_check_date !== undefined) user.rtw_check_date = body.rtw_check_date;
-        if (body.rtw_end_date !== undefined) user.rtw_end_date = body.rtw_end_date;
-        if (body.rtw_check_conducted !== undefined) user.rtw_check_conducted = body.rtw_check_conducted;
-        if (body.rtw_date_received !== undefined) user.rtw_date_received = body.rtw_date_received;
-        if (body.ecs_expiry_date !== undefined) user.ecs_expiry_date = body.ecs_expiry_date;
-
-        // Reporting
-        if (body.reporting_to !== undefined) user.reporting_to = body.reporting_to;
-
-        // Coerce salary fields to proper number/null ON THE ENTITY so TypeORM
-        // picks them up in save(). The DTO should have done this via
-        // `@Type(() => Number)` but we were still seeing null in prod, so we
-        // re-apply explicitly here. This is the authoritative write for
-        // salary/hours/pay_type on the employee record.
-        if (body.annual_salary !== undefined) {
-            user.annual_salary = body.annual_salary === null ? null : Number(body.annual_salary);
-        }
-        if (body.hourly_rate !== undefined) {
-            user.hourly_rate = body.hourly_rate === null ? null : Number(body.hourly_rate);
-        }
-        if (body.weekly_working_hours !== undefined) {
-            user.weekly_working_hours =
-                body.weekly_working_hours === null ? null : Number(body.weekly_working_hours);
-        }
-        if ((body as any).pay_type !== undefined) {
-            (user as any).pay_type = (body as any).pay_type;
-        }
+        // Apply every employee-specific field from the body onto the entity
+        // (shared with create so both persist the full payload).
+        this.applyEmployeeFields(user, body);
 
         // Update basic fields using service (whitelist path)
         const updated = await this.userService.update(user, updateData);
@@ -832,6 +732,98 @@ export class EmployeeAdminController {
             throw new BadRequestException('Role not found');
         }
         return role;
+    }
+
+    /**
+     * Applies every employee-specific field present in the request body onto
+     * the user entity (mutates `user`). Shared by create + update so both
+     * persist the FULL payload (basic, address, salary, bank, kin/emergency,
+     * immigration, RTW, reporting). Only fields present in the body are touched;
+     * the caller is responsible for saving the entity afterwards.
+     */
+    private applyEmployeeFields(user: any, body: any): void {
+        // ── Job / basic ──
+        if (body.employee_code !== undefined) user.employee_code = body.employee_code;
+        if (body.designation !== undefined) user.designation = body.designation;
+        if (body.department !== undefined) user.department = body.department;
+        if (body.employment_type !== undefined) {
+            user.employment_type = (body.employment_type && body.employment_type.trim()) ? body.employment_type : null;
+        }
+        if (body.date_of_joining !== undefined) user.date_of_joining = body.date_of_joining;
+        if (body.date_of_birth !== undefined) user.date_of_birth = body.date_of_birth;
+        if (body.is_active !== undefined) user.is_active = body.is_active;
+        if (body.location_id !== undefined) {
+            user.location_id = body.location_id;
+            user.locationId = body.location_id;
+        }
+
+        // ── Address ──
+        if (body.address_1 !== undefined) user.address_line1 = body.address_1;
+        if (body.address_2 !== undefined) user.address_line2 = body.address_2;
+        if (body.city !== undefined) user.city = body.city;
+        if (body.state !== undefined) user.state = body.state;
+        if (body.country !== undefined) user.country = body.country;
+        if (body.zip_code !== undefined) user.postcode = body.zip_code;
+
+        // ── Extended personal ──
+        if (body.middle_name !== undefined) user.middle_name = body.middle_name;
+        if (body.marital_status !== undefined) user.marital_status = body.marital_status;
+        if (body.home_telephone !== undefined) user.home_telephone = body.home_telephone;
+        if (body.ni_number !== undefined) user.ni_number = body.ni_number;
+        if (body.nationality !== undefined) user.nationality = body.nationality;
+
+        // ── Salary & working hours ──
+        if (body.working_hours_pattern !== undefined) user.working_hours_pattern = body.working_hours_pattern;
+        if (body.payroll_frequency !== undefined) user.payroll_frequency = body.payroll_frequency;
+        if (body.mode_of_transfer !== undefined) user.mode_of_transfer = body.mode_of_transfer;
+        if (body.sick_leaves_allowed !== undefined) user.sick_leaves_allowed = body.sick_leaves_allowed;
+        if (body.annual_leaves_allowed !== undefined) user.annual_leaves_allowed = body.annual_leaves_allowed;
+        if (body.annual_salary !== undefined) user.annual_salary = body.annual_salary === null ? null : Number(body.annual_salary);
+        if (body.hourly_rate !== undefined) user.hourly_rate = body.hourly_rate === null ? null : Number(body.hourly_rate);
+        if (body.weekly_working_hours !== undefined) user.weekly_working_hours = body.weekly_working_hours === null ? null : Number(body.weekly_working_hours);
+        if (body.pay_type !== undefined) user.pay_type = body.pay_type;
+
+        // ── Bank / financial ──
+        if (body.bank_name !== undefined) user.bank_name = body.bank_name;
+        if (body.account_holder_name !== undefined) user.account_holder_name = body.account_holder_name;
+        if (body.sort_code !== undefined) user.sort_code = body.sort_code;
+        if (body.account_number !== undefined) user.account_number = body.account_number;
+        if (body.pension_opt_in !== undefined) user.pension_opt_in = body.pension_opt_in;
+        if (body.pension_provider !== undefined) user.pension_provider = body.pension_provider;
+        if (body.pension_employee_contribution !== undefined) user.pension_employee_contribution = body.pension_employee_contribution;
+        if (body.pension_employer_contribution !== undefined) user.pension_employer_contribution = body.pension_employer_contribution;
+        if (body.tax_code !== undefined) user.tax_code = body.tax_code;
+        if (body.ni_category !== undefined) user.ni_category = body.ni_category;
+
+        // ── Next of kin / emergency ──
+        if (body.kin_name !== undefined) user.kin_name = body.kin_name;
+        if (body.kin_relationship !== undefined) user.kin_relationship = body.kin_relationship;
+        if (body.kin_address !== undefined) user.kin_address = body.kin_address;
+        if (body.kin_postcode !== undefined) user.kin_postcode = body.kin_postcode;
+        if (body.kin_phone !== undefined) user.kin_phone = body.kin_phone;
+        if (body.kin_email !== undefined) user.kin_email = body.kin_email;
+
+        // ── Immigration / passport ──
+        if (body.passport_number !== undefined) user.passport_number = body.passport_number;
+        if (body.passport_country_of_issue !== undefined) user.passport_country_of_issue = body.passport_country_of_issue;
+        if (body.passport_expiry !== undefined) user.passport_expiry = body.passport_expiry;
+        if (body.visa_category !== undefined) user.visa_category = body.visa_category;
+        if (body.visa_valid_from !== undefined) user.visa_valid_from = body.visa_valid_from;
+        if (body.visa_valid_to !== undefined) user.visa_valid_to = body.visa_valid_to;
+        if (body.brp_number !== undefined) user.brp_number = body.brp_number;
+        if (body.cos_number !== undefined) user.cos_number = body.cos_number;
+        if (body.visa_restriction !== undefined) user.visa_restriction = body.visa_restriction;
+        if (body.share_code !== undefined) user.share_code = body.share_code;
+
+        // ── Right to work ──
+        if (body.rtw_check_date !== undefined) user.rtw_check_date = body.rtw_check_date;
+        if (body.rtw_end_date !== undefined) user.rtw_end_date = body.rtw_end_date;
+        if (body.rtw_check_conducted !== undefined) user.rtw_check_conducted = body.rtw_check_conducted;
+        if (body.rtw_date_received !== undefined) user.rtw_date_received = body.rtw_date_received;
+        if (body.ecs_expiry_date !== undefined) user.ecs_expiry_date = body.ecs_expiry_date;
+
+        // ── Reporting ──
+        if (body.reporting_to !== undefined) user.reporting_to = body.reporting_to;
     }
 
     /**

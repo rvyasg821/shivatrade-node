@@ -170,12 +170,29 @@ export class RoleService implements IRoleService {
      * role, not the system fallback).
      */
     async getAssignableEmployeeRoleIds(companyId: string): Promise<string[]> {
-        const customRoles = await this.roleRepository.findAll({
-            type: ENUM_ROLE_TYPE.CUSTOM,
-            companyId,
-            isActive: true,
-        });
-        return customRoles.map((r: any) => r._id.toString());
+        // Keep this in sync with the user-form role dropdown
+        // (role.admin.controller list): it offers active CUSTOM
+        // (application-permission) roles for this company OR shared/global
+        // ones (companyId = null, what a Super Admin sees). Matching the
+        // dropdown means any role the user is allowed to pick will save —
+        // no "Role is not assignable" mismatch.
+        const [companyCustom, sharedCustom] = await Promise.all([
+            this.roleRepository.findAll({
+                category: 'custom',
+                companyId,
+                isActive: true,
+            }),
+            this.roleRepository.findAll({
+                category: 'custom',
+                companyId: null,
+                isActive: true,
+            }),
+        ]);
+        const ids = new Set<string>();
+        for (const r of [...companyCustom, ...sharedCustom]) {
+            ids.add((r as any)._id.toString());
+        }
+        return Array.from(ids);
     }
 
     async findOneActiveById(
