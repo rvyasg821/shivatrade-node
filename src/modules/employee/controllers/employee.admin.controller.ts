@@ -763,15 +763,27 @@ export class EmployeeAdminController {
         // Update basic fields using service (whitelist path)
         const updated = await this.userService.update(user, updateData);
 
-        // Role re-assignment. Required and must be a custom role for this
-        // company. Throws when missing or invalid.
-        if ((body as any).role_id !== undefined) {
+        // Role re-assignment. Only validate/re-assign when the role actually
+        // CHANGES — saving the form without touching the role must not require
+        // the already-assigned role to still be in the "assignable" list
+        // (otherwise every save fails with "Role is not assignable").
+        const newRoleId = (body as any).role_id
+            ? String((body as any).role_id)
+            : '';
+        // Current role may be a raw string id or a populated role doc.
+        const rawRole: any = (user as any).role;
+        const currentRoleId = rawRole
+            ? typeof rawRole === 'object'
+                ? String(rawRole._id || rawRole.id || '')
+                : String(rawRole)
+            : '';
+        if (newRoleId && newRoleId !== currentRoleId) {
             const companyId = String(
                 (user as any).company_id || (user as any).companyId || ''
             );
             const resolved = await this.resolveEmployeeRole(
                 companyId,
-                (body as any).role_id
+                newRoleId
             );
             user.role = resolved._id.toString();
             (user as any).roleLevel = resolved.level;
@@ -842,10 +854,16 @@ export class EmployeeAdminController {
             )
         );
 
-        const existing = await this.employeeLocationAssignmentRepository.findByEmployeeId(employeeId);
-        for (const a of existing) {
-            await this.employeeLocationAssignmentRepository.softDelete(a);
-        }
+        // Hard-delete EVERY existing row for this employee — including any
+        // already soft-deleted ones. The table has a unique index on
+        // (employee_id, location_id) that does NOT exclude soft-deleted rows,
+        // so soft-deleting + re-inserting the same pair violates that index
+        // (duplicate key 23505). This is a pure mapping table — the inline
+        // remove endpoint also hard-deletes — so a clean replace is correct.
+        await this.employeeLocationAssignmentRepository.deleteMany(
+            { employee_id: employeeId },
+            { withDeleted: true }
+        );
 
         for (const locationId of incoming) {
             await this.employeeLocationAssignmentRepository.create({
