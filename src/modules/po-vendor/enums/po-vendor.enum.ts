@@ -26,4 +26,7 @@ export enum ENUM_PO_VENDOR_PAYMENT_STATUS {
     UNPAID = 'unpaid',
     PARTIALLY_PAID = 'partially_paid',
     PAID = 'paid',
+    // Sum of active payments exceeds the order value — overpaying a vendor is
+    // allowed (advances, rounding, FX); the balance_payable goes negative.
+    OVERPAID = 'overpaid',
 }

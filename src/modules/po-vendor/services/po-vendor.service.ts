@@ -1893,19 +1893,10 @@ export class PoVendorService {
         if (amount <= 0) {
             throw new BadRequestException('Payment amount must be > 0.');
         }
-        const priorPaid =
-            await this.povPaymentRepository.sumActiveByPoVendorId(
-                row._id.toString()
-            );
-        const orderValue = await this.computeOrderValue(row);
-        // 1-paise slack for FP rounding.
-        if (priorPaid + amount > orderValue + 1e-2) {
-            throw new BadRequestException(
-                `Payment ${round2(amount)} exceeds outstanding balance ${round2(
-                    orderValue - priorPaid
-                )}.`
-            );
-        }
+        // NOTE: overpayment is intentionally allowed (vendor advances, rounding,
+        // FX drift). We no longer block when prior + amount exceeds the order
+        // value — applyPaymentDerived flags the POV as `overpaid` instead and
+        // the UI surfaces a warning + negative balance.
 
         // Stable payment voucher number (STIPL/PV/0001/FY) at creation, so the
         // printable voucher keeps a fixed reference even if later voided.
@@ -1996,6 +1987,8 @@ export class PoVendorService {
         row.amount_paid = String(round2(paid));
         if (paid <= 1e-2) {
             row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID;
+        } else if (paid - orderValue > 1e-2) {
+            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.OVERPAID;
         } else if (orderValue - paid <= 1e-2) {
             row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.PAID;
         } else {
@@ -2142,13 +2135,17 @@ export class PoVendorService {
             }
             const orderValue = Math.round(linesInr + chargesInr + gstInr);
             const amountPaid = round2(num(r.amount_paid));
+            // Goes negative when the vendor has been overpaid — the FE shows
+            // that as an "Overpaid" amount rather than a payable.
             const balancePayable = round2(orderValue - amountPaid);
             const paymentStatus =
                 amountPaid <= 1e-2
                     ? ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID
-                    : orderValue - amountPaid <= 1e-2
-                      ? ENUM_PO_VENDOR_PAYMENT_STATUS.PAID
-                      : ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
+                    : amountPaid - orderValue > 1e-2
+                      ? ENUM_PO_VENDOR_PAYMENT_STATUS.OVERPAID
+                      : orderValue - amountPaid <= 1e-2
+                        ? ENUM_PO_VENDOR_PAYMENT_STATUS.PAID
+                        : ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
             const payments = (paymentsByPov.get(r._id.toString()) || [])
                 .slice()
                 .sort((a, b) =>
