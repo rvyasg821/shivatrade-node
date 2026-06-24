@@ -8,7 +8,10 @@ async function bootstrap() {
     process.env.APP_ENV = ENUM_APP_ENVIRONMENT.MIGRATION;
 
     const app = await NestFactory.createApplicationContext(MigrationModule, {
-        logger: ['error', 'fatal'],
+        // Seeds/commands are meant to be verbose — surface their progress
+        // (`logger.log`/`warn`), not just errors. Without 'log' here every
+        // `this.logger.log(...)` in a seed is silently dropped.
+        logger: ['error', 'fatal', 'warn', 'log'],
         abortOnError: true,
         bufferLogs: false,
     });

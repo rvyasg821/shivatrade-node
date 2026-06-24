@@ -17,6 +17,8 @@ import { QuotationRepositoryModule } from '@modules/quotation/repository/quotati
 import { RebateRepositoryModule } from '@modules/rebate/repository/rebate.repository.module';
 import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
+// Stock ledger (Goods Out) — invoice issue/cancel post sale_out / sale_reversal.
+import { InventoryModule } from '@modules/inventory/inventory.module';
 
 /**
  * Phase 1 - Export Commercial Invoice.
@@ -29,6 +31,7 @@ import { UserRepositoryModule } from '@modules/user/repository/user.repository.m
 @Module({
     imports: [
         InvoiceRepositoryModule,
+        InventoryModule,
         VoucherModule,
         PdfModule,
         CompanyRepositoryModule,

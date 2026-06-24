@@ -42,6 +42,8 @@ import {
 } from '@common/pdf/pdf-letterhead.util';
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
+import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
+import { ENUM_STOCK_MOVEMENT_TYPE } from '@modules/inventory/enums/stock-movement.enum';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -66,7 +68,8 @@ export class GrnService {
         private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
-        private readonly trackingEventRepository: PoVendorTrackingEventRepository
+        private readonly trackingEventRepository: PoVendorTrackingEventRepository,
+        private readonly stockLedger: StockLedgerService
     ) {}
 
     /**
@@ -321,6 +324,64 @@ export class GrnService {
             await this.recomputePovFromGrns(companyId, povId);
         }
 
+        // ── Stock ledger (Goods In) ──────────────────────────────────────
+        // Keep the stock ledger in lock-step with the GRN's CONFIRMED receipt.
+        // A confirm (or an accepted-qty edit while confirmed) reverses any prior
+        // grn_in rows for this GRN and re-posts from the current accepted qty;
+        // leaving CONFIRMED (cancel / back to draft) reverses them out.
+        const linesChanged = Array.isArray(dto.lines) && dto.lines.length > 0;
+        const isConfirmed = grn.status === ENUM_GRN_STATUS.CONFIRMED;
+        const newlyConfirmed =
+            isConfirmed && prevStatus !== ENUM_GRN_STATUS.CONFIRMED;
+        const leftConfirmed =
+            prevStatus === ENUM_GRN_STATUS.CONFIRMED && !isConfirmed;
+        try {
+            if (isConfirmed && (newlyConfirmed || linesChanged)) {
+                await this.stockLedger.reverse(
+                    companyId,
+                    'grn',
+                    grnId,
+                    ENUM_STOCK_MOVEMENT_TYPE.GRN_REVERSAL,
+                    'resync on confirm/edit',
+                    userId
+                );
+                const locationId = povId
+                    ? (await this.povRepository.findOneById(povId) as any)
+                          ?.delivery_address_id || null
+                    : null;
+                const ledgerLines = await this.grnLineRepository.findByGrnId(grnId);
+                for (const l of ledgerLines as any[]) {
+                    const acceptedQty = round4(num(l.accepted_qty));
+                    if (acceptedQty > 0) {
+                        await this.stockLedger.post(companyId, {
+                            product_id: l.product_id,
+                            location_id: locationId,
+                            qty: acceptedQty,
+                            movement_type: ENUM_STOCK_MOVEMENT_TYPE.GRN_IN,
+                            source_type: 'grn',
+                            source_id: grnId,
+                            source_line_id: l._id.toString(),
+                            source_voucher_no: grn.voucher_no,
+                            created_by: userId,
+                        });
+                    }
+                }
+            } else if (leftConfirmed) {
+                await this.stockLedger.reverse(
+                    companyId,
+                    'grn',
+                    grnId,
+                    ENUM_STOCK_MOVEMENT_TYPE.GRN_REVERSAL,
+                    'GRN no longer confirmed',
+                    userId
+                );
+            }
+        } catch (e: any) {
+            this.logger.error(
+                `[GRN ${grnId}] stock ledger sync failed: ${e?.message}`
+            );
+        }
+
         // Surface only the confirm / un-confirm transition on the POV timeline.
         const crossesConfirm =
             dto.status !== undefined &&
@@ -492,9 +553,14 @@ export class GrnService {
         }
     }
 
-    async softDelete(companyId: string, grnId: string): Promise<void> {
+    async softDelete(
+        companyId: string,
+        grnId: string,
+        userId?: string
+    ): Promise<void> {
         const grn: any = await this.getOrThrow(companyId, grnId);
         const povId = grn.po_vendor_id ? grn.po_vendor_id.toString() : null;
+        const wasConfirmed = grn.status === ENUM_GRN_STATUS.CONFIRMED;
         grn.soft_delete = true;
         await this.grnRepository.save(grn);
         // Deleting any non-cancelled GRN (draft or confirmed) un-receives its
@@ -502,6 +568,26 @@ export class GrnService {
         // had been closed).
         if (povId) {
             await this.recomputePovFromGrns(companyId, povId);
+        }
+        // A confirmed GRN also posted grn_in rows into the stock ledger. Deleting
+        // it must reverse those rows so on-hand / Coverage "In Stock" no longer
+        // counts the un-received qty. reverse() is idempotent (only reverses
+        // un-reversed original rows) and never blocks the delete.
+        if (wasConfirmed) {
+            try {
+                await this.stockLedger.reverse(
+                    companyId,
+                    'grn',
+                    grnId,
+                    ENUM_STOCK_MOVEMENT_TYPE.GRN_REVERSAL,
+                    'GRN deleted',
+                    userId
+                );
+            } catch (e: any) {
+                this.logger.error(
+                    `[GRN ${grnId}] stock ledger reverse on delete failed: ${e?.message}`
+                );
+            }
         }
     }
 

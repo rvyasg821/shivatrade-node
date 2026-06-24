@@ -41,6 +41,13 @@ export class PoCoverageLineDto {
     /** dispatched − invoiced. > 0 means more invoices can still be raised
      *  against the dispatched stock. Drives the Generate Invoice button. */
     @ApiProperty({ required: true, type: String }) invoiceable: string;
+
+    /** Current on-hand stock for this product (ledger SUM, single pool). */
+    @ApiProperty({ required: true, type: String }) in_stock: string;
+
+    /** min(pending, in_stock) — qty of the pending requirement that can be
+     *  fulfilled straight from existing stock instead of a new POV. */
+    @ApiProperty({ required: true, type: String }) from_stock: string;
 }
 
 export class PoCoverageTotalsDto {
@@ -53,6 +60,7 @@ export class PoCoverageTotalsDto {
     @ApiProperty({ required: true, type: String }) pending: string;
     @ApiProperty({ required: true, type: String }) invoiced: string;
     @ApiProperty({ required: true, type: String }) invoiceable: string;
+    @ApiProperty({ required: true, type: String }) from_stock: string;
 }
 
 export class PoCoverageResponseDto {

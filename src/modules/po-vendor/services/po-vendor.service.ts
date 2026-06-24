@@ -46,6 +46,7 @@ import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.en
 
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
+import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -75,7 +76,8 @@ export class PoVendorService {
         private readonly locationRepository: LocationRepository,
         private readonly currencyService: CurrencyService,
         private readonly voucherService: VoucherService,
-        private readonly trackingEventRepository: PoVendorTrackingEventRepository
+        private readonly trackingEventRepository: PoVendorTrackingEventRepository,
+        private readonly stockLedger: StockLedgerService
     ) {}
 
     /**
@@ -914,6 +916,15 @@ export class PoVendorService {
             poLines as any[]
         );
 
+        // On-hand per product → drives "In Stock" / "To Procure" on the modal.
+        // Single pool (location = null), live (not reserved) — the issue-time
+        // stock check is the real guard.
+        const onHand = await this.stockLedger.onHandMap(
+            companyId,
+            productIds,
+            null
+        );
+
         const lines = (poLines as any[]).map((l: any) => {
             const k = l._id.toString();
             const orderedQty = num(l.qty);
@@ -925,6 +936,10 @@ export class PoVendorService {
                 ? productMap.get(l.product_id.toString())
                 : null;
             const cand = candidateByLine.get(k);
+            const inStock = l.product_id
+                ? onHand.get(l.product_id.toString()) || 0
+                : 0;
+            const toProcure = Math.max(0, round4(pendingQty - inStock));
             return {
                 purchase_order_line_id: k,
                 product_id: l.product_id?.toString(),
@@ -934,6 +949,8 @@ export class PoVendorService {
                 unit: l.unit || product?.unit_of_measure || undefined,
                 ordered_qty: String(round4(orderedQty)),
                 pending_qty: String(round4(pendingQty)),
+                in_stock: String(round4(inStock)),
+                to_procure: String(toProcure),
                 fully_covered: pendingQty <= 1e-6,
                 current_vendor_id: l.vendor_id?.toString(),
                 current_vendor_name: vendor?.company_name,
@@ -995,7 +1012,7 @@ export class PoVendorService {
             >;
         },
         createdBy: string
-    ): Promise<{ created: PoVendorDoc[] }> {
+    ): Promise<{ created: PoVendorDoc[]; all_from_stock?: boolean }> {
         if (!data.assignments?.length) {
             throw new BadRequestException(
                 'At least one line assignment is required.'
@@ -1056,6 +1073,33 @@ export class PoVendorService {
             );
         }
 
+        // Buy only the SHORTFALL: to_procure = max(0, pending − on-hand stock).
+        // Lines fully covered from stock get no POV line. Single pool, live.
+        const stockPids = unique(
+            data.assignments
+                .map((a) =>
+                    poLineById
+                        .get(a.purchase_order_line_id)
+                        ?.product_id?.toString()
+                )
+                .filter(Boolean) as string[]
+        );
+        const onHand = stockPids.length
+            ? await this.stockLedger.onHandMap(companyId, stockPids, null)
+            : new Map<string, number>();
+        const toProcureByLine = new Map<string, number>();
+        for (const a of data.assignments) {
+            const pl = poLineById.get(a.purchase_order_line_id);
+            const pendingQty = pending.get(a.purchase_order_line_id) || 0;
+            const inStock = pl?.product_id
+                ? onHand.get(pl.product_id.toString()) || 0
+                : 0;
+            toProcureByLine.set(
+                a.purchase_order_line_id,
+                Math.max(0, round4(pendingQty - inStock))
+            );
+        }
+
         // Re-assign po_line.vendor_id where the operator changed it.
         for (const a of data.assignments) {
             const pl = poLineById.get(a.purchase_order_line_id);
@@ -1072,34 +1116,43 @@ export class PoVendorService {
         // side); per-vendor charges flow through as `expenses`.
         const created: PoVendorDoc[] = [];
         for (const [vendorId, lineIds] of byVendor.entries()) {
-            const linesPayload = await Promise.all(
-                lineIds.map(async lid => {
-                    const pl = poLineById.get(lid);
-                    let unitPrice = String(pl?.unit_price || '0');
-                    const productId = pl?.product_id?.toString();
-                    if (productId) {
-                        let priceRow: any = null;
-                        try {
-                            priceRow =
-                                await this.priceListRepository.findCurrentPrice(
-                                    companyId,
-                                    vendorId,
-                                    productId
-                                );
-                        } catch {
-                            priceRow = null;
+            const linesPayload = (
+                await Promise.all(
+                    lineIds.map(async lid => {
+                        const toProcure = toProcureByLine.get(lid) || 0;
+                        // Fully in stock → no POV line for it.
+                        if (toProcure <= 1e-6) return null;
+                        const pl = poLineById.get(lid);
+                        let unitPrice = String(pl?.unit_price || '0');
+                        const productId = pl?.product_id?.toString();
+                        if (productId) {
+                            let priceRow: any = null;
+                            try {
+                                priceRow =
+                                    await this.priceListRepository.findCurrentPrice(
+                                        companyId,
+                                        vendorId,
+                                        productId
+                                    );
+                            } catch {
+                                priceRow = null;
+                            }
+                            if (priceRow) {
+                                unitPrice = String(priceRow.unit_price || '0');
+                            }
                         }
-                        if (priceRow) {
-                            unitPrice = String(priceRow.unit_price || '0');
-                        }
-                    }
-                    return {
-                        purchase_order_line_id: lid,
-                        ordered_qty: String(round4(pending.get(lid) || 0)),
-                        unit_price: unitPrice,
-                    };
-                })
-            );
+                        return {
+                            purchase_order_line_id: lid,
+                            ordered_qty: String(round4(toProcure)),
+                            unit_price: unitPrice,
+                        };
+                    })
+                )
+            ).filter(Boolean) as any[];
+
+            // Whole vendor group covered from stock → spawn no POV.
+            if (linesPayload.length === 0) continue;
+
             const body: any = {
                 vendor_id: vendorId,
                 lines: linesPayload,
@@ -1139,10 +1192,16 @@ export class PoVendorService {
             }
         }
 
+        // Every assigned line was fulfilled from stock → no POV needed.
+        const allFromStock =
+            created.length === 0 &&
+            [...toProcureByLine.values()].every((v) => v <= 1e-6);
+
         this.logger.log(
-            `Recovered ${created.length} POV(s) for PO ${purchaseOrderId}`
+            `Recovered ${created.length} POV(s) for PO ${purchaseOrderId}` +
+                (allFromStock ? ' (all lines fulfilled from stock)' : '')
         );
-        return { created };
+        return { created, all_from_stock: allFromStock };
     }
 
     // ─── Read ───────────────────────────────────────────────────────────

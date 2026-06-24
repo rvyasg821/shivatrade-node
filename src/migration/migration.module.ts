@@ -41,6 +41,10 @@ import { MigrationTradeDataSeed } from '@migration/seeds/migration.trade-data.se
 import { MigrationPortMasterSeed } from '@migration/seeds/migration.port-master.seed';
 import { MigrationShivatradeTenantSeed } from '@migration/seeds/migration.shivatrade-tenant.seed';
 import { MigrationCatalogSeed } from '@migration/seeds/migration.catalog.seed';
+import { MigrationStockBackfillSeed } from '@migration/seeds/migration.stock-backfill.seed';
+import { GrnRepositoryModule } from '@modules/grn/repository/grn.repository.module';
+import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
+import { InventoryRepositoryModule } from '@modules/inventory/repository/inventory.repository.module';
 import { CategoryRepositoryModule } from '@modules/category/repository/category.repository.module';
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
@@ -135,6 +139,9 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         VendorRepositoryModule,
         RebateRepositoryModule,
         ExpenseRepositoryModule,
+        GrnRepositoryModule,
+        PoVendorRepositoryModule,
+        InventoryRepositoryModule,
 
         // Email module for templates
         EmailModule,
@@ -160,6 +167,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         // Seeds
         MigrationUserSeed,
         MigrationCatalogSeed,
+        MigrationStockBackfillSeed,
         MigrationRoleSeed,
         MigrationRoleCategorySeed,
         MigrationFixAdminPermissionsSeed,
