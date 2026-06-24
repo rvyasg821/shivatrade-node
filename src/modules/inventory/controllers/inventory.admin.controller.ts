@@ -19,6 +19,7 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 import { InventoryService } from '../services/inventory.service';
 import { InventoryListResponseDto } from '../dtos/response/inventory-list.response.dto';
 import { InventoryReceiptDetailResponseDto } from '../dtos/response/inventory-receipt-detail.response.dto';
+import { InventoryStatsResponseDto } from '../dtos/response/inventory-stats.response.dto';
 
 @ApiTags('admin.inventory')
 @Controller({ version: '1', path: '/admin/inventory' })
@@ -69,6 +70,40 @@ export class InventoryAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data: rows,
         };
+    }
+
+    /**
+     * KPI aggregates (stock value / lines / products / vendors) for the
+     * listing header cards. Honours the same filters as `/list`.
+     */
+    @Response('inventory.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('search') search?: string,
+        @Query('category_id') categoryId?: string,
+        @Query('po_id') poId?: string,
+        @Query('pov_id') povId?: string,
+        @Query('vendor_id') vendorId?: string,
+        @Query('location_id') locationId?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('min_qty') minQty?: string
+    ): Promise<IResponse<InventoryStatsResponseDto>> {
+        const data = await this.inventoryService.stats(companyId, {
+            search: search?.trim() || undefined,
+            category_id: categoryId || undefined,
+            po_id: poId || undefined,
+            pov_id: povId || undefined,
+            vendor_id: vendorId || undefined,
+            location_id: locationId || undefined,
+            date_from: dateFrom || undefined,
+            date_to: dateTo || undefined,
+            min_qty:
+                minQty != null && minQty !== '' ? Number(minQty) : undefined,
+        });
+        return { data };
     }
 
     /**
