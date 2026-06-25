@@ -78,6 +78,7 @@ export interface ICompanyCreate {
     default_port_of_loading_snapshot?: any;
     default_declaration_text?: string;
     default_terms?: string;
+    default_remarks?: string;
     authorised_signatory_name?: string;
     footer_address?: string;
 }
@@ -257,6 +258,8 @@ export class CompanyService {
             repository.default_declaration_text = data.default_declaration_text;
         if (data.default_terms !== undefined)
             repository.default_terms = data.default_terms;
+        if (data.default_remarks !== undefined)
+            repository.default_remarks = data.default_remarks;
         if (data.authorised_signatory_name !== undefined)
             repository.authorised_signatory_name = data.authorised_signatory_name;
         if (data.footer_address !== undefined)
@@ -810,6 +813,8 @@ export class CompanyService {
                     (company as any)?.default_declaration_text || undefined,
                 default_terms:
                     (company as any)?.default_terms || undefined,
+                default_remarks:
+                    (company as any)?.default_remarks || undefined,
                 authorised_signatory_name:
                     (company as any)?.authorised_signatory_name || undefined,
                 footer_address:
@@ -863,6 +868,8 @@ export class CompanyService {
                     (company as any)?.default_declaration_text || undefined,
                 default_terms:
                     (company as any)?.default_terms || undefined,
+                default_remarks:
+                    (company as any)?.default_remarks || undefined,
                 authorised_signatory_name:
                     (company as any)?.authorised_signatory_name || undefined,
                 footer_address:

@@ -240,6 +240,19 @@ export class PurchaseOrderService {
             prefix
         );
 
+        // SO remarks default from the company's `default_remarks` when the
+        // caller didn't supply any (the UI pre-fills it, this is the fallback).
+        let remarks = data.remarks;
+        if (remarks == null || remarks === '') {
+            try {
+                const c: any =
+                    await this.companyService.findOneById(companyId);
+                remarks = c?.default_remarks || null;
+            } catch {
+                remarks = remarks ?? null;
+            }
+        }
+
         const header = await this.poRepository.create({
             company_id: companyId,
             created_by: createdBy,
@@ -265,8 +278,8 @@ export class PurchaseOrderService {
             delivery_address_id: delivery.id || null,
             payment_terms: data.payment_terms || null,
             delivery_terms: data.delivery_terms || null,
-            notes_to_vendor: data.notes_to_vendor || null,
             internal_notes: data.internal_notes || null,
+            remarks: remarks || null,
             currency_code: data.currency_code || 'INR',
             exchange_rate: data.exchange_rate || '1',
             status: data.status || ENUM_PURCHASE_ORDER_STATUS.DRAFT,
@@ -2105,8 +2118,8 @@ export class PurchaseOrderService {
                 delivery_address_id: r.delivery_address_id?.toString(),
                 payment_terms: r.payment_terms,
                 delivery_terms: r.delivery_terms,
-                notes_to_vendor: r.notes_to_vendor,
                 internal_notes: r.internal_notes,
+                remarks: r.remarks,
                 currency_code: r.currency_code,
                 currency_symbol: getCurrencySymbol(r.currency_code),
                 exchange_rate: r.exchange_rate,
@@ -2385,7 +2398,6 @@ export class PurchaseOrderService {
         if (searchTerm) {
             find.$or = [
                 { voucher_no: { $regex: searchTerm, $options: 'i' } },
-                { notes_to_vendor: { $regex: searchTerm, $options: 'i' } },
             ];
         }
         return find;
@@ -2461,10 +2473,9 @@ export class PurchaseOrderService {
                     ? filters.search.trim()
                     : '';
             if (searchTerm) {
-                qb.andWhere(
-                    '(entity.voucher_no ILIKE :q OR entity.notes_to_vendor ILIKE :q)',
-                    { q: `%${searchTerm}%` }
-                );
+                qb.andWhere('entity.voucher_no ILIKE :q', {
+                    q: `%${searchTerm}%`,
+                });
             }
             return qb
                 .select('entity.status', 'status')

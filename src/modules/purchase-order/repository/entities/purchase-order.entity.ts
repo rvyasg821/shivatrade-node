@@ -125,13 +125,15 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 100, nullable: true })
     delivery_terms?: string;
 
-    /** Renders on PDF */
-    @Column({ type: 'text', nullable: true })
-    notes_to_vendor?: string;
-
     /** Hidden from PDF */
     @Column({ type: 'text', nullable: true })
     internal_notes?: string;
+
+    /** Customer-facing remarks block printed on the Sales Order PDF.
+     *  Defaults from the company's `default_remarks` at create time; editable
+     *  per SO. */
+    @Column({ type: 'text', nullable: true })
+    remarks?: string;
 
     /** Always `INR` for v1 (domestic procurement only). */
     @Index()

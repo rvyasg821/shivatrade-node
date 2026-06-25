@@ -355,6 +355,8 @@ export class CompanyUpdateRequestDto {
     // ── PO defaults ──
     // `default_po_delivery_address` retired — see refactor plan.
     @IsOptional() @IsString() @MaxLength(4000) default_terms?: string;
+
+    @IsOptional() @IsString() @MaxLength(4000) default_remarks?: string;
     @IsOptional() @IsString() @MaxLength(150) authorised_signatory_name?: string;
     @IsOptional() @IsString() @MaxLength(255) footer_address?: string;
 
