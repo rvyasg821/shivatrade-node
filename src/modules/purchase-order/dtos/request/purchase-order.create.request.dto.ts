@@ -84,6 +84,21 @@ export class PurchaseOrderLineCreateDto {
     @Min(0)
     @IsOptional()
     seq?: number;
+
+    // Export / packing snapshot (carried from quotation/PFI line, editable in
+    // the costing worksheet). Persisted by the service + flows into the invoice.
+    @IsNumberString({}, { message: 'net_weight_kg must be a numeric string' })
+    @IsOptional()
+    net_weight_kg?: string;
+
+    @IsNumberString({}, { message: 'gross_weight_kg must be a numeric string' })
+    @IsOptional()
+    gross_weight_kg?: string;
+
+    @IsInt()
+    @Min(0)
+    @IsOptional()
+    package_count?: number;
 }
 
 export class PurchaseOrderCreateRequestDto {
