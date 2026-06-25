@@ -558,9 +558,15 @@ export class DebitNoteService {
                 : Promise.resolve([] as any[]),
         ]);
         const lineCount = new Map<string, number>();
+        const qtyByDn = new Map<string, number>();
+        const priceSetByDn = new Map<string, Set<number>>();
         for (const l of lines) {
             const k = l.debit_note_id.toString();
             lineCount.set(k, (lineCount.get(k) || 0) + 1);
+            qtyByDn.set(k, (qtyByDn.get(k) || 0) + num(l.returned_qty));
+            const ps = priceSetByDn.get(k) || new Set<number>();
+            ps.add(round4(num(l.unit_price)));
+            priceSetByDn.set(k, ps);
         }
         const vendorById = new Map<string, any>(
             (vendors as any[]).map((v) => [v._id.toString(), v])
@@ -579,6 +585,11 @@ export class DebitNoteService {
             total_amount: r.total_amount,
             status: r.status,
             line_count: lineCount.get(r._id.toString()) || 0,
+            total_qty: String(round4(qtyByDn.get(r._id.toString()) || 0)),
+            unit_price:
+                priceSetByDn.get(r._id.toString())?.size === 1
+                    ? String([...priceSetByDn.get(r._id.toString())][0])
+                    : null,
             createdAt: r.createdAt,
         }));
     }

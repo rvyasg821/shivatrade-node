@@ -55,5 +55,9 @@ export class DebitNoteListResponseDto {
     @ApiProperty({ required: false }) total_amount?: string;
     @ApiProperty() status: string;
     @ApiProperty({ required: false }) line_count?: number;
+    // Total returned qty across the DN's lines, and the unit price when all
+    // lines share one (else null → mixed). For the POV Debit Notes tab.
+    @ApiProperty({ required: false }) total_qty?: string;
+    @ApiProperty({ required: false }) unit_price?: string | null;
     @ApiProperty({ required: false }) createdAt?: Date;
 }
