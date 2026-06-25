@@ -916,14 +916,17 @@ export class PoVendorService {
             poLines as any[]
         );
 
-        // On-hand per product → drives "In Stock" / "To Procure" on the modal.
-        // Single pool (location = null), live (not reserved) — the issue-time
-        // stock check is the real guard.
-        const onHand = await this.stockLedger.onHandMap(
+        // FREE stock only → drives "In Stock" / "To Procure" on the modal.
+        // Excludes goods already received against (non-cancelled) POV lines,
+        // which are reserved to their own SO lines — counting them was the
+        // double-count that under-procured a partially-received order. Greedy
+        // allocation below splits the free pool across lines of the same product.
+        const freeStock = await this.stockLedger.freeOnHandMap(
             companyId,
             productIds,
             null
         );
+        const stockRemaining = new Map<string, number>(freeStock);
 
         const lines = (poLines as any[]).map((l: any) => {
             const k = l._id.toString();
@@ -936,9 +939,12 @@ export class PoVendorService {
                 ? productMap.get(l.product_id.toString())
                 : null;
             const cand = candidateByLine.get(k);
-            const inStock = l.product_id
-                ? onHand.get(l.product_id.toString()) || 0
-                : 0;
+            const pid = l.product_id ? l.product_id.toString() : null;
+            const avail = pid ? Math.max(0, stockRemaining.get(pid) || 0) : 0;
+            // From-stock for this line = min(still needed, free stock left).
+            const inStock = Math.max(0, round4(Math.min(pendingQty, avail)));
+            if (pid && inStock > 0)
+                stockRemaining.set(pid, round4(avail - inStock));
             const toProcure = Math.max(0, round4(pendingQty - inStock));
             return {
                 purchase_order_line_id: k,
@@ -1076,8 +1082,11 @@ export class PoVendorService {
             );
         }
 
-        // Buy only the SHORTFALL: to_procure = max(0, pending − on-hand stock).
-        // Lines fully covered from stock get no POV line. Single pool, live.
+        // Buy only the SHORTFALL: to_procure = max(0, pending − FREE stock).
+        // FREE stock excludes goods already received against (non-cancelled)
+        // POV lines (reserved to their own SO lines) — so a partially-received
+        // order no longer deducts its own received qty again. Greedy allocation
+        // splits the free pool across lines of the same product.
         const stockPids = unique(
             data.assignments
                 .map((a) =>
@@ -1087,19 +1096,22 @@ export class PoVendorService {
                 )
                 .filter(Boolean) as string[]
         );
-        const onHand = stockPids.length
-            ? await this.stockLedger.onHandMap(companyId, stockPids, null)
+        const freeStock = stockPids.length
+            ? await this.stockLedger.freeOnHandMap(companyId, stockPids, null)
             : new Map<string, number>();
+        const stockRemaining = new Map<string, number>(freeStock);
         const toProcureByLine = new Map<string, number>();
         for (const a of data.assignments) {
             const pl = poLineById.get(a.purchase_order_line_id);
             const pendingQty = pending.get(a.purchase_order_line_id) || 0;
-            const inStock = pl?.product_id
-                ? onHand.get(pl.product_id.toString()) || 0
-                : 0;
+            const pid = pl?.product_id ? pl.product_id.toString() : null;
+            const avail = pid ? Math.max(0, stockRemaining.get(pid) || 0) : 0;
+            const fromStock = Math.max(0, round4(Math.min(pendingQty, avail)));
+            if (pid && fromStock > 0)
+                stockRemaining.set(pid, round4(avail - fromStock));
             toProcureByLine.set(
                 a.purchase_order_line_id,
-                Math.max(0, round4(pendingQty - inStock))
+                Math.max(0, round4(pendingQty - fromStock))
             );
         }
 

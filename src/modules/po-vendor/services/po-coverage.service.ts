@@ -135,13 +135,16 @@ export class PoCoverageService {
             : [];
         const productMap = toMap(products as any[]);
 
-        // ── Current on-hand stock per product (single ledger pool) ─────
+        // ── FREE on-hand stock per product (single ledger pool) ────────
         // Lets the Coverage tab flag pending qty that can be served straight
-        // from stock instead of raising a new POV. `stockRemaining` is
+        // from stock instead of raising a new POV. Uses FREE stock only —
+        // goods already received against (non-cancelled) POV lines are reserved
+        // to their own SO lines, so they must not be offered "from stock" (that
+        // double-counted a partially-received order). `stockRemaining` is
         // decremented as we allocate across lines so a product appearing on
         // multiple PO lines never double-counts its shared pool.
         const onHandMap = productIds.length
-            ? await this.stockLedger.onHandMap(companyId, productIds)
+            ? await this.stockLedger.freeOnHandMap(companyId, productIds)
             : new Map<string, number>();
         const stockRemaining = new Map<string, number>(onHandMap);
 
@@ -207,14 +210,20 @@ export class PoCoverageService {
             const invoiced = invoicedByPoLine.get(k) || 0;
             const invoiceable = Math.max(0, round4(a.dispatched - invoiced));
 
-            // Stock that can cover this line's pending demand, capped by the
-            // remaining shared pool for this product.
+            // FREE stock that can cover this line's pending demand, capped by
+            // the remaining shared free pool for this product.
             const pid = pol.product_id ? pol.product_id.toString() : null;
             const inStock = pid ? Math.max(0, num(onHandMap.get(pid))) : 0;
             const avail = pid ? Math.max(0, num(stockRemaining.get(pid))) : 0;
             const fromStock = round4(Math.min(Math.max(0, pending), avail));
             if (pid && fromStock > 0)
                 stockRemaining.set(pid, round4(avail - fromStock));
+
+            // Net out the free stock that covers this line: what's still left
+            // to procure (pending) and still short after pulling from stock.
+            // Fully covered from free stock → both read 0.
+            const pendingNet = Math.max(0, round4(pending - fromStock));
+            const shortNet = Math.max(0, round4(short - fromStock));
 
             lines.push({
                 purchase_order_line_id: k,
@@ -229,8 +238,8 @@ export class PoCoverageService {
                 dispatched: String(round4(a.dispatched)),
                 received: String(round4(a.received)),
                 lost: String(round4(a.lost)),
-                short: String(short),
-                pending: String(pending),
+                short: String(shortNet),
+                pending: String(pendingNet),
                 invoiced: String(round4(invoiced)),
                 invoiceable: String(invoiceable),
                 in_stock: String(round4(inStock)),
@@ -242,8 +251,8 @@ export class PoCoverageService {
             totDis += a.dispatched;
             totRec += a.received;
             totLost += a.lost;
-            totShort += short;
-            totPend += pending;
+            totShort += shortNet;
+            totPend += pendingNet;
             totInv += invoiced;
             totInvoiceable += invoiceable;
             totFromStock += fromStock;

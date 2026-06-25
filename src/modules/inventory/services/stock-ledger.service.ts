@@ -140,4 +140,61 @@ export class StockLedgerService {
         }
         return result;
     }
+
+    /**
+     * "Truly free" on-hand per product = stock on hand NOT committed to an
+     * active Sales Order. Two sources are free:
+     *   1. standalone POV receipts (no SO line — bought to general inventory);
+     *   2. receipts whose Sales Order was CANCELLED (the commitment is gone, so
+     *      the goods, which stay on hand, are released back to free stock).
+     * Stock received against a still-active SO line is committed to it and must
+     * NOT reduce a fresh procurement requirement — counting it was the
+     * double-count that under-procured a partially received order.
+     *
+     *   free = min(on_hand, free_source_received)
+     *
+     * The `min` self-corrects: once free stock is invoiced / sold out, on-hand
+     * drops below the historical free-received total and caps free; with no
+     * free-source stock, free is 0 (buy the full shortfall). It also ignores
+     * invoiced-out SO receipts automatically — on-hand already reflects the
+     * sale-out, so they never inflate the figure.
+     */
+    async freeOnHandMap(
+        companyId: string,
+        productIds: string[],
+        locationId?: string | null
+    ): Promise<Map<string, number>> {
+        const onHand = await this.onHandMap(companyId, productIds, locationId);
+        const ids = [...new Set((productIds || []).filter(Boolean))];
+        if (!ids.length) return onHand;
+
+        const rows = await this.dataSource.query(
+            `SELECT pvl.product_id AS product_id,
+                    COALESCE(SUM(pvl.received_qty), 0)::float8 AS free_received
+             FROM po_vendor_lines pvl
+             JOIN po_vendors pv ON pv._id = pvl.po_vendor_id
+             LEFT JOIN purchase_orders po ON po._id = pv.purchase_order_id
+             WHERE pv.company_id = $1
+               AND pv.status <> 'cancelled'
+               AND pv.soft_delete = false
+               AND (
+                    pvl.purchase_order_line_id IS NULL
+                    OR po.status = 'cancelled'
+               )
+               AND pvl.product_id = ANY($2)
+             GROUP BY pvl.product_id`,
+            [companyId, ids]
+        );
+        const freeReceived = new Map<string, number>();
+        for (const r of rows)
+            freeReceived.set(r.product_id, num(r.free_received));
+
+        const free = new Map<string, number>();
+        for (const pid of ids) {
+            const oh = onHand.get(pid) || 0;
+            const fr = freeReceived.get(pid) || 0;
+            free.set(pid, Math.max(0, Math.round(Math.min(oh, fr) * 1e4) / 1e4));
+        }
+        return free;
+    }
 }
