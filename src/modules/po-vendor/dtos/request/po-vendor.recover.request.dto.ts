@@ -122,4 +122,16 @@ export class PoVendorRecoverRequestDto {
     @IsObject()
     @IsOptional()
     vendor_advances?: Record<string, PoVendorRecoverAdvanceDto>;
+
+    /** Per-vendor deliver-to location — ShivaTrade's receiving location (a
+     *  Locations-master id) where that vendor's goods land. Becomes the
+     *  spawned POV's `delivery_address_id`, which the GRN propagates to the
+     *  stock ledger (`grn_in.location_id`) so on-hand is location-scoped.
+     *  Key = vendor_id (UUID), value = location id. The UI fills it per
+     *  vendor (auto-selected to the default location); the service falls
+     *  back to the company default so a POV is never created location-less. */
+    @ApiProperty({ required: false, type: Object })
+    @IsObject()
+    @IsOptional()
+    vendor_delivery_locations?: Record<string, string>;
 }

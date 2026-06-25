@@ -211,6 +211,19 @@ export class InvoiceAdminController {
         return { data };
     }
 
+    // Goods-Out preview for the issue confirmation dialog — per-product
+    // required vs on-hand, so the UI can list what leaves stock and block
+    // the Issue button when short.
+    @Response('invoice.get')
+    @AuthJwtAccessProtected()
+    @Get('/issue-preview/:invoiceId')
+    async issuePreview(
+        @Param('invoiceId') invoiceId: string
+    ): Promise<IResponse<any>> {
+        const data = await this.invoiceService.issuePreview(invoiceId);
+        return { data };
+    }
+
     @Response('invoice.issue')
     @AuthJwtAccessProtected()
     @Post('/issue/:invoiceId')

@@ -46,6 +46,7 @@ export class InventoryAdminController {
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
         @Query('min_qty') minQty?: string,
+        @Query('in_stock_only') inStockOnly?: string,
         @Query('orderBy') orderBy?: string,
         @Query('orderDirection') orderDirection?: string
     ): Promise<IResponsePaging<InventoryListResponseDto>> {
@@ -60,6 +61,7 @@ export class InventoryAdminController {
             date_to: dateTo || undefined,
             min_qty:
                 minQty != null && minQty !== '' ? Number(minQty) : undefined,
+            in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
             limit: _limit,
             offset: _offset,
             orderBy,
@@ -148,7 +150,8 @@ export class InventoryAdminController {
         @Query('location_id') locationId?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('min_qty') minQty?: string
+        @Query('min_qty') minQty?: string,
+        @Query('in_stock_only') inStockOnly?: string
     ): Promise<IResponse<InventoryStatsResponseDto>> {
         const data = await this.inventoryService.stats(companyId, {
             search: search?.trim() || undefined,
@@ -161,6 +164,7 @@ export class InventoryAdminController {
             date_to: dateTo || undefined,
             min_qty:
                 minQty != null && minQty !== '' ? Number(minQty) : undefined,
+            in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
         });
         return { data };
     }

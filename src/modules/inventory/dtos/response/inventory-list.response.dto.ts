@@ -51,6 +51,11 @@ export class InventoryListResponseDto {
     @ApiProperty()
     rejected_qty: string;
 
+    // Live ledger on-hand for this product (single pool: GRN-in − invoice-out).
+    // The real "Qty in Stock" — reads 0 once the product is fully sold.
+    @ApiProperty()
+    on_hand: string;
+
     @ApiProperty({ nullable: true })
     arrival_date: string | null;
 }
