@@ -50,6 +50,7 @@ const EXPORT_EXTRA_HEADERS = [
 const docHasExportFields = (t: ENUM_SALES_DOC_TYPE): boolean =>
     t === ENUM_SALES_DOC_TYPE.PFI ||
     t === ENUM_SALES_DOC_TYPE.QUOTATION ||
+    t === ENUM_SALES_DOC_TYPE.PO ||
     t === ENUM_SALES_DOC_TYPE.LEAD;
 
 const num = (v: any): number => {
@@ -954,6 +955,9 @@ export class SalesDocImportService {
             headerRow.push('grand total');
             if (isForeign) headerRow.push(`rate(${cur})`, `amt(${cur})`);
         }
+        // Export / packing columns (Quotation & Sales Order). Exact header
+        // names so the importer's get('net_weight_kg') etc. resolve them.
+        headerRow.push('net_weight_kg', 'gross_weight_kg', 'package_count');
 
         // ── Data rows ──
         const dataAoa = exportLines.map((l) => {
@@ -998,6 +1002,12 @@ export class SalesDocImportService {
                     row.push(q ? r2(amtCur / q) : 0, amtCur);
                 }
             }
+            // Export / packing values (aligned with the appended headers).
+            row.push(
+                l.net_weight_kg ?? '',
+                l.gross_weight_kg ?? '',
+                l.package_count ?? '',
+            );
             return row;
         });
 
