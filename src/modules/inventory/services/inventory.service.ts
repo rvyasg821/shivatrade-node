@@ -46,19 +46,6 @@ export interface StockSummaryFilters {
     orderDirection?: string;
 }
 
-// Whitelist of sortable columns → real SQL expressions. Prevents SQL
-// injection via the orderBy query param.
-const ORDER_COLUMNS: Record<string, string> = {
-    arrival_date: 'COALESCE(pv.actual_arrival_date, pv."updatedAt")',
-    product_code: 'p.code',
-    product_name: 'p.name',
-    received_qty: 'COALESCE(pvl.received_qty, 0)',
-    accepted_qty: 'COALESCE(pvl.received_qty, 0)',
-    vendor_name: 'v.company_name',
-    po_voucher_no: 'po.voucher_no',
-    pov_voucher_no: 'pv.voucher_no',
-};
-
 const num = (v: any): number => {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
@@ -101,7 +88,7 @@ export class InventoryService {
     private readonly ON_HAND_EXPR = `COALESCE((
             SELECT SUM(sm.qty)
             FROM stock_movements sm
-            WHERE sm.company_id = pv.company_id
+            WHERE sm.company_id = p.company_id
               AND sm.product_id = p._id
               AND sm.deleted = false
         ), 0)`;
@@ -206,14 +193,27 @@ export class InventoryService {
     ): Promise<{ rows: InventoryListResponseDto[]; total: number }> {
         const { whereSql, params } = this.buildWhere(companyId, filters);
 
+        // One row per PRODUCT (not per receipt line). The same product procured
+        // on several POVs would otherwise repeat — each showing the same
+        // single-pool on-hand. Which POV/GRN it came from lives in the
+        // per-product movement drawer, so we collapse to a clean stock view.
+        const groupFrom = `${this.FROM_JOINS}
+             WHERE ${whereSql}
+             GROUP BY p._id, p.code, p.name, p.unit_of_measure, p.company_id, c.name`;
+
         const countRows = await this.dataSource.query(
-            `SELECT COUNT(*)::int AS total ${this.FROM_JOINS} WHERE ${whereSql}`,
+            `SELECT COUNT(*)::int AS total FROM (SELECT p._id ${groupFrom}) t`,
             params
         );
         const total = countRows?.[0]?.total || 0;
 
-        const orderCol =
-            ORDER_COLUMNS[filters.orderBy] || ORDER_COLUMNS.arrival_date;
+        const ORDER: Record<string, string> = {
+            arrival_date: 'arrival_date',
+            product_name: 'product_name',
+            product_code: 'product_code',
+            on_hand: 'on_hand',
+        };
+        const orderCol = ORDER[filters.orderBy] || 'arrival_date';
         const orderDir =
             (filters.orderDirection || 'DESC').toUpperCase() === 'ASC'
                 ? 'ASC'
@@ -223,25 +223,15 @@ export class InventoryService {
         const offsetIdx = params.length + 2;
         const rows = await this.dataSource.query(
             `SELECT
-                pvl._id            AS pov_line_id,
-                pvl.received_qty           AS received_qty,
-                COALESCE(acc.accepted_qty, 0) AS accepted_qty,
-                COALESCE(acc.rejected_qty, 0) AS rejected_qty,
-                ${this.ON_HAND_EXPR}::float8 AS on_hand,
                 p._id              AS product_id,
                 p.code             AS product_code,
                 p.name             AS product_name,
                 p.unit_of_measure  AS uom,
                 c.name             AS category_name,
-                po._id             AS po_id,
-                po.voucher_no      AS po_voucher_no,
-                pv._id             AS pov_id,
-                pv.voucher_no      AS pov_voucher_no,
-                COALESCE(pv.actual_arrival_date, pv."updatedAt") AS arrival_date,
-                v.company_name     AS vendor_name
-             ${this.FROM_JOINS}
-             WHERE ${whereSql}
-             ORDER BY ${orderCol} ${orderDir}, pvl._id ASC
+                ${this.ON_HAND_EXPR}::float8 AS on_hand,
+                MAX(COALESCE(pv.actual_arrival_date, pv."updatedAt")) AS arrival_date
+             ${groupFrom}
+             ORDER BY ${orderCol} ${orderDir}, p.code ASC
              LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
             [...params, filters.limit, filters.offset]
         );
