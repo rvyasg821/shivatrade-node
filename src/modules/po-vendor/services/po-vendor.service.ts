@@ -634,6 +634,25 @@ export class PoVendorService {
                     'Each line ordered_qty must be > 0.'
                 );
             }
+            // Guard: the product must be in the SELECTED VENDOR's price list —
+            // a POV line can only reference a product the vendor actually
+            // quotes (mirrors the create form's product-pick validation).
+            let priceRow: any = null;
+            try {
+                priceRow = await this.priceListRepository.findCurrentPrice(
+                    companyId,
+                    vendorId,
+                    ln.product_id
+                );
+            } catch {
+                priceRow = null;
+            }
+            if (!priceRow) {
+                const p = productById.get(ln.product_id);
+                throw new BadRequestException(
+                    `Product ${p?.code || p?.name || ln.product_id} is not in the selected vendor's price list.`
+                );
+            }
         }
 
         // ── Vendor address — request value or the vendor's default ─────
