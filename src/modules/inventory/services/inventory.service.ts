@@ -18,6 +18,9 @@ export interface InventoryListFilters {
     date_from?: string;
     date_to?: string;
     min_qty?: number;
+    // Only products whose live ledger on-hand is > 0 (hides fully sold-out
+    // receipt lines). Single-pool on-hand, matching the coverage view.
+    in_stock_only?: boolean;
     limit: number;
     offset: number;
     orderBy?: string;
@@ -89,6 +92,19 @@ export class InventoryService {
             WHERE g.status = 'confirmed' AND g.soft_delete = false
             GROUP BY gl.po_vendor_line_id
         ) acc ON acc.pov_line_id = pvl._id`;
+
+    // Live per-product on-hand from the stock ledger (single pool, matching
+    // the coverage view: GRN-in minus invoice-out). Correlated to the row's
+    // product `p._id` — so a sold-out product reads 0 even though its receipt
+    // line still exists. Used as the "Qty in Stock" column and the in-stock
+    // filter.
+    private readonly ON_HAND_EXPR = `COALESCE((
+            SELECT SUM(sm.qty)
+            FROM stock_movements sm
+            WHERE sm.company_id = pv.company_id
+              AND sm.product_id = p._id
+              AND sm.deleted = false
+        ), 0)`;
 
     /**
      * Builds the shared WHERE clause + positional params for the stock
@@ -169,6 +185,11 @@ export class InventoryService {
             params.push(filters.min_qty);
             i++;
         }
+        // In-stock toggle — live ledger on-hand > 0 (hides sold-out products).
+        // No param: correlated to the outer pv/p aliases.
+        if (filters.in_stock_only) {
+            where.push(`${this.ON_HAND_EXPR} > 0`);
+        }
 
         return { whereSql: where.join(' AND '), params };
     }
@@ -206,6 +227,7 @@ export class InventoryService {
                 pvl.received_qty           AS received_qty,
                 COALESCE(acc.accepted_qty, 0) AS accepted_qty,
                 COALESCE(acc.rejected_qty, 0) AS rejected_qty,
+                ${this.ON_HAND_EXPR}::float8 AS on_hand,
                 p._id              AS product_id,
                 p.code             AS product_code,
                 p.name             AS product_name,

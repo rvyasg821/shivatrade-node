@@ -478,6 +478,78 @@ export class InvoiceService {
         return this.invoiceRepository.findOneById(row._id.toString());
     }
 
+    /**
+     * Goods-Out preview for the issue confirmation: per-product required qty
+     * vs current on-hand (single pool, same comparison the issue() guard uses).
+     * Lets the UI list exactly what leaves stock and disable the Issue button
+     * when any product is short — before hitting the server-side guard.
+     */
+    async issuePreview(invoiceId: string): Promise<{
+        lines: Array<{
+            product_id: string;
+            product_name: string;
+            product_code: string;
+            uom: string;
+            required: string;
+            available: string;
+            short: boolean;
+        }>;
+        has_shortage: boolean;
+    }> {
+        const row = await this.findOneById(invoiceId);
+        const lines = await this.invoiceLineRepository.findByInvoiceId(
+            row._id.toString()
+        );
+        // Aggregate required qty per product (lines may repeat a product);
+        // keep a display uom per product for the dialog.
+        const needByProduct = new Map<string, number>();
+        const uomByProduct = new Map<string, string>();
+        for (const l of lines as any[]) {
+            if (!l.product_id) continue;
+            const pid = l.product_id.toString();
+            needByProduct.set(pid, (needByProduct.get(pid) || 0) + num(l.qty));
+            if (!uomByProduct.has(pid))
+                uomByProduct.set(pid, l.uqc_code || l.unit || '');
+        }
+        if (needByProduct.size === 0)
+            return { lines: [], has_shortage: false };
+
+        const productIds = [...needByProduct.keys()];
+        const have = await this.stockLedger.onHandMap(
+            row.company_id.toString(),
+            productIds,
+            null
+        );
+        const products = await this.productRepository.findAll({
+            _id: { $in: productIds },
+        });
+        const metaById = new Map(
+            (products as any[]).map((p: any) => [
+                p._id.toString(),
+                { name: p.name || '', code: p.code || '' },
+            ])
+        );
+
+        const out = productIds.map((pid) => {
+            const required = round2(needByProduct.get(pid) || 0);
+            const available = round2(have.get(pid) || 0);
+            const meta = metaById.get(pid) || { name: '', code: '' };
+            return {
+                product_id: pid,
+                product_name: meta.name,
+                product_code: meta.code,
+                uom: uomByProduct.get(pid) || '',
+                required: String(required),
+                available: String(available),
+                short: available < required - 1e-6,
+            };
+        });
+        out.sort((a, b) =>
+            (a.product_name || '').localeCompare(b.product_name || '')
+        );
+        return { lines: out, has_shortage: out.some((r) => r.short) };
+    }
+
     // ─── Issue (DRAFT → ISSUED) ─────────────────────────────────────────
 
     async issue(row: InvoiceDoc, userId: string): Promise<InvoiceDoc> {

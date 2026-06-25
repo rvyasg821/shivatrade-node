@@ -1010,6 +1010,9 @@ export class PoVendorService {
                     notes?: string;
                 }
             >;
+            /** Per-vendor deliver-to location (Locations-master id). Sets the
+             *  spawned POV's `delivery_address_id`. Key = vendor_id. */
+            vendor_delivery_locations?: Record<string, string>;
         },
         createdBy: string
     ): Promise<{ created: PoVendorDoc[]; all_from_stock?: boolean }> {
@@ -1110,6 +1113,24 @@ export class PoVendorService {
             }
         }
 
+        // Deliver-to location fallback — used when a vendor block didn't carry
+        // an explicit location. Resolved once so a POV is never created
+        // location-less (which would leave its GRN's stock off every
+        // location-scoped inventory view). ShivaTrade's default location.
+        let defaultLocationId: string | null = null;
+        const resolveDeliveryLocation = async (
+            vendorId: string
+        ): Promise<string | undefined> => {
+            const picked = data.vendor_delivery_locations?.[vendorId];
+            if (picked) return picked;
+            if (defaultLocationId === null) {
+                const def =
+                    await this.locationRepository.findDefaultLocation(companyId);
+                defaultLocationId = def?._id?.toString() || '';
+            }
+            return defaultLocationId || undefined;
+        };
+
         // For each vendor group, spawn one POV via the existing createFromPo
         // path (re-uses voucher numbering, snapshot logic, system events).
         // The POV line carries the vendor's INR price-list price (procurement
@@ -1159,7 +1180,10 @@ export class PoVendorService {
                 notes: data.notes,
                 internal_notes: data.internal_notes,
                 delivery_address: data.delivery_address,
-                delivery_address_id: data.delivery_address_id,
+                // Per-vendor deliver-to location (falls back to company default).
+                delivery_address_id:
+                    (await resolveDeliveryLocation(vendorId)) ||
+                    data.delivery_address_id,
                 expenses: data.vendor_expenses?.[vendorId] || [],
             };
             const row = await this.createFromPo(
