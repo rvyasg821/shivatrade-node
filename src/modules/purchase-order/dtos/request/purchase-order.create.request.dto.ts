@@ -204,12 +204,12 @@ export class PurchaseOrderCreateRequestDto {
     @IsString()
     @IsOptional()
     @MaxLength(2000)
-    notes_to_vendor?: string;
+    internal_notes?: string;
 
     @IsString()
     @IsOptional()
-    @MaxLength(2000)
-    internal_notes?: string;
+    @MaxLength(4000)
+    remarks?: string;
 
     @IsString()
     @IsOptional()

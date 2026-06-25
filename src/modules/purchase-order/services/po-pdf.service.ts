@@ -1,17 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
-import {
-    buildPdfLetterhead,
-    buildPdfHeaderTemplate,
-    buildPdfFooterTemplate,
-    loadCompanyLogoDataUri,
-} from '@common/pdf/pdf-letterhead.util';
+import { loadCompanyLogoDataUri } from '@common/pdf/pdf-letterhead.util';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
+import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
+import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
 
 /**
@@ -29,7 +26,8 @@ export class PoPdfService {
         private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly vendorAddressRepository: VendorAddressRepository,
-        private readonly customerAddressRepository: CustomerAddressRepository
+        private readonly customerAddressRepository: CustomerAddressRepository,
+        private readonly companyBankAccountRepository: CompanyBankAccountRepository
     ) {}
 
     async render(
@@ -41,14 +39,17 @@ export class PoPdfService {
         return this.pdfService.generateFromHtml(html, {
             format: 'A4',
             margin: {
-                top: '18mm',
-                right: '12mm',
-                bottom: '18mm',
-                left: '12mm',
+                top: '8mm',
+                right: '8mm',
+                bottom: '12mm',
+                left: '8mm',
             },
             displayHeaderFooter: true,
-            headerTemplate: buildHeaderTemplate(ctx),
-            footerTemplate: buildFooterTemplate(ctx),
+            // Tally-style: the company letterhead lives inside the bordered
+            // box, not in a running header. Only a centred "computer generated"
+            // note repeats in the page footer.
+            headerTemplate: '<div></div>',
+            footerTemplate: buildFooterTemplate(),
         });
     }
 
@@ -72,6 +73,7 @@ export class PoPdfService {
 
         let companyAddress: string | undefined;
         let companyGstin: string | undefined;
+        let companyState: string | undefined;
         try {
             const addresses =
                 await this.companyAddressRepository.findByCompanyId(companyId);
@@ -92,10 +94,12 @@ export class PoPdfService {
                     country: (corp as any).country,
                 });
                 companyGstin = (corp as any).gstin || undefined;
+                companyState = (corp as any).state || undefined;
             }
         } catch {
             // ignore
         }
+        if (!companyState && company?.state) companyState = company.state;
         if (!companyAddress && company) {
             companyAddress = joinAddress({
                 address_line1: company.address_1,
@@ -249,6 +253,43 @@ export class PoPdfService {
             0
         );
 
+        // ── Bank details — the company bank account (PI-linked, else default) ──
+        let bank: BankBlock | null = null;
+        try {
+            const accts: any[] =
+                (await this.companyBankAccountRepository.findByCompanyId(
+                    companyId
+                )) || [];
+            const linkId = (po as any).pfi_bank_account_id;
+            const picked =
+                (linkId && accts.find((a) => a._id?.toString() === linkId)) ||
+                accts.find((a) => a.is_default) ||
+                accts[0];
+            if (picked) {
+                bank = {
+                    bank_name: picked.bank_name || '',
+                    account_number: picked.account_number || '',
+                    ifsc: picked.ifsc || picked.swift_code || '',
+                    branch_name: picked.branch_name || '',
+                };
+            }
+        } catch {
+            bank = null;
+        }
+
+        // State code = first two digits of the GSTIN (GST state-code convention).
+        const stateCode =
+            companyGstin && /^\d{2}/.test(companyGstin)
+                ? companyGstin.slice(0, 2)
+                : '';
+
+        // Amount in words — grand total is shown in the customer currency.
+        const rate = Number(po.exchange_rate) || 1;
+        const amountInWords = numberToIndianWords(
+            linesInrTotal * rate,
+            po.currency_code || 'INR'
+        );
+
         return {
             po,
             logoDataUri,
@@ -263,9 +304,10 @@ export class PoPdfService {
                 website: company?.website || '',
                 footer_address: company?.footer_address || '',
                 address: companyAddress,
-                // Terms removed 2026-05-27 — STIPL client spec has no
-                // Terms block on PO PDFs. The text was moved to Invoice.
+                state: companyState || '',
+                stateCode,
                 terms: '',
+                remarks: company?.default_remarks || '',
                 signatory: company?.authorised_signatory_name || '',
             },
             vendors,
@@ -276,6 +318,8 @@ export class PoPdfService {
                 phone: po.customer_contact_phone || '',
                 address: customerAddress,
             },
+            bank,
+            amountInWords,
             inrTotal: linesInrTotal,
         };
     }
@@ -287,6 +331,13 @@ interface VendorBlock {
     name: string;
     gstin?: string;
     address?: string;
+}
+
+interface BankBlock {
+    bank_name: string;
+    account_number: string;
+    ifsc: string;
+    branch_name: string;
 }
 
 interface PoPdfContext {
@@ -303,7 +354,10 @@ interface PoPdfContext {
         website?: string;
         footer_address?: string;
         address?: string;
+        state?: string;
+        stateCode?: string;
         terms?: string;
+        remarks?: string;
         signatory?: string;
     };
     vendors: VendorBlock[];
@@ -314,6 +368,8 @@ interface PoPdfContext {
         phone?: string;
         address?: string;
     };
+    bank: BankBlock | null;
+    amountInWords: string;
     inrTotal: number;
 }
 
@@ -337,14 +393,29 @@ const fmt = (v: any): string => {
     });
 };
 
-const money = (v: any): string => `₹${fmt(v)}`;
 
-// Currency-aware money formatter — used for amounts that have already
-// been converted into the PO's customer currency.
-const ccyMoney = (sym: string, v: any): string => `${sym}${fmt(v)}`;
+// 4-decimal money (Tally export rate/amount style, e.g. "2.6880").
+const fmt4 = (v: any): string => {
+    const n = Number(v);
+    if (!isFinite(n)) return esc(v);
+    return n.toLocaleString('en-US', {
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 4,
+    });
+};
 
-const dateOnly = (v?: string | null): string =>
-    v ? esc(String(v).slice(0, 10)) : '';
+const TALLY_MONTHS = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+// "2026-06-03" → "3-Jun-26" (Tally voucher date format).
+const tallyDate = (v?: string | null): string => {
+    if (!v) return '';
+    const s = String(v).slice(0, 10);
+    const [y, m, d] = s.split('-').map(Number);
+    if (!y || !m || !d) return esc(s);
+    return `${d}-${TALLY_MONTHS[m - 1] || m}-${String(y).slice(2)}`;
+};
 
 function joinAddress(a: {
     address_line1?: string;
@@ -363,351 +434,235 @@ function joinAddress(a: {
     return parts.length ? parts.join('\n') : undefined;
 }
 
-function kv(label: string, value: any, full = false): string {
-    if (value == null || value === '') return '';
-    return `<div${full ? ' class="kv-full"' : ''}><span class="k">${esc(label)}:</span> <span class="v">${esc(value)}</span></div>`;
-}
-
-function buildHeaderTemplate(ctx: PoPdfContext): string {
-    return buildPdfHeaderTemplate({
-        companyName: ctx.company.name,
-        docLabel: 'SALES ORDER',
-        voucherNo: ctx.po.voucher_no || '',
-    });
-}
-
-// Footer identity line — GSTIN · PAN · CIN · IEC · website.
-function buildFooterIdLine(ctx: PoPdfContext): string {
-    return [
-        ctx.company.gstin ? `GSTIN: ${ctx.company.gstin}` : '',
-        ctx.company.pan ? `PAN: ${ctx.company.pan}` : '',
-        ctx.company.cin ? `CIN: ${ctx.company.cin}` : '',
-        ctx.company.iec ? `IEC: ${ctx.company.iec}` : '',
-        ctx.company.website || '',
-    ]
-        .filter(Boolean)
-        .join('  ·  ');
-}
-
-function buildFooterTemplate(ctx: PoPdfContext): string {
-    return buildPdfFooterTemplate({
-        voucherNo: ctx.po.voucher_no || '',
-        addressLine: ctx.company.footer_address || '',
-        idLine: buildFooterIdLine(ctx),
-    });
+// Centred "computer generated" note, repeated at the bottom of every page.
+function buildFooterTemplate(): string {
+    return `<div style="width:100%;font-size:8px;color:#444;text-align:center;font-family:Arial,Helvetica,sans-serif;padding-top:2px;">This is a Computer Generated Document</div>`;
 }
 
 function buildPoHtml(ctx: PoPdfContext): string {
-    const { po, company, vendors, customer, inrTotal } = ctx;
+    const { po, company, customer, bank, amountInWords, inrTotal } = ctx;
     const lines = po.lines || [];
 
-    // Shared letterhead — logo + company identity (name/phone/email) on the
-    // left, doc meta on the right. Address + tax IDs print in the footer.
-    const sourceVoucher =
-        (po as any).pfi_voucher_no || (po as any).quotation_voucher_no || '';
-    const sourceLabel = (po as any).pfi_voucher_no
-        ? 'Source PFI'
-        : (po as any).quotation_voucher_no
-          ? 'Source Quote'
-          : '';
-    const letterhead = buildPdfLetterhead(
-        {
-            logoDataUri: ctx.logoDataUri,
-            name: company.name,
-            phone: company.phone,
-            email: company.email,
-        },
-        {
-            title: 'Sales Order',
-            voucherNo: po.voucher_no || '-',
-            metaLines: [
-                `Date: ${dateOnly(po.po_date) || '-'} · Currency: ${esc(po.currency_symbol || po.currency_code || '₹')} ${esc(po.currency_code || '-')}`,
-                sourceVoucher ? `${esc(sourceLabel)}: ${esc(sourceVoucher)}` : '',
-            ].filter(Boolean),
-            statusBadge: po.status || '',
-        }
-    );
-    // PO line totals are stored in INR; convert to the PO's customer
-    // currency so the vendor sees USD/EUR/etc. like the PFI PDF.
     const sym = po.currency_symbol || po.currency_code || '₹';
     const rate = Number(po.exchange_rate) || 1;
     const grandTotalCcy = inrTotal * rate;
+
+    // Consignee (Ship to) — frozen snapshot; falls back to the buyer.
+    const cs: any = (po as any).consignee_snapshot || {};
+    const consigneeName = cs.name || customer.name || '';
+    const consigneeAddrLines = [
+        cs.address_line1,
+        cs.address_line2,
+        [cs.city, cs.postcode].filter(Boolean).join(' '),
+        cs.country,
+    ].filter(Boolean);
+    const consigneeAddr = consigneeAddrLines.length
+        ? consigneeAddrLines.join('\n')
+        : customer.address || '';
+    const consigneeState = cs.state || '';
+    const consigneeCountry = cs.country || '';
+
+    // Right-hand meta cell — small label over a bold value.
+    const meta = (label: string, value: any): string =>
+        `<div class="ml">${esc(label)}</div><div class="mv">${value == null || value === '' ? '&nbsp;' : esc(value)}</div>`;
+
+    const otherRef =
+        (po as any).quotation_voucher_no || (po as any).pfi_voucher_no || '';
+
+    const totalQty = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+    const unitSet = new Set(lines.map((l) => l.unit).filter(Boolean));
+    const totalUnit = unitSet.size === 1 ? ((`${[...unitSet][0]}` as string)) : '';
 
     const linesRows = lines.length
         ? lines
               .map((l, i) => {
                   const qty = Number(l.qty) || 0;
-                  const lineTotalInr = Number(l.line_total) || 0;
-                  const lineTotalCcy = lineTotalInr * rate;
-                  // Effective per-unit price = full line_total / qty (bakes
-                  // in expense/rebate/margin/GST), matching the PFI table.
-                  const effRate =
+                  const lineTotalCcy = (Number(l.line_total) || 0) * rate;
+                  const rateCcy =
                       qty > 0
                           ? lineTotalCcy / qty
                           : (Number(l.unit_price) || 0) * rate;
+                  const disc = Number(l.discount_pct) || 0;
                   return `
         <tr>
-          <td class="muted">${i + 1}</td>
-          <td>
-            <div class="fw">${esc(l.product_name || '-')}</div>
-          </td>
-          <td class="num">${l.qty ? fmt(l.qty) : '-'}</td>
-          <td>${esc(l.unit || '-')}</td>
-          <td class="num">${ccyMoney(sym, effRate)}</td>
-          <td class="num fw">${ccyMoney(sym, lineTotalCcy)}</td>
+          <td class="c">${i + 1}</td>
+          <td class="desc"><b>${esc(l.product_name || '-')}</b></td>
+          <td>${esc(l.hsn_code || '')}</td>
+          <td>${esc(l.part_no || '')}</td>
+          <td class="c nowrap">${tallyDate(po.expected_delivery_date) || tallyDate(po.po_date)}</td>
+          <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
+          <td class="num nowrap">${fmt4(rateCcy)} ${esc(sym)}</td>
+          <td class="c">${esc(l.unit || '')}</td>
+          <td class="num">${disc ? fmt(disc) + ' %' : ''}</td>
+          <td class="num nowrap"><b>${fmt4(lineTotalCcy)} ${esc(sym)}</b></td>
         </tr>`;
               })
               .join('')
-        : `<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
+        : `<tr><td colspan="10" class="c muted" style="padding:16px">No line items.</td></tr>`;
 
-    const vendorBlocks = vendors.length
-        ? vendors
-              .map(
-                  (v) => `
-        <div class="vendor-card">
-          <div class="party-name">${esc(v.name)}</div>
-          ${v.address ? `<div class="party-line" style="white-space:pre-line">${esc(v.address)}</div>` : ''}
-          ${v.gstin ? `<div class="party-line muted">GSTIN: ${esc(v.gstin)}</div>` : ''}
-        </div>`
-              )
-              .join('')
-        : `<div class="party-line muted">-</div>`;
-
-    // Consignee (Ship-to): always print the actual address (the frozen
-    // consignee snapshot), even when it's the same party as the buyer. Falls
-    // back to the buyer's name/address when no snapshot was captured.
-    const cs: any = (po as any).consignee_snapshot || {};
-    const consigneeAddr =
-        [
-            cs.address_line1,
-            cs.address_line2,
-            [cs.city, cs.state, cs.postcode].filter(Boolean).join(', '),
-            cs.country,
-        ]
-            .filter(Boolean)
-            .join('\n') || customer.address;
-    const consigneeName = cs.name || customer.name;
-    const consigneeBlock = `${
-        consigneeName ? `<div class="party-name">${esc(consigneeName)}</div>` : ''
-    }${
-        consigneeAddr
-            ? `<div class="party-line" style="white-space:pre-line">${esc(consigneeAddr)}</div>`
-            : `<div class="party-line muted">-</div>`
-    }`;
+    // Remarks — the SO's own (frozen) remarks block; falls back to the company
+    // default for legacy SOs created before the field existed.
+    const remarks = (po as any).remarks || company.remarks || '';
 
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>${esc(po.voucher_no || 'PO')}</title>
+<title>${esc(po.voucher_no || 'SO')}</title>
 <style>
   * { box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    font-size: 10.5px;
-    color: #1f2937;
-    margin: 0;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .doc { width: 100%; }
-  .qd-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 14px;
-    margin-bottom: 18px;
-  }
-  .qd-title {
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: 2px;
-    margin: 0;
-    color: #1f2937;
-    text-transform: uppercase;
-  }
-  .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
-  .status-badge {
-    display: inline-block;
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #e5e7eb;
-    padding: 2px 9px;
-    border-radius: 999px;
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: capitalize;
-    letter-spacing: 0.2px;
-    margin-top: 5px;
-  }
-  .company-name { font-weight: 600; color: #1f2937; font-size: 11.5px; margin-top: 4px; }
-  .party-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 22px;
-    margin-bottom: 18px;
-  }
-  .label {
-    text-transform: uppercase;
-    color: #6b7280;
-    font-weight: 600;
-    font-size: 8.5px;
-    letter-spacing: 0.6px;
-    margin-bottom: 5px;
-  }
-  .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
-  .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
-  .muted, .party-muted { color: #6b7280; }
-  .sm { font-size: 9.5px; }
-  .fw { font-weight: 600; color: #1f2937; }
-  .vendor-card { margin-bottom: 8px; }
-  .vendor-card:last-child { margin-bottom: 0; }
-  table.items {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 6px 0 0;
-  }
-  table.items thead th {
-    background: #f9fafb;
-    color: #4b5563;
-    font-weight: 600;
-    font-size: 8.5px;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    border-top: 1px solid #e5e7eb;
-    border-bottom: 1px solid #e5e7eb;
-    padding: 8px 7px;
-    text-align: left;
-  }
-  table.items td {
-    border-bottom: 1px solid #f1f2f4;
-    padding: 8px 7px;
-    font-size: 10px;
-    vertical-align: top;
-    page-break-inside: avoid;
-  }
-  table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
-  table.items th.num, table.items td.num { text-align: right; }
-  .totals {
-    width: 280px;
-    margin-left: auto;
-    margin-top: 14px;
-    margin-bottom: 4px;
-  }
-  .totals .row-grand {
-    display: flex;
-    justify-content: space-between;
-    padding: 10px 0 4px;
-    border-top: 2px solid #1f2937;
-    font-weight: 700;
-    font-size: 12px;
-    color: #1f2937;
-  }
-  .section {
-    margin-top: 14px;
-    padding-top: 0;
-    border-top: 0;
-  }
-  .section .body {
-    font-size: 10px;
-    color: #4b5563;
-    line-height: 1.55;
-    white-space: pre-line;
-  }
-  .kv-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 5px 22px;
-    font-size: 9.8px;
-    color: #4b5563;
-  }
-  .kv-grid .kv-full { grid-column: 1 / -1; }
-  .kv-grid .k { color: #6b7280; }
-  .kv-grid .v { color: #1f2937; font-weight: 600; }
-  .signature {
-    margin-top: 26px;
-    display: flex;
-    justify-content: flex-end;
-    font-size: 9.5px;
-  }
-  .signature .box {
-    width: 200px;
-    border-top: 1px solid #9ca3af;
-    padding-top: 4px;
-    text-align: center;
-    color: #6b7280;
-  }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 9px; color: #000; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .title { text-align: center; font-weight: bold; font-size: 13px; margin: 0 0 4px; }
+  table.box { width: 100%; border-collapse: collapse; }
+  table.box > tbody > tr > td { border: 0.7px solid #000; }
+  .inner { width: 100%; height: 100%; border-collapse: collapse; }
+  .inner td { border: 0.7px solid #000; }
+  td.party { vertical-align: top; padding: 3px 5px; }
+  .cap { font-size: 8.3px; }
+  .pname { font-weight: bold; font-size: 9.5px; }
+  .pline { font-size: 8.7px; line-height: 1.45; white-space: pre-line; }
+  td.meta { vertical-align: top; padding: 2px 5px; }
+  .ml { font-size: 8px; }
+  .mv { font-weight: bold; font-size: 9px; }
+  .co-name { font-weight: bold; font-size: 10px; }
+  .co-line { font-size: 8.4px; line-height: 1.4; }
+  table.items { width: 100%; border-collapse: collapse; }
+  table.items th, table.items td { border: 0.7px solid #000; padding: 3px 4px; font-size: 8.6px; vertical-align: top; }
+  table.items th { font-weight: normal; text-align: center; }
+  table.items td.desc { font-size: 9.1px; }
+  .num { text-align: right; }
+  .c { text-align: center; }
+  .nowrap { white-space: nowrap; }
+  .muted { color: #555; text-align: center; }
+  .items-fill td { height: 70px; }
+  .words { padding: 3px 5px; }
+  .words b { font-size: 9.5px; }
+  .remarks { padding: 3px 5px; font-size: 8.4px; white-space: pre-line; }
+  .ital { font-style: italic; }
+  .logo { height: 34px; margin-bottom: 2px; }
 </style>
 </head>
 <body>
-<div class="doc">
+<div class="title">SALES ORDER</div>
 
-  ${letterhead}
-
-  <div class="party-grid">
-    <div>
-      <div class="label">Buyer</div>
-      <div class="party-name">${esc(customer.name || '-')}</div>
-      ${customer.contact_name ? `<div class="party-line">${esc(customer.contact_name)}</div>` : ''}
-      ${customer.address ? `<div class="party-line" style="white-space:pre-line">${esc(customer.address)}</div>` : ''}
-      ${customer.phone ? `<div class="party-line">${esc(customer.phone)}</div>` : ''}
-      ${customer.email ? `<div class="party-line">${esc(customer.email)}</div>` : ''}
-    </div>
-    <div>
-      <div class="label">Consignee</div>
-      ${consigneeBlock}
-      ${po.expected_delivery_date ? `<div class="party-line muted">Expected: ${dateOnly(po.expected_delivery_date)}</div>` : ''}
-      ${po.payment_terms ? `<div class="party-line muted">Payment: ${esc(po.payment_terms)}</div>` : ''}
-      ${po.delivery_terms ? `<div class="party-line muted">Delivery: ${esc(po.delivery_terms)}</div>` : ''}
-    </div>
-  </div>
-
-  <div class="section" style="border-top:none;padding-top:0;margin-top:18px">
-    <table class="items">
-      <thead>
+<table class="box">
+  <tr>
+    <td style="width:50%;padding:0;vertical-align:top">
+      <table class="inner">
+        <tr><td class="party">
+          ${ctx.logoDataUri ? `<img class="logo" src="${ctx.logoDataUri}" />` : ''}
+          <div class="co-name">${esc(company.name || '')}</div>
+          ${company.address ? `<div class="co-line" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
+          ${company.gstin ? `<div class="co-line">GSTIN/UIN: ${esc(company.gstin)}</div>` : ''}
+          ${company.state ? `<div class="co-line">State Name : ${esc(company.state)}${company.stateCode ? `, Code : ${esc(company.stateCode)}` : ''}</div>` : ''}
+          ${company.cin ? `<div class="co-line">CIN: ${esc(company.cin)}</div>` : ''}
+          ${company.email ? `<div class="co-line">E-Mail : ${esc(company.email)}</div>` : ''}
+        </td></tr>
+        <tr><td class="party" style="height:96px">
+          <div class="cap">Consignee (Ship to)</div>
+          ${consigneeName ? `<div class="pname">${esc(consigneeName)}</div>` : ''}
+          ${consigneeAddr ? `<div class="pline">${esc(consigneeAddr)}</div>` : ''}
+          ${consigneeState ? `<div class="co-line">State Name : ${esc(consigneeState)}</div>` : ''}
+        </td></tr>
+        <tr><td class="party" style="height:80px">
+          <div class="cap">Buyer (Bill to)</div>
+          ${customer.name ? `<div class="pname">${esc(customer.name)}</div>` : ''}
+          ${customer.address ? `<div class="pline">${esc(customer.address)}</div>` : ''}
+          ${customer.phone ? `<div class="co-line">${esc(customer.phone)}</div>` : ''}
+          ${customer.email ? `<div class="co-line">${esc(customer.email)}</div>` : ''}
+        </td></tr>
+      </table>
+    </td>
+    <td style="width:50%;padding:0;vertical-align:top">
+      <table class="inner">
         <tr>
-          <th style="width:24px">#</th>
-          <th>Product</th>
-          <th class="num" style="width:60px">Qty</th>
-          <th style="width:50px">Unit</th>
-          <th class="num" style="width:90px">Rate</th>
-          <th class="num" style="width:110px">Amount</th>
+          <td class="meta" style="width:50%">${meta('Voucher No.', po.voucher_no)}</td>
+          <td class="meta" style="width:50%">${meta('Dated', tallyDate(po.po_date))}</td>
         </tr>
-      </thead>
-      <tbody>${linesRows}</tbody>
-    </table>
-  </div>
+        <tr>
+          <td class="meta">&nbsp;</td>
+          <td class="meta">${meta('Mode/Terms of Payment', po.payment_terms)}</td>
+        </tr>
+        <tr>
+          <td class="meta">${meta("Buyer's Ref./Order No.", (po as any).customer_po_number || po.voucher_no)}</td>
+          <td class="meta">${meta('Other References', otherRef)}</td>
+        </tr>
+        <tr>
+          <td class="meta">${meta('Dispatched through', '')}</td>
+          <td class="meta">${meta('Destination', consigneeCountry)}</td>
+        </tr>
+        <tr>
+          <td class="meta" colspan="2"><span class="ml">Country: </span><b>${esc(consigneeCountry) || '&nbsp;'}</b></td>
+        </tr>
+        <tr>
+          <td class="meta" colspan="2" style="height:90px;vertical-align:top">${meta('Terms of Delivery', po.delivery_terms)}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
 
-  <div class="totals">
-    <div class="row-grand">
-      <span>Grand Total</span>
-      <span>${ccyMoney(sym, grandTotalCcy)}</span>
-    </div>
-  </div>
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:22px">Sl<br/>No.</th>
+      <th>Description of Goods</th>
+      <th style="width:56px">HSN/SAC</th>
+      <th style="width:46px">Part No.</th>
+      <th style="width:52px">Due on</th>
+      <th style="width:72px">Quantity</th>
+      <th style="width:62px">Rate</th>
+      <th style="width:26px">per</th>
+      <th style="width:38px">Disc. %</th>
+      <th style="width:80px">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${linesRows}
+    <tr class="items-fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr>
+      <td></td>
+      <td class="num"><b>Total</b></td>
+      <td></td><td></td><td></td>
+      <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
+      <td></td><td></td><td></td>
+      <td class="num nowrap"><b>${fmt4(grandTotalCcy)} ${esc(sym)}</b></td>
+    </tr>
+  </tbody>
+</table>
 
-  ${
-      po.notes_to_vendor
-          ? `<div class="section"><div class="label">Notes to Vendor</div><div class="body">${esc(po.notes_to_vendor)}</div></div>`
-          : ''
-  }
-  ${
-      company.terms
-          ? `<div class="section"><div class="label">Terms &amp; Conditions</div><div class="body">${esc(company.terms)}</div></div>`
-          : ''
-  }
-
-  <div class="signature">
-    <div class="box">
-      For ${esc(company.name || '')}
-      <div style="height:30px"></div>
-      ${company.signatory ? `<div class="fw" style="color:#1f2937;margin-bottom:2px">${esc(company.signatory)}</div>` : ''}
-      <span style="color:#9ca3af">Authorised Signatory</span>
-    </div>
-  </div>
-
-</div>
+<table class="box" style="border-top:none">
+  <tr><td class="words">
+    <span class="cap">Amount Chargeable (in words)</span>
+    <span style="float:right" class="ital">E. &amp; O.E</span>
+    <div style="clear:both"><b>${esc(amountInWords)}</b></div>
+  </td></tr>
+  ${remarks ? `<tr><td class="remarks"><span class="ital">Remarks:</span><br/>${esc(remarks)}</td></tr>` : ''}
+  <tr>
+    <td style="padding:0">
+      <table class="inner"><tr>
+        <td style="width:55%;vertical-align:top;padding:3px 5px">
+          ${company.pan ? `<div class="co-line">Company's PAN : <b>${esc(company.pan)}</b></div>` : ''}
+          <div class="cap" style="margin-top:4px;text-decoration:underline">Declaration</div>
+          <div class="co-line">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div>
+        </td>
+        <td style="width:45%;vertical-align:top;padding:3px 5px">
+          ${
+              bank
+                  ? `<div class="cap" style="margin-bottom:2px">Company's Bank Details</div>
+                     <div class="co-line">Bank Name : <b>${esc(bank.bank_name)}</b></div>
+                     <div class="co-line">A/c No. : <b>${esc(bank.account_number)}</b></div>
+                     <div class="co-line">Branch &amp; IFS Code : <b>${esc([bank.branch_name, bank.ifsc].filter(Boolean).join(' & '))}</b></div>`
+                  : ''
+          }
+          <div style="text-align:right;margin-top:12px" class="co-line">for <b>${esc(company.name || '')}</b></div>
+          <div style="height:34px"></div>
+          <div style="text-align:right" class="co-line">${company.signatory ? `<b>${esc(company.signatory)}</b><br/>` : ''}Authorised Signatory</div>
+        </td>
+      </tr></table>
+    </td>
+  </tr>
+</table>
 </body>
 </html>`;
 }

@@ -84,8 +84,8 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: false, type: String }) delivery_address_id?: string;
     @ApiProperty({ required: false, type: String }) payment_terms?: string;
     @ApiProperty({ required: false, type: String }) delivery_terms?: string;
-    @ApiProperty({ required: false, type: String }) notes_to_vendor?: string;
     @ApiProperty({ required: false, type: String }) internal_notes?: string;
+    @ApiProperty({ required: false, type: String }) remarks?: string;
 
     @ApiProperty({ required: true, type: String }) currency_code: string;
     @ApiProperty({ required: false, type: String }) currency_symbol?: string;

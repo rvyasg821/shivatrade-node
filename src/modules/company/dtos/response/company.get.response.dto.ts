@@ -261,6 +261,7 @@ export class CompanyGetResponseDto {
     // ── PO defaults ──
     // `default_po_delivery_address` retired — see refactor plan.
     @ApiProperty({ required: false, type: String }) default_terms?: string;
+    @ApiProperty({ required: false, type: String }) default_remarks?: string;
     @ApiProperty({ required: false, type: String }) authorised_signatory_name?: string;
     @ApiProperty({ required: false, type: String }) footer_address?: string;
 
