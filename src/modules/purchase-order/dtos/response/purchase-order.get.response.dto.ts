@@ -67,6 +67,8 @@ export class PurchaseOrderGetResponseDto {
 
     @ApiProperty({ required: false, type: String }) quotation_id?: string;
     @ApiProperty({ required: false, type: String }) quotation_voucher_no?: string;
+    @ApiProperty({ required: false, type: String }) lead_id?: string;
+    @ApiProperty({ required: false, type: String }) lead_voucher_no?: string;
     @ApiProperty({ required: false, type: String }) pfi_id?: string;
     @ApiProperty({ required: false, type: String }) pfi_voucher_no?: string;
     @ApiProperty({ required: false, type: String }) pfi_bank_account_id?: string;

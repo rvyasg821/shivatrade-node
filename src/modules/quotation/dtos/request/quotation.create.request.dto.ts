@@ -1,6 +1,7 @@
 import { Type, Transform } from 'class-transformer';
 import {
     IsArray,
+    IsBoolean,
     IsDateString,
     IsEnum,
     IsNotEmpty,
@@ -137,6 +138,30 @@ export class QuotationCreateRequestDto {
     @IsUUID()
     @IsOptional()
     customer_address_id?: string;
+
+    // ── Consignee (Ship-to) — hybrid FK + snapshot (mirrors Sales Order) ──
+    @IsUUID()
+    @IsOptional()
+    consignee_id?: string;
+
+    @IsBoolean()
+    @IsOptional()
+    consignee_same_as_buyer?: boolean;
+
+    @IsUUID()
+    @IsOptional()
+    consignee_address_id?: string;
+
+    @IsOptional()
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
 
     @IsDateString()
     @IsNotEmpty()

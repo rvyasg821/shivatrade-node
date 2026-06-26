@@ -27,6 +27,7 @@ import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
 import { PfiLineRepository } from '@modules/pfi/repository/repositories/pfi-line.repository';
@@ -78,6 +79,7 @@ export class PurchaseOrderService {
         private readonly locationRepository: LocationRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
+        private readonly leadRepository: LeadRepository,
         private readonly pfiRepository: PfiRepository,
         private readonly pfiLineRepository: PfiLineRepository,
         private readonly priceListRepository: PriceListRepository,
@@ -1880,6 +1882,10 @@ export class PurchaseOrderService {
                 customer_address_id:
                     q.customer_address_id?.toString() || undefined,
                 consignee_id: q.consignee_id?.toString() || undefined,
+                consignee_same_as_buyer:
+                    (q as any).consignee_same_as_buyer ?? true,
+                consignee_address_id:
+                    (q as any).consignee_address_id?.toString() || undefined,
                 consignee_snapshot: q.consignee_snapshot || undefined,
                 quotation_id: quotationId,
                 po_date: today,
@@ -2020,6 +2026,18 @@ export class PurchaseOrderService {
         const quotationMap = toMap(quotations);
         const pfiMap = toMap(pfis);
         const productMap = toMap(products);
+        // Source lead (reached via the quotation) for the SO PDF "Lead Ref.".
+        const leadIds = unique(
+            (quotations as any[])
+                .map((q: any) => q.lead_id?.toString())
+                .filter((v: any): v is string => !!v)
+        );
+        const leads = leadIds.length
+            ? await this.leadRepository.findAll({
+                  _id: { $in: leadIds },
+              } as any)
+            : [];
+        const leadMap = toMap(leads);
         const linesByPo = groupBy(allLines, (l: any) =>
             l.purchase_order_id.toString()
         );
@@ -2102,6 +2120,10 @@ export class PurchaseOrderService {
                 customer_contact_country_code: custPrimary?.country_code,
                 quotation_id: r.quotation_id?.toString(),
                 quotation_voucher_no: q?.voucher_no,
+                lead_id: q?.lead_id?.toString(),
+                lead_voucher_no: q?.lead_id
+                    ? leadMap.get(q.lead_id.toString())?.voucher_no
+                    : undefined,
                 pfi_id: r.pfi_id?.toString(),
                 pfi_voucher_no: pfi?.voucher_no,
                 // Surface PFI's bank_account_id so the Invoice add page

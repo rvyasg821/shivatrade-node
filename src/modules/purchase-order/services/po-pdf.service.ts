@@ -580,7 +580,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
           <td class="meta" style="width:50%">${meta('Dated', tallyDate(po.po_date))}</td>
         </tr>
         <tr>
-          <td class="meta">&nbsp;</td>
+          <td class="meta">${meta('Lead Ref.', (po as any).lead_voucher_no)}</td>
           <td class="meta">${meta('Mode/Terms of Payment', po.payment_terms)}</td>
         </tr>
         <tr>

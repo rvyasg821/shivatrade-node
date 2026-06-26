@@ -64,6 +64,18 @@ export class QuotationGetResponseDto {
     customer_contact_phone?: string;
     customer_contact_country_code?: any;
     customer_address_id?: string;
+    consignee_id?: string;
+    consignee_same_as_buyer?: boolean;
+    consignee_address_id?: string;
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
     quotation_date?: string;
     valid_until?: string;
     currency_code?: string;
