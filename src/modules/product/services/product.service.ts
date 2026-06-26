@@ -85,6 +85,16 @@ export class ProductService {
             );
         }
 
+        const nameExists = await this.productRepository.isNameExists(
+            companyId,
+            data.name
+        );
+        if (nameExists) {
+            throw new BadRequestException(
+                `Product name '${data.name.trim()}' already exists for this company`
+            );
+        }
+
         if (data.category_id) {
             await this.assertCategoryValid(companyId, data.category_id);
         }
@@ -152,21 +162,51 @@ export class ProductService {
             data.code = data.code.trim();
         }
 
-        if (data.name) data.name = data.name.trim();
+        if (data.name) {
+            data.name = data.name.trim();
+            if (data.name.toLowerCase() !== (product.name || '').trim().toLowerCase()) {
+                const nameExists = await this.productRepository.isNameExists(
+                    companyId,
+                    data.name,
+                    product._id.toString()
+                );
+                if (nameExists) {
+                    throw new BadRequestException(
+                        `Product name '${data.name}' already exists for this company`
+                    );
+                }
+            }
+        }
 
         if (data.category_id) {
             await this.assertCategoryValid(companyId, data.category_id);
         }
 
-        // Cross-validate the post-update price/currency state.
-        const nextPrice = data.selling_price ?? Number(product.selling_price ?? 0);
-        const nextCurrencyId = data.currency_id ?? product.currency_id;
+        // Cross-validate the post-update price/currency state. A field that is
+        // `undefined` is unchanged (keep the stored value); `null` means the
+        // user cleared it, so the new state reflects the clear.
+        const nextPrice =
+            data.selling_price === undefined
+                ? product.selling_price
+                : data.selling_price;
+        const nextCurrencyId =
+            data.currency_id === undefined
+                ? product.currency_id
+                : data.currency_id;
         if (data.selling_price !== undefined || data.currency_id !== undefined) {
-            await this.assertCurrencyForPrice(companyId, nextPrice, nextCurrencyId as any);
+            await this.assertCurrencyForPrice(
+                companyId,
+                nextPrice as any,
+                nextCurrencyId as any
+            );
         }
         this.assertWeightConsistent(
-            data.net_weight_per_unit ?? Number(product.net_weight_per_unit ?? NaN),
-            data.gross_weight_per_unit ?? Number(product.gross_weight_per_unit ?? NaN)
+            data.net_weight_per_unit === undefined
+                ? product.net_weight_per_unit
+                : data.net_weight_per_unit,
+            data.gross_weight_per_unit === undefined
+                ? product.gross_weight_per_unit
+                : data.gross_weight_per_unit
         );
 
         if (data.rebates !== undefined) {

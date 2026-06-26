@@ -54,8 +54,13 @@ export class ProductAdminController {
     @AuthJwtAccessProtected()
     @Get('/sample-excel')
     @ApiOperation({ summary: 'Download sample Excel for product import' })
-    async downloadSampleExcel(@Res() res: ExpressResponse) {
-        const buffer = this.importExportService.generateSampleExcel();
+    async downloadSampleExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.generateSampleExcel(
+            companyId
+        );
         res.setHeader(
             'Content-Type',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -408,6 +413,25 @@ export class ProductAdminController {
         const exists = await this.productRepository.isCodeExists(
             companyId,
             code,
+            productId
+        );
+        return { data: { exists } };
+    }
+
+    @Response('product.checkName')
+    @AuthJwtAccessProtected()
+    @Post('/check-name')
+    async checkName(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body('name') name: string,
+        @Body('productId') productId?: string
+    ): Promise<IResponse<{ exists: boolean }>> {
+        if (!name || !name.trim()) {
+            return { data: { exists: false } };
+        }
+        const exists = await this.productRepository.isNameExists(
+            companyId,
+            name,
             productId
         );
         return { data: { exists } };

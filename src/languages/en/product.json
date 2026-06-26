@@ -6,6 +6,7 @@
     "delete": "Product deleted successfully.",
     "dropdown": "Products dropdown loaded.",
     "checkCode": "Code availability checked.",
+    "checkName": "Name availability checked.",
     "error": {
         "exist": "A product with this code already exists.",
         "categoryNotFound": "Category not found.",

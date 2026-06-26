@@ -13,7 +13,7 @@ import {
     ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ENUM_PRODUCT_STATUS } from '@modules/product/enums/product.enum';
+import { ENUM_PRODUCT_STATUS, ENUM_PRODUCT_UOM } from '@modules/product/enums/product.enum';
 
 export class ProductRebateLinkDto {
     @IsUUID() rebate_id: string;
@@ -52,7 +52,7 @@ export class ProductCreateRequestDto {
     @IsString() @IsOptional() quality_parameters?: string;
 
     @IsString() @IsOptional() @MaxLength(50) hsn_code?: string;
-    @IsString() @IsOptional() @MaxLength(50) unit_of_measure?: string;
+    @IsEnum(ENUM_PRODUCT_UOM) @IsNotEmpty() unit_of_measure: ENUM_PRODUCT_UOM;
 
     // GST tied to the HSN. Seeds quotation/PFI line tax %.
     @Type(() => Number)

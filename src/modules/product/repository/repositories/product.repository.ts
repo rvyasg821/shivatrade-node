@@ -45,6 +45,25 @@ export class ProductRepository extends DatabaseObjectIdRepositoryBase<
     }
 
     /**
+     * Case-insensitive name uniqueness check within a company.
+     */
+    async isNameExists(
+        companyId: string,
+        name: string,
+        excludeId?: string
+    ): Promise<boolean> {
+        const where: any = {
+            company_id: companyId,
+            name: ILike(name.trim()),
+            soft_delete: false,
+        };
+        if (excludeId) where._id = Not(excludeId);
+
+        const count = await this._repository.count({ where });
+        return count > 0;
+    }
+
+    /**
      * Count products that reference a given category — used by Category delete
      * guard in a future iteration.
      */
