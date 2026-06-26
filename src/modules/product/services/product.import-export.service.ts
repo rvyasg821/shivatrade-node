@@ -111,19 +111,21 @@ export interface ProductImportRow {
         currency_id?: string;
         status: ENUM_PRODUCT_STATUS;
         is_active: boolean;
-        description?: string;
-        specifications?: string;
-        packaging_details?: string;
-        quality_parameters?: string;
-        hsn_code?: string;
-        tax_pct?: number;
+        // Clearable fields: on an update row, a blank cell whose column is
+        // present in the file is sent as `null` to clear the stored value.
+        description?: string | null;
+        specifications?: string | null;
+        packaging_details?: string | null;
+        quality_parameters?: string | null;
+        hsn_code?: string | null;
+        tax_pct?: number | null;
         unit_of_measure?: string;
-        selling_price?: number;
-        margin_pct?: number;
-        part_no?: string;
-        pack_size?: number;
-        net_weight_per_unit?: number;
-        gross_weight_per_unit?: number;
+        selling_price?: number | null;
+        margin_pct?: number | null;
+        part_no?: string | null;
+        pack_size?: number | null;
+        net_weight_per_unit?: number | null;
+        gross_weight_per_unit?: number | null;
         country_of_origin?: string;
     };
     status: 'valid_new' | 'valid_update' | 'error';
@@ -148,13 +150,40 @@ export class ProductImportExportService {
         private readonly expenseRepository: ExpenseRepository,
     ) {}
 
-    /** Sample Excel — the scalar columns with two filled example rows. */
-    generateSampleExcel(): Buffer {
+    /**
+     * Sample Excel — the scalar columns with two filled example rows, plus a
+     * second "Reference" sheet listing every valid Unit of Measure and the
+     * company's existing Categories so users can copy exact values into the
+     * import sheet.
+     */
+    async generateSampleExcel(companyId: string): Promise<Buffer> {
         const aoa: any[][] = [buildHeaderRow()];
         for (const r of SAMPLE_ROWS) {
             aoa.push(BASE_HEADERS.map((h) => r[h] ?? ''));
         }
-        return this.fileService.writeExcelFromArray(aoa);
+
+        // Reference sheet: UOMs (fixed enum) beside the company's categories.
+        const uomValues = Object.values(ENUM_PRODUCT_UOM);
+        const categories = await this.categoryRepository.findByCompanyId(
+            companyId,
+        );
+        const categoryNames = categories
+            .map((c) => c.name)
+            .filter(Boolean)
+            .sort((a, b) =>
+                a.toLowerCase().localeCompare(b.toLowerCase()),
+            );
+
+        const refRows: any[][] = [['unit_of_measure', 'category_name']];
+        const maxLen = Math.max(uomValues.length, categoryNames.length);
+        for (let i = 0; i < maxLen; i++) {
+            refRows.push([uomValues[i] ?? '', categoryNames[i] ?? '']);
+        }
+
+        return this.fileService.writeExcelSheetsFromArray([
+            { sheetName: 'Products', rows: aoa },
+            { sheetName: 'Reference', rows: refRows },
+        ]);
     }
 
     /** Export all of a company's products as an Excel buffer. */
@@ -227,7 +256,10 @@ export class ProductImportExportService {
     ): Promise<{ summary: any; rows: ProductImportRow[] }> {
         let sheets;
         try {
-            sheets = this.fileService.readExcel(fileBuffer);
+            // `defval: null` keeps every header column on each row even when a
+            // cell is blank — otherwise an emptied cell's key is dropped and we
+            // can't tell "column present but cleared" from "column omitted".
+            sheets = this.fileService.readExcel(fileBuffer, { defval: null });
         } catch {
             throw new BadRequestException(
                 'Unable to read the file. Please upload a valid Excel or CSV file.',
@@ -242,7 +274,7 @@ export class ProductImportExportService {
         const headerKeys = Object.keys(rawRows[0]).map((k) =>
             k.trim().toLowerCase(),
         );
-        const requiredCols = ['name', 'category_name'];
+        const requiredCols = ['name', 'category_name', 'unit_of_measure'];
         const missing = requiredCols.filter((c) => !headerKeys.includes(c));
         if (missing.length > 0) {
             throw new BadRequestException(
@@ -343,10 +375,12 @@ export class ProductImportExportService {
             if (countryOfOrigin.length > 100)
                 errors.push('Country of origin must not exceed 100 characters');
 
-            // ── Unit of measure ──
+            // ── Unit of measure (required) ──
             let unitOfMeasure: string | undefined;
             const uomRaw = get('unit_of_measure');
-            if (uomRaw) {
+            if (!uomRaw) {
+                errors.push('Unit of measure is required');
+            } else {
                 unitOfMeasure = UOM_BY_LOWER[uomRaw.toLowerCase()];
                 if (!unitOfMeasure) {
                     errors.push(
@@ -486,6 +520,21 @@ export class ProductImportExportService {
             }
             if (errors.length > 0) rowStatus = 'error';
 
+            // Clearing semantics (mirrors the product edit form): on an update
+            // row, a blank cell whose column IS present in the file clears the
+            // stored value (null). On a new row — or when the column is absent
+            // from the file — a blank stays undefined so it's left untouched /
+            // takes the backend default.
+            const willUpdate = !!existingId;
+            const clearable = (col: string, value: any): any => {
+                const hasValue =
+                    value !== undefined && value !== null && value !== '';
+                if (hasValue) return value;
+                return willUpdate && headerKeys.includes(col)
+                    ? null
+                    : undefined;
+            };
+
             rows.push({
                 rowNum,
                 data: {
@@ -496,20 +545,34 @@ export class ProductImportExportService {
                     currency_id: currencyId,
                     status,
                     is_active: status === ENUM_PRODUCT_STATUS.ACTIVE,
-                    description: get('description') || undefined,
-                    specifications: get('specifications') || undefined,
-                    packaging_details: get('packaging_details') || undefined,
-                    quality_parameters:
-                        get('quality_parameters') || undefined,
-                    hsn_code: hsnCode || undefined,
-                    tax_pct: taxPct,
+                    description: clearable('description', get('description')),
+                    specifications: clearable(
+                        'specifications',
+                        get('specifications'),
+                    ),
+                    packaging_details: clearable(
+                        'packaging_details',
+                        get('packaging_details'),
+                    ),
+                    quality_parameters: clearable(
+                        'quality_parameters',
+                        get('quality_parameters'),
+                    ),
+                    hsn_code: clearable('hsn_code', hsnCode),
+                    tax_pct: clearable('gst', taxPct),
                     unit_of_measure: unitOfMeasure,
-                    selling_price: sellingPrice,
-                    margin_pct: marginPct,
-                    part_no: partNo || undefined,
-                    pack_size: packSize,
-                    net_weight_per_unit: netWeight,
-                    gross_weight_per_unit: grossWeight,
+                    selling_price: clearable('selling_price', sellingPrice),
+                    margin_pct: clearable('margin_pct', marginPct),
+                    part_no: clearable('part_no', partNo),
+                    pack_size: clearable('pack_size', packSize),
+                    net_weight_per_unit: clearable(
+                        'net_weight_per_unit',
+                        netWeight,
+                    ),
+                    gross_weight_per_unit: clearable(
+                        'gross_weight_per_unit',
+                        grossWeight,
+                    ),
                     country_of_origin: countryOfOrigin || undefined,
                 },
                 status: rowStatus,

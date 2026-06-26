@@ -76,6 +76,30 @@ export class FileService implements IFileService {
         return buff;
     }
 
+    writeExcelSheetsFromArray<T = Record<string, string | number | Date>>(
+        sheets: { sheetName: string; rows: T[][] }[]
+    ): Buffer {
+        // workbook
+        const workbook = utils.book_new();
+
+        for (const [index, sheet] of sheets.entries()) {
+            const worksheet = utils.aoa_to_sheet(sheet.rows);
+            utils.book_append_sheet(
+                workbook,
+                worksheet,
+                sheet.sheetName ?? `Sheet${index + 1}`
+            );
+        }
+
+        // create buffer
+        const buff: Buffer = write(workbook, {
+            type: 'buffer',
+            bookType: ENUM_HELPER_FILE_EXCEL_TYPE.XLSX,
+        });
+
+        return buff;
+    }
+
     readCsv<T = Record<string, string | number | Date>>(
         file: Buffer
     ): IFileRows<T> {
@@ -115,7 +139,8 @@ export class FileService implements IFileService {
     }
 
     readExcel<T = Record<string, string | number | Date>>(
-        file: Buffer
+        file: Buffer,
+        options?: Record<string, any>
     ): IFileRows<T>[] {
         // workbook
         const workbook = read(file, {
@@ -129,8 +154,10 @@ export class FileService implements IFileService {
         for (let i = 0; i < worksheetsName.length; i++) {
             const worksheet = workbook.Sheets[worksheetsName[i]];
 
-            // rows
-            const rows: T[] = utils.sheet_to_json(worksheet);
+            // rows — `options` is forwarded to sheet_to_json. Pass
+            // `{ defval: null }` to keep blank cells (so an emptied cell is
+            // surfaced as null instead of the column key being dropped).
+            const rows: T[] = utils.sheet_to_json(worksheet, options);
 
             sheets.push({
                 data: rows,

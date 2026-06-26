@@ -13,6 +13,9 @@ export interface IFileService {
     writeExcelFromArray<T = Record<string, string | number | Date>>(
         rows: T[][]
     ): Buffer;
+    writeExcelSheetsFromArray<T = Record<string, string | number | Date>>(
+        sheets: { sheetName: string; rows: T[][] }[]
+    ): Buffer;
     readCsv<T = Record<string, string | number | Date>>(
         file: Buffer
     ): IFileRows<T>;
@@ -20,7 +23,8 @@ export interface IFileService {
         file: string
     ): IFileRows<T>;
     readExcel<T = Record<string, string | number | Date>>(
-        file: Buffer
+        file: Buffer,
+        options?: Record<string, any>
     ): IFileRows<T>[];
     
     // New methods for base64 validation and image upload

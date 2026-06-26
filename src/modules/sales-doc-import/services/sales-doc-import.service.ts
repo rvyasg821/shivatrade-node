@@ -861,8 +861,9 @@ export class SalesDocImportService {
         const r2 = (n: number) =>
             Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
 
-        // Resolve code / part_no / hsn from ids when the line omits them.
+        // Resolve code / name / part_no / hsn from ids when the line omits them.
         const productCodeById = new Map<string, string>();
+        const productNameById = new Map<string, string>();
         const partNoById = new Map<string, string>();
         const hsnById = new Map<string, string>();
         const vendorCodeById = new Map<string, string>();
@@ -870,6 +871,7 @@ export class SalesDocImportService {
             const prods = await this.productRepository.findByCompanyId(companyId);
             for (const p of prods as any[]) {
                 productCodeById.set(p._id.toString(), p.code || '');
+                productNameById.set(p._id.toString(), p.name || '');
                 partNoById.set(p._id.toString(), p.part_no || '');
                 hsnById.set(p._id.toString(), p.hsn_code || '');
             }
@@ -882,6 +884,14 @@ export class SalesDocImportService {
         const pCode = (l: SalesDocExportLineDto) =>
             l.product_code ||
             (l.product_id ? productCodeById.get(String(l.product_id)) : '') ||
+            '';
+        // Display-only product name column. Header is `productname` (no
+        // underscore, matching the other costing headers); the importer does
+        // not alias it, so editing it never changes which product the row
+        // resolves to — the product is always matched by code.
+        const pName = (l: SalesDocExportLineDto) =>
+            (l as any).product_name ||
+            (l.product_id ? productNameById.get(String(l.product_id)) : '') ||
             '';
         const vCode = (l: SalesDocExportLineDto) =>
             l.vendor_code ||
@@ -937,6 +947,7 @@ export class SalesDocImportService {
         // ── Header row ──
         const headerRow: string[] = [
             'productcode',
+            'productname',
             'vendorcode',
             'partno',
             'hsncode',
@@ -970,6 +981,7 @@ export class SalesDocImportService {
 
             const row: any[] = [
                 pCode(l),
+                pName(l),
                 vCode(l),
                 pPart(l),
                 pHsn(l),
@@ -1135,6 +1147,7 @@ export class SalesDocImportService {
         const headers = isLead
             ? [
                   'product_code',
+                  'product_name',
                   'qty',
                   'unit',
                   'unit_price',
@@ -1154,6 +1167,7 @@ export class SalesDocImportService {
         // blank. (Leads have no vendor, so vendor_code legitimately stays empty.)
         const exportLines = opts.lines || [];
         const productCodeById = new Map<string, string>();
+        const productNameById = new Map<string, string>();
         const partNoById = new Map<string, string>();
         const vendorCodeById = new Map<string, string>();
         if (
@@ -1163,6 +1177,7 @@ export class SalesDocImportService {
             const prods = await this.productRepository.findByCompanyId(companyId);
             for (const p of prods as any[]) {
                 productCodeById.set(p._id.toString(), p.code || '');
+                productNameById.set(p._id.toString(), p.name || '');
                 partNoById.set(p._id.toString(), p.part_no || '');
             }
         }
@@ -1233,8 +1248,15 @@ export class SalesDocImportService {
                     (l as any).part_no ||
                     (l.product_id ? partNoById.get(String(l.product_id)) : '') ||
                     '';
+                const productName =
+                    (l as any).product_name ||
+                    (l.product_id
+                        ? productNameById.get(String(l.product_id))
+                        : '') ||
+                    '';
                 return [
                     resolveProductCode(l),
+                    productName,
                     l.qty ?? '',
                     l.unit || '',
                     l.unit_price ?? '',

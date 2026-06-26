@@ -146,6 +146,10 @@ export class InvoiceLineImportService {
 
         const baseHeaders = [
             'product_code',
+            // Display-only — shows which product each code is. The importer
+            // resolves the line by product_code (against the bound SO) and
+            // never reads this column, so edits here are ignored.
+            'product_name',
             // `description` is pre-filled with the product name on a
             // fresh export; any edits the operator makes in Excel land
             // back on the line's `description` field at import time.
@@ -224,6 +228,7 @@ export class InvoiceLineImportService {
                 l.description || l.product_name || prod?.name || '';
             return [
                 l.product_code || prod?.code || '',
+                l.product_name || prod?.name || '',
                 descriptionCell,
                 l.hsn_code || '',
                 l.customer_reference || '',
