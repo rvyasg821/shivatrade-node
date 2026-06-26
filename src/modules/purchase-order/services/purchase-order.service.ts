@@ -432,6 +432,8 @@ export class PurchaseOrderService {
         const map: Record<string, ENUM_PURCHASE_ORDER_STATUS[]> = {
             [ENUM_PURCHASE_ORDER_STATUS.DRAFT]: [
                 ENUM_PURCHASE_ORDER_STATUS.CONFIRMED,
+                // "Confirm & Start" — jump straight from draft to in-process.
+                ENUM_PURCHASE_ORDER_STATUS.IN_PROCESS,
                 ENUM_PURCHASE_ORDER_STATUS.CANCELLED,
             ],
             [ENUM_PURCHASE_ORDER_STATUS.CONFIRMED]: [
