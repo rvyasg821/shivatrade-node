@@ -17,6 +17,9 @@ const SHEET_NAME = 'Price List';
 const EXCEL_HEADERS = [
     'vendor_code',
     'product_code',
+    // Display-only — shows which product each code is. Import resolves the row
+    // by product_code and ignores this column.
+    'product_name',
     'currency_code',
     'unit_price',
     'lead_time_days',
@@ -28,6 +31,7 @@ const SAMPLE_ROWS = [
     {
         vendor_code: 'VEN-001',
         product_code: 'PRD-001',
+        product_name: 'Sample Product 1',
         currency_code: 'INR',
         unit_price: '1250.00',
         lead_time_days: '15',
@@ -37,6 +41,7 @@ const SAMPLE_ROWS = [
     {
         vendor_code: 'VEN-002',
         product_code: 'PRD-002',
+        product_name: 'Sample Product 2',
         currency_code: '',
         unit_price: '480',
         lead_time_days: '30',
@@ -115,6 +120,7 @@ export interface PriceListImportRow {
         vendor_code: string;
         vendor_id?: string;
         product_code: string;
+        product_name?: string;
         product_id?: string;
         currency_code: string;
         currency_id?: string;
@@ -186,6 +192,9 @@ export class PriceListImportExportService {
         const productCodeById = new Map<string, string>(
             products.map((p) => [p._id.toString(), p.code || '']),
         );
+        const productNameById = new Map<string, string>(
+            products.map((p) => [p._id.toString(), p.name || '']),
+        );
         const currencyCodeById = new Map<string, string>(
             currencies.map((c) => [c._id.toString(), c.code || '']),
         );
@@ -194,6 +203,9 @@ export class PriceListImportExportService {
             const base: any = {
                 product_code: r.product_id
                     ? productCodeById.get(r.product_id.toString()) || ''
+                    : '',
+                product_name: r.product_id
+                    ? productNameById.get(r.product_id.toString()) || ''
                     : '',
                 currency_code: r.currency_id
                     ? currencyCodeById.get(r.currency_id.toString()) || ''
@@ -289,6 +301,9 @@ export class PriceListImportExportService {
                 p.code.trim().toLowerCase(),
                 p._id.toString(),
             ]),
+        );
+        const productNameById = new Map<string, string>(
+            products.map((p) => [p._id.toString(), p.name || '']),
         );
         // productId → its category_id, and vendorId → set of its category_ids.
         // Used to enforce that a product belongs to the vendor (same scoping
@@ -543,6 +558,9 @@ export class PriceListImportExportService {
                     vendor_code: vendorCode,
                     vendor_id: vendorId,
                     product_code: productCode,
+                    product_name: productId
+                        ? productNameById.get(productId) || ''
+                        : '',
                     product_id: productId,
                     currency_code: currencyCode,
                     currency_id: currencyId,
