@@ -310,31 +310,87 @@ export class PriceListAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Param('productId') productId: string
     ): Promise<IResponse<PriceListGetResponseDto[]>> {
-        const today = new Date().toISOString().slice(0, 10);
+        // Vendor PICKER source for the costing worksheet — return every vendor
+        // that has a price for this product (one row per vendor), exactly like
+        // the price-list listing. No date window: effective_date / valid_until
+        // are not used as gating concepts here, so a future- or oddly-dated
+        // effective_date can no longer hide a vendor.
         const rows = await this.priceListRepository.findAll(
             {
                 company_id: companyId,
                 product_id: productId,
-                effective_date: { $lte: today },
             } as any,
             { order: { effective_date: 'desc' as any } }
         );
-        const mapped = await this.priceListService.mapList(rows);
-        // Filter out expired rows (where effective_until < today).
-        const active = mapped.filter(
-            (r) => !r.effective_until || r.effective_until >= today
-        );
-        // Keep the most recent row per vendor (first occurrence in desc order).
-        const byVendor = new Map<string, PriceListGetResponseDto>();
-        for (const r of active) {
-            const key = (r as any).vendor_id?.toString();
+        // Rows are ordered effective_date desc, so the first row seen per
+        // vendor is its latest price.
+        const byVendor = new Map<string, any>();
+        for (const r of rows as any[]) {
+            const key = r.vendor_id?.toString();
             if (key && !byVendor.has(key)) byVendor.set(key, r);
         }
-        // Sort: cheapest unit_price first.
-        const result = Array.from(byVendor.values()).sort(
-            (a, b) =>
-                Number(a.unit_price || 0) - Number(b.unit_price || 0)
+        const mapped = await this.priceListService.mapList(
+            Array.from(byVendor.values())
         );
+        // Sort: cheapest unit_price first.
+        const result = mapped.sort(
+            (a, b) => Number(a.unit_price || 0) - Number(b.unit_price || 0)
+        );
+        return { data: result };
+    }
+
+    @Response('priceList.byProducts')
+    @AuthJwtAccessProtected()
+    @Get('/vendors-by-products')
+    async vendorsByProducts(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('product_ids') productIdsRaw?: string
+    ): Promise<IResponse<Record<string, PriceListGetResponseDto[]>>> {
+        // Batch version of by-product: one request returns { productId: vendors[] }
+        // for many products at once. The costing worksheet uses this so a 30-row
+        // import doesn't fire 30 concurrent by-product calls (which could fail
+        // under load and leave a vendor dropdown permanently empty). Same
+        // semantics as by-product: latest row per vendor, no date window.
+        const productIds = (productIdsRaw || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        if (!productIds.length) return { data: {} };
+
+        const rows = await this.priceListRepository.findAll(
+            {
+                company_id: companyId,
+                product_id: { $in: productIds },
+            } as any,
+            { order: { effective_date: 'desc' as any } }
+        );
+        // Group by product → latest row per vendor (rows are effective_date desc,
+        // so the first seen per (product, vendor) is the current price).
+        const perProduct = new Map<string, Map<string, any>>();
+        for (const r of rows as any[]) {
+            const pid = r.product_id?.toString();
+            const vid = r.vendor_id?.toString();
+            if (!pid || !vid) continue;
+            if (!perProduct.has(pid)) perProduct.set(pid, new Map());
+            const vmap = perProduct.get(pid)!;
+            if (!vmap.has(vid)) vmap.set(vid, r);
+        }
+        // Map all survivors once, then regroup by product and sort cheapest-first.
+        const survivors: any[] = [];
+        for (const vmap of perProduct.values())
+            survivors.push(...vmap.values());
+        const mapped = await this.priceListService.mapList(survivors);
+        const result: Record<string, PriceListGetResponseDto[]> = {};
+        for (const m of mapped) {
+            const pid = (m as any).product_id?.toString();
+            if (!pid) continue;
+            (result[pid] = result[pid] || []).push(m);
+        }
+        for (const pid of Object.keys(result)) {
+            result[pid].sort(
+                (a, b) => Number(a.unit_price || 0) - Number(b.unit_price || 0)
+            );
+        }
         return { data: result };
     }
 

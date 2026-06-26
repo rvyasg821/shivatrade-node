@@ -11,6 +11,7 @@ import { CompanyModule } from '@modules/company/company.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { LocationRepositoryModule } from '@modules/location/repository/location.repository.module';
 import { QuotationModule } from '@modules/quotation/quotation.module';
+import { LeadRepositoryModule } from '@modules/lead/repository/lead.repository.module';
 import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
@@ -27,6 +28,7 @@ import { CompanySettingsRepositoryModule } from '@modules/company-settings/repos
         CompanyRepositoryModule,
         LocationRepositoryModule,
         QuotationModule,
+        LeadRepositoryModule,
         PfiModule,
         PriceListModule,
         PoVendorModule,

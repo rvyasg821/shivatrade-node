@@ -289,10 +289,9 @@ export class SalesDocImportService {
             let vendorCode = get('vendor_code');
             let vendorId: string | undefined;
             const activeVendorRows: any[] = [];
-            // Pull the product's current vendor catalogue from price-list.
-            // This gives us "which vendors sell this product" AND a default
-            // unit_price/discount when those cells are blank.
-            const today = new Date().toISOString().slice(0, 10);
+            // Pull the product's vendor catalogue from price-list. This gives
+            // us "which vendors sell this product" AND a default unit_price/
+            // discount when those cells are blank.
             const allPlForProduct = await this.priceListRepository.findAll(
                 {
                     company_id: companyId,
@@ -300,11 +299,12 @@ export class SalesDocImportService {
                 } as any,
                 { order: { effective_date: 'desc' as any } },
             );
-            // Keep most-recent row per vendor; filter expired.
+            // Keep the latest row per vendor. No date window: effective_date /
+            // valid_until are not gating concepts here, so a future- or oddly-
+            // dated row can't hide a vendor the sheet names. Rows are ordered
+            // effective_date desc, so the first seen per vendor is its latest.
             const seen = new Set<string>();
             for (const r of allPlForProduct) {
-                if (r.valid_until && String(r.valid_until) < today) continue;
-                if (String(r.effective_date) > today) continue;
                 const vk = r.vendor_id.toString();
                 if (seen.has(vk)) continue;
                 seen.add(vk);

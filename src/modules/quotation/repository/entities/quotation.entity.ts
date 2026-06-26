@@ -36,6 +36,32 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     customer_address_id?: string;
 
+    /** Consignee (Ship-to) — hybrid FK + frozen snapshot. Mirrors the Sales
+     *  Order model so the consignee captured on a quotation propagates onto
+     *  the SO (and then the Invoice) on Generate Sales Order. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    consignee_id?: string;
+
+    /** True when the consignee is the same party as the buyer (customer). */
+    @Column({ type: 'boolean', default: true })
+    consignee_same_as_buyer: boolean;
+
+    /** Consignee customer's selected address; the snapshot below freezes it. */
+    @Column({ type: 'uuid', nullable: true })
+    consignee_address_id?: string;
+
+    @Column({ type: 'jsonb', nullable: true })
+    consignee_snapshot?: {
+        name?: string;
+        address_line1?: string;
+        address_line2?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+    };
+
     @Column({ type: 'date', nullable: false })
     quotation_date: string;
 
