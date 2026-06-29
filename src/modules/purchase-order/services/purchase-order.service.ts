@@ -1643,7 +1643,10 @@ export class PurchaseOrderService {
             description:
                 r.sourceLine.description || r.product?.description || '',
             customer_reference: r.sourceLine.customer_reference || undefined,
-            hsn_code: r.product?.hsn_code || '',
+            part_no: r.sourceLine.part_no || r.product?.part_no || undefined,
+            // Source (quotation/pfi) lines store the code under `hs_code`;
+            // prefer it, fall back to the product master.
+            hsn_code: r.sourceLine.hs_code || r.product?.hsn_code || '',
             qty: String(r.sourceLine.qty || '0'),
             unit: r.sourceLine.unit || r.product?.unit_of_measure || '',
             unit_price: String(r.sourceLine.unit_price || '0'),

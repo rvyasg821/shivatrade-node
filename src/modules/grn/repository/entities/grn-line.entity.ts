@@ -30,6 +30,9 @@ export class GrnLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     description?: string;
 
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    part_no?: string;
+
     @Column({ type: 'varchar', length: 15, nullable: true })
     hsn_code?: string;
 

@@ -35,7 +35,7 @@ export class DebitNoteLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 15, nullable: true })
     hsn_code?: string;
 
-    @Column({ type: 'varchar', length: 30, nullable: true })
+    @Column({ type: 'varchar', length: 120, nullable: true })
     part_no?: string;
 
     @Column({ type: 'varchar', length: 30, nullable: true })
