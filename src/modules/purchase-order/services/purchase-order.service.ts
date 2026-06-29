@@ -5,6 +5,8 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { DataSource } from 'typeorm';
+import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '../repository/repositories/purchase-order-line.repository';
 import { PurchaseOrderDoc } from '../repository/entities/purchase-order.entity';
@@ -86,7 +88,8 @@ export class PurchaseOrderService {
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly povService: PoVendorService,
-        private readonly voucherService: VoucherService
+        private readonly voucherService: VoucherService,
+        @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
     // ─── Reference validation ───────────────────────────────────────────
@@ -2455,6 +2458,7 @@ export class PurchaseOrderService {
         total: number;
         total_amount_inr: string;
         by_status: Record<string, number>;
+        pending_pov: number;
     }> {
         const rows = await this.poRepository.aggregate<{
             status: string;
@@ -2531,10 +2535,40 @@ export class PurchaseOrderService {
             total += cnt;
             total_amount_inr += Number(r.amount_inr) || 0;
         }
+
+        // "Waiting for POV" = confirmed / in_process Sales Orders whose ordered
+        // qty is not yet fully covered by active (non-cancelled) Vendor POs.
+        // Counted in one pass so the dashboard can flag them without running
+        // full coverage per SO.
+        const [pp] = await this.dataSource.query(
+            `SELECT COUNT(*)::int AS count FROM (
+                SELECT po._id,
+                    COALESCE((
+                        SELECT SUM(pol.qty) FROM purchase_order_lines pol
+                        WHERE pol.purchase_order_id = po._id
+                          AND pol.soft_delete = false
+                    ), 0) AS ordered,
+                    COALESCE((
+                        SELECT SUM(pvl.ordered_qty) FROM po_vendor_lines pvl
+                        JOIN po_vendors pv ON pv._id = pvl.po_vendor_id
+                        WHERE pv.purchase_order_id = po._id
+                          AND pv.status <> 'cancelled'
+                          AND pv.soft_delete = false
+                    ), 0) AS covered
+                FROM purchase_orders po
+                WHERE po.company_id = $1
+                  AND po.soft_delete = false
+                  AND po.status IN ('confirmed', 'in_process')
+            ) t
+            WHERE t.ordered > t.covered + 0.0001`,
+            [companyId]
+        );
+
         return {
             total,
             total_amount_inr: total_amount_inr.toFixed(2),
             by_status,
+            pending_pov: Number(pp?.count) || 0,
         };
     }
 }

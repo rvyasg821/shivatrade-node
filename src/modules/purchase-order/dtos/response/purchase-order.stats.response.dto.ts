@@ -11,4 +11,7 @@ export class PurchaseOrderStatsResponseDto {
     // Per-status counts. Keys are ENUM_PURCHASE_ORDER_STATUS values that
     // actually appear in the filtered result — missing keys = 0.
     by_status: Record<string, number>;
+    // Count of confirmed / in_process Sales Orders not yet fully covered by
+    // active Vendor POs — drives the dashboard "Waiting for POV" tile.
+    pending_pov: number;
 }
