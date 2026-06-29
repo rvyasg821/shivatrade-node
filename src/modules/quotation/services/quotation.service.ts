@@ -588,6 +588,7 @@ export class QuotationService {
                 margin_amount: '0',
                 seq,
                 // ── Export / Shipping (mirrors PFI line shape) ──
+                part_no: l.part_no || null,
                 hs_code: l.hs_code || null,
                 net_weight_kg: l.net_weight_kg || '0',
                 gross_weight_kg: l.gross_weight_kg || '0',
@@ -937,9 +938,13 @@ export class QuotationService {
                             product_name: (productMap.get(
                                 l.product_id?.toString()
                             ) as any)?.name,
-                            part_no: (productMap.get(
-                                l.product_id?.toString()
-                            ) as any)?.part_no,
+                            // Prefer the per-line value the user entered; fall
+                            // back to the product master's part_no.
+                            part_no:
+                                l.part_no ||
+                                (productMap.get(
+                                    l.product_id?.toString()
+                                ) as any)?.part_no,
                             vendor_id: l.vendor_id?.toString(),
                             vendor_name: (vendorMap.get(
                                 l.vendor_id?.toString()

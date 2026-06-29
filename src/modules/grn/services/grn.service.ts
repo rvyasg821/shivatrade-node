@@ -409,13 +409,25 @@ export class GrnService {
                     `GRN ${grn.voucher_no || grnId} confirmed — ${bits.join(', ')}.`
                 );
             } else if (prevStatus === ENUM_GRN_STATUS.CONFIRMED) {
-                await this.emitPovEvent(
-                    companyId,
-                    povId,
-                    ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
-                    userId,
-                    `GRN ${grn.voucher_no || grnId} cancelled — its receipt was rolled back from the POV.`
-                );
+                // Leaving CONFIRMED is either a cancel or a revert-to-draft (re-open
+                // for editing). Both roll the stock back; log the right one.
+                if (dto.status === ENUM_GRN_STATUS.DRAFT) {
+                    await this.emitPovEvent(
+                        companyId,
+                        povId,
+                        ENUM_TRACKING_EVENT_TYPE.GRN_REVERTED,
+                        userId,
+                        `GRN ${grn.voucher_no || grnId} reverted to draft for editing — its receipt was rolled back from stock.`
+                    );
+                } else {
+                    await this.emitPovEvent(
+                        companyId,
+                        povId,
+                        ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
+                        userId,
+                        `GRN ${grn.voucher_no || grnId} cancelled — its receipt was rolled back from the POV.`
+                    );
+                }
             }
         }
 

@@ -44,6 +44,10 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 120, nullable: true })
     customer_reference?: string;
 
+    /** Vendor/manufacturer part number — snapshot from product, overridable. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    part_no?: string;
+
     /** Snapshot from product master. */
     @Column({ type: 'varchar', length: 15, nullable: true })
     hsn_code?: string;
