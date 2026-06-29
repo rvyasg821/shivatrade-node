@@ -5,6 +5,8 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
+import { DataSource } from 'typeorm';
+import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
 
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
@@ -110,7 +112,8 @@ export class InvoiceService {
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly quotationRepository: QuotationRepository,
         private readonly invoicePaymentRepository: InvoicePaymentRepository,
-        private readonly stockLedger: StockLedgerService
+        private readonly stockLedger: StockLedgerService,
+        @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
     // ─── Company snapshot ───────────────────────────────────────────────
@@ -1610,6 +1613,8 @@ export class InvoiceService {
         total: number;
         total_amount_inr: string;
         by_status: Record<string, number>;
+        overdue: number;
+        overdue_amount_inr: string;
     }> {
         const rows = await this.invoiceRepository.aggregate<{
             status: string;
@@ -1679,10 +1684,121 @@ export class InvoiceService {
             total += cnt;
             total_amount_inr += Number(r.amount_inr) || 0;
         }
+
+        // Overdue = issued / partially-paid invoices past their due date with
+        // money still owed. INR-converted via exchange_rate (foreign per ₹1).
+        const today = new Date().toISOString().slice(0, 10);
+        const [ov] = await this.invoiceRepository.aggregate<{
+            count: string;
+            amount_inr: string;
+        }>((qb) => {
+            qb.andWhere('entity.soft_delete = :sd', { sd: false });
+            qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            if (filters.customer_id) {
+                qb.andWhere('entity.customer_id = :cust', {
+                    cust: filters.customer_id,
+                });
+            }
+            qb.andWhere('entity.status IN (:...ost)', {
+                ost: [
+                    ENUM_INVOICE_STATUS.ISSUED,
+                    ENUM_INVOICE_STATUS.PARTIALLY_PAID,
+                ],
+            });
+            qb.andWhere('entity.due_date IS NOT NULL');
+            qb.andWhere('entity.due_date < :td', { td: today });
+            qb.andWhere('entity.balance_receivable > 0');
+            return qb
+                .select('COUNT(*)::int', 'count')
+                .addSelect(
+                    `COALESCE(SUM(
+                        entity.balance_receivable
+                        / COALESCE(NULLIF(entity.exchange_rate, 0), 1)
+                    ), 0)::text`,
+                    'amount_inr'
+                );
+        });
+
         return {
             total,
             total_amount_inr: total_amount_inr.toFixed(2),
             by_status,
+            overdue: Number(ov?.count) || 0,
+            overdue_amount_inr: (Number(ov?.amount_inr) || 0).toFixed(2),
+        };
+    }
+
+    // Sales leaderboard for the dashboard: top customers (by invoiced revenue)
+    // and top products (by invoiced value). Both exclude cancelled / deleted
+    // invoices and convert to ₹ via the invoice's exchange_rate (foreign per ₹1).
+    async salesLeaderboard(
+        companyId: string,
+        limit = 5
+    ): Promise<{
+        top_customers: Array<{
+            customer_id: string;
+            name: string;
+            amount_inr: string;
+            invoices: number;
+        }>;
+        top_products: Array<{
+            product_id: string;
+            name: string;
+            amount_inr: string;
+            qty: string;
+        }>;
+    }> {
+        const lim = Math.max(1, Math.min(20, Number(limit) || 5));
+        const customers = await this.dataSource.query(
+            `SELECT i.customer_id AS customer_id,
+                    COALESCE(c.company_name, '—') AS name,
+                    COALESCE(SUM(
+                        i.grand_total / COALESCE(NULLIF(i.exchange_rate, 0), 1)
+                    ), 0)::float8 AS amount_inr,
+                    COUNT(*)::int AS invoices
+             FROM invoices i
+             LEFT JOIN customers c ON c._id = i.customer_id
+             WHERE i.company_id = $1
+               AND i.soft_delete = false
+               AND i.status <> 'cancelled'
+               AND i.customer_id IS NOT NULL
+             GROUP BY i.customer_id, c.company_name
+             ORDER BY amount_inr DESC
+             LIMIT $2`,
+            [companyId, lim]
+        );
+        const products = await this.dataSource.query(
+            `SELECT il.product_id AS product_id,
+                    COALESCE(p.name, MAX(il.product_name), '—') AS name,
+                    COALESCE(SUM(
+                        il.line_total / COALESCE(NULLIF(i.exchange_rate, 0), 1)
+                    ), 0)::float8 AS amount_inr,
+                    COALESCE(SUM(il.qty), 0)::float8 AS qty
+             FROM invoice_lines il
+             JOIN invoices i ON i._id = il.invoice_id
+             LEFT JOIN products p ON p._id = il.product_id
+             WHERE i.company_id = $1
+               AND i.soft_delete = false
+               AND i.status <> 'cancelled'
+               AND il.product_id IS NOT NULL
+             GROUP BY il.product_id, p.name
+             ORDER BY amount_inr DESC
+             LIMIT $2`,
+            [companyId, lim]
+        );
+        return {
+            top_customers: (customers as any[]).map((r) => ({
+                customer_id: r.customer_id,
+                name: r.name,
+                amount_inr: (Number(r.amount_inr) || 0).toFixed(2),
+                invoices: Number(r.invoices) || 0,
+            })),
+            top_products: (products as any[]).map((r) => ({
+                product_id: r.product_id,
+                name: r.name,
+                amount_inr: (Number(r.amount_inr) || 0).toFixed(2),
+                qty: String(Number(r.qty) || 0),
+            })),
         };
     }
 }

@@ -159,6 +159,20 @@ export class InvoiceAdminController {
         return { data };
     }
 
+    @Response('invoice.leaderboard')
+    @AuthJwtAccessProtected()
+    @Get('/leaderboard')
+    async leaderboard(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('limit') limit?: string
+    ): Promise<IResponse<any>> {
+        const data = await this.invoiceService.salesLeaderboard(
+            companyId,
+            limit ? Number(limit) : 5
+        );
+        return { data };
+    }
+
     @Response('invoice.po-addable')
     @AuthJwtAccessProtected()
     @Get('/po-addable/:poId')
