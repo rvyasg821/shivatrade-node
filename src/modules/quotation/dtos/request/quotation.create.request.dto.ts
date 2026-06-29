@@ -73,6 +73,11 @@ export class QuotationLineCreateDto {
     @IsOptional()
     margin_pct?: string;
 
+    @IsString()
+    @IsOptional()
+    @MaxLength(120)
+    part_no?: string;
+
     @IsArray()
     @IsOptional()
     product_rebates_snapshot?: Array<{

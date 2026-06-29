@@ -31,9 +31,11 @@ export enum ENUM_TRACKING_EVENT_TYPE {
     // GRN (Goods Receipt Note) lifecycle, surfaced on the parent POV timeline.
     GRN_CONFIRMED = 'grn_confirmed',
     GRN_CANCELLED = 'grn_cancelled',
+    GRN_REVERTED = 'grn_reverted',
     // Debit Note (vendor return) lifecycle, surfaced on the parent POV timeline.
     DEBIT_NOTE_ISSUED = 'debit_note_issued',
     DEBIT_NOTE_CANCELLED = 'debit_note_cancelled',
+    DEBIT_NOTE_REVERTED = 'debit_note_reverted',
 }
 
 /** Subset that are emitted by the system, not picked by users. */
@@ -47,8 +49,10 @@ export const SYSTEM_TRACKING_EVENT_TYPES: string[] = [
     ENUM_TRACKING_EVENT_TYPE.POV_PAYMENT_VOIDED,
     ENUM_TRACKING_EVENT_TYPE.GRN_CONFIRMED,
     ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
+    ENUM_TRACKING_EVENT_TYPE.GRN_REVERTED,
     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_ISSUED,
     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_CANCELLED,
+    ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_REVERTED,
 ];
 
 export const TRACKING_EVENT_TYPE_VALUES: string[] = Object.values(

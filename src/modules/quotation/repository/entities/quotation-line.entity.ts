@@ -129,6 +129,10 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     // ── Export / Shipping fields (mirrors PFI line). Optional on quote;
     //   become authoritative once the line is copied into a PFI. ──
 
+    /** Vendor/manufacturer part number — auto-filled from product, overridable. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    part_no?: string;
+
     /** HS / HSN code — auto-filled from product.hsn_code, overridable. */
     @Column({ type: 'varchar', length: 15, nullable: true })
     hs_code?: string;

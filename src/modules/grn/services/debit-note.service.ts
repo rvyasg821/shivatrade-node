@@ -382,7 +382,8 @@ export class DebitNoteService {
             round4(allLines.reduce((s, l: any) => s + num(l.line_total), 0))
         );
 
-        // Status transition: draft → issued / cancelled, issued → cancelled.
+        // Status transition: draft → issued / cancelled, issued → cancelled,
+        // issued → draft (revert for editing).
         if (dto.status !== undefined && dto.status !== dn.status) {
             const from = dn.status;
             const ok =
@@ -390,7 +391,8 @@ export class DebitNoteService {
                     (dto.status === ENUM_DEBIT_NOTE_STATUS.ISSUED ||
                         dto.status === ENUM_DEBIT_NOTE_STATUS.CANCELLED)) ||
                 (from === ENUM_DEBIT_NOTE_STATUS.ISSUED &&
-                    dto.status === ENUM_DEBIT_NOTE_STATUS.CANCELLED);
+                    (dto.status === ENUM_DEBIT_NOTE_STATUS.CANCELLED ||
+                        dto.status === ENUM_DEBIT_NOTE_STATUS.DRAFT));
             if (!ok) {
                 throw new BadRequestException(
                     `Cannot change Debit Note status from ${from} to ${dto.status}.`
@@ -419,6 +421,14 @@ export class DebitNoteService {
                     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_CANCELLED,
                     userId,
                     `Debit Note ${dn.voucher_no || dnId} cancelled.`
+                );
+            } else if (dto.status === ENUM_DEBIT_NOTE_STATUS.DRAFT) {
+                await this.emitPovEvent(
+                    companyId,
+                    povId,
+                    ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_REVERTED,
+                    userId,
+                    `Debit Note ${dn.voucher_no || dnId} reverted to draft for editing.`
                 );
             }
         }

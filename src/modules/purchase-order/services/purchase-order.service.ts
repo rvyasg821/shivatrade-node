@@ -589,6 +589,7 @@ export class PurchaseOrderService {
                 source_pfi_line_id: l.source_pfi_line_id || null,
                 description: l.description || null,
                 customer_reference: l.customer_reference || null,
+                part_no: l.part_no || null,
                 hsn_code: l.hsn_code || null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
@@ -1864,7 +1865,10 @@ export class PurchaseOrderService {
                 source_quotation_line_id: l._id.toString(),
                 description: l.description || product?.description || '',
                 customer_reference: l.customer_reference || undefined,
-                hsn_code: product?.hsn_code || l.hsn_code || '',
+                part_no: l.part_no || product?.part_no || '',
+                // Quotation lines store the code under `hs_code`; prefer the
+                // value entered on the quotation, fall back to the product.
+                hsn_code: l.hs_code || product?.hsn_code || '',
                 qty: String(l.qty || '0'),
                 unit: l.unit || product?.unit_of_measure || '',
                 unit_price: String(l.unit_price || '0'),
@@ -2191,9 +2195,8 @@ export class PurchaseOrderService {
                             product_id: l.product_id?.toString(),
                             product_name: prod?.name,
                             product_code: prod?.code,
-                            // part_no isn't stored on the PO line (same as the
-                            // quotation) — derive it from the product master so
-                            // the worksheet's Part No column isn't blank.
+                            // Prefer the per-line value the user entered; fall
+                            // back to the product master (older rows / blanks).
                             part_no: (l as any).part_no || prod?.part_no,
                             vendor_id: lineVendorId,
                             vendor_name: lineVendor?.company_name,

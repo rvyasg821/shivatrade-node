@@ -56,6 +56,11 @@ export class PurchaseOrderLineCreateDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(120)
+    part_no?: string;
+
+    @IsString()
+    @IsOptional()
     @MaxLength(15)
     hsn_code?: string;
 
