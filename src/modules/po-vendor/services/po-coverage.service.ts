@@ -196,13 +196,16 @@ export class PoCoverageService {
                 };
             const ordered = num(pol.qty);
             const pending = round4(ordered - a.consumed);
-            // Short = physical loss only: qty that left the vendor on a
-            // CLOSED POV but never arrived (dispatched − received). Under-
-            // dispatch is NOT counted here — those units never left the
-            // vendor, and the recovery POV flow makes them visible via
-            // `pending` instead. Keeps the column intuitive: Short ≈ GRN
-            // loss number, no historical accumulation.
-            const short = round4(a.lost);
+            // Short = physical loss that actually leaves the ORDER unfulfilled:
+            // qty that left the vendor on a CLOSED POV but never arrived
+            // (dispatched − received), capped at the line's still-pending qty.
+            // The cap prevents an over-dispatch loss (vendor dispatched MORE
+            // than ordered, the excess lost) from showing as "short" when the
+            // ordered qty was fully received — that excess was never needed.
+            // Under-dispatch isn't counted (those units never left the vendor;
+            // the recovery POV flow surfaces them via `pending`). The raw,
+            // uncapped figure is still exposed separately as `lost`.
+            const short = round4(Math.min(a.lost, Math.max(0, pending)));
             const product = pol.product_id
                 ? productMap.get(pol.product_id.toString())
                 : null;
