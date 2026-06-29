@@ -37,6 +37,10 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     description?: string;
 
+    /** Snapshot of the part number at POV creation. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    part_no?: string;
+
     /** Snapshot of HSN. */
     @Column({ type: 'varchar', length: 15, nullable: true })
     hsn_code?: string;

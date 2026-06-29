@@ -68,6 +68,11 @@ export class PoVendorStandaloneLineDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(120)
+    part_no?: string;
+
+    @IsString()
+    @IsOptional()
     @MaxLength(50)
     hsn_code?: string;
 

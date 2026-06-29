@@ -231,6 +231,7 @@ export class PoCoverageService {
                 product_id: pol.product_id?.toString(),
                 product_name: (product as any)?.name,
                 product_code: (product as any)?.code,
+                part_no: pol.part_no || (product as any)?.part_no || undefined,
                 hsn_code: pol.hsn_code || undefined,
                 unit: pol.unit || undefined,
                 ordered: String(round4(ordered)),

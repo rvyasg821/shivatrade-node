@@ -265,7 +265,7 @@ export class DebitNoteService {
                 product_id: gl.product_id,
                 description: gl.description || null,
                 hsn_code: gl.hsn_code || prod?.hsn_code || null,
-                part_no: prod?.part_no || null,
+                part_no: gl.part_no || prod?.part_no || null,
                 unit: gl.unit || null,
                 rejected_qty: String(rejected),
                 returned_qty: String(returned),
@@ -382,8 +382,7 @@ export class DebitNoteService {
             round4(allLines.reduce((s, l: any) => s + num(l.line_total), 0))
         );
 
-        // Status transition: draft → issued / cancelled, issued → cancelled,
-        // issued → draft (revert for editing).
+        // Status transition: draft → issued / cancelled, issued → cancelled.
         if (dto.status !== undefined && dto.status !== dn.status) {
             const from = dn.status;
             const ok =
@@ -391,8 +390,7 @@ export class DebitNoteService {
                     (dto.status === ENUM_DEBIT_NOTE_STATUS.ISSUED ||
                         dto.status === ENUM_DEBIT_NOTE_STATUS.CANCELLED)) ||
                 (from === ENUM_DEBIT_NOTE_STATUS.ISSUED &&
-                    (dto.status === ENUM_DEBIT_NOTE_STATUS.CANCELLED ||
-                        dto.status === ENUM_DEBIT_NOTE_STATUS.DRAFT));
+                    dto.status === ENUM_DEBIT_NOTE_STATUS.CANCELLED);
             if (!ok) {
                 throw new BadRequestException(
                     `Cannot change Debit Note status from ${from} to ${dto.status}.`
@@ -421,14 +419,6 @@ export class DebitNoteService {
                     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_CANCELLED,
                     userId,
                     `Debit Note ${dn.voucher_no || dnId} cancelled.`
-                );
-            } else if (dto.status === ENUM_DEBIT_NOTE_STATUS.DRAFT) {
-                await this.emitPovEvent(
-                    companyId,
-                    povId,
-                    ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_REVERTED,
-                    userId,
-                    `Debit Note ${dn.voucher_no || dnId} reverted to draft for editing.`
                 );
             }
         }
