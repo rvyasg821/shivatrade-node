@@ -2546,7 +2546,6 @@ export class PurchaseOrderService {
                     COALESCE((
                         SELECT SUM(pol.qty) FROM purchase_order_lines pol
                         WHERE pol.purchase_order_id = po._id
-                          AND pol.soft_delete = false
                     ), 0) AS ordered,
                     COALESCE((
                         SELECT SUM(pvl.ordered_qty) FROM po_vendor_lines pvl
