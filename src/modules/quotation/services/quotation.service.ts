@@ -652,39 +652,40 @@ export class QuotationService {
             ln.taxable = String(split.taxable);
 
             // Sequential costing per spec:
-            //   Taxable → − Rebates → + Expenses → + Margin → + GST
+            //   Taxable → + Expenses → − Rebates → + Margin → + GST
             // Each % step applies to the running balance from the previous
-            // step, NOT to the gross Taxable.
+            // step. Rebates (DBK/RODTEP export incentives) are % of the FOB
+            // value = Taxable + Expenses, so they run AFTER expenses.
+            let lineExpensesAmt = 0;
+            for (const e of (ln as any).product_expenses_snapshot || []) {
+                lineExpensesAmt +=
+                    e.type === 'percent'
+                        ? (split.taxable * num(e.value)) / 100
+                        : num(e.value);
+            }
+            const afterExpenses = split.taxable + lineExpensesAmt;
+            // Rebate % applies on the post-expense total (FOB value).
             let lineRebatesAmt = 0;
             for (const r of (ln as any).product_rebates_snapshot || []) {
                 lineRebatesAmt +=
                     r.type === 'fixed'
                         ? num(r.pct)
-                        : (split.taxable * num(r.pct)) / 100;
-            }
-            const afterRebates = split.taxable - lineRebatesAmt;
-            // Expense % applies on the post-rebate balance.
-            let lineExpensesAmt = 0;
-            for (const e of (ln as any).product_expenses_snapshot || []) {
-                lineExpensesAmt +=
-                    e.type === 'percent'
-                        ? (afterRebates * num(e.value)) / 100
-                        : num(e.value);
+                        : (afterExpenses * num(r.pct)) / 100;
             }
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
             (ln as any).product_expenses_amount = String(round2(lineExpensesAmt));
 
-            // Margin % applies on the post-expense balance.
-            const afterExpenses = afterRebates + lineExpensesAmt;
+            // Margin % applies on the post-rebate balance.
+            const afterRebates = afterExpenses - lineRebatesAmt;
             const lineMarginPct = num((ln as any).margin_pct);
-            const lineMarginAmt = afterExpenses * (lineMarginPct / 100);
+            const lineMarginAmt = afterRebates * (lineMarginPct / 100);
             (ln as any).margin_amount = String(round2(lineMarginAmt));
 
             // GST: per-line tax_pct is still captured on the line for
             // reference (user enters it in the modal) but is NOT rolled
             // into line_total or doc totals on Quotation. cgst/sgst/igst
             // are forced to zero so legacy readers don't see stale tax.
-            const lineNetTotal = afterExpenses + lineMarginAmt;
+            const lineNetTotal = afterRebates + lineMarginAmt;
             ln.cgst = '0';
             ln.sgst = '0';
             ln.igst = '0';
