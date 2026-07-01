@@ -2123,6 +2123,20 @@ export class PoVendorService {
         const poIds = unique(rows.map(r => (r as any).purchase_order_id?.toString()));
         const vendorIds = unique(rows.map(r => (r as any).vendor_id?.toString()));
 
+        // Company default POV remarks — the PDF fallback when a POV has no
+        // `notes`. Single-tenant: all rows share one company, so fetch once.
+        let companyPovRemarks = '';
+        try {
+            const cid = (rows[0] as any)?.company_id?.toString();
+            if (cid) {
+                const co: any = await this.companyService.findOneById(cid);
+                companyPovRemarks =
+                    co?.pov_default_remarks || co?.default_remarks || '';
+            }
+        } catch {
+            /* graceful — leave blank */
+        }
+
         const allLines = await this.povLineRepository.findAll({
             po_vendor_id: { $in: povIds },
         } as any);
@@ -2310,6 +2324,8 @@ export class PoVendorService {
                 delivery_address: r.delivery_address,
                 delivery_address_id: r.delivery_address_id?.toString(),
                 notes: r.notes || undefined,
+                effective_remarks:
+                    r.notes || companyPovRemarks || undefined,
                 internal_notes: r.internal_notes || undefined,
 
                 currency_code: r.currency_code || 'INR',

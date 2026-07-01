@@ -77,6 +77,9 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: true, type: String }) delivery_address: string;
     @ApiProperty({ required: false, type: String }) delivery_address_id?: string;
     @ApiProperty({ required: false, type: String }) notes?: string;
+    /** Remarks that actually print on the PDF: per-POV `notes` when set,
+     *  otherwise the company's default POV remarks. Read-only (display). */
+    @ApiProperty({ required: false, type: String }) effective_remarks?: string;
     @ApiProperty({ required: false, type: String }) internal_notes?: string;
 
     @ApiProperty({ required: true, type: String }) currency_code: string;

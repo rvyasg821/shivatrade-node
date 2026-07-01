@@ -9,6 +9,14 @@ import { VendorAddressRepository } from '@modules/vendor/repository/repositories
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
+import {
+    escHtml as esc,
+    fmt2 as fmt,
+    fmt4,
+    tallyDate,
+    joinAddress,
+    buildTallyFooterTemplate as buildFooterTemplate,
+} from '@common/pdf/tally-pdf.util';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
 
 /**
@@ -373,71 +381,7 @@ interface PoPdfContext {
     inrTotal: number;
 }
 
-// ─── helpers ────────────────────────────────────────────────────────────
-
-const esc = (v: any): string =>
-    v == null
-        ? ''
-        : String(v)
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;');
-
-const fmt = (v: any): string => {
-    const n = Number(v);
-    if (!isFinite(n)) return esc(v);
-    return n.toLocaleString('en-IN', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    });
-};
-
-
-// 4-decimal money (Tally export rate/amount style, e.g. "2.6880").
-const fmt4 = (v: any): string => {
-    const n = Number(v);
-    if (!isFinite(n)) return esc(v);
-    return n.toLocaleString('en-US', {
-        minimumFractionDigits: 4,
-        maximumFractionDigits: 4,
-    });
-};
-
-const TALLY_MONTHS = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-// "2026-06-03" → "3-Jun-26" (Tally voucher date format).
-const tallyDate = (v?: string | null): string => {
-    if (!v) return '';
-    const s = String(v).slice(0, 10);
-    const [y, m, d] = s.split('-').map(Number);
-    if (!y || !m || !d) return esc(s);
-    return `${d}-${TALLY_MONTHS[m - 1] || m}-${String(y).slice(2)}`;
-};
-
-function joinAddress(a: {
-    address_line1?: string;
-    address_line2?: string;
-    city?: string;
-    state?: string;
-    postcode?: string;
-    country?: string;
-}): string | undefined {
-    const parts: string[] = [];
-    if (a.address_line1) parts.push(a.address_line1);
-    if (a.address_line2) parts.push(a.address_line2);
-    const cityLine = [a.city, a.state, a.postcode].filter(Boolean).join(', ');
-    if (cityLine) parts.push(cityLine);
-    if (a.country) parts.push(a.country);
-    return parts.length ? parts.join('\n') : undefined;
-}
-
-// Centred "computer generated" note, repeated at the bottom of every page.
-function buildFooterTemplate(): string {
-    return `<div style="width:100%;font-size:8px;color:#444;text-align:center;font-family:Arial,Helvetica,sans-serif;padding-top:2px;">This is a Computer Generated Document</div>`;
-}
+// ─── helpers (shared Tally primitives live in tally-pdf.util) ───────────
 
 function buildPoHtml(ctx: PoPdfContext): string {
     const { po, company, customer, bank, amountInWords, inrTotal } = ctx;
