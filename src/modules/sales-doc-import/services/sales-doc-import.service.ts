@@ -77,23 +77,25 @@ function computeLineCosting(l: SalesDocExportLineDto) {
     const gross = r2(qty * price);
     const discountAmt = r2((gross * disc) / 100);
     const taxable = r2(gross - discountAmt);
-    let rebatesAmt = 0;
-    for (const r of l.product_rebates_snapshot || []) {
-        if ((r as any).type === 'fixed') rebatesAmt += num((r as any).pct);
-        else rebatesAmt += (taxable * num((r as any).pct)) / 100;
-    }
-    rebatesAmt = r2(rebatesAmt);
-    const afterRebates = r2(taxable - rebatesAmt);
+    // Expenses first — % on taxable, fixed as-is.
     let expensesAmt = 0;
     for (const e of l.product_expenses_snapshot || []) {
         if ((e as any).type === 'percent')
-            expensesAmt += (afterRebates * num((e as any).value)) / 100;
+            expensesAmt += (taxable * num((e as any).value)) / 100;
         else expensesAmt += num((e as any).value);
     }
     expensesAmt = r2(expensesAmt);
-    const afterExpenses = r2(afterRebates + expensesAmt);
-    const margin = r2((afterExpenses * num(l.margin_pct)) / 100);
-    const netTotal = r2(afterExpenses + margin);
+    const afterExpenses = r2(taxable + expensesAmt);
+    // Rebates on the post-expense total (FOB = taxable + expenses).
+    let rebatesAmt = 0;
+    for (const r of l.product_rebates_snapshot || []) {
+        if ((r as any).type === 'fixed') rebatesAmt += num((r as any).pct);
+        else rebatesAmt += (afterExpenses * num((r as any).pct)) / 100;
+    }
+    rebatesAmt = r2(rebatesAmt);
+    const afterRebates = r2(afterExpenses - rebatesAmt);
+    const margin = r2((afterRebates * num(l.margin_pct)) / 100);
+    const netTotal = r2(afterRebates + margin);
     const gst = r2((netTotal * num(l.tax_pct)) / 100);
     return {
         gross,

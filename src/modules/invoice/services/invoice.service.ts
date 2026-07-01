@@ -960,9 +960,10 @@ export class InvoiceService {
         // source of truth) so the invoice total equals the quotation total.
         // SEQUENTIAL on the running amount:
         //   taxable      = qty × unit_price × (1 − discount_pct/100)
-        //   − rebates     (Σ snapshot, computed on `taxable`)
-        //   + expenses    (Σ snapshot, computed on the AFTER-rebate amount)
-        //   + margin      (margin_pct, computed on the AFTER-expense amount)
+        //   + expenses    (Σ snapshot, computed on `taxable`)
+        //   − rebates     (Σ snapshot, computed on the AFTER-expense total /
+        //                  FOB value — DBK/RODTEP export incentives)
+        //   + margin      (margin_pct, computed on the AFTER-rebate amount)
         // Keep everything unrounded through the chain; round only line_net.
         // On export tax_pct = 0 → cgst/sgst/igst stay 0.
         let subtotal = 0;
@@ -972,19 +973,19 @@ export class InvoiceService {
             const discount = num(l.discount_pct);
             const taxable = qty * price * (1 - discount / 100);
 
-            const rebatesTotal = sumRebates(
-                l.product_rebates_snapshot,
-                taxable
-            );
-            const afterRebate = taxable - rebatesTotal;
             const expensesTotal = sumExpenses(
                 l.product_expenses_snapshot,
-                afterRebate
+                taxable
             );
-            const afterExpense = afterRebate + expensesTotal;
+            const afterExpense = taxable + expensesTotal;
+            const rebatesTotal = sumRebates(
+                l.product_rebates_snapshot,
+                afterExpense
+            );
+            const afterRebate = afterExpense - rebatesTotal;
             const marginPct = num((l as any).margin_pct);
-            const marginAmt = (afterExpense * marginPct) / 100;
-            const lineNet = round2(afterExpense + marginAmt);
+            const marginAmt = (afterRebate * marginPct) / 100;
+            const lineNet = round2(afterRebate + marginAmt);
 
             l.taxable_amount = String(lineNet);
             l.cgst_amount = '0';

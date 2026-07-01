@@ -77,7 +77,10 @@ export class PermissionGuard implements CanActivate {
         user: IUnifiedAuthJwtAccessTokenPayload,
         permission: IPermissionMetadata
     ): Promise<boolean> {
-        // Tenant users not supported - multi-tenant feature removed
-        throw new ForbiddenException('Tenant users not supported');
+        // Multi-tenant was removed: former "tenant" users (Location Admin,
+        // Employee, custom company roles) now live in the central database and
+        // are permission-checked exactly like master users. Delegate to the
+        // shared role-lookup + hasPermission logic instead of hard-blocking.
+        return this.checkMasterUserPermission(user, permission);
     }
 }

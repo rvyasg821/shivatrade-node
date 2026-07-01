@@ -629,7 +629,8 @@ export class PurchaseOrderService {
      *   Per line:
      *     taxable        = qty × unit_price × (1 − disc/100)
      *     line_expenses  = Σ snapshot (percent → taxable × v/100; fixed → v)
-     *     line_rebates   = Σ snapshot (percent → taxable × p/100; fixed → p)
+     *     line_rebates   = Σ snapshot (percent → (taxable + line_expenses) × p/100; fixed → p)
+     *                      — DBK/RODTEP export incentives on FOB value (taxable + expenses)
      *     line_margin    = (taxable + line_expenses − line_rebates) × margin_pct/100
      *     line_net       = taxable + line_expenses − line_rebates + line_margin
      *     line_tax       = line_net × tax_pct/100               (split CGST/SGST or IGST)
@@ -717,19 +718,23 @@ export class PurchaseOrderService {
                 company_state: companyState,
             });
 
-            let lineRebatesAmt = 0;
-            for (const r of src?.product_rebates_snapshot || []) {
-                lineRebatesAmt +=
-                    r.type === 'fixed'
-                        ? num(r.pct)
-                        : (split.taxable * num(r.pct)) / 100;
-            }
+            // Expenses first — % on taxable, fixed as-is.
             let lineExpensesAmt = 0;
             for (const e of src?.product_expenses_snapshot || []) {
                 lineExpensesAmt +=
                     e.type === 'percent'
                         ? (split.taxable * num(e.value)) / 100
                         : num(e.value);
+            }
+            // Rebates on the post-expense total (FOB = taxable + expenses):
+            // % on that base, fixed as-is.
+            const lineFobBase = split.taxable + lineExpensesAmt;
+            let lineRebatesAmt = 0;
+            for (const r of src?.product_rebates_snapshot || []) {
+                lineRebatesAmt +=
+                    r.type === 'fixed'
+                        ? num(r.pct)
+                        : (lineFobBase * num(r.pct)) / 100;
             }
 
             const lineMarginPct = num(src?.margin_pct);
