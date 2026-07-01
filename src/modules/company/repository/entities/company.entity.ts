@@ -108,6 +108,11 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     default_remarks?: string;
 
+    /** Default remarks block printed on the Vendor Purchase Order (POV) PDF.
+     *  Falls back to `default_remarks` when blank. Editable in company settings. */
+    @Column({ type: 'text', nullable: true })
+    pov_default_remarks?: string;
+
     /** Name printed under the authorized-signatory block on PFI / PO PDFs. */
     @Column({ type: 'varchar', length: 150, nullable: true })
     authorised_signatory_name?: string;

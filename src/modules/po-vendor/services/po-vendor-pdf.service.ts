@@ -6,6 +6,14 @@ import {
     buildPdfFooterTemplate,
     loadCompanyLogoDataUri,
 } from '@common/pdf/pdf-letterhead.util';
+import {
+    escHtml as esc,
+    fmt2 as fmt,
+    tallyDate,
+    joinAddress,
+    buildTallyFooterTemplate,
+} from '@common/pdf/tally-pdf.util';
+import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
@@ -43,14 +51,17 @@ export class PoVendorPdfService {
         return this.pdfService.generateFromHtml(html, {
             format: 'A4',
             margin: {
-                top: '18mm',
-                right: '12mm',
-                bottom: '18mm',
-                left: '12mm',
+                top: '8mm',
+                right: '8mm',
+                bottom: '12mm',
+                left: '8mm',
             },
             displayHeaderFooter: true,
-            headerTemplate: buildHeaderTemplate(ctx),
-            footerTemplate: buildFooterTemplate(ctx),
+            // Tally-style: the company letterhead lives inside the bordered
+            // box, not in a running header. Only a centred "computer
+            // generated" note repeats in the page footer.
+            headerTemplate: '<div></div>',
+            footerTemplate: buildTallyFooterTemplate(),
         });
     }
 
@@ -103,6 +114,7 @@ export class PoVendorPdfService {
 
         let companyAddress: string | undefined;
         let companyGstin: string | undefined;
+        let companyState: string | undefined;
         try {
             const addresses =
                 await this.companyAddressRepository.findByCompanyId(companyId);
@@ -123,10 +135,12 @@ export class PoVendorPdfService {
                     country: (corp as any).country,
                 });
                 companyGstin = (corp as any).gstin || undefined;
+                companyState = (corp as any).state || undefined;
             }
         } catch {
             /* graceful */
         }
+        if (!companyState && company?.state) companyState = company.state;
         if (!companyAddress && company) {
             companyAddress = joinAddress({
                 address_line1: company.address_1,
@@ -160,6 +174,7 @@ export class PoVendorPdfService {
         // Vendor address (preferred → vendor_address_id; fallback → default).
         let vendorAddress: string | undefined;
         let vendorGstin: string | undefined;
+        let vendorState: string | undefined;
         if (pov.vendor_id) {
             try {
                 const addr = pov.vendor_address_id
@@ -187,11 +202,22 @@ export class PoVendorPdfService {
                         country: a.country,
                     });
                     vendorGstin = a.gstin || undefined;
+                    vendorState = a.state || undefined;
                 }
             } catch {
                 /* graceful */
             }
         }
+
+        // GST state code = first two digits of the GSTIN (GST convention).
+        const stateCode =
+            companyGstin && /^\d{2}/.test(companyGstin)
+                ? companyGstin.slice(0, 2)
+                : '';
+        const vendorStateCode =
+            vendorGstin && /^\d{2}/.test(vendorGstin)
+                ? vendorGstin.slice(0, 2)
+                : '';
 
         const linesInrTotal = (pov.lines || []).reduce(
             (s, l) => s + (Number((l as any).line_total) || 0),
@@ -268,7 +294,19 @@ export class PoVendorPdfService {
                 website: company?.website || '',
                 footer_address: company?.footer_address || '',
                 address: companyAddress,
+                state: companyState || '',
+                stateCode,
+                remarks:
+                    company?.pov_default_remarks ||
+                    company?.default_remarks ||
+                    '',
                 signatory: company?.authorised_signatory_name || '',
+            },
+            consignee: {
+                name: company?.company_name || '',
+                address: pov.delivery_address || companyAddress || '',
+                gstin: companyGstin,
+                state: companyState || '',
             },
             vendor: {
                 name: pov.vendor_name || '',
@@ -277,6 +315,8 @@ export class PoVendorPdfService {
                 phone: pov.vendor_contact_phone || '',
                 gstin: vendorGstin,
                 address: vendorAddress,
+                state: vendorState || '',
+                stateCode: vendorStateCode,
             },
             inrTotal: linesInrTotal,
             gstInrTotal,
@@ -302,7 +342,16 @@ interface PovPdfContext {
         website?: string;
         footer_address?: string;
         address?: string;
+        state?: string;
+        stateCode?: string;
+        remarks?: string;
         signatory?: string;
+    };
+    consignee: {
+        name: string;
+        address?: string;
+        gstin?: string;
+        state?: string;
     };
     vendor: {
         name: string;
@@ -311,6 +360,8 @@ interface PovPdfContext {
         phone?: string;
         gstin?: string;
         address?: string;
+        state?: string;
+        stateCode?: string;
     };
     inrTotal: number;
     gstInrTotal: number;
@@ -323,55 +374,12 @@ interface PovPdfContext {
     }>;
 }
 
-// ─── helpers ────────────────────────────────────────────────────────────
-
-const esc = (v: any): string =>
-    v == null
-        ? ''
-        : String(v)
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;');
-
-const fmt = (v: any): string => {
-    const n = Number(v);
-    if (!isFinite(n)) return esc(v);
-    return n.toLocaleString('en-IN', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    });
-};
+// ─── helpers (shared Tally primitives live in tally-pdf.util) ───────────
 
 const ccyMoney = (sym: string, v: any): string => `${sym}${fmt(v)}`;
 
 const dateOnly = (v?: string | null): string =>
     v ? esc(String(v).slice(0, 10)) : '';
-
-function joinAddress(a: {
-    address_line1?: string;
-    address_line2?: string;
-    city?: string;
-    state?: string;
-    postcode?: string;
-    country?: string;
-}): string | undefined {
-    const parts: string[] = [];
-    if (a.address_line1) parts.push(a.address_line1);
-    if (a.address_line2) parts.push(a.address_line2);
-    const cityLine = [a.city, a.state, a.postcode].filter(Boolean).join(', ');
-    if (cityLine) parts.push(cityLine);
-    if (a.country) parts.push(a.country);
-    return parts.length ? parts.join('\n') : undefined;
-}
-
-function buildHeaderTemplate(ctx: PovPdfContext): string {
-    return buildPdfHeaderTemplate({
-        companyName: ctx.company.name,
-        docLabel: 'DISPATCH ADVICE',
-        voucherNo: ctx.pov.voucher_no || '',
-    });
-}
 
 // Footer identity line — GSTIN · PAN · CIN · IEC · website.
 function buildFooterIdLine(ctx: PovPdfContext): string {
@@ -384,14 +392,6 @@ function buildFooterIdLine(ctx: PovPdfContext): string {
     ]
         .filter(Boolean)
         .join('  ·  ');
-}
-
-function buildFooterTemplate(ctx: PovPdfContext): string {
-    return buildPdfFooterTemplate({
-        voucherNo: ctx.pov.voucher_no || '',
-        addressLine: ctx.company.footer_address || '',
-        idLine: buildFooterIdLine(ctx),
-    });
 }
 
 // ─── Payment voucher (STIPL/PV/…) ───────────────────────────────────────
@@ -554,26 +554,23 @@ function buildPaymentVoucherHtml(
 }
 
 function buildPovHtml(ctx: PovPdfContext): string {
-    const { pov, company, vendor, inrTotal, gstInrTotal, chargesInrTotal, expensesSnapshot } = ctx;
+    const {
+        pov,
+        company,
+        consignee,
+        vendor,
+        inrTotal,
+        gstInrTotal,
+        chargesInrTotal,
+        expensesSnapshot,
+    } = ctx;
     const lines = pov.lines || [];
 
-    // Shared letterhead — logo + company identity (name/phone/email) on the
-    // left, doc meta on the right. Address + tax IDs print in the footer.
-    const letterhead = buildPdfLetterhead(
-        {
-            logoDataUri: ctx.logoDataUri,
-            name: company.name,
-            phone: company.phone,
-            email: company.email,
-        },
-        {
-            title: 'Dispatch Advice',
-            voucherNo: pov.voucher_no || '-',
-            statusBadge: pov.status || '',
-        }
-    );
     const sym = pov.currency_symbol || pov.currency_code || '₹';
     const rate = Number(pov.exchange_rate) || 1;
+
+    // Money chain (INR internal → customer currency via rate). Matches the
+    // dispatch-advice totals: Subtotal + Charges = Taxable; + CGST/SGST; round.
     const subtotalCcy = inrTotal * rate;
     const chargesCcy = chargesInrTotal * rate;
     const taxableCcy = subtotalCcy + chargesCcy;
@@ -584,316 +581,228 @@ function buildPovHtml(ctx: PovPdfContext): string {
     const grandTotalCcy = Math.round(grandRawCcy);
     const roundOffCcy = grandTotalCcy - grandRawCcy;
 
+    const amountInWords = numberToIndianWords(
+        grandTotalCcy,
+        pov.currency_code || 'INR'
+    );
+
+    // Right-hand meta cell — small label over a bold value.
+    const meta = (label: string, value: any): string =>
+        `<div class="ml">${esc(label)}</div><div class="mv">${value == null || value === '' ? '&nbsp;' : esc(value)}</div>`;
+
+    const totalQty = lines.reduce((s, l) => s + (Number(l.ordered_qty) || 0), 0);
+    const unitSet = new Set(lines.map((l) => l.unit).filter(Boolean));
+    const totalUnit = unitSet.size === 1 ? `${[...unitSet][0]}` : '';
+
+    const orderDate =
+        pov.dispatch_date || (pov.createdAt ? String(pov.createdAt) : '');
+
     const linesRows = lines.length
         ? lines
               .map((l, i) => {
                   const qty = Number(l.ordered_qty) || 0;
                   const lineTotalCcy = (Number(l.line_total) || 0) * rate;
-                  const effRate =
+                  const rateCcy =
                       qty > 0
                           ? lineTotalCcy / qty
                           : (Number(l.unit_price) || 0) * rate;
+                  const dueOn = tallyDate(pov.expected_arrival_date);
+                  const sub = [l.product_code, l.part_no]
+                      .filter(Boolean)
+                      .join(' · ');
                   return `
         <tr>
-          <td class="muted">${i + 1}</td>
-          <td><div class="fw">${esc(l.product_name || '-')}</div></td>
-          <td class="num">${l.ordered_qty ? fmt(l.ordered_qty) : '-'}</td>
-          <td>${esc(l.unit || '-')}</td>
-          <td class="num">${ccyMoney(sym, effRate)}</td>
-          <td class="num fw">${ccyMoney(sym, lineTotalCcy)}</td>
+          <td class="c">${i + 1}</td>
+          <td class="desc"><b>${esc(l.product_name || '-')}</b>${sub ? `<div class="sub ital">${esc(sub)}</div>` : ''}${l.hsn_code ? `<div class="sub">HSN: ${esc(l.hsn_code)}</div>` : ''}</td>
+          <td class="c nowrap">${dueOn}</td>
+          <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
+          <td class="num nowrap">${fmt(rateCcy)}</td>
+          <td class="c">${esc(l.unit || '')}</td>
+          <td class="num"></td>
+          <td class="num nowrap"><b>${fmt(lineTotalCcy)}</b></td>
         </tr>`;
               })
               .join('')
-        : `<tr><td colspan="6" class="muted" style="text-align:center;padding:18px">No line items.</td></tr>`;
+        : `<tr><td colspan="8" class="c muted" style="padding:16px">No line items.</td></tr>`;
 
-    const transportRows: Array<[string, any]> = [
-        ['Transporter', pov.transporter_name],
-        ['Vehicle No.', pov.vehicle_no],
-        ['LR No.', pov.lr_no],
-        ['LR Date', dateOnly(pov.lr_date)],
-        ['E-way Bill', pov.eway_bill_no],
-        ['E-way Date', dateOnly(pov.eway_bill_date)],
-    ].filter((r) => !!r[1]) as Array<[string, any]>;
+    // Tax summary rows (Tally-style, in the Amount column).
+    const sumRow = (label: string, value: string): string => `
+        <tr>
+          <td></td>
+          <td class="num ital" colspan="6">${label ? `<b>${esc(label)}</b>` : ''}</td>
+          <td class="num nowrap"><b>${value}</b></td>
+        </tr>`;
 
-    const transportBlock = transportRows.length
-        ? `
-      <div class="section">
-        <div class="label">Transport</div>
-        <div class="kv-grid">${transportRows
-            .map(
-                ([k, v]) =>
-                    `<div><span class="k">${esc(k)}:</span> <span class="v">${esc(v)}</span></div>`
-            )
-            .join('')}</div>
-      </div>`
-        : '';
+    const summaryRows =
+        sumRow('', fmt(subtotalCcy)) +
+        expensesSnapshot
+            .map((e) => {
+                const amtCcy = (Number(e.amount) || 0) * rate;
+                const label =
+                    e.type === 'percent'
+                        ? `${e.name} (${Number(e.value) || 0}%)`
+                        : e.name;
+                return sumRow(label, fmt(amtCcy));
+            })
+            .join('') +
+        (gstTotalCcy > 0
+            ? sumRow('Input CGST', fmt(cgstCcy)) +
+              sumRow('Input SGST', fmt(sgstCcy))
+            : '') +
+        (Math.abs(roundOffCcy) > 0.005
+            ? sumRow('Round Off', fmt(roundOffCcy))
+            : '');
+
+    const remarks = pov.notes || company.remarks || '';
 
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>${esc(pov.voucher_no || 'POV')}</title>
+<title>${esc(pov.voucher_no || 'PO')}</title>
 <style>
   * { box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    font-size: 10.5px;
-    color: #1f2937;
-    margin: 0;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .doc { width: 100%; }
-  .qd-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 14px;
-    margin-bottom: 18px;
-  }
-  .qd-title {
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: 2px;
-    margin: 0;
-    color: #1f2937;
-    text-transform: uppercase;
-  }
-  .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
-  .status-badge {
-    display: inline-block;
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #e5e7eb;
-    padding: 2px 9px;
-    border-radius: 999px;
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: capitalize;
-    letter-spacing: 0.2px;
-    margin-top: 5px;
-  }
-  .company-name { font-weight: 600; color: #1f2937; font-size: 11.5px; margin-top: 4px; }
-  .party-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 22px;
-    margin-bottom: 18px;
-  }
-  .label {
-    text-transform: uppercase;
-    color: #6b7280;
-    font-weight: 600;
-    font-size: 8.5px;
-    letter-spacing: 0.6px;
-    margin-bottom: 5px;
-  }
-  .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
-  .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
-  .muted { color: #6b7280; }
-  .fw { font-weight: 600; color: #1f2937; }
-  table.items {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 6px 0 0;
-  }
-  table.items thead th {
-    background: #f9fafb;
-    color: #4b5563;
-    font-weight: 600;
-    font-size: 8.5px;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    border-top: 1px solid #e5e7eb;
-    border-bottom: 1px solid #e5e7eb;
-    padding: 8px 7px;
-    text-align: left;
-  }
-  table.items td {
-    border-bottom: 1px solid #f1f2f4;
-    padding: 8px 7px;
-    font-size: 10px;
-    vertical-align: top;
-    page-break-inside: avoid;
-  }
-  table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
-  table.items th.num, table.items td.num { text-align: right; }
-  .totals {
-    width: 280px;
-    margin-left: auto;
-    margin-top: 14px;
-    margin-bottom: 4px;
-  }
-  .totals .row {
-    display: flex;
-    justify-content: space-between;
-    padding: 5px 0;
-    font-size: 10.5px;
-    color: #374151;
-  }
-  .totals .row-grand {
-    display: flex;
-    justify-content: space-between;
-    padding: 10px 0 4px;
-    border-top: 2px solid #1f2937;
-    font-weight: 700;
-    font-size: 12px;
-    color: #1f2937;
-  }
-  .section {
-    margin-top: 18px;
-    padding-top: 14px;
-    border-top: 1px solid #e5e7eb;
-  }
-  .section .body {
-    font-size: 10px;
-    color: #4b5563;
-    line-height: 1.55;
-    white-space: pre-line;
-  }
-  .kv-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 5px 22px;
-    font-size: 9.8px;
-    color: #4b5563;
-  }
-  .kv-grid .k { color: #6b7280; }
-  .kv-grid .v { color: #1f2937; font-weight: 600; }
-  .signature {
-    margin-top: 26px;
-    display: flex;
-    justify-content: flex-end;
-    font-size: 9.5px;
-  }
-  .signature .box {
-    width: 200px;
-    border-top: 1px solid #9ca3af;
-    padding-top: 4px;
-    text-align: center;
-    color: #6b7280;
-  }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 9px; color: #000; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .title { text-align: center; font-weight: bold; font-size: 13px; margin: 0 0 4px; }
+  table.box { width: 100%; border-collapse: collapse; }
+  table.box > tbody > tr > td { border: 0.7px solid #000; }
+  .inner { width: 100%; height: 100%; border-collapse: collapse; }
+  .inner td { border: 0.7px solid #000; }
+  td.party { vertical-align: top; padding: 3px 5px; }
+  .cap { font-size: 8.3px; }
+  .pname { font-weight: bold; font-size: 9.5px; }
+  .pline { font-size: 8.7px; line-height: 1.45; white-space: pre-line; }
+  td.meta { vertical-align: top; padding: 2px 5px; }
+  .ml { font-size: 8px; }
+  .mv { font-weight: bold; font-size: 9px; }
+  .co-name { font-weight: bold; font-size: 10px; }
+  .co-line { font-size: 8.4px; line-height: 1.4; }
+  table.items { width: 100%; border-collapse: collapse; }
+  table.items th, table.items td { border: 0.7px solid #000; padding: 3px 4px; font-size: 8.6px; vertical-align: top; }
+  table.items th { font-weight: normal; text-align: center; }
+  table.items td.desc { font-size: 9.1px; }
+  .sub { font-size: 8px; color: #333; }
+  .num { text-align: right; }
+  .c { text-align: center; }
+  .nowrap { white-space: nowrap; }
+  .muted { color: #555; text-align: center; }
+  .items-fill td { height: 60px; }
+  .words { padding: 3px 5px; }
+  .words b { font-size: 9.5px; }
+  .remarks { padding: 3px 5px; font-size: 8.4px; white-space: pre-line; }
+  .ital { font-style: italic; }
+  .logo { height: 34px; margin-bottom: 2px; }
 </style>
 </head>
 <body>
-<div class="doc">
+<div class="title">PURCHASE ORDER</div>
 
-  ${letterhead}
-
-  <div class="party-grid">
-    <div>
-      <div class="label">Vendor</div>
-      <div class="party-name">${esc(vendor.name || '-')}</div>
-      ${vendor.contact_name ? `<div class="party-line">${esc(vendor.contact_name)}</div>` : ''}
-      ${vendor.address ? `<div class="party-line" style="white-space:pre-line">${esc(vendor.address)}</div>` : ''}
-      ${vendor.phone ? `<div class="party-line">${esc(vendor.phone)}</div>` : ''}
-      ${vendor.email ? `<div class="party-line">${esc(vendor.email)}</div>` : ''}
-      ${vendor.gstin ? `<div class="party-line muted">GSTIN: ${esc(vendor.gstin)}</div>` : ''}
-    </div>
-    <div>
-      <div class="label">Dispatch</div>
-      ${pov.purchase_order_voucher_no ? `<div class="party-line"><span class="muted">PO #: </span><span class="fw">${esc(pov.purchase_order_voucher_no)}</span></div>` : ''}
-      ${pov.dispatch_date ? `<div class="party-line"><span class="muted">Dispatch: </span><span class="fw">${dateOnly(pov.dispatch_date)}</span></div>` : ''}
-      ${pov.expected_arrival_date ? `<div class="party-line"><span class="muted">Expected: </span><span class="fw">${dateOnly(pov.expected_arrival_date)}</span></div>` : ''}
-      ${pov.actual_arrival_date ? `<div class="party-line"><span class="muted">Arrived: </span><span class="fw">${dateOnly(pov.actual_arrival_date)}</span></div>` : ''}
-      <div class="party-line"><span class="muted">Currency: </span><span class="fw">${esc(sym)} ${esc(pov.currency_code || '-')}</span></div>
-    </div>
-  </div>
-
-  ${
-      pov.delivery_address
-          ? `<div class="section"><div class="label">Deliver To</div><div class="body">${esc(pov.delivery_address)}</div></div>`
-          : ''
-  }
-
-  ${transportBlock}
-
-  <div class="section" style="border-top:none;padding-top:0;margin-top:18px">
-    <table class="items">
-      <thead>
+<table class="box">
+  <tr>
+    <td style="width:50%;padding:0;vertical-align:top">
+      <table class="inner">
+        <tr><td class="party">
+          ${ctx.logoDataUri ? `<img class="logo" src="${ctx.logoDataUri}" />` : ''}
+          <div class="cap">Invoice To</div>
+          <div class="co-name">${esc(company.name || '')}</div>
+          ${company.address ? `<div class="co-line" style="white-space:pre-line">${esc(company.address)}</div>` : ''}
+          ${company.gstin ? `<div class="co-line">GSTIN/UIN: ${esc(company.gstin)}</div>` : ''}
+          ${company.state ? `<div class="co-line">State Name : ${esc(company.state)}${company.stateCode ? `, Code : ${esc(company.stateCode)}` : ''}</div>` : ''}
+          ${company.cin ? `<div class="co-line">CIN: ${esc(company.cin)}</div>` : ''}
+          ${company.email ? `<div class="co-line">E-Mail : ${esc(company.email)}</div>` : ''}
+        </td></tr>
+        <tr><td class="party" style="height:96px">
+          <div class="cap">Consignee (Ship to)</div>
+          ${consignee.name ? `<div class="pname">${esc(consignee.name)}</div>` : ''}
+          ${consignee.address ? `<div class="pline">${esc(consignee.address)}</div>` : ''}
+          ${consignee.gstin ? `<div class="co-line">GSTIN/UIN : ${esc(consignee.gstin)}</div>` : ''}
+          ${consignee.state ? `<div class="co-line">State Name : ${esc(consignee.state)}</div>` : ''}
+        </td></tr>
+        <tr><td class="party" style="height:96px">
+          <div class="cap">Supplier (Bill from)</div>
+          ${vendor.name ? `<div class="pname">${esc(vendor.name)}</div>` : ''}
+          ${vendor.address ? `<div class="pline">${esc(vendor.address)}</div>` : ''}
+          ${vendor.gstin ? `<div class="co-line">GSTIN/UIN : ${esc(vendor.gstin)}</div>` : ''}
+          ${vendor.state ? `<div class="co-line">State Name : ${esc(vendor.state)}${vendor.stateCode ? `, Code : ${esc(vendor.stateCode)}` : ''}</div>` : ''}
+        </td></tr>
+      </table>
+    </td>
+    <td style="width:50%;padding:0;vertical-align:top">
+      <table class="inner">
         <tr>
-          <th style="width:24px">#</th>
-          <th>Product</th>
-          <th class="num" style="width:70px">Qty</th>
-          <th style="width:60px">Unit</th>
-          <th class="num" style="width:100px">Rate</th>
-          <th class="num" style="width:120px">Amount</th>
+          <td class="meta" style="width:50%">${meta('Voucher No.', pov.voucher_no)}</td>
+          <td class="meta" style="width:50%">${meta('Dated', tallyDate(orderDate))}</td>
         </tr>
-      </thead>
-      <tbody>${linesRows}</tbody>
-    </table>
-  </div>
+        <tr>
+          <td class="meta">${meta('Reference No. & Date', pov.purchase_order_voucher_no)}</td>
+          <td class="meta">${meta('Mode/Terms of Payment', '')}</td>
+        </tr>
+        <tr>
+          <td class="meta">${meta('Dispatched through', pov.transporter_name)}</td>
+          <td class="meta">${meta('Destination', '')}</td>
+        </tr>
+        <tr>
+          <td class="meta">${meta('Vehicle No.', pov.vehicle_no)}</td>
+          <td class="meta">${meta('LR No.', pov.lr_no)}</td>
+        </tr>
+        <tr>
+          <td class="meta" colspan="2" style="height:96px;vertical-align:top">${meta('Terms of Delivery', '')}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
 
-  <div class="totals">
-    <div class="row">
-      <span>Subtotal</span>
-      <span>${ccyMoney(sym, subtotalCcy)}</span>
-    </div>
-    ${expensesSnapshot
-        .map(e => {
-            const amtCcy = (Number(e.amount) || 0) * rate;
-            const label =
-                e.type === 'percent'
-                    ? `+ ${esc(e.name)} (${Number(e.value) || 0}%)`
-                    : `+ ${esc(e.name)}`;
-            return `<div class="row">
-      <span>${label}</span>
-      <span>${ccyMoney(sym, amtCcy)}</span>
-    </div>`;
-        })
-        .join('')}
-    ${
-        chargesCcy > 0
-            ? `<div class="row">
-      <span>= Taxable</span>
-      <span>${ccyMoney(sym, taxableCcy)}</span>
-    </div>`
-            : ''
-    }
-    ${
-        gstTotalCcy > 0
-            ? `<div class="row">
-      <span>+ CGST</span>
-      <span>${ccyMoney(sym, cgstCcy)}</span>
-    </div>
-    <div class="row">
-      <span>+ SGST</span>
-      <span>${ccyMoney(sym, sgstCcy)}</span>
-    </div>`
-            : ''
-    }
-    ${
-        Math.abs(roundOffCcy) > 0.005
-            ? `<div class="row">
-      <span>Round Off</span>
-      <span>${roundOffCcy >= 0 ? '+ ' : '− '}${ccyMoney(sym, Math.abs(roundOffCcy))}</span>
-    </div>`
-            : ''
-    }
-    <div class="row-grand">
-      <span>Grand Total</span>
-      <span>${ccyMoney(sym, grandTotalCcy)}</span>
-    </div>
-  </div>
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:22px">Sl<br/>No.</th>
+      <th>Description of Goods</th>
+      <th style="width:54px">Due on</th>
+      <th style="width:74px">Quantity</th>
+      <th style="width:66px">Rate</th>
+      <th style="width:30px">per</th>
+      <th style="width:40px">Disc. %</th>
+      <th style="width:84px">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${linesRows}
+    <tr class="items-fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    ${summaryRows}
+    <tr>
+      <td></td>
+      <td class="num"><b>Total</b></td>
+      <td></td>
+      <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
+      <td></td><td></td><td></td>
+      <td class="num nowrap"><b>${fmt(grandTotalCcy)} ${esc(sym)}</b></td>
+    </tr>
+  </tbody>
+</table>
 
-  ${
-      pov.notes
-          ? `<div class="section"><div class="label">Notes</div><div class="body">${esc(pov.notes)}</div></div>`
-          : ''
-  }
-
-  <div class="signature">
-    <div class="box">
-      For ${esc(company.name || '')}
-      <div style="height:30px"></div>
-      ${company.signatory ? `<div class="fw" style="color:#1f2937;margin-bottom:2px">${esc(company.signatory)}</div>` : ''}
-      <span style="color:#9ca3af">Authorised Signatory</span>
-    </div>
-  </div>
-
-</div>
+<table class="box" style="border-top:none">
+  <tr><td class="words">
+    <span class="cap">Amount Chargeable (in words)</span>
+    <span style="float:right" class="ital">E. &amp; O.E</span>
+    <div style="clear:both"><b>${esc(amountInWords)}</b></div>
+  </td></tr>
+  ${remarks ? `<tr><td class="remarks"><span class="ital">Remarks:</span><br/>${esc(remarks)}</td></tr>` : ''}
+  <tr>
+    <td style="padding:0">
+      <table class="inner"><tr>
+        <td style="width:55%;vertical-align:top;padding:3px 5px">
+          ${company.pan ? `<div class="co-line">Company's PAN : <b>${esc(company.pan)}</b></div>` : ''}
+        </td>
+        <td style="width:45%;vertical-align:top;padding:3px 5px">
+          <div style="text-align:right" class="co-line">for <b>${esc(company.name || '')}</b></div>
+          <div style="height:34px"></div>
+          <div style="text-align:right" class="co-line">${company.signatory ? `<b>${esc(company.signatory)}</b><br/>` : ''}Authorised Signatory</div>
+        </td>
+      </tr></table>
+    </td>
+  </tr>
+</table>
 </body>
 </html>`;
 }
