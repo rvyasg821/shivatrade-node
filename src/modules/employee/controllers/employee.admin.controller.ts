@@ -170,9 +170,11 @@ export class EmployeeAdminController {
         @Body() body: EmployeeCreateRequestDto
     ): Promise<IResponse<any>> {
       try {
-        // Check if email already exists
+        // Only a genuinely ACTIVE user blocks creation. An inactive or
+        // soft-deleted user with this email is revived + overwritten by
+        // userService.create() (same recipe as the Users create flow).
         const existingUser = await this.userService.findOneByEmail(body.email);
-        if (existingUser) {
+        if (existingUser && existingUser.status === ENUM_USER_STATUS.ACTIVE) {
             throw new BadRequestException('Email already exists. Please use a different email address.');
         }
 
