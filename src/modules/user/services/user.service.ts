@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+    BadRequestException,
+    ConflictException,
+    Injectable,
+} from '@nestjs/common';
+import { ENUM_USER_STATUS_CODE_ERROR } from '@modules/user/enums/user.status-code.enum';
 import {
     IDatabaseAggregateOptions,
     IDatabaseCreateOptions,
@@ -329,9 +334,44 @@ export class UserService implements IUserService {
             if (postcode) create.postcode = postcode;
             if (country) create.country = country;
 
+            // Email is globally unique among NON-deleted users (partial index
+            // `WHERE deleted = false`). If the email already belongs to a user
+            // that is soft-deleted OR merely deactivated, reuse that row —
+            // overwrite it with the incoming data and bring it back to life —
+            // instead of hitting the DB duplicate-key constraint. Only a
+            // genuinely ACTIVE user blocks re-use.
+            const existing = await this.userRepository.findOne<UserDoc>(
+                { email: email.toLowerCase() },
+                { withDeleted: true, session: options?.session }
+            );
+
+            if (existing) {
+                const isActive =
+                    !(existing as any).deleted &&
+                    existing.status === ENUM_USER_STATUS.ACTIVE;
+                if (isActive) {
+                    throw new ConflictException({
+                        statusCode: ENUM_USER_STATUS_CODE_ERROR.EMAIL_EXIST,
+                        message: 'user.error.emailExist',
+                    });
+                }
+
+                // Revive / reactivate: keep the same row (_id + original
+                // createdAt) but overwrite with the new data and clear the
+                // soft-delete / inactive flags so the user is live again.
+                create._id = (existing as any)._id;
+                (create as any).createdAt = (existing as any).createdAt;
+                (create as any).deleted = false;
+                (create as any).deletedAt = null;
+                (create as any).deletedBy = null;
+                (create as any).inactive_reason = null;
+                create.status = status || ENUM_USER_STATUS.ACTIVE;
+
+                return this.userRepository.save(create, options);
+            }
+
             // Create user in main database
             const createdUser = await this.userRepository.create<UserEntity>(create, options);
-
 
             return createdUser;
         } catch (error) {
@@ -361,6 +401,26 @@ export class UserService implements IUserService {
         const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return this.userRepository.exists(
             { email: { $regex: new RegExp(`^${escapedEmail}$`, 'i') } },
+            options
+        );
+    }
+
+    /**
+     * True only when the email belongs to an ACTIVE, non-deleted user.
+     * Soft-deleted / deactivated users do NOT block creation — those rows are
+     * revived + overwritten by `create()`. Used by the create controllers so
+     * they only reject genuine duplicates.
+     */
+    async existActiveByEmail(
+        email: string,
+        options?: IDatabaseExistsOptions
+    ): Promise<boolean> {
+        const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return this.userRepository.exists(
+            {
+                email: { $regex: new RegExp(`^${escapedEmail}$`, 'i') },
+                status: ENUM_USER_STATUS.ACTIVE,
+            },
             options
         );
     }

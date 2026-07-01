@@ -158,20 +158,32 @@ export class UserAdminController {
         if (role && Object.keys(role).length > 0) {
             find['role'] = role['role'];
         } else {
-            // Otherwise, exclude only the truly external system roles —
-            // Agent / Vendor / Customer — which are managed in their own
-            // modules. Employee + custom roles stay visible in /apps/users
-            // so admins get a unified view of every tenant user.
-            const [agentRole, vendorRole, customerRole] = await Promise.all([
-                this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.AGENT }),
-                this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.VENDOR }),
-                this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.CUSTOMER }),
-            ]);
+            // Otherwise exclude:
+            //   • external system roles (Agent / Vendor / Customer) — managed
+            //     in their own modules, and
+            //   • the STAFF / employee role-set (custom company roles + the
+            //     legacy Employee role) — those people are managed on the
+            //     Employees screen. This keeps /apps/users to admins only
+            //     (Admin / Company Admin / Location Admin) with no overlap.
+            const [agentRole, vendorRole, customerRole, employeeRoleIds] =
+                await Promise.all([
+                    this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.AGENT }),
+                    this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.VENDOR }),
+                    this.roleService.findOne({
+                        name: ENUM_SYSTEM_ROLE.CUSTOMER,
+                    }),
+                    currentUserCompanyId
+                        ? this.roleService.getListableEmployeeRoleIds(
+                              currentUserCompanyId
+                          )
+                        : Promise.resolve([] as string[]),
+                ]);
 
             const excludeRoleIds = [
-                agentRole?._id,
-                vendorRole?._id,
-                customerRole?._id,
+                agentRole?._id?.toString(),
+                vendorRole?._id?.toString(),
+                customerRole?._id?.toString(),
+                ...(employeeRoleIds || []),
             ].filter(Boolean);
             if (excludeRoleIds.length > 0) {
                 find['role'] = { $nin: excludeRoleIds };
@@ -426,7 +438,10 @@ export class UserAdminController {
     ): Promise<IResponse<any>> {
         const promises: Promise<any>[] = [
             this.roleService.findOneById(role),
-            this.userService.existByEmail(email),
+            // Only a genuinely ACTIVE user blocks creation. A soft-deleted or
+            // deactivated user with this email is revived + overwritten by
+            // userService.create() instead of erroring.
+            this.userService.existActiveByEmail(email),
         ];
 
         const [checkRole, emailExist] = await Promise.all(promises);
@@ -660,7 +675,8 @@ export class UserAdminController {
     ): Promise<IResponse<any>> {
         const promises: Promise<any>[] = [
             this.roleService.findOneByName(ENUM_SYSTEM_ROLE.AGENT),
-            this.userService.existByEmail(email),
+            // Active users block; soft-deleted / deactivated are revived.
+            this.userService.existActiveByEmail(email),
         ];
 
         const [checkRole, emailExist] = await Promise.all(promises);
