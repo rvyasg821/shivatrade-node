@@ -81,8 +81,11 @@ export class EmployeeAdminController {
     @AuthJwtAccessProtected()
     @Get('/sample-csv')
     @ApiOperation({ summary: 'Download sample Excel for employee import' })
-    async downloadSampleTemplate(@Res() res: ExpressResponse) {
-        const buffer = this.importExportService.generateSampleTemplate();
+    async downloadSampleTemplate(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse,
+    ) {
+        const buffer = await this.importExportService.generateSampleTemplate(companyId);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename="employee-import-sample.xlsx"');
         res.end(buffer);
