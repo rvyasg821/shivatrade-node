@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { utils, write, read } from 'xlsx';
+import { utils, read } from 'xlsx';
+import { FileService } from '@common/file/services/file.service';
 import { UserService } from '@modules/user/services/user.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { AuthService } from '@modules/auth/services/auth.service';
@@ -76,6 +77,7 @@ export class EmployeeImportExportService {
     private readonly logger = new Logger(EmployeeImportExportService.name);
 
     constructor(
+        private readonly fileService: FileService,
         private readonly userService: UserService,
         private readonly roleService: RoleService,
         private readonly authService: AuthService,
@@ -95,17 +97,26 @@ export class EmployeeImportExportService {
         }
     }
 
-    generateSampleCsv(): Buffer {
-        const ws = utils.json_to_sheet(SAMPLE_ROWS, { header: CSV_HEADERS });
-        const csv = utils.sheet_to_csv(ws);
-        return Buffer.from(csv, 'utf8');
+    /** Header row + object rows → array-of-arrays for the shared Excel writer. */
+    private toAoa(rows: Record<string, any>[]): any[][] {
+        const aoa: any[][] = [[...CSV_HEADERS]];
+        for (const r of rows) {
+            aoa.push(CSV_HEADERS.map((h) => r[h] ?? ''));
+        }
+        return aoa;
+    }
+
+    generateSampleTemplate(): Buffer {
+        return this.fileService.writeExcelFromArray(this.toAoa(SAMPLE_ROWS));
     }
 
     async exportEmployees(companyId: string, locationIds?: string[]): Promise<Buffer> {
-        const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-        if (!employeeRole) throw new Error('Employee role not found');
+        // Employees use custom company roles (the legacy "Employee" system role
+        // is effectively unused), so match the same role set the listing uses —
+        // otherwise the export comes back empty. Mirrors attendance export.
+        const allowedRoleIds = await this.roleService.getListableEmployeeRoleIds(companyId);
 
-        const find: any = { companyId, role: employeeRole._id };
+        const find: any = { companyId, role: { $in: allowedRoleIds } };
         if (locationIds && locationIds.length > 0) {
             find.location_id = { $in: locationIds };
         }
@@ -172,9 +183,7 @@ export class EmployeeImportExportService {
             kin_email: emp.kin_email || '',
         }));
 
-        const ws = utils.json_to_sheet(rows, { header: CSV_HEADERS });
-        const csv = utils.sheet_to_csv(ws);
-        return Buffer.from(csv, 'utf8');
+        return this.fileService.writeExcelFromArray(this.toAoa(rows));
     }
 
     /** Normalize employment_type: accept underscores, spaces, or hyphens → always store with hyphens */

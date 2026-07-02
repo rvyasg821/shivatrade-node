@@ -80,18 +80,18 @@ export class EmployeeAdminController {
 
     @AuthJwtAccessProtected()
     @Get('/sample-csv')
-    @ApiOperation({ summary: 'Download sample CSV for employee import' })
-    async downloadSampleCsv(@Res() res: ExpressResponse) {
-        const buffer = this.importExportService.generateSampleCsv();
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename="employee-import-sample.csv"');
+    @ApiOperation({ summary: 'Download sample Excel for employee import' })
+    async downloadSampleTemplate(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateSampleTemplate();
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="employee-import-sample.xlsx"');
         res.end(buffer);
     }
 
     @AuthJwtAccessProtected()
     @Get('/export')
-    @ApiOperation({ summary: 'Export employees as CSV' })
-    async exportCsv(
+    @ApiOperation({ summary: 'Export employees as Excel' })
+    async exportExcel(
         @AuthJwtPayload('companyId') companyId: string,
         @AuthJwtPayload('roleName') roleName: string,
         @AuthJwtPayload('locationId') locationIdFromToken: string,
@@ -108,8 +108,8 @@ export class EmployeeAdminController {
         }
 
         const buffer = await this.importExportService.exportEmployees(companyId, locationIds);
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="employees-${new Date().toISOString().split('T')[0]}.csv"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="employees-${new Date().toISOString().split('T')[0]}.xlsx"`);
         res.end(buffer);
     }
 
@@ -117,8 +117,8 @@ export class EmployeeAdminController {
     @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
     @AuthJwtAccessProtected()
     @Post('/import')
-    @ApiOperation({ summary: 'Import employees from CSV (preview or confirm)' })
-    async importCsv(
+    @ApiOperation({ summary: 'Import employees from Excel (preview or confirm)' })
+    async importExcel(
         @AuthJwtPayload('companyId') companyId: string,
         @AuthJwtPayload('user') userId: string,
         @AuthJwtPayload('roleName') roleName: string,
