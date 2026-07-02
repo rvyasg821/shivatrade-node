@@ -14,6 +14,9 @@ export class FaceRecognitionService implements OnModuleInit {
     private modelsLoaded = false;
 
     async onModuleInit(): Promise<void> {
+        // Kept enabled: face enrollment (extractDescriptor) is still used by
+        // employee/user creation, so the models must load even though the
+        // Attendance UI is hidden.
         await this.loadModels();
     }
 
