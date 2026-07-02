@@ -581,7 +581,12 @@ export class UserService implements IUserService {
         if (last_name !== undefined) repository.last_name = last_name;
         if (role) repository.role = this.convertToObjectId(role);
         if (gender) repository.gender = gender;
-        if (status) repository.status = status;
+        if (status) {
+            repository.status = status;
+            // Keep the is_active flag in sync so screens that filter by
+            // is_active (e.g. the Employees list) reflect the change too.
+            repository.is_active = status === ENUM_USER_STATUS.ACTIVE;
+        }
         if (commission) repository.commission = commission;
         if(photo) repository.photo = photo;
 

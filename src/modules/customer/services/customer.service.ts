@@ -179,7 +179,14 @@ export class CustomerService {
         const existingUser = await this.userService.findOneByEmail(
             email.trim().toLowerCase()
         );
-        return !existingUser || !!(existingUser as any).deleted;
+        // Available unless a genuinely ACTIVE user owns it. Soft-deleted or
+        // inactive rows are revived by userService.create() (Users/Employee
+        // /Agent recipe).
+        return (
+            !existingUser ||
+            !!(existingUser as any).deleted ||
+            existingUser.status !== ENUM_USER_STATUS.ACTIVE
+        );
     }
 
     private async assertPrimaryEmailAvailable(
@@ -188,7 +195,16 @@ export class CustomerService {
     ): Promise<void> {
         const normalized = email.trim().toLowerCase();
         const existingUser = await this.userService.findOneByEmail(normalized);
-        if (!existingUser || (existingUser as any).deleted) return;
+        // Only a genuinely ACTIVE user blocks re-use. Soft-deleted or inactive
+        // rows are revived + overwritten by userService.create() (same recipe
+        // as Users/Employee/Agent create flows).
+        if (
+            !existingUser ||
+            (existingUser as any).deleted ||
+            existingUser.status !== ENUM_USER_STATUS.ACTIVE
+        ) {
+            return;
+        }
 
         if (customerId) {
             const ownContact = await this.contactRepository.findOne({
