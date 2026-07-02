@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+// HR tools (Attendance/Leave/Holiday) disabled — attendance crons stopped.
+// import { Cron } from '@nestjs/schedule';
 import { AttendanceSettingsRepository } from '../repository/repositories/attendance-settings.repository';
 import { AttendanceRecordRepository } from '../repository/repositories/attendance-record.repository';
 import { LocationService } from '@modules/location/services/location.service';
@@ -33,7 +34,7 @@ export class AttendanceCronService {
     /**
      * Every 5 minutes — auto clock-out employees whose auto_clock_out_time has passed.
      */
-    @Cron('*/5 * * * *')
+    // @Cron('*/5 * * * *') // disabled — HR tools off
     async autoClockOut(): Promise<void> {
         if (!this.shouldRunCron()) return;
         try {
@@ -208,7 +209,7 @@ export class AttendanceCronService {
     // Creates 'holiday' attendance records for all employees at locations
     // where today is a holiday
     // ─────────────────────────────────────────────────────────────────────
-    @Cron('15 0 * * *')
+    // @Cron('15 0 * * *') // disabled — HR tools off
     async markHolidays(): Promise<void> {
         if (!this.shouldRunCron()) return;
         try {
@@ -277,7 +278,7 @@ export class AttendanceCronService {
     // Creates 'absent' attendance records for employees who didn't clock in
     // and don't have any record (leave, holiday, manual) for today
     // ─────────────────────────────────────────────────────────────────────
-    @Cron('50 23 * * *')
+    // @Cron('50 23 * * *') // disabled — HR tools off
     async markAbsent(): Promise<void> {
         if (!this.shouldRunCron()) return;
         try {

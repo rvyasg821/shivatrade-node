@@ -84,16 +84,16 @@ import { TrackingEventAdminController } from '@modules/tracking-event/controller
 import { EmployeeModule } from '@modules/employee/employee.module';
 import { EmployeeAdminController } from '@modules/employee/controllers/employee.admin.controller';
 import { HolidayCalendarModule } from '@modules/holiday-calendar/holiday-calendar.module';
-import { HolidayCalendarAdminController } from '@modules/holiday-calendar/controllers/holiday-calendar.admin.controller';
+// Hidden (routes disabled): import { HolidayCalendarAdminController } from '@modules/holiday-calendar/controllers/holiday-calendar.admin.controller';
 import { DocumentModule } from '@modules/document/document.module';
 import { DocumentAdminController } from '@modules/document/controllers/document.admin.controller';
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
 import { ContractModule } from '@modules/contract/contract.module';
 import { ContractAdminController } from '@modules/contract/controllers/contract.admin.controller';
 import { LeaveModule } from '@modules/leave/leave.module';
-import { LeaveAdminController } from '@modules/leave/controllers/leave.admin.controller';
+// Hidden (routes disabled): import { LeaveAdminController } from '@modules/leave/controllers/leave.admin.controller';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
-import { AttendanceAdminController } from '@modules/attendance/controllers/attendance.admin.controller';
+// Hidden (routes disabled): import { AttendanceAdminController } from '@modules/attendance/controllers/attendance.admin.controller';
 import { ShiftModule } from '@modules/shift/shift.module';
 import { ShiftAdminController } from '@modules/shift/controllers/shift.admin.controller';
 import { ComplianceModule } from '@modules/compliance/compliance.module';
@@ -173,8 +173,8 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         // Employee controller
         EmployeeAdminController,
 
-        // Holiday Calendar controller
-        HolidayCalendarAdminController,
+        // Holiday Calendar controller — hidden (routes disabled)
+        // HolidayCalendarAdminController,
 
         // Document controller
         DocumentAdminController,
@@ -182,11 +182,11 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         // Contract controller
         ContractAdminController,
 
-        // Leave controller
-        LeaveAdminController,
+        // Leave controller — hidden (routes disabled)
+        // LeaveAdminController,
 
-        // Attendance controller
-        AttendanceAdminController,
+        // Attendance controller — hidden (routes disabled)
+        // AttendanceAdminController,
 
         // Shift controller
         ShiftAdminController,
