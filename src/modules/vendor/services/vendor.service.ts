@@ -196,7 +196,16 @@ export class VendorService {
     ): Promise<void> {
         const normalized = email.trim().toLowerCase();
         const existingUser = await this.userService.findOneByEmail(normalized);
-        if (!existingUser || (existingUser as any).deleted) return;
+        // Only a genuinely ACTIVE user blocks re-use. Soft-deleted or inactive
+        // rows are revived + overwritten by userService.create() (same recipe
+        // as Customer/Users/Employee/Agent create flows).
+        if (
+            !existingUser ||
+            (existingUser as any).deleted ||
+            existingUser.status !== ENUM_USER_STATUS.ACTIVE
+        ) {
+            return;
+        }
 
         if (vendorId) {
             const ownContact = await this.contactRepository.findOne({
