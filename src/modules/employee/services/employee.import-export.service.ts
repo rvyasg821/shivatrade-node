@@ -7,14 +7,13 @@ import { AuthService } from '@modules/auth/services/auth.service';
 import { LocationService } from '@modules/location/services/location.service';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { CompanyLookupService } from '@modules/company-lookup/services/company-lookup.service';
-import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_SIGN_UP_FROM } from '@modules/user/enums/user.enum';
 import { EnhancedEmailService } from '@modules/email/services/enhanced-email.service';
 
 const CSV_HEADERS = [
     // Basic
     'employee_code', 'email', 'first_name', 'middle_name', 'last_name',
-    'designation', 'department', 'employment_type',
+    'designation', 'department', 'role', 'location', 'employment_type',
     'date_of_joining', 'date_of_birth', 'mobile', 'dial_code', 'gender',
     // Personal
     'marital_status', 'nationality', 'ni_number', 'home_telephone',
@@ -33,7 +32,7 @@ const CSV_HEADERS = [
 const SAMPLE_ROWS = [
     {
         employee_code: 'EMP001', email: 'john.doe@company.com', first_name: 'John', middle_name: '', last_name: 'Doe',
-        designation: 'Developer', department: 'IT', employment_type: 'full-time',
+        designation: 'Developer', department: 'IT', role: 'Sales', location: 'Head Office', employment_type: 'full-time',
         date_of_joining: '2026-01-15', date_of_birth: '1990-05-20', mobile: '7911123456', dial_code: '+44', gender: 'MALE',
         marital_status: 'SINGLE', nationality: 'British', ni_number: 'AB123456C', home_telephone: '',
         address_line1: '123 High St', address_line2: '', city: 'London', state: 'Greater London', postcode: 'SW1A 1AA', country: 'GB',
@@ -44,7 +43,7 @@ const SAMPLE_ROWS = [
     },
     {
         employee_code: '', email: 'jane.smith@company.com', first_name: 'Jane', middle_name: 'Marie', last_name: 'Smith',
-        designation: 'Manager', department: 'HR', employment_type: 'full-time',
+        designation: 'Manager', department: 'HR', role: 'Account', location: 'Head Office', employment_type: 'full-time',
         date_of_joining: '2025-06-01', date_of_birth: '1988-12-10', mobile: '7911654321', dial_code: '+44', gender: 'FEMALE',
         marital_status: 'MARRIED', nationality: 'British', ni_number: 'CD654321B', home_telephone: '02012345678',
         address_line1: '456 Main Rd', address_line2: 'Apt 5', city: 'Manchester', state: '', postcode: 'M1 1AA', country: 'GB',
@@ -87,14 +86,89 @@ export class EmployeeImportExportService {
         private readonly emailService: EnhancedEmailService,
     ) {}
 
-    /** Find or create a company lookup entry (designation/department) */
-    private async findOrCreateLookup(companyId: string, type: string, name: string): Promise<void> {
-        if (!name?.trim()) return;
-        try {
-            await this.companyLookupService.create(companyId, type, name.trim());
-        } catch {
-            // Already exists — that's fine
+    /**
+     * Load the master values the import validates against, as lowercase→value
+     * maps. Designation/department resolve to their canonical name; role
+     * resolves to { id, level }; location resolves to its id. Import requires
+     * these to already exist (nothing is auto-created).
+     */
+    private async getImportRefMaps(companyId: string): Promise<{
+        designation: Map<string, string>;
+        department: Map<string, string>;
+        role: Map<string, { id: string; level: number }>;
+        location: Map<string, string>;
+    }> {
+        const [designations, departments, roleDocs, locations] = await Promise.all([
+            this.companyLookupService.findByCompanyAndType(companyId, 'designation'),
+            this.companyLookupService.findByCompanyAndType(companyId, 'department'),
+            // Only the company's custom roles (e.g. Sales, Account) — the same set
+            // the Roles page manages. The deprecated "Employee" role is excluded.
+            this.roleService.findAll({ category: 'custom', companyId, isActive: true } as any),
+            this.locationService.findAll(companyId) as Promise<any[]>,
+        ]);
+        const nameMap = (arr: any[]) =>
+            new Map<string, string>(arr.map((d) => [d.name.toLowerCase(), d.name]));
+
+        const role = new Map<string, { id: string; level: number }>(
+            (roleDocs as any[]).map((r) => [String(r.name).toLowerCase(), { id: r._id.toString(), level: r.level }]),
+        );
+        const location = new Map<string, string>(
+            (locations as any[]).map((l) => [String(l.location_name).toLowerCase(), l._id.toString()]),
+        );
+
+        return { designation: nameMap(designations), department: nameMap(departments), role, location };
+    }
+
+    /** Export a stored date as ISO YYYY-MM-DD (locale-proof; re-importable). */
+    private formatExportDate(val: any): string {
+        if (!val) return '';
+        const d = val instanceof Date ? val : new Date(val);
+        if (isNaN(d.getTime())) return '';
+        return d.toISOString().slice(0, 10);
+    }
+
+    /** yyyy-mm-dd from a Date's local parts. */
+    private toIsoDate(d: Date): string {
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const da = String(d.getDate()).padStart(2, '0');
+        return `${y}-${mo}-${da}`;
+    }
+
+    /**
+     * Normalize an imported date cell → ISO `YYYY-MM-DD`.
+     * Returns '' for empty and null for an unparseable value (caller decides if
+     * that's an error). Slash/dash/dot dates are read as **DD/MM/YY(YY)** — the
+     * app displays DD/MM — and Excel serial-number date cells are supported.
+     */
+    private parseImportDate(rawVal: any): string | null {
+        if (rawVal === undefined || rawVal === null) return '';
+        // Excel date cell read as a serial number (raw:true).
+        if (typeof rawVal === 'number' && isFinite(rawVal)) {
+            const d = new Date(Math.round((rawVal - 25569) * 86400 * 1000));
+            if (isNaN(d.getTime())) return null;
+            return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
         }
+        const s = String(rawVal).trim();
+        if (!s) return '';
+        // DD/MM/YYYY or DD/MM/YY (also - or . separators).
+        let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);
+        if (m) {
+            const day = parseInt(m[1], 10);
+            const month = parseInt(m[2], 10);
+            const year = m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+            const d = new Date(year, month - 1, day);
+            if (isNaN(d.getTime()) || d.getDate() !== day || d.getMonth() !== month - 1) return null;
+            return this.toIsoDate(d);
+        }
+        // ISO YYYY-MM-DD (optionally with a time part).
+        m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (m) {
+            const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+            if (isNaN(d.getTime())) return null;
+            return this.toIsoDate(d);
+        }
+        return null;
     }
 
     /** Header row + object rows → array-of-arrays for the shared Excel writer. */
@@ -106,8 +180,32 @@ export class EmployeeImportExportService {
         return aoa;
     }
 
-    generateSampleTemplate(): Buffer {
-        return this.fileService.writeExcelFromArray(this.toAoa(SAMPLE_ROWS));
+    async generateSampleTemplate(companyId: string): Promise<Buffer> {
+        // Sheet 1 — the import columns with two example rows.
+        const employeesSheet = { sheetName: 'Employees', rows: this.toAoa(SAMPLE_ROWS) };
+
+        // Sheet 2 — "Reference": the valid designations, departments, roles and
+        // locations to copy from. Import only accepts values that appear here.
+        const [designations, departments, roleDocs, locations] = await Promise.all([
+            this.companyLookupService.findByCompanyAndType(companyId, 'designation'),
+            this.companyLookupService.findByCompanyAndType(companyId, 'department'),
+            // Company custom roles only (Sales, Account, …) — excludes deprecated Employee.
+            this.roleService.findAll({ category: 'custom', companyId, isActive: true } as any),
+            this.locationService.findAll(companyId) as Promise<any[]>,
+        ]);
+        const desigNames = designations.map((d) => d.name);
+        const deptNames = departments.map((d) => d.name);
+        const roleNames = (roleDocs as any[]).map((r) => r.name);
+        const locNames = (locations as any[]).map((l) => l.location_name);
+
+        const maxLen = Math.max(desigNames.length, deptNames.length, roleNames.length, locNames.length);
+        const refRows: any[][] = [['designation', 'department', 'role', 'location']];
+        for (let i = 0; i < maxLen; i++) {
+            refRows.push([desigNames[i] ?? '', deptNames[i] ?? '', roleNames[i] ?? '', locNames[i] ?? '']);
+        }
+        const referenceSheet = { sheetName: 'Reference', rows: refRows };
+
+        return this.fileService.writeExcelSheetsFromArray([employeesSheet, referenceSheet]);
     }
 
     async exportEmployees(companyId: string, locationIds?: string[]): Promise<Buffer> {
@@ -123,12 +221,18 @@ export class EmployeeImportExportService {
 
         const employees = await this.userService.findAll(find, {});
 
-        // Build location map
+        // Build location map (id → name)
         const locations = await this.locationService.findAll(companyId) as any[];
         const locMap: Record<string, string> = {};
         for (const loc of locations) {
             locMap[loc._id?.toString()] = loc.location_name;
         }
+
+        // Build role map (id → name) for the exported employees.
+        const roleIds = [...new Set(employees.map((e: any) => e.role?.toString()).filter(Boolean))];
+        const roleDocs = roleIds.length ? await this.roleService.findAll({ _id: { $in: roleIds } } as any) : [];
+        const roleMap: Record<string, string> = {};
+        for (const r of roleDocs as any[]) roleMap[r._id.toString()] = r.name;
 
         const rows = employees.map((emp: any) => ({
             // Basic
@@ -139,10 +243,11 @@ export class EmployeeImportExportService {
             last_name: emp.last_name || '',
             designation: emp.designation || '',
             department: emp.department || '',
-            location_name: emp.location_id ? (locMap[emp.location_id?.toString()] || '') : '',
+            role: emp.role ? (roleMap[emp.role?.toString()] || '') : '',
+            location: emp.location_id ? (locMap[emp.location_id?.toString()] || '') : '',
             employment_type: emp.employment_type || '',
-            date_of_joining: emp.date_of_joining ? String(emp.date_of_joining).split('T')[0] : '',
-            date_of_birth: emp.date_of_birth ? String(emp.date_of_birth).split('T')[0] : '',
+            date_of_joining: this.formatExportDate(emp.date_of_joining),
+            date_of_birth: this.formatExportDate(emp.date_of_birth),
             mobile: emp.mobile || '',
             dial_code: emp.country_code?.dialCode || '',
             gender: emp.gender || '',
@@ -300,6 +405,10 @@ export class EmployeeImportExportService {
             } catch { }
         }
 
+        // Master reference values (designation/department/role/location) —
+        // imported values must match one of these (hard error otherwise).
+        const lookups = await this.getImportRefMaps(companyId);
+
         // Track seen emails/codes for duplicate detection within file
         const seenEmails = new Set<string>();
         const seenCodes = new Set<string>();
@@ -315,10 +424,44 @@ export class EmployeeImportExportService {
             const employeeCode = String(raw.employee_code || '').trim().toUpperCase();
             const firstName = String(raw.first_name || '').trim();
 
+            const lastName = String(raw.last_name || '').trim();
+            const gender = String(raw.gender || '').trim().toUpperCase();
+            // '' = empty, null = unparseable, else ISO YYYY-MM-DD.
+            const dateOfJoining = this.parseImportDate(raw.date_of_joining);
+            const dateOfBirth = this.parseImportDate(raw.date_of_birth);
+            const rawDesignation = String(raw.designation || '').trim();
+            const rawDepartment = String(raw.department || '').trim();
+            const rawRole = String(raw.role || '').trim();
+            const rawLocation = String(raw.location || '').trim();
+
             // Required field validation
             if (!email) errors.push('Email is required');
             else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push('Invalid email format');
             if (!firstName) errors.push('First name is required');
+            if (!lastName) errors.push('Last name is required');
+            if (!gender) errors.push('Gender is required');
+            else if (!['MALE', 'FEMALE'].includes(gender)) errors.push('Gender must be MALE or FEMALE');
+            if (dateOfJoining === '') errors.push('Date of joining is required');
+            else if (dateOfJoining === null) errors.push('Invalid date_of_joining (use YYYY-MM-DD, e.g. 2026-07-01)');
+            if (dateOfBirth === null) errors.push('Invalid date_of_birth (use YYYY-MM-DD, e.g. 1990-05-20)');
+
+            // Reference-backed fields: required + must match the master list.
+            if (!rawDesignation) errors.push('Designation is required');
+            else if (!lookups.designation.has(rawDesignation.toLowerCase())) {
+                errors.push(`Designation "${rawDesignation}" is not in the master list — see the Reference sheet`);
+            }
+            if (!rawDepartment) errors.push('Department is required');
+            else if (!lookups.department.has(rawDepartment.toLowerCase())) {
+                errors.push(`Department "${rawDepartment}" is not in the master list — see the Reference sheet`);
+            }
+            if (!rawRole) errors.push('Role is required');
+            else if (!lookups.role.has(rawRole.toLowerCase())) {
+                errors.push(`Role "${rawRole}" is not a valid employee role — see the Reference sheet`);
+            }
+            if (!rawLocation) errors.push('Location is required');
+            else if (!lookups.location.has(rawLocation.toLowerCase())) {
+                errors.push(`Location "${rawLocation}" is not in the master list — see the Reference sheet`);
+            }
 
             // Duplicate within file
             if (email && seenEmails.has(email)) errors.push('Duplicate email in file');
@@ -369,16 +512,18 @@ export class EmployeeImportExportService {
                     email,
                     first_name: firstName,
                     middle_name: str('middle_name'),
-                    last_name: str('last_name'),
-                    designation: str('designation'),
-                    department: str('department'),
-                    location_id: locationId || null,
+                    last_name: lastName,
+                    designation: lookups.designation.get(rawDesignation.toLowerCase()) || rawDesignation,
+                    department: lookups.department.get(rawDepartment.toLowerCase()) || rawDepartment,
+                    role: lookups.role.get(rawRole.toLowerCase())?.id,
+                    roleLevel: lookups.role.get(rawRole.toLowerCase())?.level,
+                    location_id: lookups.location.get(rawLocation.toLowerCase()) || null,
                     country_code: parsedCountryCode,
                     employment_type: this.normalizeEmploymentType(str('employment_type')),
-                    date_of_joining: str('date_of_joining'),
-                    date_of_birth: str('date_of_birth'),
+                    date_of_joining: dateOfJoining || '',
+                    date_of_birth: dateOfBirth || '',
                     mobile: parsedMobile,
-                    gender: str('gender').toUpperCase(),
+                    gender: gender,
                     // Personal
                     marital_status: str('marital_status').toUpperCase(),
                     nationality: str('nationality'),
@@ -437,9 +582,8 @@ export class EmployeeImportExportService {
         adminUserId: string,
         sendWelcomeEmail: boolean = false,
     ): Promise<{ created: number; updated: number; errors: { row: number; message: string }[] }> {
-        const employeeRole = await this.roleService.findOne({ name: ENUM_SYSTEM_ROLE.EMPLOYEE });
-        if (!employeeRole) throw new Error('Employee role not found');
-
+        // Role comes per-row (validated against the employee-assignable roles at
+        // preview time) — no fixed Employee-role assignment here.
         let created = 0;
         let updated = 0;
         const errors: { row: number; message: string }[] = [];
@@ -448,14 +592,8 @@ export class EmployeeImportExportService {
             if (row.status === 'error') continue;
 
             try {
-                // Auto-create designation/department lookups
-                if (row.data.designation) {
-                    await this.findOrCreateLookup(companyId, 'designation', row.data.designation);
-                }
-                if (row.data.department) {
-                    await this.findOrCreateLookup(companyId, 'department', row.data.department);
-                }
-
+                // Designation/Department are validated against the master list at
+                // preview time — no auto-create here.
                 if (row.status === 'valid_update' && row.existingId) {
                     // Update existing employee
                     const existing = await this.userService.findOneById(row.existingId);
@@ -484,6 +622,7 @@ export class EmployeeImportExportService {
                         'pension_opt_in', 'pension_provider', 'pension_employee_contribution', 'pension_employer_contribution',
                         'kin_name', 'kin_relationship', 'kin_phone', 'kin_email',
                         'location_id', 'employee_code', 'mobile', 'country_code',
+                        'role', 'roleLevel',
                     ]);
 
                     await this.userService.update(existing, updateData);
@@ -506,9 +645,9 @@ export class EmployeeImportExportService {
                         mobile: row.data.mobile || undefined,
                         country_code: row.data.country_code || undefined,
                         gender: row.data.gender || undefined,
-                        role: employeeRole._id.toString(),
+                        role: row.data.role,
                         companyId,
-                        roleLevel: employeeRole.level,
+                        roleLevel: row.data.roleLevel,
                     };
 
                     const user = await this.userService.create(userData, passwordHash, ENUM_USER_SIGN_UP_FROM.ADMIN);
