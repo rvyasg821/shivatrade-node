@@ -283,9 +283,10 @@ export class AuthPublicController {
 
                             // Only expose tools if subscription is currently active
                             const subscription = hasActiveSubscription ? anySubscription : null;
-                            const tools = subscription
-                                ? subscription.tools
-                                : [];
+                            // Single-tenant: expose ALL active tools (no tool-based access).
+                            const tools = await this.toolsService.resolveExposedTools(
+                                subscription ? subscription.tools : []
+                            );
                             const helpdeskTool =
                                 await this.toolsService.findOne({
                                     slug: 'helpdesk-support-ticket',
@@ -446,6 +447,8 @@ export class AuthPublicController {
                                 } catch {
                                     // No subscription found — tools stays empty
                                 }
+                                // Single-tenant: expose ALL active tools (no tool-based access).
+                                tools = await this.toolsService.resolveExposedTools(tools);
 
                                 // Remove helpdesk permission if tool not in subscription
                                 const helpdeskTool = await this.toolsService.findOne({ slug: 'helpdesk-support-ticket' });

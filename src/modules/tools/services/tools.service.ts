@@ -61,6 +61,19 @@ export class ToolsService implements IToolsService {
         return this.toolsRepository.findAllActive(find, options);
     }
 
+    /**
+     * Tools to expose to the frontend as `company.tools`. In single-tenant mode
+     * tool/subscription gating is disabled — every company (new or existing)
+     * gets ALL active tools, so the UI shows every module regardless of plan.
+     * In SaaS mode the subscription's own tools are returned unchanged.
+     */
+    async resolveExposedTools(subscriptionTools: any[] = []): Promise<any[]> {
+        if ((process.env.APP_MODE || 'single') === 'single') {
+            return this.findAllActive({});
+        }
+        return subscriptionTools || [];
+    }
+
     async getTotal(
         find?: Record<string, any>,
         options?: IDatabaseGetTotalOptions
