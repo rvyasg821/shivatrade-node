@@ -195,7 +195,10 @@ export class AuthAdminController {
             const subscriptionUserId = company.user_id ? String(company.user_id) : user._id?.toString();
             const subscription = await this.subscriptionService.findActiveByUserId(subscriptionUserId);
             const hasActiveSubscription = !!subscription;
-            const tools = subscription ? subscription.tools : [];
+            // Single-tenant: expose ALL active tools (no tool-based access).
+            const tools = await this.toolsService.resolveExposedTools(
+                subscription ? subscription.tools : []
+            );
             const helpdeskTool = await this.toolsService.findOne({ slug: 'helpdesk-support-ticket' });
             if (helpdeskTool) {
                 const isToolExists = tools.find((tool) => tool?._id.toString() === helpdeskTool._id.toString());
