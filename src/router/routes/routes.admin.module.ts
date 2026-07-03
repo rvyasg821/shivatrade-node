@@ -33,12 +33,6 @@ import { SubscriptionAdminController } from '@modules/subscription/controllers/s
 import { DiscountModule } from '@modules/discount/discount.module';
 import { DiscountAdminController } from '@modules/discount/controllers/discount.admin.controller';
 import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
-import { AssessmentModule } from '@modules/assessment/assessment.module';
-import { AssessmentReportController } from '@modules/assessment/controllers/assessment-report.controller';
-import { AssessmentAdminController } from '@modules/assessment/controllers/assessment.admin.controller';
-import { QuestionAnswerController } from '@modules/assessment/controllers/question-answer.controller';
-import { QuestionController } from '@modules/assessment/controllers/question.controller';
-import { SectionController } from '@modules/assessment/controllers/section.controller';
 import { DashboardModule } from '@modules/dashboard/dashboard.module';
 import { DashboardAdminController } from '@modules/dashboard/controllers/dashboard.admin.controller';
 import { LocationModule } from '@modules/location/location.module';
@@ -121,14 +115,6 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         CardAdminController,
         ToolsAdminController,
         SubscriptionAdminController,
-
-        // Assessment controllers
-
-        AssessmentReportController,
-        AssessmentAdminController,
-        QuestionAnswerController,
-        QuestionController,
-        SectionController,
 
         DiscountAdminController,
 
@@ -244,7 +230,6 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         DiscountModule,
         ToolDeletionModule,
-        AssessmentModule,
         DashboardModule,
         LocationModule,
         CategoryModule,
