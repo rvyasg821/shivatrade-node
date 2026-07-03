@@ -17,10 +17,12 @@ import { PriceListModule } from '@modules/price-list/price-list.module';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
     imports: [
         PurchaseOrderRepositoryModule,
+        DependencyCheckModule,
         VendorModule,
         ProductModule,
         CustomerModule,

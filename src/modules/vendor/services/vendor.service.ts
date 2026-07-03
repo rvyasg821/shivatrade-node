@@ -28,6 +28,7 @@ import { VendorListResponseDto } from '../dtos/response/vendor.list.response.dto
 import { ENUM_VENDOR_ADDRESS_TYPE } from '../enums/vendor.enum';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { UserService } from '@modules/user/services/user.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { AuthService } from '@modules/auth/services/auth.service';
@@ -57,7 +58,8 @@ export class VendorService {
         private readonly authService: AuthService,
         private readonly configService: ConfigService,
         private readonly helperDateService: HelperDateService,
-        private readonly companySettingsService: CompanySettingsService
+        private readonly companySettingsService: CompanySettingsService,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
 
     /**
@@ -516,6 +518,13 @@ export class VendorService {
     }
 
     async softDelete(vendor: VendorDoc, deletedBy?: string): Promise<VendorDoc> {
+        // Block deletion while the vendor is still used by any live document
+        // (POV / PO / GRN / Debit-Note / Price-List / RFQ / Quotation). Vendor
+        // stays a soft-delete master (revive recipe) — only guarded, not hard-deleted.
+        await this.dependencyCheckService.assertVendorNotInUse(
+            vendor._id.toString()
+        );
+
         // Deactivate linked vendor user(s) before wiping the contact rows.
         const existingContacts = await this.contactRepository.findByVendorId(
             vendor._id.toString()

@@ -144,7 +144,7 @@ export class QuotationAdminController {
     @Delete('/delete/:id')
     async delete(@Param('id') id: string): Promise<IResponse<null>> {
         const row = await this.quotationService.findOneById(id);
-        await this.quotationService.softDelete(row);
+        await this.quotationService.deleteWithGuard(row);
         return { data: null };
     }
 

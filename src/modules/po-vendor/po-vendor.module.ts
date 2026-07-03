@@ -19,6 +19,7 @@ import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.rep
 import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 // Stock ledger — Generate POV reads on-hand for In Stock / To Procure.
 import { InventoryModule } from '@modules/inventory/inventory.module';
 
@@ -28,6 +29,7 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
 @Module({
     imports: [
         PoVendorRepositoryModule,
+        DependencyCheckModule,
         PurchaseOrderRepositoryModule,
         VendorModule,
         ProductModule,

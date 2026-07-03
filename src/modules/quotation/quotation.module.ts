@@ -21,10 +21,12 @@ import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repositor
 import { RfqRepositoryModule } from '@modules/rfq/repository/rfq.repository.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
     imports: [
         QuotationRepositoryModule,
+        DependencyCheckModule,
         CustomerModule,
         CurrencyModule,
         ProductModule,

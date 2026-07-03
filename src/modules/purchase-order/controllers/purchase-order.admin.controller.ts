@@ -163,7 +163,7 @@ export class PurchaseOrderAdminController {
     @Delete('/delete/:id')
     async delete(@Param('id') id: string): Promise<IResponse<null>> {
         const row = await this.poService.findOneById(id);
-        await this.poService.softDelete(row);
+        await this.poService.deleteWithGuard(row);
         return { data: null };
     }
 

@@ -16,6 +16,7 @@ import {
 } from '../dtos/response/quotation.get.response.dto';
 import { QuotationPublicResponseDto } from '../dtos/response/quotation.public.response.dto';
 import { ENUM_QUOTATION_STATUS } from '../enums/quotation.enum';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
@@ -82,8 +83,32 @@ export class QuotationService {
         private readonly rfqRepository: RfqRepository,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
-        private readonly companySettingsRepository: CompanySettingsRepository
+        private readonly companySettingsRepository: CompanySettingsRepository,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
+
+    /**
+     * Delete policy: block if any Sales Order / Invoice references this
+     * quotation; otherwise only a DRAFT may be deleted (a sent quotation must
+     * be cancelled), and it is HARD-deleted with its lines. `softDelete` above
+     * remains for internal use.
+     */
+    async deleteWithGuard(row: QuotationDoc): Promise<void> {
+        await this.dependencyCheckService.assertNoDependents(
+            'quotation',
+            row._id.toString(),
+            'Quotation'
+        );
+        if (row.status !== ENUM_QUOTATION_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only a draft Quotation can be deleted. Cancel it instead.'
+            );
+        }
+        await this.quotationLineRepository.deleteMany({
+            quotation_id: row._id.toString(),
+        } as any);
+        await this.quotationRepository.delete({ _id: row._id } as any);
+    }
 
     // ─── Reference validation ───────────────────────────────────────────
 

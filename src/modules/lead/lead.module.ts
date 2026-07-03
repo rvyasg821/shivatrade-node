@@ -12,6 +12,7 @@ import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.reposi
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 // Repository-only import (no service-level cycle with QuotationModule).
 import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
     imports: [
@@ -23,6 +24,7 @@ import { QuotationRepositoryModule } from '@modules/quotation/repository/quotati
         VendorRepositoryModule,
         CompanyRepositoryModule,
         QuotationRepositoryModule,
+        DependencyCheckModule,
     ],
     providers: [LeadService, LeadActivityService],
     exports: [LeadRepositoryModule, LeadService, LeadActivityService],
