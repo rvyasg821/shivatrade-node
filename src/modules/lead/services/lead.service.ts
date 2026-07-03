@@ -107,27 +107,33 @@ export class LeadService {
             data.interested_categories
         );
 
-        // Email is a shared identity across the app. Reject a new lead when the
-        // contact email already belongs to (a) another open lead in this
-        // company, or (b) a genuinely ACTIVE user (customer / vendor / employee
-        // / user). Soft-deleted leads and inactive/deleted users don't block.
-        const normalizedEmail = data.contact_email.trim().toLowerCase();
-        const dupLead = await this.leadRepository.findOne({
-            company_id: companyId,
-            contact_email: ILike(normalizedEmail),
-            soft_delete: false,
-        } as any);
-        if (dupLead) {
-            throw new BadRequestException(
-                `A lead with the email '${normalizedEmail}' already exists`
-            );
-        }
-        const emailFree =
-            await this.customerService.isPrimaryEmailAvailable(normalizedEmail);
-        if (!emailFree) {
-            throw new BadRequestException(
-                `Email '${normalizedEmail}' is already in use`
-            );
+        // Email is a shared identity across the app. For a brand-new prospect
+        // (no linked customer), reject when the contact email already belongs to
+        // (a) another open lead, or (b) a genuinely ACTIVE user. But when the
+        // lead is created FROM an existing customer (customer_id set), the email
+        // legitimately belongs to that customer — and a customer may have many
+        // leads/opportunities — so skip the uniqueness checks entirely.
+        if (!data.customer_id) {
+            const normalizedEmail = data.contact_email.trim().toLowerCase();
+            const dupLead = await this.leadRepository.findOne({
+                company_id: companyId,
+                contact_email: ILike(normalizedEmail),
+                soft_delete: false,
+            } as any);
+            if (dupLead) {
+                throw new BadRequestException(
+                    `A lead with the email '${normalizedEmail}' already exists`
+                );
+            }
+            const emailFree =
+                await this.customerService.isPrimaryEmailAvailable(
+                    normalizedEmail
+                );
+            if (!emailFree) {
+                throw new BadRequestException(
+                    `Email '${normalizedEmail}' is already in use`
+                );
+            }
         }
 
         // `lines` is a child table, not a lead column — keep it out of the write.
@@ -201,11 +207,15 @@ export class LeadService {
         }
         if (data.contact_email) {
             data.contact_email = data.contact_email.trim().toLowerCase();
-            // Same shared-identity guard as create, but only when the email
-            // actually changes — an unchanged email (incl. a converted lead
-            // whose email now belongs to its own customer) must not block.
+            // Same shared-identity guard as create, but skip it when the email
+            // is unchanged, OR the lead is linked to an existing customer (the
+            // email legitimately belongs to that customer — new or converted).
             const currentEmail = (lead.contact_email || '').trim().toLowerCase();
-            if (data.contact_email !== currentEmail) {
+            const linkedCustomerId =
+                data.customer_id !== undefined
+                    ? data.customer_id || null
+                    : (lead as any).customer_id || null;
+            if (data.contact_email !== currentEmail && !linkedCustomerId) {
                 const normalizedEmail = data.contact_email;
                 const dupLead = await this.leadRepository.findOne({
                     company_id: companyId,
