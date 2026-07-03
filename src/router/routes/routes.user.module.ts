@@ -11,9 +11,9 @@ import { CompanyModule } from '@modules/company/company.module';
 import { ContractModule } from '@modules/contract/contract.module';
 import { ContractEmployeeController } from '@modules/contract/controllers/contract.employee.controller';
 import { LeaveModule } from '@modules/leave/leave.module';
-// Hidden (routes disabled): import { LeaveEmployeeController } from '@modules/leave/controllers/leave.employee.controller';
+import { LeaveEmployeeController } from '@modules/leave/controllers/leave.employee.controller';
 import { AttendanceModule } from '@modules/attendance/attendance.module';
-// Hidden (routes disabled): import { AttendanceEmployeeController } from '@modules/attendance/controllers/attendance.employee.controller';
+import { AttendanceEmployeeController } from '@modules/attendance/controllers/attendance.employee.controller';
 import { ShiftModule } from '@modules/shift/shift.module';
 import { ShiftEmployeeController } from '@modules/shift/controllers/shift.employee.controller';
 import { SubscriptionModule } from '@modules/subscription/subscription.module';
@@ -26,8 +26,8 @@ import { PayrollEmployeeController } from '@modules/payroll/controllers/payroll.
     controllers: [
         ContractEmployeeController,
         // Hidden (routes disabled):
-        // LeaveEmployeeController,
-        // AttendanceEmployeeController,
+        LeaveEmployeeController,
+        AttendanceEmployeeController,
         ShiftEmployeeController,
         PayrollEmployeeController,
     ],
