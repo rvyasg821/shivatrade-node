@@ -19,10 +19,6 @@
             {
                 "include": "**/**/templates/*",
                 "outDir": "dist"
-            },
-            {
-                "include": "modules/attendance/face-models/*",
-                "outDir": "dist"
             }
         ],
         "deleteOutDir": false,

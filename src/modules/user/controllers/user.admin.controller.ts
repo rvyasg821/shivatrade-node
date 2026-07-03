@@ -5,6 +5,7 @@ import {
     Controller,
     Delete,
     Get,
+    HttpException,
     InternalServerErrorException,
     NotFoundException,
     Param,
@@ -87,7 +88,6 @@ import { name } from '@azure/msal-node/dist/packageMetadata';
 import { UserAgentCreateRequestDto } from '../dtos/request/user_agent.create.request.dto';
 import { EnhancedEmailService } from '@modules/email/services/enhanced-email.service';
 import { FileService } from '@common/file/services/file.service';
-import { FaceRecognitionService } from '@modules/attendance/services/face-recognition.service';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 
 @ApiTags('modules.admin.user')
@@ -109,7 +109,6 @@ export class UserAdminController {
         private readonly emailService: EnhancedEmailService,
         private readonly companyService: CompanyService,
         private readonly fileService: FileService,
-        private readonly faceRecognitionService: FaceRecognitionService,
         private readonly companySettingsService: CompanySettingsService
     ) {}
 
@@ -270,6 +269,9 @@ export class UserAdminController {
 
             return { data: { userExists } };
         } catch (err: unknown) {
+            // Preserve intentional HTTP errors (e.g. 409 email-already-exists,
+            // 400, 404) — only genuinely unexpected errors become a 500.
+            if (err instanceof HttpException) throw err;
             throw new InternalServerErrorException({
                 statusCode: ENUM_APP_STATUS_CODE_ERROR.UNKNOWN,
                 message: 'http.serverError.internalServerError',
@@ -433,7 +435,6 @@ export class UserAdminController {
             state,
             postcode,
             country,
-            face_image,
         }: UserCreateRequestDto
     ): Promise<IResponse<any>> {
         const promises: Promise<any>[] = [
@@ -471,22 +472,6 @@ export class UserAdminController {
                 targetRoleLevel,
                 'assign role to user'
             );
-        }
-
-        // Extract face descriptor if face_image is provided
-        let faceDescriptor: number[] | null = null;
-        let faceReferencePhoto: string | null = null;
-        if (face_image) {
-            try {
-                const descriptor = await this.faceRecognitionService.extractDescriptor(face_image);
-                faceDescriptor = Array.from(descriptor);
-                faceReferencePhoto = await this.uploadBase64Image(face_image, `${Date.now()}-face-ref`);
-            } catch (error) {
-                if (error instanceof BadRequestException) {
-                    throw error;
-                }
-                // Silently skip face registration on unexpected errors
-            }
         }
 
         const passwordHash: IAuthPassword =
@@ -565,10 +550,6 @@ export class UserAdminController {
             if (postcode) userData.postcode = postcode;
             if (country) userData.country = country;
 
-            // Add face recognition data if extracted
-            if (faceDescriptor) userData.face_descriptor = faceDescriptor;
-            if (faceReferencePhoto) userData.face_reference_photo = faceReferencePhoto;
-
             // Add companyId only if creator is not an admin
             if (roleName !== ENUM_SYSTEM_ROLE.SUPER_ADMIN && currentUserCompanyId) {
                 userData.companyId = currentUserCompanyId;
@@ -637,6 +618,9 @@ export class UserAdminController {
                 data: created,
             };
         } catch (err: unknown) {
+            // Preserve intentional HTTP errors (e.g. 409 email-already-exists,
+            // 400, 404) — only genuinely unexpected errors become a 500.
+            if (err instanceof HttpException) throw err;
             // console.log("create ===== ", err);
 
             throw new InternalServerErrorException({
@@ -815,6 +799,9 @@ export class UserAdminController {
                 data: created,
             };
         } catch (err: unknown) {
+            // Preserve intentional HTTP errors (e.g. 409 email-already-exists,
+            // 400, 404) — only genuinely unexpected errors become a 500.
+            if (err instanceof HttpException) throw err;
             // console.log("create ===== ", err);
 
             throw new InternalServerErrorException({
@@ -869,7 +856,6 @@ export class UserAdminController {
             state,
             postcode,
             country,
-            face_image,
         }: UserUpdateRequestDto
     ): Promise<IResponse<any>> {
         // Validate hierarchy - user can only update users at or below their level
@@ -884,21 +870,6 @@ export class UserAdminController {
                 user.roleLevel || 1,
                 'update'
             );
-        }
-
-        // Extract face descriptor if face_image is provided
-        let faceDescriptor: number[] | null = null;
-        let faceReferencePhoto: string | null = null;
-        if (face_image) {
-            try {
-                const descriptor = await this.faceRecognitionService.extractDescriptor(face_image);
-                faceDescriptor = Array.from(descriptor);
-                faceReferencePhoto = await this.uploadBase64Image(face_image, `${Date.now()}-face-ref`);
-            } catch (error) {
-                if (error instanceof BadRequestException) {
-                    throw error;
-                }
-            }
         }
 
         const currentUserEmail = user.email;
@@ -1000,10 +971,6 @@ export class UserAdminController {
             if (postcode !== undefined) userData.postcode = postcode;
             if (country !== undefined) userData.country = country;
 
-            // Add face recognition data if extracted
-            if (faceDescriptor) userData.face_descriptor = faceDescriptor;
-            if (faceReferencePhoto) userData.face_reference_photo = faceReferencePhoto;
-
             // Add companyId only if updater is not an admin
             if (roleName !== ENUM_SYSTEM_ROLE.SUPER_ADMIN && currentUserCompanyId) {
                 userData.companyId = currentUserCompanyId;
@@ -1055,6 +1022,9 @@ export class UserAdminController {
                 data: { ...updated, password: undefined },
             };
         } catch (err: unknown) {
+            // Preserve intentional HTTP errors (e.g. 409 email-already-exists,
+            // 400, 404) — only genuinely unexpected errors become a 500.
+            if (err instanceof HttpException) throw err;
             console.log("update error ===== ", err);
 
             throw new InternalServerErrorException({
@@ -1108,6 +1078,9 @@ export class UserAdminController {
                 },
             };
         } catch (err: unknown) {
+            // Preserve intentional HTTP errors (e.g. 409 email-already-exists,
+            // 400, 404) — only genuinely unexpected errors become a 500.
+            if (err instanceof HttpException) throw err;
             throw new InternalServerErrorException({
                 statusCode: ENUM_APP_STATUS_CODE_ERROR.UNKNOWN,
                 message: 'http.serverError.internalServerError',
@@ -1134,6 +1107,9 @@ export class UserAdminController {
                 description: this.messageService.setMessage('activity.delete'),
             });
         } catch (err: unknown) {
+            // Preserve intentional HTTP errors (e.g. 409 email-already-exists,
+            // 400, 404) — only genuinely unexpected errors become a 500.
+            if (err instanceof HttpException) throw err;
             throw new InternalServerErrorException({
                 statusCode: ENUM_APP_STATUS_CODE_ERROR.UNKNOWN,
                 message: 'http.serverError.internalServerError',
@@ -1155,6 +1131,7 @@ export class UserAdminController {
             );
             return response;
         } catch (error) {
+            if (error instanceof HttpException) throw error;
             throw new InternalServerErrorException({
                 statusCode: ENUM_APP_STATUS_CODE_ERROR.UNKNOWN,
                 message: 'user.error.base64ImageUploadFailed',

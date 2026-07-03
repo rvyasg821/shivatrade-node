@@ -32,7 +32,6 @@ import { AuthService } from '@modules/auth/services/auth.service';
 import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
 import { ENUM_SYSTEM_ROLE, ENUM_ROLE_TYPE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_SIGN_UP_FROM, ENUM_USER_STATUS } from '@modules/user/enums/user.enum';
-import { FaceRecognitionService } from '@modules/attendance/services/face-recognition.service';
 import { FileService } from '@common/file/services/file.service';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { EnhancedEmailService } from '@modules/email/services/enhanced-email.service';
@@ -65,7 +64,6 @@ export class EmployeeAdminController {
         private readonly roleService: RoleService,
         private readonly authService: AuthService,
         private readonly locationRepository: LocationRepository,
-        private readonly faceRecognitionService: FaceRecognitionService,
         private readonly fileService: FileService,
         private readonly companySettingsService: CompanySettingsService,
         private readonly employeeLocationAssignmentRepository: EmployeeLocationAssignmentRepository,
@@ -228,24 +226,6 @@ export class EmployeeAdminController {
             ENUM_USER_SIGN_UP_FROM.ADMIN
         );
 
-        // Extract face descriptor if face_image is provided
-        let faceDescriptor: number[] | null = null;
-        let faceReferencePhoto: string | null = null;
-        if (body.face_image) {
-            try {
-                const descriptor = await this.faceRecognitionService.extractDescriptor(body.face_image);
-                faceDescriptor = Array.from(descriptor);
-                faceReferencePhoto = await this.fileService.uploadBase64Image(
-                    body.face_image,
-                    `${Date.now()}-face-ref`
-                );
-            } catch (error) {
-                if (error instanceof BadRequestException) {
-                    throw error;
-                }
-            }
-        }
-
         // Auto-generate employee code if not provided
         let employeeCode = body.employee_code;
         if (!employeeCode) {
@@ -267,8 +247,6 @@ export class EmployeeAdminController {
         try {
             this.applyEmployeeFields(user, body);
             user.employee_code = employeeCode;
-            if (faceDescriptor) user.face_descriptor = faceDescriptor;
-            if (faceReferencePhoto) user.face_reference_photo = faceReferencePhoto;
 
             // userService.update saves the (now fully-populated) entity. Pass the
             // identity fields it would otherwise reset, plus the auto code +
@@ -626,22 +604,6 @@ export class EmployeeAdminController {
         let userGender = body.gender;
         if (userGender === 'OTHER') {
             userGender = undefined;
-        }
-
-        // Extract face descriptor if face_image is provided
-        if (body.face_image) {
-            try {
-                const descriptor = await this.faceRecognitionService.extractDescriptor(body.face_image);
-                user.face_descriptor = Array.from(descriptor) as any;
-                user.face_reference_photo = await this.fileService.uploadBase64Image(
-                    body.face_image,
-                    `${Date.now()}-face-ref`
-                );
-            } catch (error) {
-                if (error instanceof BadRequestException) {
-                    throw error;
-                }
-            }
         }
 
         // Map employee DTO fields to user update data

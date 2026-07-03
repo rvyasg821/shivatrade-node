@@ -85,6 +85,29 @@ export class LeadService {
             data.interested_categories
         );
 
+        // Email is a shared identity across the app. Reject a new lead when the
+        // contact email already belongs to (a) another open lead in this
+        // company, or (b) a genuinely ACTIVE user (customer / vendor / employee
+        // / user). Soft-deleted leads and inactive/deleted users don't block.
+        const normalizedEmail = data.contact_email.trim().toLowerCase();
+        const dupLead = await this.leadRepository.findOne({
+            company_id: companyId,
+            contact_email: ILike(normalizedEmail),
+            soft_delete: false,
+        } as any);
+        if (dupLead) {
+            throw new BadRequestException(
+                `A lead with the email '${normalizedEmail}' already exists`
+            );
+        }
+        const emailFree =
+            await this.customerService.isPrimaryEmailAvailable(normalizedEmail);
+        if (!emailFree) {
+            throw new BadRequestException(
+                `Email '${normalizedEmail}' is already in use`
+            );
+        }
+
         // `lines` is a child table, not a lead column — keep it out of the write.
         const { lines, ...leadData } = data as any;
         const prefix = await this.resolveCompanyPrefix(companyId);
@@ -156,6 +179,32 @@ export class LeadService {
         }
         if (data.contact_email) {
             data.contact_email = data.contact_email.trim().toLowerCase();
+            // Same shared-identity guard as create, but only when the email
+            // actually changes — an unchanged email (incl. a converted lead
+            // whose email now belongs to its own customer) must not block.
+            const currentEmail = (lead.contact_email || '').trim().toLowerCase();
+            if (data.contact_email !== currentEmail) {
+                const normalizedEmail = data.contact_email;
+                const dupLead = await this.leadRepository.findOne({
+                    company_id: companyId,
+                    contact_email: ILike(normalizedEmail),
+                    soft_delete: false,
+                } as any);
+                if (dupLead && dupLead._id.toString() !== lead._id.toString()) {
+                    throw new BadRequestException(
+                        `A lead with the email '${normalizedEmail}' already exists`
+                    );
+                }
+                const emailFree =
+                    await this.customerService.isPrimaryEmailAvailable(
+                        normalizedEmail
+                    );
+                if (!emailFree) {
+                    throw new BadRequestException(
+                        `Email '${normalizedEmail}' is already in use`
+                    );
+                }
+            }
         }
         if (data.company_name) {
             data.company_name = data.company_name.trim();
