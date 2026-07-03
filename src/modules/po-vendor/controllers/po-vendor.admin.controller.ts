@@ -392,7 +392,7 @@ export class PoVendorAdminController {
     @Delete('/delete/:id')
     async delete(@Param('id') id: string): Promise<IResponse<null>> {
         const row = await this.povService.findOneById(id);
-        await this.povService.softDelete(row);
+        await this.povService.deleteWithGuard(row);
         return { data: null };
     }
 }

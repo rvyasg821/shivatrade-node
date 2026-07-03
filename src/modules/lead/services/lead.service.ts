@@ -27,6 +27,7 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -54,8 +55,29 @@ export class LeadService {
         private readonly companyRepository: CompanyRepository,
         private readonly voucherService: VoucherService,
         private readonly activityService: LeadActivityService,
-        private readonly activityRepository: LeadActivityRepository
+        private readonly activityRepository: LeadActivityRepository,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
+
+    /**
+     * Delete policy (per senior): a Lead with any linked downstream document
+     * (RFQ / Quotation) CANNOT be deleted. With nothing linked, a lead is
+     * permanently HARD-deleted (leads have no draft status). `softDelete`
+     * below is kept for internal/rollback use.
+     */
+    async deleteWithGuard(lead: LeadDoc): Promise<void> {
+        await this.dependencyCheckService.assertNoDependents(
+            'lead',
+            lead._id.toString(),
+            'Lead'
+        );
+        // No dependents → hard delete the lead and its requirement lines.
+        await this.leadLineRepository.deleteMany({
+            lead_id: lead._id.toString(),
+        } as any);
+        await this.leadRepository.delete({ _id: lead._id } as any);
+        this.logger.log(`Lead hard-deleted: ${lead._id}`);
+    }
 
     /** Company voucher prefix (explicit `voucher_prefix` or first 5 chars of name). */
     private async resolveCompanyPrefix(companyId: string): Promise<string> {

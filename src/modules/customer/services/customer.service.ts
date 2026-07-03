@@ -26,6 +26,7 @@ import { AuthService } from '@modules/auth/services/auth.service';
 import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_GENDER, ENUM_USER_SIGN_UP_FROM, ENUM_USER_STATUS } from '@modules/user/enums/user.enum';
 import { HelperDateService } from '@common/helper/services/helper.date.service';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import {
     IDatabaseFindAllOptions,
     IDatabaseFindOneOptions,
@@ -43,7 +44,8 @@ export class CustomerService {
         private readonly roleService: RoleService,
         private readonly authService: AuthService,
         private readonly configService: ConfigService,
-        private readonly helperDateService: HelperDateService
+        private readonly helperDateService: HelperDateService,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
 
     /**
@@ -426,6 +428,13 @@ export class CustomerService {
     }
 
     async softDelete(customer: CustomerDoc, deletedBy?: string): Promise<CustomerDoc> {
+        // Block deletion while the customer is still used by any live document
+        // (Lead / Quotation / Sales Order / Invoice). Customer stays a
+        // soft-delete master (revive recipe) — guarded, not hard-deleted.
+        await this.dependencyCheckService.assertCustomerNotInUse(
+            customer._id.toString()
+        );
+
         const existingContacts = await this.contactRepository.findByCustomerId(
             customer._id.toString()
         );

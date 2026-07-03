@@ -8,6 +8,7 @@ import { plainToInstance } from 'class-transformer';
 import { In } from 'typeorm';
 import { RfqRepository } from '../repository/repositories/rfq.repository';
 import { RfqLineRepository } from '../repository/repositories/rfq-line.repository';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { RfqVendorRepository } from '../repository/repositories/rfq-vendor.repository';
 import { RfqVendorPriceRepository } from '../repository/repositories/rfq-vendor-price.repository';
 import { RfqDoc } from '../repository/entities/rfq.entity';
@@ -55,8 +56,29 @@ export class RfqService {
         private readonly priceListService: PriceListService,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
-        private readonly leadActivityService: LeadActivityService
+        private readonly leadActivityService: LeadActivityService,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
+
+    /**
+     * Delete policy: block if any downstream doc (Quotation) references this
+     * RFQ; otherwise only a DRAFT may be deleted (a sent RFQ must be cancelled),
+     * and it is HARD-deleted with its lines/vendors/prices. `softDelete` above
+     * is kept for any internal use.
+     */
+    async deleteWithGuard(companyId: string, rfqId: string): Promise<void> {
+        const rfq: any = await this.getOrThrow(companyId, rfqId);
+        await this.dependencyCheckService.assertNoDependents('rfq', rfqId, 'RFQ');
+        if (rfq.status !== ENUM_RFQ_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only a draft RFQ can be deleted. Cancel it instead.'
+            );
+        }
+        await this.rfqVendorPriceRepository.deleteMany({ rfq_id: rfqId } as any);
+        await this.rfqVendorRepository.deleteMany({ rfq_id: rfqId } as any);
+        await this.rfqLineRepository.deleteMany({ rfq_id: rfqId } as any);
+        await this.rfqRepository.delete({ _id: rfqId } as any);
+    }
 
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
         const company: any = await this.companyRepository.findOneById(companyId);

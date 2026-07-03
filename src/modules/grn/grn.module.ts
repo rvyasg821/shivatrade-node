@@ -14,10 +14,12 @@ import { TrackingEventRepositoryModule } from '@modules/tracking-event/repositor
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 // Stock ledger (Goods In) — GRN confirm posts grn_in movements.
 import { InventoryModule } from '@modules/inventory/inventory.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
     imports: [
         GrnRepositoryModule,
+        DependencyCheckModule,
         PoVendorRepositoryModule,
         PurchaseOrderRepositoryModule,
         ProductRepositoryModule,

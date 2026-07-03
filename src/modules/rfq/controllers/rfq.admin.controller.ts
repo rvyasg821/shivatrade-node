@@ -234,7 +234,7 @@ export class RfqAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<{ deleted: boolean }>> {
-        await this.rfqService.softDelete(companyId, id);
+        await this.rfqService.deleteWithGuard(companyId, id);
         return { data: { deleted: true } };
     }
 

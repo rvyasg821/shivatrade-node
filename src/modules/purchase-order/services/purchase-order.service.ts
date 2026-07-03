@@ -17,6 +17,7 @@ import {
     PurchaseOrderLineResponseDto,
 } from '../dtos/response/purchase-order.get.response.dto';
 import { ENUM_PURCHASE_ORDER_STATUS } from '../enums/purchase-order.enum';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
@@ -89,8 +90,32 @@ export class PurchaseOrderService {
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly povService: PoVendorService,
         private readonly voucherService: VoucherService,
-        @InjectDatabaseConnection() private readonly dataSource: DataSource
+        @InjectDatabaseConnection() private readonly dataSource: DataSource,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
+
+    /**
+     * Delete policy: block if any Invoice / PO-Vendor / GRN / Debit-Note
+     * references this Sales Order; otherwise only a DRAFT may be deleted (a
+     * confirmed SO must be cancelled), and it is HARD-deleted with its lines.
+     * `softDelete` above stays for the internal rollback path.
+     */
+    async deleteWithGuard(row: PurchaseOrderDoc): Promise<void> {
+        await this.dependencyCheckService.assertNoDependents(
+            'purchase_order',
+            row._id.toString(),
+            'Sales Order'
+        );
+        if (row.status !== ENUM_PURCHASE_ORDER_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only a draft Sales Order can be deleted. Cancel it instead.'
+            );
+        }
+        await this.poLineRepository.deleteMany({
+            purchase_order_id: row._id.toString(),
+        } as any);
+        await this.poRepository.delete({ _id: row._id } as any);
+    }
 
     // ─── Reference validation ───────────────────────────────────────────
 

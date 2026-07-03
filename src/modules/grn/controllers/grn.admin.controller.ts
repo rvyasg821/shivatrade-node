@@ -148,7 +148,7 @@ export class GrnAdminController {
         @AuthJwtPayload('user') userId: string,
         @Param('id') id: string
     ): Promise<IResponse<{ deleted: boolean }>> {
-        await this.grnService.softDelete(companyId, id, userId);
+        await this.grnService.deleteWithGuard(companyId, id);
         return { data: { deleted: true } };
     }
 

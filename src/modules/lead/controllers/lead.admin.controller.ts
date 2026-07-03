@@ -144,7 +144,7 @@ export class LeadAdminController {
         @Param('leadId') leadId: string
     ): Promise<void> {
         const lead = await this.leadService.findOneById(leadId);
-        await this.leadService.softDelete(lead, userId);
+        await this.leadService.deleteWithGuard(lead);
     }
 
     @Response('lead.convert')

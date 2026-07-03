@@ -8,6 +8,7 @@ import { ProductRepositoryModule } from '@modules/product/repository/product.rep
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
     imports: [
@@ -16,6 +17,7 @@ import { PriceListModule } from '@modules/price-list/price-list.module';
         ProductRepositoryModule,
         VendorRepositoryModule,
         CompanyRepositoryModule,
+        DependencyCheckModule,
         // Full PriceListModule (not just the repo) — the RFQ vendor-price import
         // reuses the price-list Excel parser + create/upsert services.
         PriceListModule,

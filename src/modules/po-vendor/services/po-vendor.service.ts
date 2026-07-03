@@ -45,6 +45,7 @@ import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
 
@@ -77,8 +78,35 @@ export class PoVendorService {
         private readonly currencyService: CurrencyService,
         private readonly voucherService: VoucherService,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
-        private readonly stockLedger: StockLedgerService
+        private readonly stockLedger: StockLedgerService,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
+
+    /**
+     * Delete policy: block if any GRN / Debit-Note references this POV;
+     * otherwise only a DRAFT may be deleted (a dispatched POV must be
+     * cancelled), and it is HARD-deleted with its lines + payments.
+     * `softDelete` above stays for internal use.
+     */
+    async deleteWithGuard(row: PoVendorDoc): Promise<void> {
+        await this.dependencyCheckService.assertNoDependents(
+            'po_vendor',
+            row._id.toString(),
+            'Vendor PO'
+        );
+        if (row.status !== ENUM_PO_VENDOR_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only draft POVs can be deleted. Cancel non-draft POVs instead.'
+            );
+        }
+        await this.povPaymentRepository.deleteMany({
+            po_vendor_id: row._id.toString(),
+        } as any);
+        await this.povLineRepository.deleteMany({
+            po_vendor_id: row._id.toString(),
+        } as any);
+        await this.povRepository.delete({ _id: row._id } as any);
+    }
 
     /**
      * Append an auto-generated lifecycle event to a POV's tracking timeline.

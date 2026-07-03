@@ -138,7 +138,7 @@ export class DebitNoteAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<{ deleted: boolean }>> {
-        await this.debitNoteService.softDelete(companyId, id);
+        await this.debitNoteService.deleteWithGuard(companyId, id);
         return { data: { deleted: true } };
     }
 

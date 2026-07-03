@@ -433,6 +433,24 @@ export class DebitNoteService {
         await this.debitNoteRepository.save(dn);
     }
 
+    /**
+     * Delete policy: a Debit Note is the end of the chain (nothing references
+     * it), so only the draft rule applies — a confirmed DN must be cancelled;
+     * a DRAFT is HARD-deleted with its lines.
+     */
+    async deleteWithGuard(companyId: string, dnId: string): Promise<void> {
+        const dn: any = await this.getOrThrow(companyId, dnId);
+        if (dn.status !== ENUM_DEBIT_NOTE_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only a draft Debit Note can be deleted. Cancel it instead.'
+            );
+        }
+        await this.debitNoteLineRepository.deleteMany({
+            debit_note_id: dnId,
+        } as any);
+        await this.debitNoteRepository.delete({ _id: dnId } as any);
+    }
+
     // ─── Read ────────────────────────────────────────────────────────────
     async mapGet(
         companyId: string,

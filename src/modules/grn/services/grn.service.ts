@@ -12,6 +12,7 @@ import { DebitNoteRepository } from '../repository/repositories/debit-note.repos
 import { ENUM_DEBIT_NOTE_STATUS } from '../enums/debit-note.enum';
 import { GrnDoc } from '../repository/entities/grn.entity';
 import { ENUM_GRN_STATUS } from '../enums/grn.enum';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import {
     GrnCreateFromPovDto,
     GrnUpdateDto,
@@ -69,8 +70,32 @@ export class GrnService {
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
-        private readonly stockLedger: StockLedgerService
+        private readonly stockLedger: StockLedgerService,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
+
+    /**
+     * Delete policy: block if any Debit-Note references this GRN; otherwise
+     * only a DRAFT may be deleted (a confirmed GRN must be cancelled), and it
+     * is HARD-deleted with its lines. A draft GRN still counts toward the POV's
+     * received qty, so recompute the POV after removal (no stock reversal —
+     * only confirmed GRNs post stock). `softDelete` above stays for internal use.
+     */
+    async deleteWithGuard(companyId: string, grnId: string): Promise<void> {
+        const grn: any = await this.getOrThrow(companyId, grnId);
+        await this.dependencyCheckService.assertNoDependents('grn', grnId, 'GRN');
+        if (grn.status !== ENUM_GRN_STATUS.DRAFT) {
+            throw new BadRequestException(
+                'Only a draft GRN can be deleted. Cancel it instead.'
+            );
+        }
+        const povId = grn.po_vendor_id ? grn.po_vendor_id.toString() : null;
+        await this.grnLineRepository.deleteMany({ grn_id: grnId } as any);
+        await this.grnRepository.delete({ _id: grnId } as any);
+        if (povId) {
+            await this.recomputePovFromGrns(companyId, povId);
+        }
+    }
 
     /**
      * Emit a system tracking event onto a POV's timeline. Best-effort — a
