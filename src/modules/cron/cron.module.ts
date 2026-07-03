@@ -9,7 +9,6 @@ import { SubscriptionCronService } from '@modules/cron/services/subscription-cro
 import { CronAdminController } from '@modules/cron/controllers/cron.admin.controller';
 import { EmailModule } from '@modules/email/email.module';
 import { CardModule } from '@modules/card/card.module';
-import { ComplianceModule } from '@modules/compliance/compliance.module';
 
 @Module({
     imports: [
@@ -21,7 +20,6 @@ import { ComplianceModule } from '@modules/compliance/compliance.module';
         DiscountModule,
         EmailModule,
         CardModule,
-        ComplianceModule,
     ],
     providers: [SubscriptionCronService],
     exports: [SubscriptionCronService],

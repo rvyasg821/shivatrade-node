@@ -96,8 +96,6 @@ import { AttendanceModule } from '@modules/attendance/attendance.module';
 // Hidden (routes disabled): import { AttendanceAdminController } from '@modules/attendance/controllers/attendance.admin.controller';
 import { ShiftModule } from '@modules/shift/shift.module';
 import { ShiftAdminController } from '@modules/shift/controllers/shift.admin.controller';
-import { ComplianceModule } from '@modules/compliance/compliance.module';
-import { ComplianceAdminController } from '@modules/compliance/controllers/compliance.admin.controller';
 import { CompanyLookupModule } from '@modules/company-lookup/company-lookup.module';
 import { CompanyLookupAdminController } from '@modules/company-lookup/controllers/company-lookup.admin.controller';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
@@ -191,8 +189,6 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         // Shift controller
         ShiftAdminController,
 
-        // Compliance controller
-        ComplianceAdminController,
 
         // Company Lookup controller
         CompanyLookupAdminController,
@@ -280,7 +276,6 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         LeaveModule,
         AttendanceModule,
         ShiftModule,
-        ComplianceModule,
         CompanyLookupModule,
         CompanySettingsModule,
         NotificationModule,
