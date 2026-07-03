@@ -2,7 +2,6 @@ import { Injectable, BadRequestException, ConflictException, Logger } from '@nes
 import { AttendanceRecordRepository } from '../repository/repositories/attendance-record.repository';
 import { AttendanceBreakRepository } from '../repository/repositories/attendance-break.repository';
 import { AttendanceSettingsService } from './attendance-settings.service';
-import { FaceRecognitionService } from './face-recognition.service';
 import { LocationService } from '@modules/location/services/location.service';
 import { UserRepository } from '@modules/user/repository/repositories/user.repository';
 import { AttendanceRecordEntity } from '../repository/entities/attendance-record.entity';
@@ -23,7 +22,6 @@ export class AttendanceClockService {
         private readonly breakRepository: AttendanceBreakRepository,
         private readonly settingsService: AttendanceSettingsService,
         private readonly locationService: LocationService,
-        private readonly faceRecognitionService: FaceRecognitionService,
         private readonly userRepository: UserRepository,
     ) {}
 
@@ -88,45 +86,8 @@ export class AttendanceClockService {
         opts: { gps?: { lat: number; lng: number }; faceDescriptor?: any },
         locationId?: string,
     ): Promise<void> {
-        // Face capture validation
-        if (settings.face_capture_enabled && !opts.faceDescriptor) {
-            throw new BadRequestException('Face capture is required');
-        }
-
-        // Face matching validation
-        if (settings.face_capture_enabled && opts.faceDescriptor) {
-            const user = await this.userRepository.findOne({ _id: userId } as any);
-
-            if (user && (user as any).face_descriptor && Array.isArray((user as any).face_descriptor)) {
-                try {
-                    // Extract descriptor from the captured image (faceDescriptor is base64 string)
-                    const capturedBase64 = typeof opts.faceDescriptor === 'string'
-                        ? opts.faceDescriptor
-                        : opts.faceDescriptor?.image;
-
-                    if (capturedBase64 && capturedBase64.startsWith('data:image')) {
-                        const capturedDescriptor = await this.faceRecognitionService.extractDescriptor(capturedBase64);
-                        const storedDescriptor = (user as any).face_descriptor;
-                        // Use ?? not || so an explicit 0 doesn't fall back silently.
-                        // Default tightened from 0.6 → 0.5 to match the new face-recognition defaults.
-                        const threshold = settings.face_match_threshold ?? 0.5;
-
-                        if (!this.faceRecognitionService.isMatch(storedDescriptor, capturedDescriptor, threshold)) {
-                            throw new BadRequestException(
-                                'Face verification failed. The captured face does not match your registered face.'
-                            );
-                        }
-                        this.logger.log(`Face verification passed for user ${userId}`);
-                    }
-                } catch (error) {
-                    if (error instanceof BadRequestException) {
-                        throw error;
-                    }
-                    this.logger.warn(`Face matching error for user ${userId}: ${error.message}`);
-                }
-            }
-            // If no stored descriptor, allow (just store proof image, no matching)
-        }
+        // Face capture/matching removed — attendance no longer performs face
+        // verification. GPS/geofence validation still applies below.
 
         // GPS validation
         if (settings.gps_enabled) {

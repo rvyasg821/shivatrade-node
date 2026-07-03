@@ -12,7 +12,6 @@ import { AttendanceClockService } from './services/attendance-clock.service';
 import { AttendanceService } from './services/attendance.service';
 import { AttendanceReportService } from './services/attendance-report.service';
 import { AttendanceCronService } from './services/attendance-cron.service';
-import { FaceRecognitionService } from './services/face-recognition.service';
 import { AttendanceImportExportService } from './services/attendance.import-export.service';
 
 @Module({
@@ -32,7 +31,6 @@ import { AttendanceImportExportService } from './services/attendance.import-expo
         AttendanceService,
         AttendanceReportService,
         AttendanceCronService,
-        FaceRecognitionService,
         AttendanceImportExportService,
     ],
     exports: [
@@ -41,7 +39,6 @@ import { AttendanceImportExportService } from './services/attendance.import-expo
         AttendanceService,
         AttendanceReportService,
         AttendanceCronService,
-        FaceRecognitionService,
         AttendanceImportExportService,
     ],
 })
