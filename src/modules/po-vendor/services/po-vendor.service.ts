@@ -5,6 +5,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
 import { PoVendorLineRepository } from '../repository/repositories/po-vendor-line.repository';
 import { PoVendorPaymentRepository } from '../repository/repositories/po-vendor-payment.repository';
@@ -2400,7 +2401,8 @@ export class PoVendorService {
             date_from?: string;
             date_to?: string;
             search?: string;
-        }
+        },
+        creator?: undefined | string | string[]
     ): Promise<{ total: number; by_status: Record<string, number> }> {
         const rows = await this.povRepository.aggregate<{
             status: string;
@@ -2408,6 +2410,7 @@ export class PoVendorService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.purchase_order_id) {
                 qb.andWhere('entity.purchase_order_id = :po', {
                     po: filters.purchase_order_id,

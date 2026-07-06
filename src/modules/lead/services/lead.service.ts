@@ -31,6 +31,7 @@ import { DependencyCheckService } from '@modules/dependency-check/dependency-che
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { ILike } from 'typeorm';
 import {
     IDatabaseFindAllOptions,
@@ -1162,7 +1163,10 @@ export class LeadService {
             source?: string;
             assigned_to?: string;
             search?: string;
-        }
+        },
+        // Ownership scope from CreatorScopeService: undefined = no filter,
+        // string = one creator, string[] = a set (Location Admin "All").
+        creator?: undefined | string | string[]
     ): Promise<LeadStatsResponseDto> {
         const find = this.buildListFind(companyId, filters);
 
@@ -1194,6 +1198,7 @@ export class LeadService {
                     at: filters.assigned_to,
                 });
             }
+            CreatorScopeService.applyToQb(qb, creator);
             const searchTerm =
                 typeof filters.search === 'string'
                     ? filters.search.trim()

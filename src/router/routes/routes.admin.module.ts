@@ -50,6 +50,7 @@ import { CustomerAdminController } from '@modules/customer/controllers/customer.
 import { LeadModule } from '@modules/lead/lead.module';
 import { RfqModule } from '@modules/rfq/rfq.module';
 import { LeadAdminController } from '@modules/lead/controllers/lead.admin.controller';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { RebateModule } from '@modules/rebate/rebate.module';
 import { RebateAdminController } from '@modules/rebate/controllers/rebate.admin.controller';
 import { ExpenseModule } from '@modules/expense/expense.module';
@@ -237,6 +238,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         ProductModule,
         VendorModule,
         CustomerModule,
+        CreatorScopeModule,
         LeadModule,
         RfqModule,
         RebateModule,

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { In } from 'typeorm';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 
 import { GrnRepository } from '../repository/repositories/grn.repository';
 import { GrnLineRepository } from '../repository/repositories/grn-line.repository';
@@ -536,11 +537,13 @@ export class DebitNoteService {
 
     async count(
         companyId: string,
-        filters: DebitNoteListFilters
+        filters: DebitNoteListFilters,
+        creator?: undefined | string | string[]
     ): Promise<number> {
-        return this.debitNoteRepository.getTotal(
-            this.buildListFind(companyId, filters) as any
-        );
+        return this.debitNoteRepository.getTotal({
+            ...this.buildListFind(companyId, filters),
+            ...CreatorScopeService.toFind(creator),
+        } as any);
     }
 
     async list(

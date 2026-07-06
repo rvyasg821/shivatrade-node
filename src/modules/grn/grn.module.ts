@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { GrnRepositoryModule } from './repository/grn.repository.module';
 import { GrnService } from './services/grn.service';
 import { DebitNoteService } from './services/debit-note.service';
@@ -18,6 +19,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
 
 @Module({
     imports: [
+        CreatorScopeModule,
         GrnRepositoryModule,
         DependencyCheckModule,
         PoVendorRepositoryModule,

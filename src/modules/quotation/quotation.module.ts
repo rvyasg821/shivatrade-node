@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { QuotationRepositoryModule } from './repository/quotation.repository.module';
 import { QuotationService } from './services/quotation.service';
 import { QuotationAdminController } from './controllers/quotation.admin.controller';
@@ -25,6 +26,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
 
 @Module({
     imports: [
+        CreatorScopeModule,
         QuotationRepositoryModule,
         DependencyCheckModule,
         CustomerModule,

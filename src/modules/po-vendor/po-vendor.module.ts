@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { PoVendorRepositoryModule } from './repository/po-vendor.repository.module';
 import { PoVendorService } from './services/po-vendor.service';
 import { PoCoverageService } from './services/po-coverage.service';
@@ -28,6 +29,7 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
  */
 @Module({
     imports: [
+        CreatorScopeModule,
         PoVendorRepositoryModule,
         DependencyCheckModule,
         PurchaseOrderRepositoryModule,

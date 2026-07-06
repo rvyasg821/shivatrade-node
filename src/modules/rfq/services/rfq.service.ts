@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { In } from 'typeorm';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { RfqRepository } from '../repository/repositories/rfq.repository';
 import { RfqLineRepository } from '../repository/repositories/rfq-line.repository';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
@@ -458,11 +459,17 @@ export class RfqService {
 
     async count(
         companyId: string,
-        filters: { status?: string | string[]; lead_id?: string; search?: string }
+        filters: {
+            status?: string | string[];
+            lead_id?: string;
+            search?: string;
+        },
+        creator?: undefined | string | string[]
     ): Promise<number> {
-        return this.rfqRepository.getTotal(
-            this.buildListFind(companyId, filters) as any
-        );
+        return this.rfqRepository.getTotal({
+            ...this.buildListFind(companyId, filters),
+            ...CreatorScopeService.toFind(creator),
+        } as any);
     }
 
     async list(
@@ -512,7 +519,12 @@ export class RfqService {
     /** Status counts for the KPI tile strip (mirrors lead.stats). */
     async stats(
         companyId: string,
-        filters: { status?: string | string[]; lead_id?: string; search?: string }
+        filters: {
+            status?: string | string[];
+            lead_id?: string;
+            search?: string;
+        },
+        creator?: undefined | string | string[]
     ): Promise<RfqStatsResponseDto> {
         const rows = await this.rfqRepository.aggregate<{
             status: string;
@@ -520,6 +532,7 @@ export class RfqService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.lead_id) {
                 qb.andWhere('entity.lead_id = :lid', { lid: filters.lead_id });
             }

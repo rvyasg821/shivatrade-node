@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { PurchaseOrderRepositoryModule } from './repository/purchase-order.repository.module';
 import { PurchaseOrderService } from './services/purchase-order.service';
 import { PoPdfService } from './services/po-pdf.service';
@@ -21,6 +22,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
 
 @Module({
     imports: [
+        CreatorScopeModule,
         PurchaseOrderRepositoryModule,
         DependencyCheckModule,
         VendorModule,

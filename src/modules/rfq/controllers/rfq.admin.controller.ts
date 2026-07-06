@@ -30,6 +30,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { RfqService } from '../services/rfq.service';
 import { RfqVendorSheetService } from '../services/rfq-vendor-sheet.service';
 import {
@@ -50,7 +51,8 @@ import {
 export class RfqAdminController {
     constructor(
         private readonly rfqService: RfqService,
-        private readonly rfqVendorSheetService: RfqVendorSheetService
+        private readonly rfqVendorSheetService: RfqVendorSheetService,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     // Per-vendor RFQ price-request sheets bundled into one ZIP. Draft-aware:
@@ -165,23 +167,36 @@ export class RfqAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('lead_id') leadId?: string,
-        @Query('search') search?: string
+        @Query('search') search?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<RfqListResponseDto>> {
         const filters = {
             status: parseRfqStatusParam(status),
             lead_id: leadId,
             search,
         };
-        const find = this.rfqService.buildListFind(companyId, filters);
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const find = {
+            ...this.rfqService.buildListFind(companyId, filters),
+            ...CreatorScopeService.toFind(creatorValue),
+        };
         const data = await this.rfqService.list(companyId, {
             find,
             paging: { limit: _limit, offset: _offset },
             order: _order,
         });
-        const total = await this.rfqService.count(companyId, filters);
+        const total = await this.rfqService.count(companyId, filters, creatorValue);
         return {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
@@ -193,15 +208,28 @@ export class RfqAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('status') status?: string,
         @Query('lead_id') leadId?: string,
-        @Query('search') search?: string
+        @Query('search') search?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<RfqStatsResponseDto>> {
-        const data = await this.rfqService.stats(companyId, {
-            status: parseRfqStatusParam(status),
-            lead_id: leadId,
-            search,
-        });
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.rfqService.stats(
+            companyId,
+            {
+                status: parseRfqStatusParam(status),
+                lead_id: leadId,
+                search,
+            },
+            creatorValue
+        );
         return { data };
     }
 
