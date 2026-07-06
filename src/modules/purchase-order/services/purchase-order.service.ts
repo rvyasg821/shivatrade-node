@@ -812,7 +812,10 @@ export class PurchaseOrderService {
         header.igst_total = '0';
         header.tax_total = '0';
         header.round_off = String(round_off);
-        header.grand_total = String(round2(grand_total));
+        // Round the customer-currency grand total to a whole number so the
+        // Sales Order carries the same clean figure as the quotation (e.g.
+        // $80, not $80.44). The ₹ round_off stays as the INR adjustment.
+        header.grand_total = String(Math.round(grand_total));
 
         await this.poRepository.save(header);
     }
