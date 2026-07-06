@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { InvoiceRepositoryModule } from './repository/invoice.repository.module';
 import { InvoiceService } from './services/invoice.service';
 import { InvoicePdfService } from './services/invoice-pdf.service';
@@ -30,6 +31,7 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
  */
 @Module({
     imports: [
+        CreatorScopeModule,
         InvoiceRepositoryModule,
         InventoryModule,
         VoucherModule,

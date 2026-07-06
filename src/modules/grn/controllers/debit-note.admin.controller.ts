@@ -26,6 +26,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { DebitNoteService } from '../services/debit-note.service';
 import {
     DebitNoteCreateFromGrnDto,
@@ -39,7 +40,10 @@ import {
 @ApiTags('admin.debitNote')
 @Controller({ version: '1', path: '/admin/debit-note' })
 export class DebitNoteAdminController {
-    constructor(private readonly debitNoteService: DebitNoteService) {}
+    constructor(
+        private readonly debitNoteService: DebitNoteService,
+        private readonly creatorScope: CreatorScopeService
+    ) {}
 
     @Response('debitNote.create')
     @AuthJwtAccessProtected()
@@ -69,12 +73,17 @@ export class DebitNoteAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('vendor_id') vendorId?: string,
         @Query('grn_id') grnId?: string,
         @Query('po_vendor_id') poVendorId?: string,
-        @Query('search') search?: string
+        @Query('search') search?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<DebitNoteListResponseDto>> {
         const filters = {
             status: parseStatusParam(status),
@@ -83,13 +92,25 @@ export class DebitNoteAdminController {
             po_vendor_id: poVendorId,
             search,
         };
-        const find = this.debitNoteService.buildListFind(companyId, filters);
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const find = {
+            ...this.debitNoteService.buildListFind(companyId, filters),
+            ...CreatorScopeService.toFind(creatorValue),
+        };
         const data = await this.debitNoteService.list(companyId, {
             find,
             paging: { limit: _limit, offset: _offset },
             order: _order,
         });
-        const total = await this.debitNoteService.count(companyId, filters);
+        const total = await this.debitNoteService.count(
+            companyId,
+            filters,
+            creatorValue
+        );
         return {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,

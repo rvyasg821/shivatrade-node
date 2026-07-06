@@ -26,6 +26,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { QuotationService } from '../services/quotation.service';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationCreateRequestDto } from '../dtos/request/quotation.create.request.dto';
@@ -38,7 +39,8 @@ import { QuotationStatsResponseDto } from '../dtos/response/quotation.stats.resp
 export class QuotationAdminController {
     constructor(
         private readonly quotationService: QuotationService,
-        private readonly quotationRepository: QuotationRepository
+        private readonly quotationRepository: QuotationRepository,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     @Response('quotation.create')
@@ -58,13 +60,18 @@ export class QuotationAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('customer_id') customerId?: string,
         @Query('lead_id') leadId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<QuotationGetResponseDto>> {
         // Status accepts a single value or comma-separated list — the
         // tile strip uses csv for multi-status buckets like "Draft + Sent".
@@ -72,14 +79,22 @@ export class QuotationAdminController {
         const searchTerm =
             searchRaw?.trim() ||
             (_search && typeof _search === 'string' ? _search : '');
-        const find = this.quotationService.buildListFind(companyId, {
-            customer_id: customerId,
-            lead_id: leadId,
-            status: statusValue,
-            date_from: dateFrom,
-            date_to: dateTo,
-            search: searchTerm,
-        });
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const find = {
+            ...this.quotationService.buildListFind(companyId, {
+                customer_id: customerId,
+                lead_id: leadId,
+                status: statusValue,
+                date_from: dateFrom,
+                date_to: dateTo,
+                search: searchTerm,
+            }),
+            ...CreatorScopeService.toFind(creatorValue),
+        };
 
         const rows = await this.quotationRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -98,22 +113,35 @@ export class QuotationAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('customer_id') customerId?: string,
         @Query('lead_id') leadId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<QuotationStatsResponseDto>> {
         const statusValue = parseStatusParam(status);
-        const data = await this.quotationService.stats(companyId, {
-            customer_id: customerId,
-            lead_id: leadId,
-            status: statusValue,
-            date_from: dateFrom,
-            date_to: dateTo,
-            search: searchRaw,
-        });
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.quotationService.stats(
+            companyId,
+            {
+                customer_id: customerId,
+                lead_id: leadId,
+                status: statusValue,
+                date_from: dateFrom,
+                date_to: dateTo,
+                search: searchRaw,
+            },
+            creatorValue
+        );
         return { data };
     }
 

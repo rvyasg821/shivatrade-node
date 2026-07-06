@@ -13,6 +13,7 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 // Repository-only import (no service-level cycle with QuotationModule).
 import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 
 @Module({
     imports: [
@@ -25,6 +26,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         CompanyRepositoryModule,
         QuotationRepositoryModule,
         DependencyCheckModule,
+        CreatorScopeModule,
     ],
     providers: [LeadService, LeadActivityService],
     exports: [LeadRepositoryModule, LeadService, LeadActivityService],

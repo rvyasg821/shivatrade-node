@@ -15,6 +15,7 @@ import { IResponse, IResponsePaging } from '@common/response/interfaces/response
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { CustomerService } from '../services/customer.service';
 import { CustomerRepository } from '../repository/repositories/customer.repository';
 import { CustomerCreateRequestDto } from '../dtos/request/customer.create.request.dto';
@@ -27,7 +28,8 @@ import { CustomerListResponseDto } from '../dtos/response/customer.list.response
 export class CustomerAdminController {
     constructor(
         private readonly customerService: CustomerService,
-        private readonly customerRepository: CustomerRepository
+        private readonly customerRepository: CustomerRepository,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     @Response('customer.create')
@@ -48,9 +50,14 @@ export class CustomerAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
-        @Query('country') country?: string
+        @Query('country') country?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<CustomerListResponseDto>> {
         const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
@@ -68,6 +75,13 @@ export class CustomerAdminController {
                 { country: { $regex: _search, $options: 'i' } },
             ];
         }
+
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        Object.assign(find, CreatorScopeService.toFind(creatorValue));
 
         const customers = await this.customerRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },

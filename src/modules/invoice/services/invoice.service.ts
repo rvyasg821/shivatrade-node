@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { DataSource } from 'typeorm';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
 
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
@@ -1609,7 +1610,8 @@ export class InvoiceService {
             date_from?: string;
             date_to?: string;
             search?: string;
-        }
+        },
+        creator?: undefined | string | string[]
     ): Promise<{
         total: number;
         total_amount_inr: string;
@@ -1624,6 +1626,7 @@ export class InvoiceService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.customer_id) {
                 qb.andWhere('entity.customer_id = :cust', {
                     cust: filters.customer_id,
@@ -1695,6 +1698,7 @@ export class InvoiceService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.customer_id) {
                 qb.andWhere('entity.customer_id = :cust', {
                     cust: filters.customer_id,

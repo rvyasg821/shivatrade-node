@@ -26,6 +26,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { PurchaseOrderService } from '../services/purchase-order.service';
 import { PoPdfService } from '../services/po-pdf.service';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
@@ -44,7 +45,8 @@ export class PurchaseOrderAdminController {
         private readonly poService: PurchaseOrderService,
         private readonly poPdfService: PoPdfService,
         private readonly poRepository: PurchaseOrderRepository,
-        private readonly poCoverageService: PoCoverageService
+        private readonly poCoverageService: PoCoverageService,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     @Response('purchaseOrder.create')
@@ -71,6 +73,10 @@ export class PurchaseOrderAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery()
         { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('vendor_id') vendorId?: string,
@@ -80,22 +86,31 @@ export class PurchaseOrderAdminController {
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<PurchaseOrderGetResponseDto>> {
         const statusValue = parseStatusParam(status);
         const searchTerm =
             searchRaw?.trim() ||
             (_search && typeof _search === 'string' ? _search : '');
-        const find = this.poService.buildListFind(companyId, {
-            vendor_id: vendorId,
-            customer_id: customerId,
-            quotation_id: quotationId,
-            pfi_id: pfiId,
-            status: statusValue,
-            date_from: dateFrom,
-            date_to: dateTo,
-            search: searchTerm,
-        });
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const find = {
+            ...this.poService.buildListFind(companyId, {
+                vendor_id: vendorId,
+                customer_id: customerId,
+                quotation_id: quotationId,
+                pfi_id: pfiId,
+                status: statusValue,
+                date_from: dateFrom,
+                date_to: dateTo,
+                search: searchTerm,
+            }),
+            ...CreatorScopeService.toFind(creatorValue),
+        };
 
         const rows = await this.poRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -113,6 +128,10 @@ export class PurchaseOrderAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('vendor_id') vendorId?: string,
         @Query('customer_id') customerId?: string,
         @Query('quotation_id') quotationId?: string,
@@ -120,19 +139,28 @@ export class PurchaseOrderAdminController {
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<PurchaseOrderStatsResponseDto>> {
         const statusValue = parseStatusParam(status);
-        const data = await this.poService.stats(companyId, {
-            vendor_id: vendorId,
-            customer_id: customerId,
-            quotation_id: quotationId,
-            pfi_id: pfiId,
-            status: statusValue,
-            date_from: dateFrom,
-            date_to: dateTo,
-            search: searchRaw,
-        });
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.poService.stats(
+            companyId,
+            {
+                vendor_id: vendorId,
+                customer_id: customerId,
+                quotation_id: quotationId,
+                pfi_id: pfiId,
+                status: statusValue,
+                date_from: dateFrom,
+                date_to: dateTo,
+                search: searchRaw,
+            },
+            creatorValue
+        );
         return { data };
     }
 

@@ -5,6 +5,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
 import { QuotationDoc } from '../repository/entities/quotation.entity';
@@ -1544,7 +1545,8 @@ export class QuotationService {
             date_from?: string;
             date_to?: string;
             search?: string;
-        }
+        },
+        creator?: undefined | string | string[]
     ): Promise<{
         total: number;
         total_amount_inr: string;
@@ -1562,6 +1564,7 @@ export class QuotationService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.customer_id) {
                 qb.andWhere('entity.customer_id = :cust', {
                     cust: filters.customer_id,

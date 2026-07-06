@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { RfqRepositoryModule } from './repository/rfq.repository.module';
 import { RfqService } from './services/rfq.service';
 import { RfqVendorSheetService } from './services/rfq-vendor-sheet.service';
@@ -12,6 +13,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
 
 @Module({
     imports: [
+        CreatorScopeModule,
         RfqRepositoryModule,
         LeadModule,
         ProductRepositoryModule,

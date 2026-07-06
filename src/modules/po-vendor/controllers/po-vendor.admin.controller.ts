@@ -27,6 +27,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { PoVendorService } from '../services/po-vendor.service';
 import { PoVendorPdfService } from '../services/po-vendor-pdf.service';
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
@@ -49,7 +50,8 @@ export class PoVendorAdminController {
     constructor(
         private readonly povService: PoVendorService,
         private readonly povRepository: PoVendorRepository,
-        private readonly povPdfService: PoVendorPdfService
+        private readonly povPdfService: PoVendorPdfService,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     // ─── Recover (multi-vendor batch) ───────────────────────────────────
@@ -143,13 +145,18 @@ export class PoVendorAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery()
         { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('vendor_id') vendorId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
-        @Query('date_to') dateTo?: string
+        @Query('date_to') dateTo?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<PoVendorGetResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
         if (purchaseOrderId) find.purchase_order_id = purchaseOrderId;
@@ -171,6 +178,13 @@ export class PoVendorAdminController {
             ];
         }
 
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        Object.assign(find, CreatorScopeService.toFind(creatorValue));
+
         const rows = await this.povRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
             order: _order || { createdAt: 'desc' as any },
@@ -189,12 +203,17 @@ export class PoVendorAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('vendor_id') vendorId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<{ total: number; by_status: Record<string, number> }>> {
         // CSV status → array (the tiles pass comma-separated statuses).
         let statusValue: string | string[] | undefined;
@@ -205,14 +224,22 @@ export class PoVendorAdminController {
                 .filter(Boolean);
             statusValue = parts.length > 1 ? parts : parts[0];
         }
-        const data = await this.povService.stats(companyId, {
-            purchase_order_id: purchaseOrderId,
-            vendor_id: vendorId,
-            status: statusValue,
-            date_from: dateFrom,
-            date_to: dateTo,
-            search: searchRaw,
-        });
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.povService.stats(
+            companyId,
+            {
+                purchase_order_id: purchaseOrderId,
+                vendor_id: vendorId,
+                status: statusValue,
+                date_from: dateFrom,
+                date_to: dateTo,
+                search: searchRaw,
+            },
+            creatorValue
+        );
         return { data };
     }
 

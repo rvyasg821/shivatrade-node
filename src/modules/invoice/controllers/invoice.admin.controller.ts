@@ -31,6 +31,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { InvoiceService } from '../services/invoice.service';
 import { InvoiceLineImportService } from '../services/invoice-line-import.service';
 import { InvoiceEventService } from '../services/invoice-event.service';
@@ -66,7 +67,8 @@ export class InvoiceAdminController {
         private readonly invoicePdfService: InvoicePdfService,
         private readonly invoiceLineImportService: InvoiceLineImportService,
         private readonly invoiceEventService: InvoiceEventService,
-        private readonly invoiceEventFileService: InvoiceEventFileService
+        private readonly invoiceEventFileService: InvoiceEventFileService,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     private static readonly ALLOWED_EVENT_ATTACHMENT_EXTS = new Set([
@@ -97,12 +99,17 @@ export class InvoiceAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('customer_id') customerId?: string,
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('date_from') dateFrom?: string,
-        @Query('date_to') dateTo?: string
+        @Query('date_to') dateTo?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<InvoiceListResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
         // status may be a single value or a CSV (tile clicks send
@@ -123,6 +130,13 @@ export class InvoiceAdminController {
             ];
         }
 
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        Object.assign(find, CreatorScopeService.toFind(creatorValue));
+
         const rows = await this.invoiceRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
             order: _order,
@@ -141,21 +155,34 @@ export class InvoiceAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('customer_id') customerId?: string,
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<any>> {
-        const data = await this.invoiceService.stats(companyId, {
-            customer_id: customerId,
-            purchase_order_id: purchaseOrderId,
-            status: parseStatusParam(status),
-            date_from: dateFrom,
-            date_to: dateTo,
-            search: searchRaw,
-        });
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.invoiceService.stats(
+            companyId,
+            {
+                customer_id: customerId,
+                purchase_order_id: purchaseOrderId,
+                status: parseStatusParam(status),
+                date_from: dateFrom,
+                date_to: dateTo,
+                search: searchRaw,
+            },
+            creatorValue
+        );
         return { data };
     }
 

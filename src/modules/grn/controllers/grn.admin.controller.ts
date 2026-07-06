@@ -26,6 +26,7 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { GrnService } from '../services/grn.service';
 import {
     GrnCreateFromPovDto,
@@ -41,7 +42,10 @@ import {
 @ApiTags('admin.grn')
 @Controller({ version: '1', path: '/admin/grn' })
 export class GrnAdminController {
-    constructor(private readonly grnService: GrnService) {}
+    constructor(
+        private readonly grnService: GrnService,
+        private readonly creatorScope: CreatorScopeService
+    ) {}
 
     @Response('grn.create')
     @AuthJwtAccessProtected()
@@ -66,11 +70,16 @@ export class GrnAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('vendor_id') vendorId?: string,
         @Query('po_vendor_id') poVendorId?: string,
-        @Query('search') search?: string
+        @Query('search') search?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<GrnListResponseDto>> {
         const filters = {
             status: parseGrnStatusParam(status),
@@ -78,13 +87,21 @@ export class GrnAdminController {
             po_vendor_id: poVendorId,
             search,
         };
-        const find = this.grnService.buildListFind(companyId, filters);
+        // Ownership scope (Created-By filter) — enforced backend-side.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const find = {
+            ...this.grnService.buildListFind(companyId, filters),
+            ...CreatorScopeService.toFind(creatorValue),
+        };
         const data = await this.grnService.list(companyId, {
             find,
             paging: { limit: _limit, offset: _offset },
             order: _order,
         });
-        const total = await this.grnService.count(companyId, filters);
+        const total = await this.grnService.count(companyId, filters, creatorValue);
         return {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
@@ -96,15 +113,28 @@ export class GrnAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('status') status?: string,
         @Query('vendor_id') vendorId?: string,
-        @Query('search') search?: string
+        @Query('search') search?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<GrnStatsResponseDto>> {
-        const data = await this.grnService.stats(companyId, {
-            status: parseGrnStatusParam(status),
-            vendor_id: vendorId,
-            search,
-        });
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.grnService.stats(
+            companyId,
+            {
+                status: parseGrnStatusParam(status),
+                vendor_id: vendorId,
+                search,
+            },
+            creatorValue
+        );
         return { data };
     }
 

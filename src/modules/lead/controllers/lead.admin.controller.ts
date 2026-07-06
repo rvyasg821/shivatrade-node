@@ -24,6 +24,8 @@ import {
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
+
 import { LeadService } from '../services/lead.service';
 import { LeadRepository } from '../repository/repositories/lead.repository';
 import { LeadCreateRequestDto } from '../dtos/request/lead.create.request.dto';
@@ -37,7 +39,8 @@ import { LeadStatsResponseDto } from '../dtos/response/lead.stats.response.dto';
 export class LeadAdminController {
     constructor(
         private readonly leadService: LeadService,
-        private readonly leadRepository: LeadRepository
+        private readonly leadRepository: LeadRepository,
+        private readonly creatorScope: CreatorScopeService
     ) {}
 
     @Response('lead.create')
@@ -58,11 +61,16 @@ export class LeadAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('status') status?: string,
         @Query('source') source?: string,
         @Query('assigned_to') assignedTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<LeadListResponseDto>> {
         // Status accepts a single value or a comma-separated list — the
         // tile strip uses the latter for the "In Pipeline" multi-status
@@ -71,12 +79,24 @@ export class LeadAdminController {
         const searchTerm =
             searchRaw?.trim() ||
             (_search && typeof _search === 'string' ? _search : '');
-        const find = this.leadService.buildListFind(companyId, {
-            status: statusValue,
-            source,
-            assigned_to: assignedTo,
-            search: searchTerm,
-        });
+
+        // Ownership scope (Created-By filter). The dropdown is convenience —
+        // this call is the gate: non-admins are forced to self, a Location
+        // Admin is confined to users in their locations.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+
+        const find = {
+            ...this.leadService.buildListFind(companyId, {
+                status: statusValue,
+                source,
+                assigned_to: assignedTo,
+                search: searchTerm,
+            }),
+            ...CreatorScopeService.toFind(creatorValue),
+        };
 
         const leads = await this.leadRepository.findAll(find, {
             paging: { limit: _limit, offset: _offset },
@@ -96,18 +116,32 @@ export class LeadAdminController {
     @Get('/stats')
     async stats(
         @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
         @Query('status') status?: string,
         @Query('source') source?: string,
         @Query('assigned_to') assignedTo?: string,
-        @Query('search') searchRaw?: string
+        @Query('search') searchRaw?: string,
+        @Query('created_by') createdBy?: string
     ): Promise<IResponse<LeadStatsResponseDto>> {
         const statusValue = parseStatusParam(status);
-        const data = await this.leadService.stats(companyId, {
-            status: statusValue,
-            source,
-            assigned_to: assignedTo,
-            search: searchRaw,
-        });
+        // Same ownership scope as /list so the tiles match the table.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.leadService.stats(
+            companyId,
+            {
+                status: statusValue,
+                source,
+                assigned_to: assignedTo,
+                search: searchRaw,
+            },
+            creatorValue
+        );
         return { data };
     }
 

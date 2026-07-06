@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { DataSource } from 'typeorm';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '../repository/repositories/purchase-order-line.repository';
@@ -2483,7 +2484,8 @@ export class PurchaseOrderService {
             date_from?: string;
             date_to?: string;
             search?: string;
-        }
+        },
+        creator?: undefined | string | string[]
     ): Promise<{
         total: number;
         total_amount_inr: string;
@@ -2497,6 +2499,7 @@ export class PurchaseOrderService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.vendor_id) {
                 qb.andWhere('entity.vendor_id = :v', { v: filters.vendor_id });
             }
@@ -2570,6 +2573,22 @@ export class PurchaseOrderService {
         // qty is not yet fully covered by active (non-cancelled) Vendor POs.
         // Counted in one pass so the dashboard can flag them without running
         // full coverage per SO.
+        // Scope the "Waiting for POV" count by the same creator filter.
+        const ppParams: any[] = [companyId];
+        let ppCreatorClause = '';
+        if (creator !== undefined) {
+            if (Array.isArray(creator)) {
+                if (creator.length === 0) {
+                    ppCreatorClause = ' AND 1 = 0';
+                } else {
+                    ppParams.push(creator);
+                    ppCreatorClause = ` AND po.created_by = ANY($${ppParams.length})`;
+                }
+            } else {
+                ppParams.push(creator);
+                ppCreatorClause = ` AND po.created_by = $${ppParams.length}`;
+            }
+        }
         const [pp] = await this.dataSource.query(
             `SELECT COUNT(*)::int AS count FROM (
                 SELECT po._id,
@@ -2587,10 +2606,10 @@ export class PurchaseOrderService {
                 FROM purchase_orders po
                 WHERE po.company_id = $1
                   AND po.soft_delete = false
-                  AND po.status IN ('confirmed', 'in_process')
+                  AND po.status IN ('confirmed', 'in_process')${ppCreatorClause}
             ) t
             WHERE t.ordered > t.covered + 0.0001`,
-            [companyId]
+            ppParams
         );
 
         return {

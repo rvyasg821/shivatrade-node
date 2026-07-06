@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { In } from 'typeorm';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { GrnRepository } from '../repository/repositories/grn.repository';
 import { GrnLineRepository } from '../repository/repositories/grn-line.repository';
 import { DebitNoteRepository } from '../repository/repositories/debit-note.repository';
@@ -656,11 +657,13 @@ export class GrnService {
             vendor_id?: string;
             po_vendor_id?: string;
             search?: string;
-        }
+        },
+        creator?: undefined | string | string[]
     ): Promise<number> {
-        return this.grnRepository.getTotal(
-            this.buildListFind(companyId, filters) as any
-        );
+        return this.grnRepository.getTotal({
+            ...this.buildListFind(companyId, filters),
+            ...CreatorScopeService.toFind(creator),
+        } as any);
     }
 
     async list(
@@ -735,7 +738,8 @@ export class GrnService {
 
     async stats(
         companyId: string,
-        filters: { status?: string | string[]; vendor_id?: string; search?: string }
+        filters: { status?: string | string[]; vendor_id?: string; search?: string },
+        creator?: undefined | string | string[]
     ): Promise<GrnStatsResponseDto> {
         const rows = await this.grnRepository.aggregate<{
             status: string;
@@ -743,6 +747,7 @@ export class GrnService {
         }>((qb) => {
             qb.andWhere('entity.soft_delete = :sd', { sd: false });
             qb.andWhere('entity.company_id = :cid', { cid: companyId });
+            CreatorScopeService.applyToQb(qb, creator);
             if (filters.vendor_id) {
                 qb.andWhere('entity.vendor_id = :vid', { vid: filters.vendor_id });
             }
