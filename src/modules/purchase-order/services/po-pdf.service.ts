@@ -291,10 +291,11 @@ export class PoPdfService {
                 ? companyGstin.slice(0, 2)
                 : '';
 
-        // Amount in words — grand total is shown in the customer currency.
+        // Amount in words — grand total in customer currency, rounded to a
+        // whole number to match the printed Grand Total (and the on-screen SO).
         const rate = Number(po.exchange_rate) || 1;
         const amountInWords = numberToIndianWords(
-            linesInrTotal * rate,
+            Math.round(linesInrTotal * rate),
             po.currency_code || 'INR'
         );
 
@@ -389,7 +390,12 @@ function buildPoHtml(ctx: PoPdfContext): string {
 
     const sym = po.currency_symbol || po.currency_code || '₹';
     const rate = Number(po.exchange_rate) || 1;
-    const grandTotalCcy = inrTotal * rate;
+    // Sum of line amounts (customer currency) …
+    const rawGrandTotalCcy = inrTotal * rate;
+    // … rounded to a whole number for the Grand Total; the delta prints as a
+    // Round Off row so the line amounts still reconcile with the total.
+    const grandTotalCcy = Math.round(rawGrandTotalCcy);
+    const roundOffCcy = grandTotalCcy - rawGrandTotalCcy;
 
     // Consignee (Ship to) — frozen snapshot; falls back to the buyer.
     const cs: any = (po as any).consignee_snapshot || {};
@@ -570,7 +576,23 @@ function buildPoHtml(ctx: PoPdfContext): string {
       <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
       <td></td><td></td><td></td>
-      <td class="num nowrap"><b>${fmt4(grandTotalCcy)} ${esc(sym)}</b></td>
+      <td class="num nowrap"><b>${fmt4(rawGrandTotalCcy)} ${esc(sym)}</b></td>
+    </tr>
+    ${
+        Math.abs(roundOffCcy) >= 0.005
+            ? `<tr>
+      <td></td>
+      <td class="num">Round Off</td>
+      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+      <td class="num nowrap">${roundOffCcy < 0 ? '&minus; ' : '+ '}${fmt(Math.abs(roundOffCcy))} ${esc(sym)}</td>
+    </tr>`
+            : ''
+    }
+    <tr>
+      <td></td>
+      <td class="num"><b>Grand Total</b></td>
+      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+      <td class="num nowrap"><b>${fmt(grandTotalCcy)} ${esc(sym)}</b></td>
     </tr>
   </tbody>
 </table>

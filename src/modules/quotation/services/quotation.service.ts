@@ -757,7 +757,11 @@ export class QuotationService {
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));
         (header as any).round_off = String(round_off);
-        header.grand_total = String(round2(grand_total));
+        // Round the customer-currency grand total to a whole number so the
+        // figure the customer sees/pays is clean (e.g. $80, not $80.44). The
+        // rounded total carries forward to the Sales Order + Invoice. The ₹
+        // round_off above stays as the home-currency (INR) adjustment.
+        header.grand_total = String(Math.round(grand_total));
 
         await this.quotationRepository.save(header);
     }
@@ -1207,7 +1211,9 @@ export class QuotationService {
             lines,
             subtotal: String(round2(subtotal)),
             gst_total: String(round2(gst_total)),
-            grand_total: String(round2(grand_total_calc)),
+            // Whole-number customer-currency total (matches the persisted,
+            // rounded header grand_total shown across the doc chain).
+            grand_total: String(Math.round(grand_total_calc)),
         };
     }
 

@@ -1011,7 +1011,12 @@ export class InvoiceService {
         const freight = num(row.freight_charges);
         const insurance = num(row.insurance_charges);
         const other = num(row.other_charges);
-        const grand_total = round2(fob_value + freight + insurance + other);
+        // Round the customer-currency grand total to a whole number so the
+        // final invoice carries the same clean figure as the quotation/SO
+        // (e.g. $80, not $80.44) — the amount the customer actually pays.
+        const grand_total = Math.round(
+            fob_value + freight + insurance + other
+        );
         // INR equivalent of the document-currency grand total.
         const grand_total_inr = er > 0 ? round2(grand_total / er) : grand_total;
         const advance = num(row.advance_received);
