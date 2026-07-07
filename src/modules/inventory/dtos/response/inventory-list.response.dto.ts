@@ -27,6 +27,27 @@ export class InventoryListResponseDto {
     @ApiProperty()
     on_hand: string;
 
+    // Weighted-average received unit price (₹/unit) across this product's POV
+    // lines — same cost basis as the Stock Value card.
+    @ApiProperty()
+    avg_rate: string;
+
+    // Stock-summary figures over the Received From/To period (movement date):
+    //   opening = balance before From, inward = IN during, outward = OUT during,
+    //   closing = balance up to To (= on_hand when no To). Closing = Opening +
+    //   Inward − Outward.
+    @ApiProperty()
+    opening_qty: string;
+
+    @ApiProperty()
+    inward_qty: string;
+
+    @ApiProperty()
+    outward_qty: string;
+
+    @ApiProperty()
+    closing_qty: string;
+
     // Most recent receipt date across this product's POVs.
     @ApiProperty({ nullable: true })
     arrival_date: string | null;
