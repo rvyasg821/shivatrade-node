@@ -1,5 +1,6 @@
 {
     "list": "Customers retrieved successfully.",
+    "stats": "Customer stats loaded.",
     "get": "Customer details fetched successfully.",
     "create": "Customer created successfully.",
     "update": "Customer updated successfully.",

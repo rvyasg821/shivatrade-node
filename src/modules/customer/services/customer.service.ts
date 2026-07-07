@@ -27,6 +27,7 @@ import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_GENDER, ENUM_USER_SIGN_UP_FROM, ENUM_USER_STATUS } from '@modules/user/enums/user.enum';
 import { HelperDateService } from '@common/helper/services/helper.date.service';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
+import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import {
     IDatabaseFindAllOptions,
     IDatabaseFindOneOptions,
@@ -723,5 +724,60 @@ export class CustomerService {
             if (addr?.country) dto.country = addr.country;
             return dto;
         });
+    }
+
+    // ── KPI stats for the customer listing tile strip ────────────────────
+    //
+    // Counts over the SAME creator/search scope the listing uses, but NOT
+    // filtered by the active/inactive tab — so the tiles always show the
+    // true breakdown regardless of which status tab is selected. Four cheap
+    // COUNT(*) queries (total / active / inactive / new-30d) run in parallel.
+    async stats(
+        companyId: string,
+        filters: { search?: string; country?: string },
+        // Ownership scope from CreatorScopeService: undefined = no filter,
+        // string = one creator, string[] = a set (Location Admin "All").
+        creator?: undefined | string | string[]
+    ): Promise<{
+        total: number;
+        by_status: Record<string, number>;
+        new_30d: number;
+    }> {
+        const base: any = { soft_delete: false };
+        if (companyId) base.company_id = companyId;
+        if (filters.country) base.country = filters.country;
+
+        const search =
+            typeof filters.search === 'string' ? filters.search.trim() : '';
+        if (search) {
+            base.$or = [
+                { company_name: { $regex: search, $options: 'i' } },
+                { website: { $regex: search, $options: 'i' } },
+                { city: { $regex: search, $options: 'i' } },
+                { country: { $regex: search, $options: 'i' } },
+            ];
+        }
+
+        // Same ownership scope as /list so the tiles match the table.
+        Object.assign(base, CreatorScopeService.toFind(creator));
+
+        const now = this.helperDateService.create();
+        const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        const [total, active, inactive, new_30d] = await Promise.all([
+            this.customerRepository.getTotal(base),
+            this.customerRepository.getTotal({ ...base, is_active: true }),
+            this.customerRepository.getTotal({ ...base, is_active: false }),
+            this.customerRepository.getTotal({
+                ...base,
+                createdAt: { $gte: cutoff },
+            }),
+        ]);
+
+        return {
+            total,
+            by_status: { ACTIVE: active, INACTIVE: inactive },
+            new_30d,
+        };
     }
 }
