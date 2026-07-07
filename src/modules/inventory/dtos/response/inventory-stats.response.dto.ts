@@ -5,8 +5,10 @@ import { ApiProperty } from '@nestjs/swagger';
  * same filtered set as the list (location / category / vendor / date / search).
  */
 export class InventoryStatsResponseDto {
-    // Σ(received_qty × unit_price), INR. Goods-inward valuation (received &
-    // accepted), returned as a raw string — the FE formats for display.
+    // Current on-hand valuation, INR: Σ per product of
+    // (net ledger on-hand × weighted-average received unit price). Sold-out
+    // products contribute 0 so it reconciles with the "Qty in Stock" column.
+    // Returned as a raw string — the FE formats for display.
     @ApiProperty()
     stock_value: string;
 

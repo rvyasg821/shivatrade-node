@@ -243,10 +243,12 @@ export class InventoryService {
      * KPI aggregates for the listing header cards, over the SAME filtered set
      * as `list` (location / category / vendor / date / search all apply).
      *
-     * - stock_value   = Σ(received_qty × unit_price), in INR (vendor purchase
-     *   price). A goods-inward valuation — what has been received & accepted,
-     *   not yet net of invoiced-out qty (the stock-movement ledger handles
-     *   that once built).
+     * - stock_value   = CURRENT on-hand valuation, in INR. Per product it is
+     *   `net on-hand (ledger: GRN-in − invoice-out) × weighted-average
+     *   received unit price`. A fully invoiced-out (sold) product therefore
+     *   contributes ₹0, so the card reconciles with the "Qty in Stock" column
+     *   (both net of what's left the building). On-hand is clamped at 0 so a
+     *   negative ledger balance can't subtract value.
      * - line_count    = number of receipt lines (matches the list total).
      * - product_count = distinct products (SKUs) in stock.
      * - vendor_count  = distinct vendors supplying the current stock.
@@ -258,13 +260,41 @@ export class InventoryService {
         const { whereSql, params } = this.buildWhere(companyId, filters);
 
         const rows = await this.dataSource.query(
-            `SELECT
-                COALESCE(SUM(COALESCE(pvl.received_qty, 0) * COALESCE(pvl.unit_price, 0)), 0) AS stock_value,
-                COUNT(*)::int                  AS line_count,
-                COUNT(DISTINCT p._id)::int     AS product_count,
-                COUNT(DISTINCT pv.vendor_id)::int AS vendor_count
-             ${this.FROM_JOINS}
-             WHERE ${whereSql}`,
+            `WITH filtered AS (
+                SELECT pvl._id                       AS line_id,
+                       p._id                         AS product_id,
+                       p.company_id                  AS company_id,
+                       pv.vendor_id                  AS vendor_id,
+                       COALESCE(pvl.received_qty, 0) AS rq,
+                       COALESCE(pvl.unit_price, 0)   AS up
+                ${this.FROM_JOINS}
+                WHERE ${whereSql}
+             ),
+             per_product AS (
+                SELECT f.product_id,
+                       f.company_id,
+                       SUM(f.rq)          AS received_qty_total,
+                       SUM(f.rq * f.up)   AS received_value_total
+                FROM filtered f
+                GROUP BY f.product_id, f.company_id
+             )
+             SELECT
+                COALESCE(SUM(
+                    CASE WHEN pp.received_qty_total > 0 THEN
+                        GREATEST(COALESCE((
+                            SELECT SUM(sm.qty)
+                            FROM stock_movements sm
+                            WHERE sm.company_id = pp.company_id
+                              AND sm.product_id = pp.product_id
+                              AND sm.deleted = false
+                        ), 0), 0)
+                        * (pp.received_value_total / pp.received_qty_total)
+                    ELSE 0 END
+                ), 0)                                         AS stock_value,
+                (SELECT COUNT(*)::int FROM filtered)          AS line_count,
+                (SELECT COUNT(DISTINCT product_id)::int FROM filtered) AS product_count,
+                (SELECT COUNT(DISTINCT vendor_id)::int FROM filtered)  AS vendor_count
+             FROM per_product pp`,
             params
         );
 
