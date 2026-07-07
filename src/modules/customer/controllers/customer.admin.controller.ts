@@ -22,6 +22,7 @@ import { CustomerCreateRequestDto } from '../dtos/request/customer.create.reques
 import { CustomerUpdateRequestDto } from '../dtos/request/customer.update.request.dto';
 import { CustomerGetResponseDto } from '../dtos/response/customer.get.response.dto';
 import { CustomerListResponseDto } from '../dtos/response/customer.list.response.dto';
+import { CustomerStatsResponseDto } from '../dtos/response/customer.stats.response.dto';
 
 @ApiTags('admin.customer')
 @Controller({ version: '1', path: '/admin/customer' })
@@ -95,6 +96,32 @@ export class CustomerAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data,
         };
+    }
+
+    @Response('customer.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    async stats(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @AuthJwtPayload('locationId') locationId: string,
+        @Query('search') search?: string,
+        @Query('country') country?: string,
+        @Query('created_by') createdBy?: string
+    ): Promise<IResponse<CustomerStatsResponseDto>> {
+        // Same ownership scope as /list so the tiles match the table.
+        const creatorValue = await this.creatorScope.resolveCreatorValue(
+            { user: userId, roleName, companyId, assignedLocations, locationId },
+            createdBy
+        );
+        const data = await this.customerService.stats(
+            companyId,
+            { search, country },
+            creatorValue
+        );
+        return { data };
     }
 
     @Response('customer.dropdown')
