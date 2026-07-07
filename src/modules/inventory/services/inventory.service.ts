@@ -219,8 +219,15 @@ export class InventoryService {
                 ? 'ASC'
                 : 'DESC';
 
-        const limitIdx = params.length + 1;
-        const offsetIdx = params.length + 2;
+        // Stock-summary period params: Received From/To become the window for
+        // opening / inward / outward / closing, applied to the ledger's
+        // movement date (sm."createdAt"). Appended as their own params so the
+        // per-product subqueries can reference them regardless of which list
+        // filters buildWhere added.
+        const dfromIdx = params.length + 1;
+        const dtoIdx = params.length + 2;
+        const limitIdx = params.length + 3;
+        const offsetIdx = params.length + 4;
         const rows = await this.dataSource.query(
             `SELECT
                 p._id              AS product_id,
@@ -229,11 +236,52 @@ export class InventoryService {
                 p.unit_of_measure  AS uom,
                 c.name             AS category_name,
                 ${this.ON_HAND_EXPR}::float8 AS on_hand,
+                -- Weighted-average received unit price (₹/unit).
+                (COALESCE(SUM(pvl.received_qty * pvl.unit_price), 0)
+                    / NULLIF(SUM(pvl.received_qty), 0))::float8 AS avg_rate,
+                -- Opening: net ledger balance BEFORE the From date (0 if no From,
+                -- since "createdAt" < NULL is never true).
+                COALESCE((
+                    SELECT SUM(sm.qty) FROM stock_movements sm
+                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
+                      AND sm.deleted = false
+                      AND sm."createdAt" < $${dfromIdx}::timestamptz
+                ), 0)::float8 AS opening_qty,
+                -- Inward: IN movements within the period.
+                COALESCE((
+                    SELECT SUM(sm.qty) FROM stock_movements sm
+                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
+                      AND sm.deleted = false AND sm.qty > 0
+                      AND ($${dfromIdx}::timestamptz IS NULL OR sm."createdAt" >= $${dfromIdx}::timestamptz)
+                      AND ($${dtoIdx}::date IS NULL OR sm."createdAt" < ($${dtoIdx}::date + 1))
+                ), 0)::float8 AS inward_qty,
+                -- Outward: OUT movements within the period (returned positive).
+                COALESCE((
+                    SELECT SUM(-sm.qty) FROM stock_movements sm
+                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
+                      AND sm.deleted = false AND sm.qty < 0
+                      AND ($${dfromIdx}::timestamptz IS NULL OR sm."createdAt" >= $${dfromIdx}::timestamptz)
+                      AND ($${dtoIdx}::date IS NULL OR sm."createdAt" < ($${dtoIdx}::date + 1))
+                ), 0)::float8 AS outward_qty,
+                -- Closing: net ledger balance up to the To date (= current on-hand
+                -- when no To). Closing = Opening + Inward − Outward by construction.
+                COALESCE((
+                    SELECT SUM(sm.qty) FROM stock_movements sm
+                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
+                      AND sm.deleted = false
+                      AND ($${dtoIdx}::date IS NULL OR sm."createdAt" < ($${dtoIdx}::date + 1))
+                ), 0)::float8 AS closing_qty,
                 MAX(COALESCE(pv.actual_arrival_date, pv."updatedAt")) AS arrival_date
              ${groupFrom}
              ORDER BY ${orderCol} ${orderDir}, p.code ASC
              LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-            [...params, filters.limit, filters.offset]
+            [
+                ...params,
+                filters.date_from ?? null,
+                filters.date_to ?? null,
+                filters.limit,
+                filters.offset,
+            ]
         );
 
         return { rows, total };
