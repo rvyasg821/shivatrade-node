@@ -249,36 +249,56 @@ export class PoVendorPdfService {
                     .filter(Boolean)
             )
         );
-        let gstInrTotal = 0;
+        // Per-line GST (line's tax_pct snapshot, product master as fallback)
+        // with a proportional charge share, grouped into HSN/rate buckets so
+        // the PDF can print a detailed GST table. Bucket GST sums to the total.
+        const chargesPct =
+            linesInrTotal > 0 ? chargesInrTotal / linesInrTotal : 0;
+        const taxByProduct = new Map<string, number>();
         if (productIds.length) {
             try {
                 const products: any[] = await this.productRepository.findAll({
                     _id: { $in: productIds },
                 } as any);
-                const taxByProduct = new Map<string, number>();
                 for (const pr of products) {
                     taxByProduct.set(
                         pr._id.toString(),
                         Number(pr.tax_pct) || 0
                     );
                 }
-                // Per line: scale the line's contribution to Taxable by
-                // (1 + chargesPct) so charges share GST proportionally.
-                const chargesPct =
-                    linesInrTotal > 0
-                        ? chargesInrTotal / linesInrTotal
-                        : 0;
-                for (const l of pov.lines || []) {
-                    const pid = (l as any).product_id?.toString();
-                    const lineTotal = Number((l as any).line_total) || 0;
-                    const taxPct = taxByProduct.get(pid) || 0;
-                    const lineTaxable = lineTotal * (1 + chargesPct);
-                    gstInrTotal += (lineTaxable * taxPct) / 100;
-                }
             } catch {
-                /* graceful — keep GST as 0 if lookup fails */
+                /* graceful — empty tax map, GST falls back to 0 */
             }
         }
+        let gstInrTotal = 0;
+        const gstBucketMap = new Map<
+            string,
+            { hsn: string; rate: number; taxable: number; gst: number }
+        >();
+        for (const l of pov.lines || []) {
+            const pid = (l as any).product_id?.toString();
+            const lineTotal = Number((l as any).line_total) || 0;
+            const rate =
+                Number((l as any).tax_pct) || taxByProduct.get(pid) || 0;
+            if (rate <= 0) continue;
+            const taxable = lineTotal * (1 + chargesPct);
+            const gst = (taxable * rate) / 100;
+            gstInrTotal += gst;
+            const hsn = (l as any).hsn_code || '-';
+            const key = `${hsn}|${rate}`;
+            const b = gstBucketMap.get(key) || {
+                hsn,
+                rate,
+                taxable: 0,
+                gst: 0,
+            };
+            b.taxable += taxable;
+            b.gst += gst;
+            gstBucketMap.set(key, b);
+        }
+        const gstBuckets = Array.from(gstBucketMap.values()).sort(
+            (a, b) => a.rate - b.rate
+        );
 
         return {
             pov,
@@ -320,6 +340,7 @@ export class PoVendorPdfService {
             },
             inrTotal: linesInrTotal,
             gstInrTotal,
+            gstBuckets,
             chargesInrTotal,
             expensesSnapshot,
         };
@@ -365,6 +386,12 @@ interface PovPdfContext {
     };
     inrTotal: number;
     gstInrTotal: number;
+    gstBuckets: Array<{
+        hsn: string;
+        rate: number;
+        taxable: number;
+        gst: number;
+    }>;
     chargesInrTotal: number;
     expensesSnapshot: Array<{
         name: string;
@@ -553,6 +580,59 @@ function buildPaymentVoucherHtml(
 </html>`;
 }
 
+// GST state codes by state name — used to resolve intra/inter-state when a
+// party has a valid state name but no usable GSTIN (or vice-versa).
+const GST_STATE_CODE_BY_NAME: Record<string, string> = {
+    'jammu and kashmir': '01',
+    'jammu & kashmir': '01',
+    'himachal pradesh': '02',
+    punjab: '03',
+    chandigarh: '04',
+    uttarakhand: '05',
+    haryana: '06',
+    delhi: '07',
+    rajasthan: '08',
+    'uttar pradesh': '09',
+    bihar: '10',
+    sikkim: '11',
+    'arunachal pradesh': '12',
+    nagaland: '13',
+    manipur: '14',
+    mizoram: '15',
+    tripura: '16',
+    meghalaya: '17',
+    assam: '18',
+    'west bengal': '19',
+    jharkhand: '20',
+    odisha: '21',
+    orissa: '21',
+    chhattisgarh: '22',
+    'madhya pradesh': '23',
+    gujarat: '24',
+    'daman and diu': '25',
+    'dadra and nagar haveli': '26',
+    maharashtra: '27',
+    karnataka: '29',
+    goa: '30',
+    lakshadweep: '31',
+    kerala: '32',
+    'tamil nadu': '33',
+    puducherry: '34',
+    pondicherry: '34',
+    'andaman and nicobar islands': '35',
+    telangana: '36',
+    'andhra pradesh': '37',
+    ladakh: '38',
+};
+
+// A party's GST state code: first 2 digits of a valid GSTIN, else the state
+// name mapped to its code. Returns undefined when neither resolves.
+function gstStateCode(gstin?: string, stateName?: string): string | undefined {
+    if (gstin && /^\d{2}/.test(gstin)) return gstin.slice(0, 2);
+    const key = (stateName || '').trim().toLowerCase();
+    return GST_STATE_CODE_BY_NAME[key];
+}
+
 function buildPovHtml(ctx: PovPdfContext): string {
     const {
         pov,
@@ -561,9 +641,22 @@ function buildPovHtml(ctx: PovPdfContext): string {
         vendor,
         inrTotal,
         gstInrTotal,
+        gstBuckets,
         chargesInrTotal,
         expensesSnapshot,
     } = ctx;
+
+    // Intra-state (same state as ShivaTrade) → CGST + SGST; inter-state → IGST.
+    // Resolve each party's GST state code from its GSTIN (first 2 digits) OR,
+    // when the GSTIN is missing/malformed, from its state name — so it still
+    // works when one side has only a GSTIN and the other only a state name.
+    // Default to intra (CGST + SGST) when a code can't be resolved for both.
+    const interState = (() => {
+        const cc = gstStateCode(company.gstin, company.state);
+        const vc = gstStateCode(vendor.gstin, vendor.state);
+        if (cc && vc) return cc !== vc;
+        return false;
+    })();
     const lines = pov.lines || [];
 
     const sym = pov.currency_symbol || pov.currency_code || '₹';
@@ -607,29 +700,29 @@ function buildPovHtml(ctx: PovPdfContext): string {
                           ? lineTotalCcy / qty
                           : (Number(l.unit_price) || 0) * rate;
                   const dueOn = tallyDate(pov.expected_arrival_date);
-                  const sub = [l.product_code, l.part_no]
-                      .filter(Boolean)
-                      .join(' · ');
+                  const gstPct = Number(l.tax_pct) || 0;
                   return `
         <tr>
           <td class="c">${i + 1}</td>
-          <td class="desc"><b>${esc(l.product_name || '-')}</b>${sub ? `<div class="sub ital">${esc(sub)}</div>` : ''}${l.hsn_code ? `<div class="sub">HSN: ${esc(l.hsn_code)}</div>` : ''}</td>
+          <td class="desc"><b>${esc(l.product_name || '-')}</b>${l.product_code ? `<div class="sub ital">${esc(l.product_code)}</div>` : ''}</td>
+          <td class="c">${esc(l.part_no || '-')}</td>
+          <td class="c">${esc(l.hsn_code || '-')}</td>
           <td class="c nowrap">${dueOn}</td>
           <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
           <td class="num nowrap">${fmt(rateCcy)}</td>
           <td class="c">${esc(l.unit || '')}</td>
-          <td class="num"></td>
+          <td class="c nowrap">${gstPct > 0 ? `${gstPct}%` : '-'}</td>
           <td class="num nowrap"><b>${fmt(lineTotalCcy)}</b></td>
         </tr>`;
               })
               .join('')
-        : `<tr><td colspan="8" class="c muted" style="padding:16px">No line items.</td></tr>`;
+        : `<tr><td colspan="10" class="c muted" style="padding:16px">No line items.</td></tr>`;
 
     // Tax summary rows (Tally-style, in the Amount column).
     const sumRow = (label: string, value: string): string => `
         <tr>
           <td></td>
-          <td class="num ital" colspan="6">${label ? `<b>${esc(label)}</b>` : ''}</td>
+          <td class="num ital" colspan="8">${label ? `<b>${esc(label)}</b>` : ''}</td>
           <td class="num nowrap"><b>${value}</b></td>
         </tr>`;
 
@@ -646,12 +739,68 @@ function buildPovHtml(ctx: PovPdfContext): string {
             })
             .join('') +
         (gstTotalCcy > 0
-            ? sumRow('Input CGST', fmt(cgstCcy)) +
-              sumRow('Input SGST', fmt(sgstCcy))
+            ? interState
+                ? sumRow('Input IGST', fmt(gstTotalCcy))
+                : sumRow('Input CGST', fmt(cgstCcy)) +
+                  sumRow('Input SGST', fmt(sgstCcy))
             : '') +
         (Math.abs(roundOffCcy) > 0.005
             ? sumRow('Round Off', fmt(roundOffCcy))
             : '');
+
+    // Detailed GST table (Tally-style HSN/rate summary). Columns adapt to the
+    // supply type: CGST + SGST for intra-state, IGST for inter-state.
+    const gstDetailTable = gstBuckets.length
+        ? `<table class="items" style="margin-top:6px">
+  <thead>
+    <tr>
+      <th style="width:70px">HSN/SAC</th>
+      <th class="num">Taxable Value</th>
+      ${
+          interState
+              ? `<th class="num" style="width:56px">IGST %</th>
+                 <th class="num" style="width:90px">IGST Amt</th>`
+              : `<th class="num" style="width:52px">CGST %</th>
+                 <th class="num" style="width:84px">CGST Amt</th>
+                 <th class="num" style="width:52px">SGST %</th>
+                 <th class="num" style="width:84px">SGST Amt</th>`
+      }
+      <th class="num" style="width:90px">Total Tax</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${gstBuckets
+        .map((b) => {
+            const taxableCcyRow = b.taxable * rate;
+            const gstCcyRow = b.gst * rate;
+            const halfRate = b.rate / 2;
+            const halfAmt = gstCcyRow / 2;
+            const cells = interState
+                ? `<td class="num nowrap">${b.rate}%</td>
+                   <td class="num nowrap">${fmt(gstCcyRow)}</td>`
+                : `<td class="num nowrap">${halfRate}%</td>
+                   <td class="num nowrap">${fmt(halfAmt)}</td>
+                   <td class="num nowrap">${halfRate}%</td>
+                   <td class="num nowrap">${fmt(gstCcyRow - halfAmt)}</td>`;
+            return `<tr>
+      <td class="c">${esc(b.hsn)}</td>
+      <td class="num nowrap">${fmt(taxableCcyRow)}</td>
+      ${cells}
+      <td class="num nowrap"><b>${fmt(gstCcyRow)}</b></td>
+    </tr>`;
+        })
+        .join('')}
+    <tr>
+      <td class="num"><b>Total</b></td>
+      <td class="num nowrap"><b>${fmt(gstBuckets.reduce((s, b) => s + b.taxable * rate, 0))}</b></td>
+      ${interState ? '<td></td>' : '<td></td><td></td>'}
+      <td></td>
+      ${interState ? '' : '<td></td>'}
+      <td class="num nowrap"><b>${fmt(gstTotalCcy)}</b></td>
+    </tr>
+  </tbody>
+</table>`
+        : '';
 
     const remarks = pov.notes || company.remarks || '';
 
@@ -758,28 +907,32 @@ function buildPovHtml(ctx: PovPdfContext): string {
     <tr>
       <th style="width:22px">Sl<br/>No.</th>
       <th>Description of Goods</th>
-      <th style="width:54px">Due on</th>
+      <th style="width:64px">Part No</th>
+      <th style="width:54px">HSN/SAC</th>
+      <th style="width:50px">Due on</th>
       <th style="width:74px">Quantity</th>
-      <th style="width:66px">Rate</th>
-      <th style="width:30px">per</th>
-      <th style="width:40px">Disc. %</th>
-      <th style="width:84px">Amount</th>
+      <th style="width:60px">Rate</th>
+      <th style="width:26px">per</th>
+      <th style="width:42px">GST %</th>
+      <th style="width:80px">Amount</th>
     </tr>
   </thead>
   <tbody>
     ${linesRows}
-    <tr class="items-fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="items-fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     ${summaryRows}
     <tr>
       <td></td>
       <td class="num"><b>Total</b></td>
-      <td></td>
+      <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
       <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt(grandTotalCcy)} ${esc(sym)}</b></td>
     </tr>
   </tbody>
 </table>
+
+${gstDetailTable}
 
 <table class="box" style="border-top:none">
   <tr><td class="words">

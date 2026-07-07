@@ -279,6 +279,13 @@ export class InvoiceService {
             (p: any) => p?.consignee_snapshot || p?.consignee_id
         );
 
+        // First source Sales Order that carries a bill-to address — used to
+        // inherit the Bill-to (customer_address_id) onto the invoice when the
+        // payload doesn't supply one, so the Bill To block always prints.
+        const srcCustomerAddrPo: any = (source.pos || []).find(
+            (p: any) => p?.customer_address_id
+        );
+
         // Assign the invoice number up-front so the DRAFT already carries a
         // stable voucher (e.g. STIPL/INV/0001/2026-27). voucher_prefix always
         // resolves (falls back to the company name), so this never blocks
@@ -314,7 +321,12 @@ export class InvoiceService {
             country_of_destination: data.country_of_destination,
             country_of_origin: data.country_of_origin || 'India',
             customer_id: data.customer_id,
-            customer_address_id: data.customer_address_id,
+            // Inherit the Bill-to address from the source Sales Order when the
+            // invoice payload doesn't carry one (operator can still override).
+            customer_address_id:
+                data.customer_address_id ||
+                srcCustomerAddrPo?.customer_address_id?.toString() ||
+                null,
             // Inherit the consignee from the source Sales Order when the
             // invoice payload doesn't carry one (operator can still override).
             consignee_id:

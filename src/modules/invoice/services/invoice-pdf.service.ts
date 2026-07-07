@@ -213,6 +213,29 @@ export class InvoicePdfService {
                 : (consigneeAddresses as any[]).find((a: any) => a.is_default) ||
                   (consigneeAddresses as any[])[0];
 
+        // Bill-to (buyer): the customer being invoiced + its selected BILL_TO
+        // address. Keyed on invoice.customer_id / customer_address_id (distinct
+        // from the consignee/ship-to above). Powers the "Bill To" block.
+        const billToCustomer: any = invoice.customer_id
+            ? await this.customerRepository.findOneById(
+                  invoice.customer_id.toString()
+              )
+            : null;
+        const billToAddresses = billToCustomer
+            ? await this.customerAddressRepository.findAll({
+                  customer_id: billToCustomer._id.toString(),
+                  soft_delete: false,
+              } as any)
+            : [];
+        const billToAddr: any = invoice.customer_address_id
+            ? (billToAddresses as any[]).find(
+                  (a: any) =>
+                      a._id?.toString() ===
+                      invoice.customer_address_id?.toString()
+              )
+            : (billToAddresses as any[]).find((a: any) => a.is_default) ||
+              (billToAddresses as any[])[0];
+
         return {
             invoice,
             lines: lines as any[],
@@ -226,6 +249,9 @@ export class InvoicePdfService {
             // before the snapshot pattern landed).
             consigneeSnapshot: invoice.consignee_snapshot,
             notifySnapshot: invoice.notify_party_snapshot,
+            billToCustomer,
+            billToAddr,
+            billToSnapshot: invoice.customer_snapshot,
         };
     }
 }
@@ -241,6 +267,11 @@ interface RenderData {
     consigneeAddr: any;
     consigneeSnapshot: any;
     notifySnapshot: any;
+    // Bill-to (buyer) party — customer + its selected BILL_TO address, plus
+    // any frozen snapshot on the invoice. Rendered as the "Bill To" block.
+    billToCustomer: any;
+    billToAddr: any;
+    billToSnapshot: any;
 }
 
 /** AWB/BL transport-doc label, derived from invoice.mode (sea→BL, air-courier
@@ -454,6 +485,34 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
                   .join('<br/>')
             : '';
 
+    // Bill To (buyer being invoiced): snapshot preferred, else FK lookup.
+    const bSnap = d.billToSnapshot || null;
+    const btCust = d.billToCustomer || {};
+    const bta = d.billToAddr || {};
+    const billToLines = bSnap
+        ? [
+              bSnap.name,
+              bSnap.address_line1,
+              bSnap.address_line2,
+              [bSnap.city, bSnap.state].filter(Boolean).join(', '),
+              [bSnap.country, bSnap.postcode].filter(Boolean).join(' - '),
+          ]
+              .filter(Boolean)
+              .join('<br/>')
+        : [
+              btCust.company_name,
+              bta?.address_line1,
+              bta?.address_line2,
+              [bta?.city, bta?.state].filter(Boolean).join(', '),
+              [bta?.country, bta?.postcode].filter(Boolean).join(' - '),
+          ]
+              .filter(Boolean)
+              .join('<br/>');
+
+    // Ship To = consignee. When no distinct consignee is set (ship-to same as
+    // bill-to), fall back to the Bill To address so both blocks print it.
+    const shipToLines = consigneeLines || billToLines;
+
     return `
     <table>
         <tr>
@@ -468,15 +527,23 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
                     <tr><td class="lbl">LUT No. and date</td><td>${esc(d.invoice.lut_no)}${d.invoice.lut_date ? ' / ' + esc(String(d.invoice.lut_date).slice(0, 10)) : ''}</td></tr>
                 </table>
             </td>
-            <td style="width: 50%;">
-                <div class="lbl">CONSIGNEE:</div>
-                <div>${consigneeLines}</div>
+            <td style="width: 50%; vertical-align: top;">
                 ${
                     includeNotify && notifyLines
-                        ? `<div class="lbl" style="margin-top: 6px;">Buyer(s) / Notify Party</div>
+                        ? `<div class="lbl">Buyer(s) / Notify Party</div>
                            <div>${notifyLines}</div>`
                         : ''
                 }
+            </td>
+        </tr>
+        <tr>
+            <td style="width: 50%; vertical-align: top;">
+                <div class="lbl">BILL TO:</div>
+                <div>${billToLines}</div>
+            </td>
+            <td style="width: 50%; vertical-align: top;">
+                <div class="lbl">SHIP TO:</div>
+                <div>${shipToLines}</div>
             </td>
         </tr>
         <tr>

@@ -17,7 +17,14 @@ export class PoVendorRecoverPreviewLineDto {
     product_code?: string;
 
     @ApiProperty({ required: false, type: String })
+    part_no?: string;
+
+    @ApiProperty({ required: false, type: String })
     hsn_code?: string;
+
+    /** GST rate (%) snapshot for the line — for display in the Generate-POV grid. */
+    @ApiProperty({ required: false, type: String })
+    tax_pct?: string;
 
     @ApiProperty({ required: false, type: String })
     unit?: string;
