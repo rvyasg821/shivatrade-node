@@ -407,6 +407,49 @@ export class RoleAdminController {
             throw new ConflictException('Company ID is required for custom roles');
         }
 
+        // Permission cap: a limited (non-admin) creator can only assign
+        // permissions they personally hold. Super Admin / Company Admin are
+        // exempt. New roles have no existing permissions, so every requested
+        // `true` is a fresh grant and must be within the creator's own set.
+        const callerRoleForPerms = await this.roleService.findOneById(user.role);
+        const callerName = callerRoleForPerms?.name;
+        const isPrivileged =
+            callerName === ENUM_SYSTEM_ROLE.SUPER_ADMIN ||
+            callerName === 'Super Admin' ||
+            callerName === ENUM_SYSTEM_ROLE.COMPANY_ADMIN;
+
+        if (!isPrivileged && permissions && typeof permissions === 'object') {
+            const creatorPerms = callerRoleForPerms?.permissions || {};
+            for (const moduleKey of Object.keys(permissions)) {
+                const nextModule = permissions[moduleKey] || {};
+                const creatorModule = creatorPerms[moduleKey];
+                for (const permKey of Object.keys(nextModule)) {
+                    if (nextModule[permKey] !== true) continue;
+
+                    if (!creatorModule) {
+                        throw new BadRequestException(
+                            `You do not have permission to assign this module '${moduleKey}'`
+                        );
+                    }
+                    if (permKey === 'can_all') {
+                        const hasAll = ['can_read', 'can_add', 'can_update', 'can_delete']
+                            .every(k => creatorModule[k] === true);
+                        if (!hasAll && creatorModule.can_all !== true) {
+                            throw new BadRequestException(
+                                `You do not have sufficient permissions to assign 'can_all' on module '${moduleKey}'`
+                            );
+                        }
+                        continue;
+                    }
+                    if (creatorModule[permKey] !== true && creatorModule.can_all !== true) {
+                        throw new BadRequestException(
+                            `You do not have permission to assign '${permKey}' on module '${moduleKey}'`
+                        );
+                    }
+                }
+            }
+        }
+
         const companyIdToSave = actualCompanyId ? actualCompanyId.toString() : null;
         console.log('💾 Saving: companyId=%s, type=%s', companyIdToSave, type);
 
@@ -557,39 +600,46 @@ export class RoleAdminController {
         const CurrentUserPermissions =
             await this.roleService.findOneById(currentUserRole);
 
-        const currentUserPermissionsData = CurrentUserPermissions.permissions;
-        const permissionsKeys = Object.keys(permissions);
+        // Validate only NEWLY granted (off→on) permissions, comparing the
+        // incoming payload against the role's EXISTING saved permissions.
+        // Unchanged / pre-existing permissions pass through untouched, so a
+        // limited editor can neither wipe nor be blocked by powers an admin
+        // granted above them — they're only stopped from adding a permission
+        // they don't personally hold.
+        const creatorPerms = CurrentUserPermissions.permissions || {};
+        const existingPerms = roleDoc.permissions || {};
 
-        for (const moduleKey of permissionsKeys) {
-            const modulePermissions = permissions[moduleKey];
-            const creatorModulePermissions =
-                currentUserPermissionsData[moduleKey];
+        for (const moduleKey of Object.keys(permissions)) {
+            const nextModule = permissions[moduleKey] || {};
+            const prevModule = existingPerms[moduleKey] || {};
+            const creatorModule = creatorPerms[moduleKey];
 
-            if (!creatorModulePermissions) {
-                throw new BadRequestException(
-                    `You do not have permission to assign this module '${moduleKey}'`
-                );
-            }
+            for (const permKey of Object.keys(nextModule)) {
+                const nextOn = nextModule[permKey] === true;
+                const prevOn = prevModule[permKey] === true;
+                if (!nextOn || prevOn) continue; // only police off→on changes
 
-            for (const permissionKey of Object.keys(modulePermissions)) {
-                const permissionValue = modulePermissions[permissionKey];
-                if (permissionValue !== true) continue;
+                if (!creatorModule) {
+                    throw new BadRequestException(
+                        `You do not have permission to assign this module '${moduleKey}'`
+                    );
+                }
 
-                // For can_all: allow if the creator has all individual permissions on this module
-                if (permissionKey === 'can_all') {
-                    const hasAll = ['can_read', 'can_add', 'can_create', 'can_update', 'can_delete']
-                        .every(k => creatorModulePermissions[k] === true);
-                    if (!hasAll && creatorModulePermissions['can_all'] !== true) {
+                if (permKey === 'can_all') {
+                    const hasAll = ['can_read', 'can_add', 'can_update', 'can_delete']
+                        .every(k => creatorModule[k] === true);
+                    if (!hasAll && creatorModule.can_all !== true) {
                         throw new BadRequestException(
-                            `You do not have sufficient permissions to assign '${permissionKey}' on module '${moduleKey}'`
+                            `You do not have sufficient permissions to assign 'can_all' on module '${moduleKey}'`
                         );
                     }
                     continue;
                 }
 
-                if (creatorModulePermissions[permissionKey] !== true) {
+                // A creator with can_all on a module may grant any single action.
+                if (creatorModule[permKey] !== true && creatorModule.can_all !== true) {
                     throw new BadRequestException(
-                        `You do not have permission to assign '${permissionKey}' on module '${moduleKey}'`
+                        `You do not have permission to assign '${permKey}' on module '${moduleKey}'`
                     );
                 }
             }
