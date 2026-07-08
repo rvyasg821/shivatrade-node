@@ -47,6 +47,7 @@ import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositori
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
+import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { In } from 'typeorm';
 import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
@@ -112,6 +113,7 @@ export class InvoiceService {
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly quotationRepository: QuotationRepository,
+        private readonly quotationLineRepository: QuotationLineRepository,
         private readonly invoicePaymentRepository: InvoicePaymentRepository,
         private readonly stockLedger: StockLedgerService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
@@ -1311,10 +1313,99 @@ export class InvoiceService {
             productMap.set(p._id.toString(), p);
         }
 
+        // ── Costing carry-forward: margin / rebates / expenses ──────────────
+        // The customer-facing (sales) value = vendor cost + margin (± expenses/
+        // rebates). The SO line's own `unit_price` is only the vendor cost, so
+        // without the costing snapshot `recompute` sees margin=0 and the
+        // taxable/assessable value collapses to the purchase cost. The SO line
+        // now FREEZES this costing (from the quotation at create); we read it
+        // straight off the SO line, and only fall back to the quotation line
+        // for legacy SOs created before those columns existed. Only fills when
+        // the incoming DTO didn't already carry a value (an explicit operator
+        // override still wins). PFI-sourced lines are skipped (PFI is retired).
+        const poLineIds = Array.from(
+            new Set(
+                lines
+                    .map((l) => l.purchase_order_line_id)
+                    .filter(Boolean) as string[]
+            )
+        );
+        const hasSnapshot = (v: any) => Array.isArray(v) && v.length > 0;
+        const costByPoLineId = new Map<
+            string,
+            {
+                margin_pct?: string;
+                product_rebates_snapshot?: any;
+                product_expenses_snapshot?: any;
+            }
+        >();
+        if (poLineIds.length) {
+            const soLines = (await this.poLineRepository.findAll({
+                _id: In(poLineIds),
+            } as any)) as any[];
+            // Legacy SO lines that never stored costing → resolve via quotation.
+            const qLineIdByPoLine = new Map<string, string>();
+            const qLineIds = new Set<string>();
+            for (const sl of soLines) {
+                const hasOwn =
+                    num(sl.margin_pct) > 0 ||
+                    hasSnapshot(sl.product_rebates_snapshot) ||
+                    hasSnapshot(sl.product_expenses_snapshot);
+                if (hasOwn) {
+                    costByPoLineId.set(sl._id.toString(), {
+                        margin_pct: sl.margin_pct,
+                        product_rebates_snapshot: sl.product_rebates_snapshot,
+                        product_expenses_snapshot: sl.product_expenses_snapshot,
+                    });
+                    continue;
+                }
+                const qId = sl.source_quotation_line_id?.toString();
+                if (qId) {
+                    qLineIdByPoLine.set(sl._id.toString(), qId);
+                    qLineIds.add(qId);
+                }
+            }
+            const qLines = qLineIds.size
+                ? ((await this.quotationLineRepository.findAll({
+                      _id: In(Array.from(qLineIds)),
+                  } as any)) as any[])
+                : [];
+            const qLineById = new Map<string, any>(
+                qLines.map((q) => [q._id.toString(), q])
+            );
+            for (const [poLineId, qId] of qLineIdByPoLine.entries()) {
+                const q = qLineById.get(qId);
+                if (!q) continue;
+                costByPoLineId.set(poLineId, {
+                    margin_pct: q.margin_pct,
+                    product_rebates_snapshot: q.product_rebates_snapshot,
+                    product_expenses_snapshot: q.product_expenses_snapshot,
+                });
+            }
+        }
+
         for (let i = 0; i < lines.length; i++) {
             const l = lines[i];
             const prod: any = l.product_id ? productMap.get(l.product_id) : null;
             const src = sourceByPoLineId?.get(l.purchase_order_line_id);
+            const cost = costByPoLineId.get(l.purchase_order_line_id);
+            // A POSITIVE DTO margin is an explicit operator override and wins.
+            // 0 / blank means the FE never carried one (its prefill reads the
+            // SO line, which has no margin) → inherit from the quotation.
+            const marginPct =
+                num((l as any).margin_pct) > 0
+                    ? String((l as any).margin_pct)
+                    : cost?.margin_pct ?? '0';
+            const rebatesSnapshot = hasSnapshot(
+                (l as any).product_rebates_snapshot
+            )
+                ? (l as any).product_rebates_snapshot
+                : cost?.product_rebates_snapshot ?? null;
+            const expensesSnapshot = hasSnapshot(
+                (l as any).product_expenses_snapshot
+            )
+                ? (l as any).product_expenses_snapshot
+                : cost?.product_expenses_snapshot ?? null;
             await this.invoiceLineRepository.create({
                 invoice_id: invoiceId,
                 company_id: companyId,
@@ -1333,13 +1424,11 @@ export class InvoiceService {
                 qty: l.qty,
                 unit_price: l.unit_price,
                 discount_pct: l.discount_pct || '0',
-                margin_pct: (l as any).margin_pct || '0',
+                margin_pct: marginPct || '0',
                 tax_pct: l.tax_pct || '0',
                 igst_rate_pct: l.igst_rate_pct || '0',
-                product_rebates_snapshot:
-                    (l as any).product_rebates_snapshot ?? null,
-                product_expenses_snapshot:
-                    (l as any).product_expenses_snapshot ?? null,
+                product_rebates_snapshot: rebatesSnapshot,
+                product_expenses_snapshot: expensesSnapshot,
                 // Packing List (§3b)
                 packages: l.packages ?? null,
                 net_weight: l.net_weight ?? null,
