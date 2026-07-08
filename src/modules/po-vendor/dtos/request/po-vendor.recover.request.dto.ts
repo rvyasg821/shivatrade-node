@@ -28,6 +28,13 @@ export class PoVendorRecoverAssignmentDto {
     @IsString()
     @IsNotEmpty()
     vendor_id: string;
+
+    // Optional GST% override. Defaults from the product/HSN master when omitted;
+    // sent when the operator edits the GST % column on the generate-POV screen.
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
+    @IsOptional()
+    tax_pct?: string;
 }
 
 /**
