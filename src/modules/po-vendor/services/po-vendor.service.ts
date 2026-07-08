@@ -569,7 +569,13 @@ export class PoVendorService {
                 part_no: poLine.part_no || null,
                 hsn_code: poLine.hsn_code || null,
                 unit: poLine.unit || null,
-                tax_pct: String(poLine.tax_pct || '0'),
+                // Caller may override GST% (generate-POV screen lets the
+                // operator correct a wrong/blank master rate). Fall back to the
+                // PO line snapshot otherwise.
+                tax_pct:
+                    (ln as any).tax_pct != null && (ln as any).tax_pct !== ''
+                        ? String((ln as any).tax_pct)
+                        : String(poLine.tax_pct || '0'),
                 unit_price: unitPriceStr,
                 ordered_qty: String(ordered),
                 dispatched_qty: '0',
@@ -1044,6 +1050,7 @@ export class PoVendorService {
             assignments: Array<{
                 purchase_order_line_id: string;
                 vendor_id: string;
+                tax_pct?: string;
             }>;
             delivery_address_id?: string;
             delivery_address?: string;
@@ -1083,6 +1090,8 @@ export class PoVendorService {
         // Group assignments by vendor_id.
         const byVendor = new Map<string, string[]>();
         const seenLines = new Set<string>();
+        // Per-line GST% override (operator-edited on the generate-POV screen).
+        const taxOverrideByLine = new Map<string, string>();
         for (const a of data.assignments) {
             if (!a.purchase_order_line_id || !a.vendor_id) {
                 throw new BadRequestException(
@@ -1095,6 +1104,9 @@ export class PoVendorService {
                 );
             }
             seenLines.add(a.purchase_order_line_id);
+            if (a.tax_pct != null && a.tax_pct !== '') {
+                taxOverrideByLine.set(a.purchase_order_line_id, String(a.tax_pct));
+            }
             const arr = byVendor.get(a.vendor_id) || [];
             arr.push(a.purchase_order_line_id);
             byVendor.set(a.vendor_id, arr);
@@ -1230,6 +1242,7 @@ export class PoVendorService {
                             purchase_order_line_id: lid,
                             ordered_qty: String(round4(toProcure)),
                             unit_price: unitPrice,
+                            tax_pct: taxOverrideByLine.get(lid),
                         };
                     })
                 )
