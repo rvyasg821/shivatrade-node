@@ -106,6 +106,7 @@ export class PoVendorGetResponseDto {
         type: string;
         value: string;
         amount: string;
+        gst_pct?: string;
     }>;
 
     // ── Vendor payments ──────────────────────────────────────────────────

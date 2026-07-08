@@ -56,6 +56,12 @@ export class PoVendorRecoverExpensePickDto {
     @IsNumberString({}, { message: 'value must be a numeric string' })
     @IsOptional()
     value?: string;
+
+    /** Per-charge GST % — carried into the spawned POV's expenses_snapshot. */
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'gst_pct must be a numeric string' })
+    @IsOptional()
+    gst_pct?: string;
 }
 
 /**

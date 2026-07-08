@@ -250,6 +250,7 @@ export class PoVendorPdfService {
             type: string;
             value: string;
             amount: string;
+            gst_pct?: string;
         }> = Array.isArray((pov as any).expenses_snapshot)
             ? (pov as any).expenses_snapshot
             : [];
@@ -257,10 +258,15 @@ export class PoVendorPdfService {
             (s, e) => s + (Number(e.amount) || 0),
             0
         );
-        // Taxable = Subtotal + Charges (per Excel reference).
-        const taxableInrTotal = linesInrTotal + chargesInrTotal;
+        // Per-charge GST (operator-entered gst_pct on each charge). Charges are
+        // now taxed by their own rate — not folded into the goods GST.
+        const chargeGstInrTotal = expensesSnapshot.reduce(
+            (s, e) =>
+                s + ((Number(e.amount) || 0) * (Number(e.gst_pct) || 0)) / 100,
+            0
+        );
 
-        // GST is applied on Taxable (not just Subtotal).
+        // GST on the goods lines (charges carry their own GST above).
         const productIds = Array.from(
             new Set(
                 (pov.lines || [])
@@ -268,11 +274,9 @@ export class PoVendorPdfService {
                     .filter(Boolean)
             )
         );
-        // Per-line GST (line's tax_pct snapshot, product master as fallback)
-        // with a proportional charge share, grouped into HSN/rate buckets so
-        // the PDF can print a detailed GST table. Bucket GST sums to the total.
-        const chargesPct =
-            linesInrTotal > 0 ? chargesInrTotal / linesInrTotal : 0;
+        // Per-line GST (line's tax_pct snapshot, product master as fallback),
+        // grouped into HSN/rate buckets so the PDF can print a detailed GST
+        // table. Goods-only — charge GST is handled per charge (gross rows).
         const taxByProduct = new Map<string, number>();
         if (productIds.length) {
             try {
@@ -300,7 +304,7 @@ export class PoVendorPdfService {
             const rate =
                 Number((l as any).tax_pct) || taxByProduct.get(pid) || 0;
             if (rate <= 0) continue;
-            const taxable = lineTotal * (1 + chargesPct);
+            const taxable = lineTotal;
             const gst = (taxable * rate) / 100;
             gstInrTotal += gst;
             const hsn = (l as any).hsn_code || '-';
@@ -361,6 +365,7 @@ export class PoVendorPdfService {
             gstInrTotal,
             gstBuckets,
             chargesInrTotal,
+            chargeGstInrTotal,
             expensesSnapshot,
         };
     }
@@ -412,11 +417,13 @@ interface PovPdfContext {
         gst: number;
     }>;
     chargesInrTotal: number;
+    chargeGstInrTotal: number;
     expensesSnapshot: Array<{
         name: string;
         type: string;
         value: string;
         amount: string;
+        gst_pct?: string;
     }>;
 }
 
@@ -662,6 +669,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
         gstInrTotal,
         gstBuckets,
         chargesInrTotal,
+        chargeGstInrTotal,
         expensesSnapshot,
     } = ctx;
 
@@ -684,12 +692,15 @@ function buildPovHtml(ctx: PovPdfContext): string {
     // Money chain (INR internal → customer currency via rate). Matches the
     // dispatch-advice totals: Subtotal + Charges = Taxable; + CGST/SGST; round.
     const subtotalCcy = inrTotal * rate;
-    const chargesCcy = chargesInrTotal * rate;
+    const chargesCcy = chargesInrTotal * rate; // charges taxable value
+    const chargeGstCcy = chargeGstInrTotal * rate; // GST on charges (per gst_pct)
     const taxableCcy = subtotalCcy + chargesCcy;
-    const gstTotalCcy = gstInrTotal * rate;
+    const gstTotalCcy = gstInrTotal * rate; // goods GST only
     const cgstCcy = gstTotalCcy / 2;
     const sgstCcy = gstTotalCcy - cgstCcy;
-    const grandRawCcy = taxableCcy + gstTotalCcy;
+    // Grand total = goods + charges + goods GST + charge GST. Charge GST is
+    // shown baked into each charge's row (gross), so it's added here too.
+    const grandRawCcy = taxableCcy + gstTotalCcy + chargeGstCcy;
     const grandTotalCcy = Math.round(grandRawCcy);
     const roundOffCcy = grandTotalCcy - grandRawCcy;
 
@@ -749,12 +760,16 @@ function buildPovHtml(ctx: PovPdfContext): string {
         sumRow('', fmt(subtotalCcy)) +
         expensesSnapshot
             .map((e) => {
-                const amtCcy = (Number(e.amount) || 0) * rate;
-                const label =
+                // Show the charge GROSS = taxable + its own GST (gst_pct).
+                const gstPct = Number(e.gst_pct) || 0;
+                const grossCcy =
+                    (Number(e.amount) || 0) * (1 + gstPct / 100) * rate;
+                const base =
                     e.type === 'percent'
                         ? `${e.name} (${Number(e.value) || 0}%)`
                         : e.name;
-                return sumRow(label, fmt(amtCcy));
+                const label = gstPct > 0 ? `${base} (+${gstPct}% GST)` : base;
+                return sumRow(label, fmt(grossCcy));
             })
             .join('') +
         (gstTotalCcy > 0
@@ -932,7 +947,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
       <th style="width:74px">Quantity</th>
       <th style="width:60px">Rate</th>
       <th style="width:26px">per</th>
-      <th style="width:42px">GST %</th>
+      <th style="width:42px">${interState ? 'IGST %' : 'GST %'}</th>
       <th style="width:80px">Amount</th>
     </tr>
   </thead>

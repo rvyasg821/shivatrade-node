@@ -176,6 +176,7 @@ export class PoVendorService {
             expense_id: string;
             type?: 'percent' | 'fixed';
             value?: string;
+            gst_pct?: string;
         }>,
         subtotal: number
     ): Promise<
@@ -186,6 +187,7 @@ export class PoVendorService {
             type: string;
             value: string;
             amount: string;
+            gst_pct: string;
         }>
     > {
         if (!picks || picks.length === 0) return [];
@@ -219,6 +221,7 @@ export class PoVendorService {
             type: string;
             value: string;
             amount: string;
+            gst_pct: string;
         }> = [];
         for (const p of picks) {
             const m = masterById.get(p.expense_id);
@@ -236,6 +239,12 @@ export class PoVendorService {
                 type === 'percent'
                     ? round2((subtotal * num(value)) / 100)
                     : round2(num(value));
+            // Per-charge GST% (operator-entered). Charge master carries no GST,
+            // so default to 0 when not supplied.
+            const gstPct =
+                p.gst_pct != null && p.gst_pct !== ''
+                    ? String(num(p.gst_pct))
+                    : '0';
             out.push({
                 expense_id: p.expense_id,
                 code: m.code,
@@ -243,6 +252,7 @@ export class PoVendorService {
                 type,
                 value,
                 amount: String(amount),
+                gst_pct: gstPct,
             });
         }
         return out;
@@ -1063,6 +1073,7 @@ export class PoVendorService {
                     expense_id: string;
                     type?: 'percent' | 'fixed';
                     value?: string;
+                    gst_pct?: string;
                 }>
             >;
             /** Per-vendor advance paid, recorded on the spawned POV. */
@@ -2300,15 +2311,27 @@ export class PoVendorService {
                 (s, e) => s + num(e.amount),
                 0
             );
-            const chargesPct = linesInr > 0 ? chargesInr / linesInr : 0;
             let gstInr = 0;
             for (const l of linesRaw) {
-                const taxPct = num(
-                    (productMap.get(l.product_id?.toString()) as any)?.tax_pct
-                );
-                gstInr += (num(l.line_total) * (1 + chargesPct) * taxPct) / 100;
+                // Line's own tax_pct wins (standalone POVs set GST per line);
+                // fall back to the product master — same rule as the POV PDF.
+                const taxPct =
+                    num((l as any).tax_pct) ||
+                    num(
+                        (productMap.get(l.product_id?.toString()) as any)
+                            ?.tax_pct
+                    );
+                gstInr += (num(l.line_total) * taxPct) / 100; // goods GST
             }
-            const orderValue = Math.round(linesInr + chargesInr + gstInr);
+            // Per-charge GST (operator-entered gst_pct on each charge) — charges
+            // are taxed by their own rate, not folded into the goods GST.
+            const chargeGstInr = expensesSnap.reduce(
+                (s, e) => s + (num(e.amount) * num(e.gst_pct)) / 100,
+                0
+            );
+            const orderValue = Math.round(
+                linesInr + chargesInr + gstInr + chargeGstInr
+            );
             const amountPaid = round2(num(r.amount_paid));
             // Goes negative when the vendor has been overpaid — the FE shows
             // that as an "Overpaid" amount rather than a payable.
