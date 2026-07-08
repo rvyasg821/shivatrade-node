@@ -33,6 +33,12 @@ export class PoVendorExpenseInputDto {
     @IsNumberString({}, { message: 'value must be a numeric string' })
     @IsOptional()
     value?: string;
+
+    /** Per-charge GST % (operator-entered). Charge master has no GST, so 0
+     *  when omitted. Snapshotted onto the POV's expenses_snapshot. */
+    @IsNumberString({}, { message: 'gst_pct must be a numeric string' })
+    @IsOptional()
+    gst_pct?: string;
 }
 
 /**
