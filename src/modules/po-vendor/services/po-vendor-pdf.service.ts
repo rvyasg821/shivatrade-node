@@ -18,6 +18,7 @@ import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import {
     PoVendorGetResponseDto,
@@ -39,6 +40,7 @@ export class PoVendorPdfService {
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly vendorAddressRepository: VendorAddressRepository,
+        private readonly vendorRepository: VendorRepository,
         private readonly productRepository: ProductRepository
     ) {}
 
@@ -206,6 +208,23 @@ export class PoVendorPdfService {
                 }
             } catch {
                 /* graceful */
+            }
+
+            // The GSTIN entered on the vendor form (step 1) lives on the vendor
+            // entity, not the address row. Fall back to it so inter/intra-state
+            // GST is decided correctly even when the address has no GSTIN.
+            if (!vendorGstin || !vendorState) {
+                try {
+                    const v: any = await this.vendorRepository.findOne({
+                        _id: pov.vendor_id,
+                    } as any);
+                    if (v) {
+                        if (!vendorGstin && v.gstin) vendorGstin = v.gstin;
+                        if (!vendorState && v.state) vendorState = v.state;
+                    }
+                } catch {
+                    /* graceful */
+                }
             }
         }
 
