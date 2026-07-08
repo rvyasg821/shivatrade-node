@@ -3,7 +3,6 @@ import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module'
 import { QuotationRepositoryModule } from './repository/quotation.repository.module';
 import { QuotationService } from './services/quotation.service';
 import { QuotationAdminController } from './controllers/quotation.admin.controller';
-import { QuotationPublicController } from './controllers/quotation.public.controller';
 import { CustomerModule } from '@modules/customer/customer.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { ProductModule } from '@modules/product/product.module';
@@ -45,6 +44,6 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
     ],
     providers: [QuotationService],
     exports: [QuotationRepositoryModule, QuotationService],
-    controllers: [QuotationAdminController, QuotationPublicController],
+    controllers: [QuotationAdminController],
 })
 export class QuotationModule {}

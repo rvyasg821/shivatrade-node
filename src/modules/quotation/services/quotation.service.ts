@@ -4,7 +4,6 @@ import {
     BadRequestException,
     NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'crypto';
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationLineRepository } from '../repository/repositories/quotation-line.repository';
@@ -481,68 +480,6 @@ export class QuotationService {
         row.soft_delete = true;
         await this.quotationRepository.save(row);
         this.logger.log(`Quotation soft-deleted: ${row._id}`);
-    }
-
-    // ─── Public share link ──────────────────────────────────────────────
-
-    /** Generate (or keep) the public token. Only sent/approved quotations
-     *  can be published - a draft is not final enough to share. */
-    async publish(id: string): Promise<QuotationDoc> {
-        const row = await this.findOneById(id);
-        this.assertPublishable(row.status);
-        if (!row.public_token) {
-            row.public_token = randomBytes(24).toString('base64url');
-            await this.quotationRepository.save(row);
-        }
-        return row;
-    }
-
-    /** Issue a fresh token - the old public URL stops working immediately. */
-    async rotateToken(id: string): Promise<QuotationDoc> {
-        const row = await this.findOneById(id);
-        this.assertPublishable(row.status);
-        row.public_token = randomBytes(24).toString('base64url');
-        await this.quotationRepository.save(row);
-        return row;
-    }
-
-    /** Revoke the public link entirely. */
-    async unpublish(id: string): Promise<QuotationDoc> {
-        const row = await this.findOneById(id);
-        row.public_token = null as any;
-        await this.quotationRepository.save(row);
-        return row;
-    }
-
-    private assertPublishable(status: ENUM_QUOTATION_STATUS): void {
-        if (
-            status !== ENUM_QUOTATION_STATUS.SENT &&
-            status !== ENUM_QUOTATION_STATUS.APPROVED
-        ) {
-            throw new BadRequestException(
-                'Only sent or approved quotations can be published'
-            );
-        }
-    }
-
-    /** Public view-only fetch by token - no auth. Returns null for an
-     *  unknown token or a quotation that is no longer in a shareable state. */
-    async findByPublicToken(token: string): Promise<QuotationDoc | null> {
-        if (!token) return null;
-        const row = await this.quotationRepository.findOne({
-            public_token: token,
-            soft_delete: false,
-        } as any);
-        if (!row) return null;
-        // Bump view tracking (fire-and-forget - never block the response).
-        row.public_view_count = (row.public_view_count || 0) + 1;
-        row.public_last_viewed_at = new Date();
-        this.quotationRepository
-            .save(row)
-            .catch((err) =>
-                this.logger.warn(`Public view-count update failed: ${err}`)
-            );
-        return row;
     }
 
     // ─── Replace-on-update for nested arrays ────────────────────────────

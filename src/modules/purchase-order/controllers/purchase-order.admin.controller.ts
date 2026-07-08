@@ -315,52 +315,6 @@ export class PurchaseOrderAdminController {
         res.end(buf);
     }
 
-    /** Admin-only "preview" — sanitized projection used by the React Share
-     *  panel's Preview action. Returns the same shape as `mapGet` but lets
-     *  the frontend render a client-facing layout without re-fetching the
-     *  full admin detail page. Works in any status. */
-    @Response('purchaseOrder.publicPreview')
-    @AuthJwtAccessProtected()
-    @Get('/public-preview/:id')
-    async publicPreview(
-        @Param('id') id: string
-    ): Promise<IResponse<any>> {
-        const row = await this.poService.findOneById(id);
-        return { data: await this.poService.mapPublicPreview(row) };
-    }
-
-    // ─── Public share link ──────────────────────────────────────────────
-
-    @Response('purchaseOrder.publish')
-    @AuthJwtAccessProtected()
-    @Post('/publish/:id')
-    async publish(
-        @Param('id') id: string
-    ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
-        const row = await this.poService.publish(id);
-        return { data: await this.poService.mapGet(row) };
-    }
-
-    @Response('purchaseOrder.rotateToken')
-    @AuthJwtAccessProtected()
-    @Post('/rotate-token/:id')
-    async rotateToken(
-        @Param('id') id: string
-    ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
-        const row = await this.poService.rotateToken(id);
-        return { data: await this.poService.mapGet(row) };
-    }
-
-    @Response('purchaseOrder.unpublish')
-    @AuthJwtAccessProtected()
-    @Post('/unpublish/:id')
-    async unpublish(
-        @Param('id') id: string
-    ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
-        const row = await this.poService.unpublish(id);
-        return { data: await this.poService.mapGet(row) };
-    }
-
     /** Per-PFI coverage roll-up — covered/pending qty per PFI line. */
     @Response('purchaseOrder.pfiCoverage')
     @AuthJwtAccessProtected()
