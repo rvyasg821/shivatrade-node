@@ -625,6 +625,13 @@ export class PurchaseOrderService {
                 unit_price: l.unit_price || '0',
                 discount_pct: l.discount_pct || '0',
                 tax_pct: l.tax_pct || '0',
+                // Costing snapshot (frozen from the source quotation line).
+                margin_pct: l.margin_pct ?? '0',
+                margin_amount: l.margin_amount ?? '0',
+                product_rebates_snapshot: l.product_rebates_snapshot ?? null,
+                product_expenses_snapshot: l.product_expenses_snapshot ?? null,
+                product_rebates_amount: l.product_rebates_amount ?? '0',
+                product_expenses_amount: l.product_expenses_amount ?? '0',
                 cgst: '0',
                 sgst: '0',
                 igst: '0',
@@ -734,6 +741,24 @@ export class PurchaseOrderService {
                 (ln as any).source_quotation_line_id?.toString();
             const src: any = srcId ? sourceById.get(srcId) : null;
 
+            // Costing now lives on the SO line itself (frozen from the
+            // quotation at create). Prefer it; fall back to the quotation
+            // source only for legacy SOs created before the columns existed.
+            const lineExpensesSnap =
+                Array.isArray((ln as any).product_expenses_snapshot) &&
+                (ln as any).product_expenses_snapshot.length
+                    ? (ln as any).product_expenses_snapshot
+                    : src?.product_expenses_snapshot || [];
+            const lineRebatesSnap =
+                Array.isArray((ln as any).product_rebates_snapshot) &&
+                (ln as any).product_rebates_snapshot.length
+                    ? (ln as any).product_rebates_snapshot
+                    : src?.product_rebates_snapshot || [];
+            const lineMarginPct =
+                num((ln as any).margin_pct) > 0
+                    ? num((ln as any).margin_pct)
+                    : num(src?.margin_pct);
+
             // Use engine only for the intra/inter split; recompute tax on Net.
             const split = computeLineTax({
                 qty: num(ln.qty),
@@ -746,7 +771,7 @@ export class PurchaseOrderService {
 
             // Expenses first — % on taxable, fixed as-is.
             let lineExpensesAmt = 0;
-            for (const e of src?.product_expenses_snapshot || []) {
+            for (const e of lineExpensesSnap) {
                 lineExpensesAmt +=
                     e.type === 'percent'
                         ? (split.taxable * num(e.value)) / 100
@@ -756,14 +781,13 @@ export class PurchaseOrderService {
             // % on that base, fixed as-is.
             const lineFobBase = split.taxable + lineExpensesAmt;
             let lineRebatesAmt = 0;
-            for (const r of src?.product_rebates_snapshot || []) {
+            for (const r of lineRebatesSnap) {
                 lineRebatesAmt +=
                     r.type === 'fixed'
                         ? num(r.pct)
                         : (lineFobBase * num(r.pct)) / 100;
             }
 
-            const lineMarginPct = num(src?.margin_pct);
             const lineMarginBase =
                 split.taxable + lineExpensesAmt - lineRebatesAmt;
             const lineMarginAmt = lineMarginBase * (lineMarginPct / 100);
@@ -782,6 +806,20 @@ export class PurchaseOrderService {
             ln.sgst = '0';
             ln.igst = '0';
             ln.line_total = String(round2(lineNet));
+            // Freeze the resolved costing on the line (and backfill legacy SOs
+            // whose snapshot columns were empty — pulled from the quotation).
+            (ln as any).margin_pct = String(lineMarginPct);
+            (ln as any).margin_amount = String(round2(lineMarginAmt));
+            (ln as any).product_rebates_snapshot = lineRebatesSnap.length
+                ? lineRebatesSnap
+                : null;
+            (ln as any).product_expenses_snapshot = lineExpensesSnap.length
+                ? lineExpensesSnap
+                : null;
+            (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));
+            (ln as any).product_expenses_amount = String(
+                round2(lineExpensesAmt)
+            );
             await this.poLineRepository.save(ln);
 
             subtotal += split.taxable;
@@ -1914,6 +1952,17 @@ export class PurchaseOrderService {
                 unit_price: String(l.unit_price || '0'),
                 discount_pct: String(l.discount_pct ?? '0'),
                 tax_pct: String(l.tax_pct ?? product?.tax_pct ?? '0'),
+                // Costing snapshot frozen from the quotation line so the sales
+                // value (cost + margin ± expenses/rebates) survives into the SO
+                // and onward to the Invoice.
+                margin_pct: String(l.margin_pct ?? '0'),
+                margin_amount: String(l.margin_amount ?? '0'),
+                product_rebates_snapshot: l.product_rebates_snapshot ?? null,
+                product_expenses_snapshot: l.product_expenses_snapshot ?? null,
+                product_rebates_amount: String(l.product_rebates_amount ?? '0'),
+                product_expenses_amount: String(
+                    l.product_expenses_amount ?? '0'
+                ),
                 net_weight_kg: l.net_weight_kg ?? undefined,
                 gross_weight_kg: l.gross_weight_kg ?? undefined,
                 package_count: l.package_count ?? undefined,

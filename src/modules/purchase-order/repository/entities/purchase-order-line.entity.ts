@@ -129,6 +129,45 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
     })
     line_total: string;
 
+    // ── Costing snapshot (propagated from the source Quotation line) ─────
+    // The SO's own `unit_price` is the VENDOR cost; the customer-facing sales
+    // value is cost + margin (± expenses/rebates). Historically the SO stored
+    // none of this and re-read the quotation at calc time — which meant the
+    // snapshot never reached the Invoice, collapsing its taxable/assessable
+    // value to the purchase cost. We now freeze the costing here (same shape
+    // as quotation_line) so it carries forward Quotation → SO → Invoice.
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_rebates_snapshot?: Array<{
+        rebate_id: string;
+        code?: string;
+        name?: string;
+        pct: string;
+    }>;
+
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    product_expenses_snapshot?: Array<{
+        expense_id: string;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_rebates_amount: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    product_expenses_amount: string;
+
+    /** Per-line margin %, frozen from the source Quotation line. */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
+    margin_pct?: string;
+
+    /** Computed: (taxable + product_expenses_amount − product_rebates_amount)
+     *  × margin_pct/100. Frozen from the source Quotation line. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    margin_amount: string;
+
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 
