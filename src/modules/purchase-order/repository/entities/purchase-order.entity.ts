@@ -125,6 +125,10 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 100, nullable: true })
     delivery_terms?: string;
 
+    /** Mode of dispatch printed on the SO PDF (e.g. By Sea / By Road / By Air) */
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    dispatched_through?: string;
+
     /** Hidden from PDF */
     @Column({ type: 'text', nullable: true })
     internal_notes?: string;

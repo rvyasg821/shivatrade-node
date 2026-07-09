@@ -208,6 +208,11 @@ export class PurchaseOrderCreateRequestDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(50)
+    dispatched_through?: string;
+
+    @IsString()
+    @IsOptional()
     @MaxLength(2000)
     internal_notes?: string;
 

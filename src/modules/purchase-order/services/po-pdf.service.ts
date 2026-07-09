@@ -390,12 +390,10 @@ function buildPoHtml(ctx: PoPdfContext): string {
 
     const sym = po.currency_symbol || po.currency_code || '₹';
     const rate = Number(po.exchange_rate) || 1;
-    // Sum of line amounts (customer currency) …
+    // Sum of line amounts (customer currency). No round-off is applied — the
+    // Grand Total prints the exact computed value.
     const rawGrandTotalCcy = inrTotal * rate;
-    // … rounded to a whole number for the Grand Total; the delta prints as a
-    // Round Off row so the line amounts still reconcile with the total.
-    const grandTotalCcy = Math.round(rawGrandTotalCcy);
-    const roundOffCcy = grandTotalCcy - rawGrandTotalCcy;
+    const grandTotalCcy = rawGrandTotalCcy;
 
     // Consignee (Ship to) — frozen snapshot; falls back to the buyer.
     const cs: any = (po as any).consignee_snapshot || {};
@@ -538,7 +536,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
           <td class="meta">${meta('Other References', otherRef)}</td>
         </tr>
         <tr>
-          <td class="meta">${meta('Dispatched through', '')}</td>
+          <td class="meta">${meta('Dispatched through', (po as any).dispatched_through)}</td>
           <td class="meta">${meta('Destination', consigneeCountry)}</td>
         </tr>
         <tr>
@@ -578,16 +576,6 @@ function buildPoHtml(ctx: PoPdfContext): string {
       <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt4(rawGrandTotalCcy)} ${esc(sym)}</b></td>
     </tr>
-    ${
-        Math.abs(roundOffCcy) >= 0.005
-            ? `<tr>
-      <td></td>
-      <td class="num">Round Off</td>
-      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-      <td class="num nowrap">${roundOffCcy < 0 ? '&minus; ' : '+ '}${fmt(Math.abs(roundOffCcy))} ${esc(sym)}</td>
-    </tr>`
-            : ''
-    }
     <tr>
       <td></td>
       <td class="num"><b>Grand Total</b></td>
