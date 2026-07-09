@@ -59,6 +59,12 @@ export class QuotationPublicResponseDto {
     /** Bill-to address — newline-separated lines. */
     customer_address?: string;
 
+    /** Consignee (Ship-to). Falls back to the buyer when same-as-buyer. */
+    consignee_name?: string;
+    /** Ship-to address — newline-separated lines. */
+    consignee_address?: string;
+    consignee_same_as_buyer?: boolean;
+
     payment_terms?: string;
     delivery_terms?: string;
     delivery_location?: string;
