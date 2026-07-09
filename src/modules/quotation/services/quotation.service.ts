@@ -1068,6 +1068,52 @@ export class QuotationService {
             }
         }
 
+        // Resolve the ship-to (consignee) for the document header. When the
+        // consignee is the same party as the buyer, it mirrors the bill-to;
+        // otherwise it uses the frozen consignee snapshot (falling back to the
+        // linked consignee address if the snapshot has no address lines).
+        const consignee_same_as_buyer = (row as any).consignee_same_as_buyer !== false;
+        let consignee_name: string | undefined;
+        let consignee_address: string | undefined;
+        if (consignee_same_as_buyer) {
+            consignee_name = full.customer_name;
+            consignee_address = customer_address;
+        } else {
+            const snap: any = (row as any).consignee_snapshot || {};
+            consignee_name = snap.name || full.customer_name;
+            const snapAddress = [
+                snap.address_line1,
+                snap.address_line2,
+                [snap.city, snap.state, snap.postcode].filter(Boolean).join(', '),
+                snap.country,
+            ]
+                .filter(Boolean)
+                .join('\n');
+            consignee_address = snapAddress || undefined;
+            if (!consignee_address && (row as any).consignee_address_id) {
+                try {
+                    const addr: any =
+                        await this.customerAddressRepository.findOne({
+                            _id: (row as any).consignee_address_id.toString(),
+                        } as any);
+                    if (addr) {
+                        consignee_address = [
+                            addr.address_line1,
+                            addr.address_line2,
+                            [addr.city, addr.state, addr.postcode]
+                                .filter(Boolean)
+                                .join(', '),
+                            addr.country,
+                        ]
+                            .filter(Boolean)
+                            .join('\n');
+                    }
+                } catch {
+                    consignee_address = undefined;
+                }
+            }
+        }
+
         // Contact phone - prefer the rich formatted form, else compose it.
         const cc: any = full.customer_contact_country_code;
         const customer_phone =
@@ -1141,6 +1187,9 @@ export class QuotationService {
             customer_email: full.customer_contact_email,
             customer_phone,
             customer_address,
+            consignee_name,
+            consignee_address,
+            consignee_same_as_buyer,
             payment_terms: full.payment_terms,
             delivery_terms: full.delivery_terms,
             delivery_location: full.delivery_location,
@@ -1313,10 +1362,24 @@ export class QuotationService {
             q.delivery_terms
                 ? `<div class="party-line"><span class="party-muted">Delivery:</span> ${this.esc(q.delivery_terms)}</div>`
                 : '',
-            q.delivery_location
-                ? `<div class="party-line"><span class="party-muted">Ship To:</span> ${this.esc(q.delivery_location)}</div>`
-                : '',
         ].join('');
+
+        // Ship-to (consignee) block — mirrors the buyer when same-as-buyer.
+        // Falls back to the free-text delivery location when no structured
+        // consignee address is present.
+        const shipToLines = [
+            q.consignee_name
+                ? `<div class="party-name">${this.esc(q.consignee_name)}</div>`
+                : '',
+            q.consignee_address
+                ? `<div class="party-line" style="white-space:pre-line">${preLine(q.consignee_address)}</div>`
+                : '',
+            !q.consignee_address && q.delivery_location
+                ? `<div class="party-line">${this.esc(q.delivery_location)}</div>`
+                : '',
+        ]
+            .filter(Boolean)
+            .join('');
 
         // Shared letterhead — logo + company identity (from the company
         // profile) on the left, document meta on the right. Reused across
@@ -1357,6 +1420,7 @@ export class QuotationService {
   .voucher { color: #6b7280; font-size: 10px; margin-top: 2px; }
   .status-badge { display: inline-block; background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; padding: 2px 9px; border-radius: 999px; font-size: 9px; font-weight: 600; text-transform: capitalize; letter-spacing: 0.2px; margin-top: 5px; }
   .party-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 18px; }
+  .party-grid-3 { grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
   .label { text-transform: uppercase; color: #6b7280; font-weight: 600; font-size: 8.5px; letter-spacing: 0.6px; margin-bottom: 5px; }
   .party-name { font-weight: 600; color: #1f2937; margin-bottom: 3px; font-size: 10.5px; }
   .party-line { font-size: 9.8px; color: #4b5563; line-height: 1.5; }
@@ -1378,14 +1442,18 @@ export class QuotationService {
 <div class="doc">
   ${letterhead}
 
-  <div class="party-grid">
+  <div class="party-grid party-grid-3">
     <div>
-      <div class="label">Billed To</div>
+      <div class="label">Bill To</div>
       <div class="party-name">${this.esc(q.customer_name || '-')}</div>
       ${q.customer_contact_name ? `<div class="party-line">${this.esc(q.customer_contact_name)}</div>` : ''}
       ${q.customer_address ? `<div class="party-line" style="white-space:pre-line">${preLine(q.customer_address)}</div>` : ''}
       ${q.customer_phone ? `<div class="party-line">${this.esc(q.customer_phone)}</div>` : ''}
       ${q.customer_email ? `<div class="party-line">${this.esc(q.customer_email)}</div>` : ''}
+    </div>
+    <div>
+      <div class="label">Ship To${q.consignee_same_as_buyer ? ' <span class="party-muted" style="text-transform:none;font-weight:400">(same as bill to)</span>' : ''}</div>
+      ${shipToLines || `<div class="party-line muted">-</div>`}
     </div>
     <div>
       <div class="label">Details</div>
