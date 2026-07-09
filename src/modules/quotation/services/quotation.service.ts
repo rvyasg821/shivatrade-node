@@ -944,7 +944,14 @@ export class QuotationService {
                             margin_pct: l.margin_pct,
                             margin_amount: l.margin_amount,
                             seq: l.seq,
-                            hs_code: l.hs_code,
+                            // Prefer the per-line value; fall back to the
+                            // product master's HSN so it always shows even for
+                            // legacy lines saved before HSN was persisted.
+                            hs_code:
+                                l.hs_code ||
+                                (productMap.get(
+                                    l.product_id?.toString()
+                                ) as any)?.hsn_code,
                             net_weight_kg: l.net_weight_kg,
                             gross_weight_kg: l.gross_weight_kg,
                             package_count: l.package_count,
