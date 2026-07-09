@@ -1074,47 +1074,8 @@ export class SalesDocImportService {
             );
         }
 
-        // _README (sample only).
-        if (opts.includeReadme) {
-            const readme = [
-                ['Sales Doc Line-Items — Import Sample'],
-                [],
-                ['Sheet "LineItems" — one row per line item.'],
-                ['Required columns: productcode (must exist) and qty (> 0).'],
-                [
-                    'vendorcode is optional — if blank, the cheapest active vendor from the product price list is used.',
-                ],
-                [
-                    'rate(inr) / disc(%) fall back to the resolved vendor row when blank.',
-                ],
-                [
-                    'margin(%) falls back to the product master when blank. partno / hsncode auto-fill from the product when blank.',
-                ],
-                [],
-                ['Expense & rebate columns'],
-                [
-                    'Each expense/rebate code is its own column (e.g. PKC, TPC(%), DBK). A "(%)" suffix means the value is a percentage; otherwise it is a flat amount.',
-                ],
-                [
-                    'Type an amount in a code cell to apply that expense/rebate to the line — the typed value overrides the master default. Leave the cell blank to skip that code for the row.',
-                ],
-                [
-                    'Computed columns (price/disc, value, total+exp, grand total, currency) appear on exports only and are ignored on import.',
-                ],
-                [],
-                ['Status meaning on the preview screen'],
-                ['New      → product/vendor not in current form lines'],
-                ['Updated  → product/vendor already present (will overwrite)'],
-                ['Skipped  → duplicate of an earlier row in this sheet'],
-                ['Warning  → imported with a fallback (vendor auto-pick, etc.)'],
-                ['Error    → cannot import (blocked)'],
-            ];
-            utils.book_append_sheet(
-                workbook,
-                utils.aoa_to_sheet(readme),
-                '_README',
-            );
-        }
+        // (The _README helper sheet was removed — the sample now ships with just
+        // the LineItems sheet. Import still targets "LineItems" by name.)
 
         return write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     }
