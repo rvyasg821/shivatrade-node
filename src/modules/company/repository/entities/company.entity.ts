@@ -113,6 +113,18 @@ export class CompanyEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     pov_default_remarks?: string;
 
+    /** Default vendor terms for a new Vendor Purchase Order (POV). Each is
+     *  copied onto the POV at create time and is editable per POV; the POV PDF
+     *  falls back to these when the POV carries none. */
+    @Column({ type: 'varchar', length: 150, nullable: true })
+    pov_default_dispatched_through?: string;
+
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    pov_default_payment_terms?: string;
+
+    @Column({ type: 'varchar', length: 1000, nullable: true })
+    pov_default_delivery_terms?: string;
+
     /** Name printed under the authorized-signatory block on PFI / PO PDFs. */
     @Column({ type: 'varchar', length: 150, nullable: true })
     authorised_signatory_name?: string;
