@@ -263,6 +263,9 @@ export class CompanyGetResponseDto {
     @ApiProperty({ required: false, type: String }) default_terms?: string;
     @ApiProperty({ required: false, type: String }) default_remarks?: string;
     @ApiProperty({ required: false, type: String }) pov_default_remarks?: string;
+    @ApiProperty({ required: false, type: String }) pov_default_dispatched_through?: string;
+    @ApiProperty({ required: false, type: String }) pov_default_payment_terms?: string;
+    @ApiProperty({ required: false, type: String }) pov_default_delivery_terms?: string;
     @ApiProperty({ required: false, type: String }) authorised_signatory_name?: string;
     @ApiProperty({ required: false, type: String }) footer_address?: string;
 

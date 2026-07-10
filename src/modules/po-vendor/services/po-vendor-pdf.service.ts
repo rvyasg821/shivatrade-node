@@ -343,6 +343,10 @@ export class PoVendorPdfService {
                     company?.pov_default_remarks ||
                     company?.default_remarks ||
                     '',
+                dispatched_through:
+                    company?.pov_default_dispatched_through || '',
+                payment_terms: company?.pov_default_payment_terms || '',
+                delivery_terms: company?.pov_default_delivery_terms || '',
                 signatory: company?.authorised_signatory_name || '',
             },
             consignee: {
@@ -390,6 +394,10 @@ interface PovPdfContext {
         state?: string;
         stateCode?: string;
         remarks?: string;
+        /** Company-level fallbacks for a POV that carries no terms of its own. */
+        dispatched_through?: string;
+        payment_terms?: string;
+        delivery_terms?: string;
         signatory?: string;
     };
     consignee: {
@@ -837,6 +845,17 @@ function buildPovHtml(ctx: PovPdfContext): string {
         : '';
 
     const remarks = pov.notes || company.remarks || '';
+    // POV-level terms win; the company defaults fill in for POVs saved before
+    // the terms existed (or left blank). Same shape as `remarks` above.
+    const dispatchedThrough =
+        (pov as any).dispatched_through ||
+        pov.transporter_name ||
+        company.dispatched_through ||
+        '';
+    const paymentTerms =
+        (pov as any).payment_terms || company.payment_terms || '';
+    const deliveryTerms =
+        (pov as any).delivery_terms || company.delivery_terms || '';
 
     return `<!DOCTYPE html>
 <html>
@@ -918,10 +937,10 @@ function buildPovHtml(ctx: PovPdfContext): string {
         </tr>
         <tr>
           <td class="meta">${meta('Reference No. & Date', pov.purchase_order_voucher_no)}</td>
-          <td class="meta">${meta('Mode/Terms of Payment', (pov as any).payment_terms)}</td>
+          <td class="meta">${meta('Mode/Terms of Payment', paymentTerms)}</td>
         </tr>
         <tr>
-          <td class="meta">${meta('Dispatched through', (pov as any).dispatched_through || pov.transporter_name)}</td>
+          <td class="meta">${meta('Dispatched through', dispatchedThrough)}</td>
           <td class="meta">${meta('Destination', '')}</td>
         </tr>
         <tr>
@@ -929,7 +948,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="meta">${meta('LR No.', pov.lr_no)}</td>
         </tr>
         <tr>
-          <td class="meta" colspan="2" style="height:96px;vertical-align:top">${meta('Terms of Delivery', (pov as any).delivery_terms)}</td>
+          <td class="meta" colspan="2" style="height:96px;vertical-align:top">${meta('Terms of Delivery', deliveryTerms)}</td>
         </tr>
       </table>
     </td>
