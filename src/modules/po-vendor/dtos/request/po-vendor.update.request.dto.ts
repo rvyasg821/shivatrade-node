@@ -48,6 +48,22 @@ export class PoVendorUpdateRequestDto {
     @IsOptional()
     delivery_address_id?: string;
 
+    // ── Vendor terms printed on the POV PDF (free text, draft only) ──
+    @IsString()
+    @IsOptional()
+    @MaxLength(150)
+    dispatched_through?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(500)
+    payment_terms?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(1000)
+    delivery_terms?: string;
+
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => PoVendorLineUpdateDto)

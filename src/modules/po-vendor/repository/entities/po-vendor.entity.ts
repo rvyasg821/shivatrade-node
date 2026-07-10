@@ -57,6 +57,24 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'date', nullable: true })
     actual_arrival_date?: string;
 
+    // ── Vendor terms printed on the POV PDF ──────────────────────────────
+    //
+    // The POV's own terms — deliberately NOT inherited from the parent Sales
+    // Order, which carries the customer-side terms. Free text: the operator
+    // types whatever the vendor agreed to.
+
+    /** Mode of dispatch, e.g. "By Sea". Prints as "Dispatched through". */
+    @Column({ type: 'varchar', length: 150, nullable: true })
+    dispatched_through?: string;
+
+    /** e.g. "50% ADVANCE & 50% AT DISPATCH TIME". */
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    payment_terms?: string;
+
+    /** e.g. "OUR PFI NO:STIPL/PI0344/2025-26, DELIVERY TERM: 4 TO 5 WEEKS". */
+    @Column({ type: 'varchar', length: 1000, nullable: true })
+    delivery_terms?: string;
+
     // ── Transport / tracking ─────────────────────────────────────────────
     @Column({ type: 'varchar', length: 150, nullable: true })
     transporter_name?: string;

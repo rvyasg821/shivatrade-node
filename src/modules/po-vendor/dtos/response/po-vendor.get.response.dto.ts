@@ -72,6 +72,11 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: false, type: String }) expected_arrival_date?: string;
     @ApiProperty({ required: false, type: String }) actual_arrival_date?: string;
 
+    /** POV-owned terms printed on the vendor PDF (free text). */
+    @ApiProperty({ required: false, type: String }) dispatched_through?: string;
+    @ApiProperty({ required: false, type: String }) payment_terms?: string;
+    @ApiProperty({ required: false, type: String }) delivery_terms?: string;
+
     @ApiProperty({ required: false, type: String }) transporter_name?: string;
     @ApiProperty({ required: false, type: String }) vehicle_no?: string;
     @ApiProperty({ required: false, type: String }) lr_no?: string;

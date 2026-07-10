@@ -91,6 +91,28 @@ export class PoVendorRecoverAdvanceDto {
 }
 
 /**
+ * Per-vendor terms typed on the Generate-POV screen, stamped onto that
+ * vendor's spawned POV and printed on its PDF. Free text — the POV's terms are
+ * the vendor's, not the parent Sales Order's (those are the customer's).
+ */
+export class PoVendorRecoverTermsDto {
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    dispatched_through?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    payment_terms?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    delivery_terms?: string;
+}
+
+/**
  * Batch recover request — used by `POST /admin/po-vendor/recover/:poId`.
  * Groups assignments by vendor_id and spawns one POV per vendor in a
  * single logical operation.
@@ -147,4 +169,10 @@ export class PoVendorRecoverRequestDto {
     @IsObject()
     @IsOptional()
     vendor_delivery_locations?: Record<string, string>;
+
+    /** Per-vendor terms stamped onto each spawned POV. Key = vendor_id. */
+    @ApiProperty({ required: false, type: Object })
+    @IsObject()
+    @IsOptional()
+    vendor_terms?: Record<string, PoVendorRecoverTermsDto>;
 }
