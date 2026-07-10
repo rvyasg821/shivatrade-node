@@ -7,7 +7,10 @@ import { PO_VENDOR_LINE_COLLECTION_NAME } from '../../constants/po-vendor.entity
  *
  * `short_qty` and `undispatched_qty` are NOT stored; they are derived
  * in the service layer from these three qty columns (POV plan §9):
- *   short_qty        = dispatched_qty − received_qty   (loss, never recovered)
+ *   short_qty        = dispatched_qty − received_qty   (loss, never recovered;
+ *                                                       0 until a receipt
+ *                                                       exists — an un-receipted
+ *                                                       dispatch is in transit)
  *   undispatched_qty = ordered_qty    − dispatched_qty (recoverable via a new POV
  *                                                       manually created against
  *                                                       the parent PO)
@@ -28,6 +31,13 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
     @Index()
     @Column({ type: 'uuid', nullable: true })
     purchase_order_line_id?: string;
+
+    /** The source POV line this one re-orders, when this POV is a balance POV.
+     *  Matching by line id (not product) keeps the arithmetic right when the
+     *  same product appears on two lines. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    balance_of_po_vendor_line_id?: string;
 
     @Index()
     @Column({ type: 'uuid', nullable: false })

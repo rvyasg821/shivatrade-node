@@ -28,6 +28,15 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     purchase_order_id?: string;
 
+    /** Set when this POV was raised as the BALANCE of an earlier one — i.e.
+     *  to re-order what that POV never delivered (undispatched, plus any short
+     *  receipt once it closed). Lets the source POV subtract what has already
+     *  been re-ordered, so the balance action can't be run twice for the same
+     *  units. Null for every other POV. */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    balance_of_po_vendor_id?: string;
+
     /** Snapshot of vendor at POV creation — inherited from PO header. */
     @Index()
     @Column({ type: 'uuid', nullable: false })

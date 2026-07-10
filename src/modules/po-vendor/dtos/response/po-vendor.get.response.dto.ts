@@ -47,6 +47,11 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: true, type: String }) purchase_order_id: string;
     @ApiProperty({ required: false, type: String }) purchase_order_voucher_no?: string;
 
+    /** The POV this one re-orders the balance of, when it is a balance POV. */
+    @ApiProperty({ required: false, type: String }) balance_of_po_vendor_id?: string;
+    /** Detail-page only: this POV still has un-delivered qty to re-order. */
+    @ApiProperty({ required: false, type: Boolean }) has_balance?: boolean;
+
 
     @ApiProperty({ required: true, type: String }) vendor_id: string;
     @ApiProperty({ required: false, type: String }) vendor_name?: string;
