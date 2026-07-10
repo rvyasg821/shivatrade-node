@@ -6,6 +6,7 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { VendorCategoryRepository } from '@modules/vendor/repository/repositories/vendor-category.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
 
 const SHEET_NAME = 'Price List';
 
@@ -149,6 +150,7 @@ export class PriceListImportExportService {
         private readonly vendorCategoryRepository: VendorCategoryRepository,
         private readonly productRepository: ProductRepository,
         private readonly currencyRepository: CurrencyRepository,
+        private readonly auditLogService: AuditLogService,
     ) {}
 
     /**
@@ -632,6 +634,20 @@ export class PriceListImportExportService {
                     message: err?.message || 'Import failed',
                 });
             }
+        }
+
+        // ONE audit row for the whole import, not one per price. `PriceListEntity`
+        // is deliberately off the audit allowlist — a 500-row import would
+        // otherwise write 500 history entries and bury every other change.
+        // Fire-and-forget: an audit failure must never fail the import.
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'PriceListEntity',
+                entity_label: `Price list import — ${created + updated} price(s)`,
+                summary: { created, updated, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
         }
 
         return { created, updated, errors };

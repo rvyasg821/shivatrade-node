@@ -6,6 +6,7 @@ import { PriceListAdminController } from './controllers/price-list.admin.control
 import { VendorModule } from '@modules/vendor/vendor.module';
 import { ProductModule } from '@modules/product/product.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -13,6 +14,8 @@ import { CurrencyModule } from '@modules/currency/currency.module';
         VendorModule,
         ProductModule,
         CurrencyModule,
+        // For AuditLogService — one summary audit row per bulk import.
+        TrackingModule,
     ],
     providers: [PriceListService, PriceListImportExportService],
     exports: [

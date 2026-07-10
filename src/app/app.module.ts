@@ -8,6 +8,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { join } from 'path';
 
 import { CronModule } from '@modules/cron/cron.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 import { NotificationModule } from '@modules/notification/notification.module';
 import { MessageLogModule } from '@modules/message-log/message-log.module';
 
@@ -26,6 +27,9 @@ import { MessageLogModule } from '@modules/message-log/message-log.module';
 
         // Cron
         CronModule,
+
+        // ERP Tracking — Phase 1: API-call telemetry + 30-day prune cron.
+        TrackingModule,
 
         // Routes
         RouterModule,
