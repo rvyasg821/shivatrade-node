@@ -110,6 +110,22 @@ export class PoVendorCreateRequestDto {
     @MaxLength(2000)
     internal_notes?: string;
 
+    // ── Vendor terms printed on the POV PDF (free text) ──────────────
+    @IsString()
+    @IsOptional()
+    @MaxLength(150)
+    dispatched_through?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(500)
+    payment_terms?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(1000)
+    delivery_terms?: string;
+
     @IsArray()
     @ArrayMinSize(1, { message: 'At least one line is required.' })
     @ValidateNested({ each: true })

@@ -550,6 +550,11 @@ export class PoVendorService {
             delivery_address_id,
             notes: data.notes || null,
             internal_notes: data.internal_notes || null,
+            // The POV's own vendor-side terms — never inherited from the PO,
+            // whose terms belong to the customer.
+            dispatched_through: (data as any).dispatched_through || null,
+            payment_terms: (data as any).payment_terms || null,
+            delivery_terms: (data as any).delivery_terms || null,
             currency_code,
             exchange_rate: '1',
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
@@ -751,6 +756,9 @@ export class PoVendorService {
             delivery_address_id,
             notes: data.notes || null,
             internal_notes: data.internal_notes || null,
+            dispatched_through: data.dispatched_through || null,
+            payment_terms: data.payment_terms || null,
+            delivery_terms: data.delivery_terms || null,
             currency_code,
             exchange_rate: '1',
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
@@ -951,6 +959,9 @@ export class PoVendorService {
             delivery_address_id: source.delivery_address_id || null,
             notes: source.notes || null,
             internal_notes: source.internal_notes || null,
+            dispatched_through: source.dispatched_through || null,
+            payment_terms: source.payment_terms || null,
+            delivery_terms: source.delivery_terms || null,
             currency_code: source.currency_code || 'INR',
             exchange_rate: String(source.exchange_rate ?? '1'),
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
@@ -1278,6 +1289,15 @@ export class PoVendorService {
             /** Per-vendor deliver-to location (Locations-master id). Sets the
              *  spawned POV's `delivery_address_id`. Key = vendor_id. */
             vendor_delivery_locations?: Record<string, string>;
+            /** Per-vendor terms stamped onto the spawned POV. Key = vendor_id. */
+            vendor_terms?: Record<
+                string,
+                {
+                    dispatched_through?: string;
+                    payment_terms?: string;
+                    delivery_terms?: string;
+                }
+            >;
         },
         createdBy: string
     ): Promise<{ created: PoVendorDoc[]; all_from_stock?: boolean }> {
@@ -1462,6 +1482,11 @@ export class PoVendorService {
                     (await resolveDeliveryLocation(vendorId)) ||
                     data.delivery_address_id,
                 expenses: data.vendor_expenses?.[vendorId] || [],
+                // Per-vendor terms typed on the generate-POV screen.
+                dispatched_through:
+                    data.vendor_terms?.[vendorId]?.dispatched_through,
+                payment_terms: data.vendor_terms?.[vendorId]?.payment_terms,
+                delivery_terms: data.vendor_terms?.[vendorId]?.delivery_terms,
             };
             const row = await this.createFromPo(
                 companyId,
@@ -1599,6 +1624,11 @@ export class PoVendorService {
             'delivery_address_id',
             'lines',
             'expenses',
+            // Vendor terms — draft only; once dispatched the PDF is out with
+            // the vendor and its terms are frozen.
+            'dispatched_through',
+            'payment_terms',
+            'delivery_terms',
             'expected_arrival_date',
             'transporter_name',
             'vehicle_no',
@@ -2574,6 +2604,11 @@ export class PoVendorService {
                 dispatch_date: r.dispatch_date || undefined,
                 expected_arrival_date: r.expected_arrival_date || undefined,
                 actual_arrival_date: r.actual_arrival_date || undefined,
+
+                dispatched_through:
+                    (r as any).dispatched_through || undefined,
+                payment_terms: (r as any).payment_terms || undefined,
+                delivery_terms: (r as any).delivery_terms || undefined,
 
                 transporter_name: r.transporter_name || undefined,
                 vehicle_no: r.vehicle_no || undefined,

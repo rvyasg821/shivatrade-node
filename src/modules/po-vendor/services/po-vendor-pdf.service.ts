@@ -918,10 +918,10 @@ function buildPovHtml(ctx: PovPdfContext): string {
         </tr>
         <tr>
           <td class="meta">${meta('Reference No. & Date', pov.purchase_order_voucher_no)}</td>
-          <td class="meta">${meta('Mode/Terms of Payment', '')}</td>
+          <td class="meta">${meta('Mode/Terms of Payment', (pov as any).payment_terms)}</td>
         </tr>
         <tr>
-          <td class="meta">${meta('Dispatched through', pov.transporter_name)}</td>
+          <td class="meta">${meta('Dispatched through', (pov as any).dispatched_through || pov.transporter_name)}</td>
           <td class="meta">${meta('Destination', '')}</td>
         </tr>
         <tr>
@@ -929,7 +929,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="meta">${meta('LR No.', pov.lr_no)}</td>
         </tr>
         <tr>
-          <td class="meta" colspan="2" style="height:96px;vertical-align:top">${meta('Terms of Delivery', '')}</td>
+          <td class="meta" colspan="2" style="height:96px;vertical-align:top">${meta('Terms of Delivery', (pov as any).delivery_terms)}</td>
         </tr>
       </table>
     </td>
