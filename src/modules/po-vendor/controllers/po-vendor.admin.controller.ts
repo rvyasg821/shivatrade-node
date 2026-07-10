@@ -336,6 +336,24 @@ export class PoVendorAdminController {
         return { data: await this.povService.mapGet(updated) };
     }
 
+    // ─── Action: Create balance POV ─────────────────────────────────────
+    //
+    // Re-orders whatever this POV never delivered (undispatched, plus any short
+    // receipt once closed) as a new DRAFT POV on the same vendor. Returns the
+    // NEW POV so the caller can navigate straight to it.
+
+    @Response('poVendor.balance')
+    @AuthJwtAccessProtected()
+    @Post('/:id/balance')
+    async createBalance(
+        @AuthJwtPayload('user') userId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.findOneById(id);
+        const created = await this.povService.createBalance(row, userId);
+        return { data: await this.povService.mapGet(created) };
+    }
+
     // ─── Revert to draft (cancelled only) ───────────────────────────────
 
     @Response('poVendor.revertDraft')

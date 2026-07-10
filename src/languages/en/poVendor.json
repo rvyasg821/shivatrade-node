@@ -9,6 +9,7 @@
     "receive": "PO Vendor closed (goods received).",
     "cancel": "PO Vendor cancelled.",
     "revertDraft": "PO Vendor reverted to draft.",
+    "balance": "Balance PO Vendor created for the un-delivered quantity.",
     "payment": {
         "create": "Vendor payment recorded.",
         "void": "Vendor payment voided."

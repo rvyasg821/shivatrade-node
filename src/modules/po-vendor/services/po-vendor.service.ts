@@ -818,6 +818,195 @@ export class PoVendorService {
         return this.povRepository.findOneById(header._id.toString());
     }
 
+    // ─── Balance POV (re-order what this POV never delivered) ──────────
+    //
+    // A POV can under-deliver two ways: the vendor ships less than ordered
+    // (undispatched), or goods are lost/rejected in transit (short). Both leave
+    // the order unfulfilled. For a PO-backed POV those units flow back to PO
+    // pending; for a STANDALONE POV there is no PO, so they were orphaned. This
+    // raises a follow-up DRAFT POV for the balance in both cases.
+
+    /**
+     * Per-line balance still worth re-ordering from this POV.
+     *
+     * `ordered − consumed`, where `consumed` mirrors computePendingByPoLineId:
+     * a CLOSED POV consumes what it received, a DISPATCHED one what it
+     * dispatched. So a dispatched POV's balance is its undispatched qty, and a
+     * closed one's is undispatched + short. Qty already re-ordered on live
+     * balance POVs raised from this one is subtracted, so the action is
+     * idempotent. A PO-backed line is additionally capped at the parent PO
+     * line's pending, so a balance POV can never over-consume the PO.
+     */
+    private async balancePlan(
+        source: any
+    ): Promise<Array<{ line: any; qty: number }>> {
+        const status = source.status;
+        if (
+            status !== ENUM_PO_VENDOR_STATUS.CLOSED &&
+            status !== ENUM_PO_VENDOR_STATUS.DISPATCHED
+        ) {
+            return [];
+        }
+        const srcId = source._id.toString();
+        const lines = (await this.povLineRepository.findAll({
+            po_vendor_id: srcId,
+        } as any)) as any[];
+        if (!lines.length) return [];
+
+        // Qty already covered by live balance POVs raised from this one.
+        const children = (
+            (await this.povRepository.findAll({
+                balance_of_po_vendor_id: srcId,
+                soft_delete: false,
+            } as any)) as any[]
+        ).filter(c => c.status !== ENUM_PO_VENDOR_STATUS.CANCELLED);
+        const covered = new Map<string, number>();
+        if (children.length) {
+            const childLines = (await this.povLineRepository.findAll({
+                po_vendor_id: { $in: children.map(c => c._id.toString()) },
+            } as any)) as any[];
+            for (const cl of childLines) {
+                const k = cl.balance_of_po_vendor_line_id?.toString();
+                if (!k) continue;
+                covered.set(
+                    k,
+                    round4((covered.get(k) || 0) + num(cl.ordered_qty))
+                );
+            }
+        }
+
+        const poPending = source.purchase_order_id
+            ? await this.computePendingByPoLineId(
+                  source.purchase_order_id.toString()
+              )
+            : null;
+
+        const plan: Array<{ line: any; qty: number }> = [];
+        for (const l of lines) {
+            const consumed =
+                status === ENUM_PO_VENDOR_STATUS.CLOSED
+                    ? num(l.received_qty)
+                    : num(l.dispatched_qty);
+            let qty = round4(
+                num(l.ordered_qty) -
+                    consumed -
+                    (covered.get(l._id.toString()) || 0)
+            );
+            const polId = l.purchase_order_line_id?.toString();
+            if (poPending && polId) {
+                qty = Math.min(qty, round4(poPending.get(polId) || 0));
+            }
+            if (qty > 1e-6) plan.push({ line: l, qty: round4(qty) });
+        }
+        return plan;
+    }
+
+    /** True when this POV still has un-delivered qty worth re-ordering. */
+    async hasBalance(source: any): Promise<boolean> {
+        const plan = await this.balancePlan(source);
+        return plan.length > 0;
+    }
+
+    /**
+     * Clone the un-delivered balance of `source` into a new DRAFT POV on the
+     * same vendor, keeping the parent-PO links so coverage stays correct.
+     */
+    async createBalance(source: any, userId: string): Promise<PoVendorDoc> {
+        const status = source.status;
+        if (
+            status !== ENUM_PO_VENDOR_STATUS.CLOSED &&
+            status !== ENUM_PO_VENDOR_STATUS.DISPATCHED
+        ) {
+            throw new BadRequestException(
+                'A balance Vendor PO can only be raised from a dispatched or closed Vendor PO.'
+            );
+        }
+        const plan = await this.balancePlan(source);
+        if (!plan.length) {
+            throw new BadRequestException(
+                'This Vendor PO has no un-delivered balance left to re-order.'
+            );
+        }
+
+        const companyId = source.company_id;
+        const srcId = source._id.toString();
+        const prefix = await this.resolveCompanyPrefix(companyId);
+        const voucher_no = await this.voucherService.getNext(
+            companyId,
+            ENUM_VOUCHER_DOC_TYPE.PO_VENDOR,
+            prefix
+        );
+
+        // Charges are per-shipment, so they are NOT carried over — the operator
+        // adds them on the new draft.
+        const header = await this.povRepository.create({
+            company_id: companyId,
+            created_by: userId,
+            voucher_no,
+            purchase_order_id: source.purchase_order_id || null,
+            balance_of_po_vendor_id: srcId,
+            vendor_id: source.vendor_id,
+            vendor_address_id: source.vendor_address_id || null,
+            delivery_address: source.delivery_address,
+            delivery_address_id: source.delivery_address_id || null,
+            notes: source.notes || null,
+            internal_notes: source.internal_notes || null,
+            currency_code: source.currency_code || 'INR',
+            exchange_rate: String(source.exchange_rate ?? '1'),
+            status: ENUM_PO_VENDOR_STATUS.DRAFT,
+            expenses_snapshot: [],
+        } as any);
+        const newId = header._id.toString();
+
+        let seq = 0;
+        let totalQty = 0;
+        for (const { line, qty } of plan.sort(
+            (a, b) => Number(a.line.seq || 0) - Number(b.line.seq || 0)
+        )) {
+            seq += 1;
+            totalQty = round4(totalQty + qty);
+            const unitPrice = num(line.unit_price);
+            await this.povLineRepository.create({
+                company_id: companyId,
+                po_vendor_id: newId,
+                purchase_order_line_id: line.purchase_order_line_id || null,
+                balance_of_po_vendor_line_id: line._id.toString(),
+                product_id: line.product_id,
+                description: line.description || null,
+                part_no: line.part_no || null,
+                hsn_code: line.hsn_code || null,
+                unit: line.unit || null,
+                tax_pct: String(line.tax_pct ?? '0'),
+                unit_price: String(line.unit_price ?? '0'),
+                ordered_qty: String(qty),
+                dispatched_qty: '0',
+                received_qty: '0',
+                line_total: String(round2(qty * unitPrice)),
+                seq,
+            } as any);
+        }
+
+        this.logger.log(
+            `Balance POV ${voucher_no} created from POV ${source.voucher_no || srcId}`
+        );
+        await this.emitSystemEvent(
+            companyId,
+            newId,
+            ENUM_TRACKING_EVENT_TYPE.POV_CREATED,
+            userId,
+            `Created as the balance of ${source.voucher_no || 'the source Vendor PO'} — ${totalQty} un-delivered unit(s) re-ordered.`
+        );
+        await this.emitSystemEvent(
+            companyId,
+            srcId,
+            ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+            userId,
+            `Balance Vendor PO ${voucher_no} raised for ${totalQty} un-delivered unit(s).`
+        );
+
+        return this.povRepository.findOneById(newId);
+    }
+
     // ─── Recover from PO (multi-vendor batch — PFI→PO-style flow) ──────
     //
     // When a POV is cancelled, its PO lines go back to uncovered.
@@ -2293,7 +2482,12 @@ export class PoVendorService {
                     dispatched_qty: String(dispatched),
                     received_qty: String(received),
                     undispatched_qty: String(round4(ordered - dispatched)),
-                    short_qty: String(round4(dispatched - received)),
+                    // Short = dispatched goods that never arrived (a real
+                    // loss). Only knowable once a receipt exists — before the
+                    // first GRN the whole dispatch is in transit, not short.
+                    short_qty: String(
+                        received > 0 ? round4(dispatched - received) : 0
+                    ),
                     line_total: String(l.line_total ?? '0'),
                     seq: Number(l.seq || 0),
                 };
@@ -2423,6 +2617,12 @@ export class PoVendorService {
 
     async mapGet(row: PoVendorDoc): Promise<PoVendorGetResponseDto> {
         const [mapped] = await this.mapList([row]);
+        // Detail-page only — balancePlan() costs a few queries per row, so it
+        // deliberately does not run in mapList.
+        mapped.has_balance = await this.hasBalance(row as any);
+        mapped.balance_of_po_vendor_id = (
+            row as any
+        ).balance_of_po_vendor_id?.toString();
         return mapped;
     }
 
