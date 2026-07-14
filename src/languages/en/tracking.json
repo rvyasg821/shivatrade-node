@@ -1,0 +1,11 @@
+{
+    "activity": "Activity feed retrieved successfully.",
+    "history": "Document history retrieved successfully.",
+    "error": {
+        "forbidden": "Tracking is restricted to the platform owner."
+    },
+    "usage": "Usage metrics retrieved successfully.",
+    "rollup": "Usage rollup completed.",
+    "apiCalls": "API calls retrieved successfully.",
+    "apiCallStats": "API call stats retrieved successfully."
+}

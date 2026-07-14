@@ -23,6 +23,9 @@ import { AppResponseTimeMiddleware } from '@app/middlewares/app.response-time.mi
 import { AppUrlVersionMiddleware } from '@app/middlewares/app.url-version.middleware';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { AppRequestIdMiddleware } from '@app/middlewares/app.request-id.middleware';
+import { TrackingModule } from '@modules/tracking/tracking.module';
+import { ApiCallLogMiddleware } from '@modules/tracking/middlewares/api-call-log.middleware';
+import { RequestContextMiddleware } from '@common/request/middlewares/request-context.middleware';
 
 @Module({
     controllers: [],
@@ -52,6 +55,9 @@ import { AppRequestIdMiddleware } from '@app/middlewares/app.request-id.middlewa
     
     imports: [
         SentryModule.forRoot(),
+        // Provides ApiCallLogMiddleware with its dependencies. Deliberately NOT
+        // an APP_INTERCEPTOR — see ApiCallLogMiddleware's class doc.
+        TrackingModule,
         ThrottlerModule.forRootAsync({
             imports: [ConfigModule],
             inject: [ConfigService],
@@ -72,6 +78,10 @@ export class AppMiddlewareModule implements NestModule {
         consumer
             .apply(
                 AppRequestIdMiddleware,
+                // Immediately after req.id exists and BEFORE the auth guard, so
+                // the AsyncLocalStorage scope wraps guards, handler and every
+                // repository call the audit subscriber later observes.
+                RequestContextMiddleware,
                 AppHelmetMiddleware,
                 AppJsonBodyParserMiddleware,
                 AppTextBodyParserMiddleware,
@@ -80,7 +90,11 @@ export class AppMiddlewareModule implements NestModule {
                 AppCorsMiddleware,
                 AppUrlVersionMiddleware,
                 AppResponseTimeMiddleware,
-                AppCustomLanguageMiddleware
+                AppCustomLanguageMiddleware,
+                // Last: needs req.id from AppRequestIdMiddleware. Only registers
+                // an res.on('finish') listener, so it adds nothing to the
+                // request path and cannot alter a response.
+                ApiCallLogMiddleware
             )
             // .exclude({
             //     path: '.well-known/jwks/jwks.json',
