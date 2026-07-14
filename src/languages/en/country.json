@@ -1,0 +1,15 @@
+{
+    "list": "Countries retrieved successfully.",
+    "get": "Country details fetched successfully.",
+    "create": "Country created successfully.",
+    "update": "Country updated successfully.",
+    "updateStatus": "Country status updated successfully.",
+    "delete": "Country deleted successfully.",
+    "dropdown": "Countries dropdown loaded.",
+    "error": {
+        "exist": "A country with this name or code already exists.",
+        "notFound": "Sorry, we couldn't find the requested country.",
+        "statusInvalid": "This country is blocked and its status cannot be changed.",
+        "hasChildren": "This country still has states or cities under it. Delete them first."
+    }
+}
