@@ -11,6 +11,14 @@ export class PoCoverageLineDto {
     @ApiProperty({ required: false, type: String }) hsn_code?: string;
     @ApiProperty({ required: false, type: String }) unit?: string;
 
+    /**
+     * GST rate carried from the PO line, so the Vendor-PO create screen can show
+     * the tax live instead of only discovering it on the PDF. Falls back to the
+     * product master's rate the same way `po-vendor-pdf.service` does, so the
+     * preview and the printed document agree.
+     */
+    @ApiProperty({ required: false, type: String }) tax_pct?: string;
+
     /** PO line.qty — the contracted quantity. */
     @ApiProperty({ required: true, type: String }) ordered: string;
 

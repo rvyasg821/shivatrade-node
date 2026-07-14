@@ -237,6 +237,12 @@ export class PoCoverageService {
                 part_no: pol.part_no || (product as any)?.part_no || undefined,
                 hsn_code: pol.hsn_code || undefined,
                 unit: pol.unit || undefined,
+                // Same precedence the POV PDF uses: the PO line's snapshot
+                // first, product master as fallback. Anything else would let the
+                // live preview and the printed GST disagree.
+                tax_pct: String(
+                    Number(pol.tax_pct) || Number((product as any)?.tax_pct) || 0
+                ),
                 ordered: String(round4(ordered)),
                 covered: String(round4(a.covered)),
                 dispatched: String(round4(a.dispatched)),
