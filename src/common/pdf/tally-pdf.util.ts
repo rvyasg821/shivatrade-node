@@ -35,18 +35,52 @@ export const fmt4 = (v: any): string => {
     });
 };
 
-const TALLY_MONTHS = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
+const pad2 = (n: number): string => String(n).padStart(2, '0');
 
-/** "2026-06-03" → "3-Jun-26" (Tally voucher date format). */
-export const tallyDate = (v?: string | null): string => {
+/**
+ * THE date format for every printed document: "2026-06-03" → "03-06-2026".
+ *
+ * One function, used by every PDF. Before this the documents disagreed with each
+ * other: the Invoice and PFI printed the raw ISO string ("2026-06-03"), the
+ * Sales Order and Vendor PO printed Tally's "3-Jun-26", and the payslip printed
+ * "03/06/2026" — so the same customer could receive three date formats from one
+ * business.
+ *
+ * Accepts a plain date ("2026-06-03") or a full ISO datetime; the time part is
+ * sliced off BEFORE parsing so a UTC timestamp can never roll the day backwards
+ * in a positive-offset timezone.
+ */
+export const docDate = (v?: string | null | Date): string => {
     if (!v) return '';
-    const s = String(v).slice(0, 10);
-    const [y, m, d] = s.split('-').map(Number);
-    if (!y || !m || !d) return escHtml(s);
-    return `${d}-${TALLY_MONTHS[m - 1] || m}-${String(y).slice(2)}`;
+
+    const fromParts = (dt: Date): string =>
+        `${pad2(dt.getDate())}-${pad2(dt.getMonth() + 1)}-${dt.getFullYear()}`;
+
+    if (v instanceof Date) {
+        return isNaN(v.getTime()) ? '' : fromParts(v);
+    }
+
+    // ISO-ish ("2026-06-03" or "2026-06-03T…"): read the parts by hand rather
+    // than through `new Date()`, which treats a bare date as UTC midnight and
+    // shifts the day backwards west of Greenwich.
+    const s = String(v);
+    const iso = s.slice(0, 10).split('-').map(Number);
+    if (iso.length === 3 && iso.every(n => n > 0)) {
+        const [y, m, d] = iso;
+        return `${pad2(d)}-${pad2(m)}-${y}`;
+    }
+
+    // Anything else — a Date that was already String()'d ("Tue Jul 14 2026
+    // 17:43:19 GMT+0530 (India Standard Time)"), a locale string, a timestamp.
+    // Parse it rather than echoing it: this fallback used to return the input
+    // verbatim, which is exactly how that GMT+0530 monster reached a customer's
+    // Purchase Order.
+    const parsed = new Date(s);
+    if (!isNaN(parsed.getTime())) return fromParts(parsed);
+
+    // Genuinely not a date. Return nothing — a blank cell is honest; the raw
+    // string is not a date and must never be printed as though it were one.
+    return '';
 };
 
 /** Multi-line address block from structured parts (blank parts skipped). */

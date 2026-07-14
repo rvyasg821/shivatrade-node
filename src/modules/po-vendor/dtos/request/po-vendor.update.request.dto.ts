@@ -34,10 +34,53 @@ export class PoVendorLineUpdateDto {
     @IsNumberString({}, { message: 'ordered_qty must be a numeric string' })
     @IsOptional()
     ordered_qty?: string;
+
+    /**
+     * GST rate for this line. DRAFT ONLY — the service refuses it at any other
+     * status, because once the POV is dispatched the PDF is with the vendor and
+     * changing the tax would make our copy disagree with theirs.
+     *
+     * The GST *amount* is never stored: `line_total` is qty × price with no tax
+     * in it, and the PDF derives GST from this rate at render time. So updating
+     * the rate is all that is needed — every downstream figure follows.
+     */
+    @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
+    @IsOptional()
+    tax_pct?: string;
+}
+
+/**
+ * Targeted GST-rate edit for lines that ALREADY EXIST on a draft POV.
+ *
+ * Deliberately separate from `lines`: that path is a wholesale replace — it
+ * DELETES every POV line and recreates them — and it requires a
+ * `purchase_order_line_id`, which standalone POV lines do not have (the column
+ * is nullable). Reusing it to change one number would destroy and rebuild the
+ * lines, and would fail outright on a standalone POV.
+ *
+ * This patches `tax_pct` in place, keyed by the POV line's own `_id`.
+ */
+export class PoVendorLineTaxUpdateDto {
+    /** The POV line's own id — always present, unlike purchase_order_line_id. */
+    @IsUUID()
+    @IsNotEmpty()
+    _id: string;
+
+    @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
+    @IsNotEmpty()
+    tax_pct: string;
 }
 
 export class PoVendorUpdateRequestDto {
     // ── Editable in DRAFT only ──────────────────────────────────────────
+
+    /** GST rates for existing lines. Draft only — see PoVendorLineTaxUpdateDto. */
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => PoVendorLineTaxUpdateDto)
+    @IsOptional()
+    line_taxes?: PoVendorLineTaxUpdateDto[];
+
     @IsString()
     @IsOptional()
     @MaxLength(2000)

@@ -1623,6 +1623,9 @@ export class PoVendorService {
             'delivery_address',
             'delivery_address_id',
             'lines',
+            // GST rates for existing lines. Draft only: once dispatched the PDF
+            // is with the vendor and the tax is frozen, same as the terms below.
+            'line_taxes',
             'expenses',
             // Vendor terms — draft only; once dispatched the PDF is out with
             // the vendor and its terms are frozen.
@@ -1708,7 +1711,10 @@ export class PoVendorService {
         }
 
         // ── Apply scalar changes ────────────────────────────────────────
-        const { lines, expenses, status, ...scalar } = data as any;
+        // `line_taxes` must be pulled out here: anything left in `scalar` gets
+        // Object.assign'd straight onto the entity, and an array of line patches
+        // is not a column.
+        const { lines, line_taxes, expenses, status, ...scalar } = data as any;
         Object.assign(row, scalar);
         if (status) row.status = status;
 
@@ -1741,6 +1747,51 @@ export class PoVendorService {
                 row.purchase_order_id.toString(),
                 (row as any).vendor_id?.toString(),
                 lines
+            );
+        }
+
+        // ── GST rate patch (DRAFT only — gated by the allowlist above) ──
+        //
+        // In place, by POV line id. NOT via `replaceLinesOnDraft`: that deletes
+        // and recreates every line, which is destructive for a one-number change
+        // and impossible for a standalone POV (its lines have no
+        // purchase_order_line_id, which that path demands).
+        //
+        // Only the RATE is written. `line_total` stays qty × price with no tax in
+        // it, and the PDF derives the GST amount from the rate at render time —
+        // so there is no stored amount that could fall out of sync.
+        if (
+            Array.isArray(line_taxes) &&
+            line_taxes.length > 0 &&
+            fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT
+        ) {
+            const povLines = await this.povLineRepository.findAll({
+                po_vendor_id: row._id.toString(),
+            } as any);
+            const byId = new Map<string, any>(
+                (povLines as any[]).map(l => [l._id.toString(), l])
+            );
+
+            for (const patch of line_taxes) {
+                const line = byId.get(String(patch._id));
+                // Refuse a line id from a different POV rather than silently
+                // ignoring it — a caller sending the wrong id should hear about it.
+                if (!line) {
+                    throw new BadRequestException(
+                        `Line ${patch._id} does not belong to this POV.`
+                    );
+                }
+                const pct = num(patch.tax_pct);
+                if (pct < 0 || pct > 100) {
+                    throw new BadRequestException(
+                        `tax_pct must be between 0 and 100 (line ${patch._id}).`
+                    );
+                }
+                line.tax_pct = String(pct);
+                await this.povLineRepository.save(line);
+            }
+            this.logger.log(
+                `POV ${row._id}: GST updated on ${line_taxes.length} line(s)`
             );
         }
 
@@ -1834,7 +1885,19 @@ export class PoVendorService {
                 part_no: poLine.part_no || null,
                 hsn_code: poLine.hsn_code || null,
                 unit: poLine.unit || null,
-                tax_pct: String(poLine.tax_pct || '0'),
+                // GST rate: the operator's edit wins, the PO line is the
+                // fallback. This used to take the PO line unconditionally, so a
+                // rate typed on a draft POV was silently discarded on save —
+                // the edit appeared to work and changed nothing.
+                //
+                // Only the RATE is stored. `line_total` below stays qty × price
+                // with no tax in it, and the PDF derives the GST amount from this
+                // rate at render time — so changing the rate updates every
+                // downstream figure automatically, with nothing to keep in sync.
+                tax_pct:
+                    ln.tax_pct != null && ln.tax_pct !== ''
+                        ? String(num(ln.tax_pct))
+                        : String(poLine.tax_pct || '0'),
                 unit_price: String(poLine.unit_price || '0'),
                 ordered_qty: String(ordered),
                 dispatched_qty: '0',

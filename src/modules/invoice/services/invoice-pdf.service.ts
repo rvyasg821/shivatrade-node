@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
+import { docDate } from '@common/pdf/tally-pdf.util';
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
 import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
@@ -524,7 +525,7 @@ function partiesBlock(d: RenderData, includeNotify = true): string {
                     <tr><td class="lbl" style="width:90px;">GST No</td><td>${esc(ca.gstin || c.tax_number)}</td></tr>
                     <tr><td class="lbl">PAN No.</td><td>${esc(c.pan)}</td></tr>
                     <tr><td class="lbl">IEC No.</td><td>${esc(c.iec)}</td></tr>
-                    <tr><td class="lbl">LUT No. and date</td><td>${esc(d.invoice.lut_no)}${d.invoice.lut_date ? ' / ' + esc(String(d.invoice.lut_date).slice(0, 10)) : ''}</td></tr>
+                    <tr><td class="lbl">LUT No. and date</td><td>${esc(d.invoice.lut_no)}${d.invoice.lut_date ? ' / ' + esc(docDate(d.invoice.lut_date)) : ''}</td></tr>
                 </table>
             </td>
             <td style="width: 50%; vertical-align: top;">
@@ -681,7 +682,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
     <table>
         <tr>
             <td style="width:60%;"><span class="lbl">Invoice No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
-            <td><span class="lbl">Date:</span> ${esc(String(inv.invoice_date || '').slice(0, 10))}</td>
+            <td><span class="lbl">Date:</span> ${esc(docDate(inv.invoice_date))}</td>
         </tr>
     </table>
 
@@ -825,7 +826,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
     <table>
         <tr>
             <td style="width:60%;"><span class="lbl">Invoice No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
-            <td><span class="lbl">Date:</span> ${esc(String(inv.invoice_date || '').slice(0, 10))}</td>
+            <td><span class="lbl">Date:</span> ${esc(docDate(inv.invoice_date))}</td>
         </tr>
     </table>
 
@@ -972,7 +973,7 @@ function buildReceiptHtml(
             <td>
                 <table class="nob">
                     <tr><td class="lbl" style="width:90px;">Receipt No.</td><td class="strong">${esc(payment.receipt_voucher_no || '—')}</td></tr>
-                    <tr><td class="lbl">Date</td><td>${esc(String(payment.payment_date || '').slice(0, 10))}</td></tr>
+                    <tr><td class="lbl">Date</td><td>${esc(docDate(payment.payment_date))}</td></tr>
                 </table>
             </td>
         </tr>
@@ -986,7 +987,7 @@ function buildReceiptHtml(
             <td><span class="lbl">Amount Received</span><br/><span class="strong">${sym}${fmt(payment.amount, 2)}</span></td>
         </tr>
         <tr>
-            <td><span class="lbl">Towards Invoice</span><br/>${esc(inv.voucher_no || '(DRAFT)')}${inv.invoice_date ? ' dated ' + esc(String(inv.invoice_date).slice(0, 10)) : ''}</td>
+            <td><span class="lbl">Towards Invoice</span><br/>${esc(inv.voucher_no || '(DRAFT)')}${inv.invoice_date ? ' dated ' + esc(docDate(inv.invoice_date)) : ''}</td>
         </tr>
     </table>
 
@@ -1059,7 +1060,7 @@ function buildPackingListHtml(d: RenderData): string {
     <table>
         <tr>
             <td style="width:60%;"><span class="lbl">Packing List No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
-            <td><span class="lbl">Date:</span> ${esc(String(inv.invoice_date || '').slice(0, 10))}</td>
+            <td><span class="lbl">Date:</span> ${esc(docDate(inv.invoice_date))}</td>
         </tr>
     </table>
 

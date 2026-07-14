@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Injectable } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
+import { docDate } from '@common/pdf/tally-pdf.util';
 import { PfiPublicResponseDto } from '../dtos/response/pfi.public.response.dto';
 
 // Embed the ShivaTrade logo once at module load. Puppeteer renders the
@@ -76,8 +77,8 @@ const sym = (p: PfiPublicResponseDto): string =>
 const money = (p: PfiPublicResponseDto, v: any): string =>
     `${esc(sym(p))}${fmt(v)}`;
 
-const dateOnly = (v?: string | null): string =>
-    v ? esc(String(v).slice(0, 10)) : '';
+/** DD-MM-YYYY, same as every other printed document. Was the raw ISO slice. */
+const dateOnly = (v?: string | null): string => (v ? esc(docDate(v)) : '');
 
 function buildHeaderTemplate(p: PfiPublicResponseDto): string {
     return `
