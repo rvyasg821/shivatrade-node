@@ -1,0 +1,13 @@
+{
+    "list": "Cities retrieved successfully.",
+    "get": "City details fetched successfully.",
+    "create": "City created successfully.",
+    "update": "City updated successfully.",
+    "delete": "City deleted successfully.",
+    "dropdown": "Cities dropdown loaded.",
+    "error": {
+        "exist": "A city with this name already exists in the selected state.",
+        "notFound": "Sorry, we couldn't find the requested city.",
+        "stateNotFound": "The selected state does not exist."
+    }
+}

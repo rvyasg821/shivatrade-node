@@ -1,0 +1,14 @@
+{
+    "list": "States retrieved successfully.",
+    "get": "State details fetched successfully.",
+    "create": "State created successfully.",
+    "update": "State updated successfully.",
+    "delete": "State deleted successfully.",
+    "dropdown": "States dropdown loaded.",
+    "error": {
+        "exist": "A state with this name already exists in the selected country.",
+        "notFound": "Sorry, we couldn't find the requested state.",
+        "countryNotFound": "The selected country does not exist.",
+        "hasCities": "This state still has cities under it. Delete or re-assign them first."
+    }
+}

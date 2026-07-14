@@ -4,6 +4,7 @@ import {
     Body,
     Post,
     Param,
+    Query,
     Delete,
     Controller,
     ConflictException,
@@ -50,17 +51,50 @@ import { CountryIsUsedPipe } from '@modules/country/pipes/country.is-used.pipe';
 import { ENUM_COUNTRY_STATUS } from '@modules/country/enums/country.enum';
 import { ENUM_APP_STATUS_CODE_ERROR } from '@app/enums/app.status-code.enum';
 import {COUNTRY_DEFAULT_STATUS} from '@modules/country/constants/country.list.constant';
+import { CountryShortResponseDto } from '@modules/country/dtos/response/country.short.response.dto';
+import { StateRepository } from '@modules/state/repository/repositories/state.repository';
+import { CityRepository } from '@modules/city/repository/repositories/city.repository';
 
 @ApiTags('modules.admin.country')
 @Controller({
     version: '1',
-    path: '/country',
+    path: '/admin/country',
 })
 export class CountryAdminController {
     constructor(
         private readonly paginationService: PaginationService,
-        private readonly countryService: CountryService
+        private readonly countryService: CountryService,
+        private readonly stateRepository: StateRepository,
+        private readonly cityRepository: CityRepository
     ) {}
+
+    /**
+     * Active countries for the address dropdowns.
+     *
+     * Unpaginated by design — there are ~250 countries and every address form
+     * needs the whole list at once to resolve a stored code back to a label.
+     */
+    @Response('country.dropdown')
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/dropdown')
+    async dropdown(
+        @Query('q') q?: string
+    ): Promise<IResponse<CountryShortResponseDto[]>> {
+        const find: Record<string, any> = q?.trim()
+            ? { name: { $regex: q.trim(), $options: 'i' } }
+            : {};
+
+        const countries: CountryDoc[] = await this.countryService.findAllActive(
+            find,
+            { paging: { limit: 300, offset: 0 } }
+        );
+
+        const sorted = [...countries].sort((a, b) =>
+            a.name.localeCompare(b.name)
+        );
+        return { data: this.countryService.mapShort(sorted) };
+    }
 
     @CountryAdminListDoc()
     @ResponsePaging('country.list')
@@ -271,6 +305,26 @@ export class CountryAdminController {
         )
         country: CountryDoc
     ): Promise<void> {
+        // Refuse to orphan the tree below. States and cities carry `country_id`
+        // as a plain uuid (no FK, because this master soft-deletes), so nothing
+        // at the database level would stop the rows from silently losing their
+        // parent and rendering a blank country column forever after.
+        const countryId = String(country._id);
+        const [states, cities] = await Promise.all([
+            this.stateRepository.countByCountry(countryId),
+            this.cityRepository.countByCountry(countryId),
+        ]);
+
+        if (states > 0 || cities > 0) {
+            const parts = [
+                states > 0 ? `${states} state(s)` : null,
+                cities > 0 ? `${cities} city/cities` : null,
+            ].filter(Boolean);
+            throw new BadRequestException(
+                `Cannot delete '${country.name}' — ${parts.join(' and ')} belong to it. Delete them first.`
+            );
+        }
+
         await this.countryService.softDelete(country);
 
         return;

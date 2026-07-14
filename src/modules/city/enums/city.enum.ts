@@ -1,0 +1,7 @@
+/** Mirrors ENUM_STATE_STATUS / ENUM_COUNTRY_STATUS. */
+export enum ENUM_CITY_STATUS {
+    ACTIVE = 'ACTIVE',
+    INACTIVE = 'INACTIVE',
+}
+
+export const CITY_STATUS_VALUES = Object.values(ENUM_CITY_STATUS);

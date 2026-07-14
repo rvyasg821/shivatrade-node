@@ -41,6 +41,12 @@ import { CategoryModule } from '@modules/category/category.module';
 import { CategoryAdminController } from '@modules/category/controllers/category.admin.controller';
 import { PortMasterModule } from '@modules/port-master/port-master.module';
 import { PortMasterAdminController } from '@modules/port-master/controllers/port-master.admin.controller';
+import { CountryModule } from '@modules/country/country.module';
+import { CountryAdminController } from '@modules/country/controllers/country.admin.controller';
+import { StateModule } from '@modules/state/state.module';
+import { StateAdminController } from '@modules/state/controllers/state.admin.controller';
+import { CityModule } from '@modules/city/city.module';
+import { CityAdminController } from '@modules/city/controllers/city.admin.controller';
 import { ProductModule } from '@modules/product/product.module';
 import { ProductAdminController } from '@modules/product/controllers/product.admin.controller';
 import { VendorModule } from '@modules/vendor/vendor.module';
@@ -130,6 +136,11 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
 
         // Port master controller
         PortMasterAdminController,
+
+        // Geo masters — country → state → city
+        CountryAdminController,
+        StateAdminController,
+        CityAdminController,
 
         // Product controller
         ProductAdminController,
@@ -235,6 +246,9 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         LocationModule,
         CategoryModule,
         PortMasterModule,
+        CountryModule,
+        StateModule,
+        CityModule,
         ProductModule,
         VendorModule,
         CustomerModule,
