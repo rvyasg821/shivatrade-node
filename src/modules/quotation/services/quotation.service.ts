@@ -40,6 +40,7 @@ import { RfqRepository } from '@modules/rfq/repository/repositories/rfq.reposito
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { PdfService } from '@common/pdf/pdf.service';
+import { docDate } from '@common/pdf/tally-pdf.util';
 import {
     buildPdfLetterhead,
     buildPdfHeaderTemplate,
@@ -1335,8 +1336,10 @@ export class QuotationService {
             v === null || v === undefined || v === ''
                 ? '-'
                 : `${sym}${fmtNum(v)}`;
-        const dateOnly = (iso?: string) =>
-            iso ? this.esc(String(iso).slice(0, 10)) : '-';
+        // DD-MM-YYYY, same as every other printed document. Was the raw ISO
+        // slice, so the Quotation printed "2026-07-14" while the Sales Order and
+        // Vendor PO printed something else entirely.
+        const dateOnly = (iso?: string) => (iso ? this.esc(docDate(iso)) : '-');
         const preLine = (s: string) => this.esc(s).replace(/\n/g, '<br/>');
 
         const rows = (q.lines || []).length

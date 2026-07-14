@@ -38,6 +38,7 @@ import { PriceListService } from '@modules/price-list/services/price-list.servic
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
+import { docDate } from '@common/pdf/tally-pdf.util';
 
 @Injectable()
 export class RfqService {
@@ -742,7 +743,7 @@ export class RfqService {
           <div class="muted">Request for Quotation</div>
           <div style="margin-top:8px">
             <strong>RFQ No:</strong> ${this.esc(rfq.voucher_no || '-')} &nbsp;
-            <strong>Date:</strong> ${this.esc(rfq.rfq_date || '-')}<br/>
+            <strong>Date:</strong> ${this.esc(docDate(rfq.rfq_date) || '-')}<br/>
             ${vendor ? `<strong>To:</strong> ${this.esc(vendor.vendor_name || '')}` : ''}
           </div>
           <p>Please quote your best price and lead time for the items below.</p>

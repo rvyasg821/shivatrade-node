@@ -9,7 +9,7 @@ import {
 import {
     escHtml as esc,
     fmt2 as fmt,
-    tallyDate,
+    docDate,
     joinAddress,
     buildTallyFooterTemplate,
 } from '@common/pdf/tally-pdf.util';
@@ -439,8 +439,8 @@ interface PovPdfContext {
 
 const ccyMoney = (sym: string, v: any): string => `${sym}${fmt(v)}`;
 
-const dateOnly = (v?: string | null): string =>
-    v ? esc(String(v).slice(0, 10)) : '';
+/** DD-MM-YYYY, same as every other printed document. Was the raw ISO slice. */
+const dateOnly = (v?: string | null): string => (v ? esc(docDate(v)) : '');
 
 // Footer identity line — GSTIN · PAN · CIN · IEC · website.
 function buildFooterIdLine(ctx: PovPdfContext): string {
@@ -725,8 +725,11 @@ function buildPovHtml(ctx: PovPdfContext): string {
     const unitSet = new Set(lines.map((l) => l.unit).filter(Boolean));
     const totalUnit = unitSet.size === 1 ? `${[...unitSet][0]}` : '';
 
-    const orderDate =
-        pov.dispatch_date || (pov.createdAt ? String(pov.createdAt) : '');
+    // Pass the raw value through — do NOT String() a Date here. `createdAt` is a
+    // JS Date, and String(date) yields "Tue Jul 14 2026 17:43:19 GMT+0530 (India
+    // Standard Time)", which is not a parseable date string. docDate handles a
+    // Date directly.
+    const orderDate = pov.dispatch_date || pov.createdAt || '';
 
     const linesRows = lines.length
         ? lines
@@ -737,7 +740,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
                       qty > 0
                           ? lineTotalCcy / qty
                           : (Number(l.unit_price) || 0) * rate;
-                  const dueOn = tallyDate(pov.expected_arrival_date);
+                  const dueOn = docDate(pov.expected_arrival_date);
                   const gstPct = Number(l.tax_pct) || 0;
                   return `
         <tr>
@@ -933,7 +936,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
       <table class="inner">
         <tr>
           <td class="meta" style="width:50%">${meta('Voucher No.', pov.voucher_no)}</td>
-          <td class="meta" style="width:50%">${meta('Dated', tallyDate(orderDate))}</td>
+          <td class="meta" style="width:50%">${meta('Dated', docDate(orderDate))}</td>
         </tr>
         <tr>
           <td class="meta">${meta('Reference No. & Date', pov.purchase_order_voucher_no)}</td>

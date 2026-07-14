@@ -3,6 +3,7 @@ import puppeteer from 'puppeteer';
 import { PayslipService } from './payslip.service';
 import { PayRunRepository } from '../repository/repositories/pay-run.repository';
 import { CompanyService } from '@modules/company/services/company.service';
+import { docDate } from '@common/pdf/tally-pdf.util';
 import { PayslipEntity } from '../repository/entities/payslip.entity';
 import { PayslipLineItemEntity } from '../repository/entities/payslip-line-item.entity';
 import { ENUM_LINE_ITEM_TYPE } from '../enums/payroll.enum';
@@ -91,7 +92,9 @@ export class PayslipPdfService {
             const symbol = this.currencySymbol(payslip.currency || 'GBP');
             return `${symbol}${num.toFixed(2)}`;
         };
-        const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString('en-GB') : '—');
+        // DD-MM-YYYY, same as every other printed document. Was en-GB, which
+        // renders with slashes (03/06/2026) — close, but not the same format.
+        const fmtDate = (d: any) => (d ? docDate(d) : '—');
 
         const renderRow = (label: string, amount: number | string | undefined) =>
             `<tr><td>${this.escape(label)}</td><td class="right">${fmt(amount)}</td></tr>`;

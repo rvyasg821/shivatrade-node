@@ -13,7 +13,7 @@ import {
     escHtml as esc,
     fmt2 as fmt,
     fmt4,
-    tallyDate,
+    docDate,
     joinAddress,
     buildTallyFooterTemplate as buildFooterTemplate,
 } from '@common/pdf/tally-pdf.util';
@@ -437,7 +437,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
           <td class="desc"><b>${esc(l.product_name || '-')}</b></td>
           <td>${esc(l.hsn_code || '')}</td>
           <td>${esc(l.part_no || '')}</td>
-          <td class="c nowrap">${tallyDate(po.expected_delivery_date) || tallyDate(po.po_date)}</td>
+          <td class="c nowrap">${docDate(po.expected_delivery_date) || docDate(po.po_date)}</td>
           <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
           <td class="num nowrap">${fmt4(rateCcy)} ${esc(sym)}</td>
           <td class="c">${esc(l.unit || '')}</td>
@@ -525,7 +525,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
       <table class="inner">
         <tr>
           <td class="meta" style="width:50%">${meta('Voucher No.', po.voucher_no)}</td>
-          <td class="meta" style="width:50%">${meta('Dated', tallyDate(po.po_date))}</td>
+          <td class="meta" style="width:50%">${meta('Dated', docDate(po.po_date))}</td>
         </tr>
         <tr>
           <td class="meta">${meta('Lead Ref.', (po as any).lead_voucher_no)}</td>
