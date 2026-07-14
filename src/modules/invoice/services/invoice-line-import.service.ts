@@ -124,25 +124,56 @@ export class InvoiceLineImportService {
             products.map((p) => [p._id.toString(), p]),
         );
 
-        // Size rebate / expense column groups by the widest snapshot.
-        const rebatesPerLine = draftLines.map((l: any) =>
-            (l.product_rebates_snapshot || [])
-                .map((r: any) => r?.code)
-                .filter(Boolean),
-        );
-        const expensesPerLine = draftLines.map((l: any) =>
-            (l.product_expenses_snapshot || [])
-                .map((e: any) => e?.code)
-                .filter(Boolean),
-        );
-        const maxRebates = Math.max(
-            1,
-            ...rebatesPerLine.map((a) => a.length),
-        );
-        const maxExpenses = Math.max(
-            1,
-            ...expensesPerLine.map((a) => a.length),
-        );
+        // ── Rebate / expense columns — costing-worksheet layout ──────────
+        //
+        // ONE COLUMN PER MASTER CODE, and the cell holds that code's VALUE for
+        // the line. Blank = the code is not applied. This replaces the old
+        // layout, which emitted N repeated `rebate` / `expense` columns holding
+        // CODES: that could only ever say "this rebate applies", never "at what
+        // rate", so a per-line override was impossible to express in the sheet
+        // and every import silently reset the line to the master's default.
+        //
+        // Mirrors `sales-doc-import.service.buildCostingWorkbook()` exactly, so
+        // the Invoice sheet and the Quotation / Sales Order costing worksheet
+        // behave identically.
+        const [expenseMasters, rebateMasters] = await Promise.all([
+            this.expenseRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+            this.rebateRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+        ]);
+        const isActiveMaster = (m: any): boolean =>
+            m?.is_active !== false &&
+            String(m?.status ?? '').toUpperCase() !== 'INACTIVE';
+
+        // Active masters become columns, UNIONED with any code already sitting
+        // on a line — so a code that has since been deactivated but is still
+        // used by this invoice keeps its column instead of being silently lost.
+        const expenseColTypes = new Map<string, string>();
+        for (const m of expenseMasters as any[])
+            if (isActiveMaster(m) && m.code)
+                expenseColTypes.set(m.code, lc(m.type) || 'fixed');
+        const rebateColTypes = new Map<string, string>();
+        for (const m of rebateMasters as any[])
+            if (isActiveMaster(m) && m.code)
+                rebateColTypes.set(m.code, lc(m.type) || 'percent');
+        for (const l of draftLines as any[]) {
+            for (const e of (l.product_expenses_snapshot || []) as any[])
+                if (e?.code && !expenseColTypes.has(e.code))
+                    expenseColTypes.set(e.code, lc(e.type) || 'fixed');
+            for (const r of (l.product_rebates_snapshot || []) as any[])
+                if (r?.code && !rebateColTypes.has(r.code))
+                    rebateColTypes.set(r.code, lc(r.type) || 'percent');
+        }
+        const expenseCols = Array.from(expenseColTypes.keys()).sort();
+        const rebateCols = Array.from(rebateColTypes.keys()).sort();
+        // Percent codes get a "(%)" header suffix; flat codes stay bare.
+        const colHeader = (code: string, type?: string): string =>
+            lc(type) === 'percent' ? `${code}(%)` : code;
 
         const baseHeaders = [
             'product_code',
@@ -171,8 +202,8 @@ export class InvoiceLineImportService {
         const computedHeaders = ['line_total'];
         const headerRow: string[] = [
             ...baseHeaders,
-            ...Array(maxRebates).fill('rebate'),
-            ...Array(maxExpenses).fill('expense'),
+            ...expenseCols.map((c) => colHeader(c, expenseColTypes.get(c))),
+            ...rebateCols.map((c) => colHeader(c, rebateColTypes.get(c))),
             ...computedHeaders,
         ];
 
@@ -205,23 +236,19 @@ export class InvoiceLineImportService {
 
         const dataAoa = sourceLines.map((l: any, i: number) => {
             const prod = productById.get(l.product_id?.toString());
-            const rebs =
-                rebatesPerLine[i] ||
-                (l.product_rebates_snapshot || [])
-                    .map((r: any) => r?.code)
-                    .filter(Boolean);
-            const exps =
-                expensesPerLine[i] ||
-                (l.product_expenses_snapshot || [])
-                    .map((e: any) => e?.code)
-                    .filter(Boolean);
-            const rebCells = Array.from(
-                { length: maxRebates },
-                (_, j) => rebs[j] || '',
+            // One cell per master code, holding this line's VALUE for it.
+            // Absent → blank, which the importer reads as "not applied".
+            const expByCode = new Map<string, number>();
+            for (const e of (l.product_expenses_snapshot || []) as any[])
+                if (e?.code) expByCode.set(e.code, num(e.value));
+            const rebByCode = new Map<string, number>();
+            for (const r of (l.product_rebates_snapshot || []) as any[])
+                if (r?.code) rebByCode.set(r.code, num(r.pct));
+            const expCells = expenseCols.map((code) =>
+                expByCode.has(code) ? expByCode.get(code) : '',
             );
-            const expCells = Array.from(
-                { length: maxExpenses },
-                (_, j) => exps[j] || '',
+            const rebCells = rebateCols.map((code) =>
+                rebByCode.has(code) ? rebByCode.get(code) : '',
             );
             // Pre-fill description with the product name when blank so
             // the export ships a sensible default. Operator edits to
@@ -243,8 +270,8 @@ export class InvoiceLineImportService {
                 l.packages ?? '',
                 l.net_weight ?? '',
                 l.gross_weight ?? '',
-                ...rebCells,
                 ...expCells,
+                ...rebCells,
                 l.line_total ?? '',
             ];
         });
@@ -304,18 +331,13 @@ export class InvoiceLineImportService {
         const { companyId, purchaseOrderId, invoiceId } = opts;
         const out: InvoiceLineResolvedRow[] = [];
 
-        // Master lookups are skipped entirely when no row in the sheet
-        // mentions a rebate/expense code — typical invoice imports don't
-        // touch them, and the masters can be a noticeable query for
-        // companies with hundreds of records.
-        const sheetUsesRebates = opts.rows.some(
-            (r: any) =>
-                Array.isArray(r?.rebate_codes) && r.rebate_codes.length > 0,
-        );
-        const sheetUsesExpenses = opts.rows.some(
-            (r: any) =>
-                Array.isArray(r?.expense_codes) && r.expense_codes.length > 0,
-        );
+        // The masters are ALWAYS loaded now. They used to be fetched only when a
+        // row carried a `rebate_codes` / `expense_codes` array — the old
+        // code-column layout. With the costing-worksheet layout the sheet names
+        // each code as a COLUMN HEADER instead, so we cannot know whether the
+        // sheet mentions a code until we know what the codes are. Skipping the
+        // load left the lookup maps empty, no header ever matched a master, and
+        // every typed value ("CHA 2000") was silently dropped.
 
         // Fan out the independent I/O. PO lines / draft lines / rebate +
         // expense masters all run in parallel — this is the biggest win
@@ -334,20 +356,16 @@ export class InvoiceLineImportService {
                             invoiceId,
                         ) as Promise<any[]>)
                       : Promise.resolve([] as any[]),
-                sheetUsesRebates
-                    ? (this.rebateRepository.findAll({
-                          company_id: companyId,
-                          soft_delete: false,
-                          is_active: true,
-                      } as any) as Promise<any[]>)
-                    : Promise.resolve([] as any[]),
-                sheetUsesExpenses
-                    ? (this.expenseRepository.findAll({
-                          company_id: companyId,
-                          soft_delete: false,
-                          is_active: true,
-                      } as any) as Promise<any[]>)
-                    : Promise.resolve([] as any[]),
+                this.rebateRepository.findAll({
+                    company_id: companyId,
+                    soft_delete: false,
+                    is_active: true,
+                } as any) as Promise<any[]>,
+                this.expenseRepository.findAll({
+                    company_id: companyId,
+                    soft_delete: false,
+                    is_active: true,
+                } as any) as Promise<any[]>,
             ]);
 
         // Existing draft lines — used for the update-by-product-code
@@ -591,58 +609,78 @@ export class InvoiceLineImportService {
                 );
             }
 
-            // Hydrate rebate / expense snapshots from codes in the sheet.
-            // FE collapses repeated `rebate` / `expense` header columns
-            // into `rebate_codes[]` and `expense_codes[]` before posting,
-            // matching the product-master importer.
-            const rebateCodes: string[] = Array.isArray(
-                (raw as any).rebate_codes,
-            )
-                ? ((raw as any).rebate_codes as any[])
-                      .map((c) => String(c ?? '').trim())
-                      .filter(Boolean)
-                : [];
-            const expenseCodes: string[] = Array.isArray(
-                (raw as any).expense_codes,
-            )
-                ? ((raw as any).expense_codes as any[])
-                      .map((c) => String(c ?? '').trim())
-                      .filter(Boolean)
-                : [];
-
+            // ── Rebates / expenses: costing-worksheet layout ────────────────
+            //
+            // Each expense / rebate master code is its own COLUMN; the header may
+            // carry a trailing "(%)". A non-blank cell applies that code to the
+            // line at the TYPED value — a real per-line override. A blank cell
+            // means the code is not applied to that line.
+            //
+            // The legacy layout (repeated `rebate` / `expense` columns holding
+            // CODES, resolved to the master's DEFAULT value) is gone. It could
+            // only ever say "this rebate applies", never at what rate, so every
+            // import silently reset a hand-tuned line back to the master default.
+            //
+            // Same rule as `sales-doc-import.service.resolveRows()` — that is the
+            // point: the Invoice sheet and the costing worksheet must not diverge.
             const rebatesSnapshot: any[] = [];
-            for (const code of rebateCodes) {
-                const master = rebateByCode.get(lc(code));
-                if (!master) {
-                    warnings.push(
-                        `Rebate code "${code}" is not set up — it will be ignored.`,
-                    );
-                    continue;
-                }
-                rebatesSnapshot.push({
-                    rebate_id: master._id.toString(),
-                    code: master.code,
-                    name: master.name,
-                    type: ((master.type as string) || 'percent').toLowerCase(),
-                    pct: num(master.pct),
-                });
-            }
             const expensesSnapshot: any[] = [];
-            for (const code of expenseCodes) {
-                const master = expenseByCode.get(lc(code));
-                if (!master) {
-                    warnings.push(
-                        `Expense code "${code}" is not set up — it will be ignored.`,
-                    );
+
+            const stripPct = (h: string) =>
+                h.trim().replace(/\(%\)\s*$/, '').trim();
+            const expHdrs: Array<{ key: string; master: any }> = [];
+            const rebHdrs: Array<{ key: string; master: any }> = [];
+            for (const key of Object.keys(raw)) {
+                const codeKey = lc(stripPct(key));
+                if (!codeKey) continue;
+                const em = expenseByCode.get(codeKey);
+                if (em) {
+                    expHdrs.push({ key, master: em });
                     continue;
                 }
-                expensesSnapshot.push({
-                    expense_id: master._id.toString(),
-                    code: master.code,
-                    name: master.name,
-                    type: ((master.type as string) || 'fixed').toLowerCase(),
-                    value: num(master.value),
-                });
+                const rm = rebateByCode.get(codeKey);
+                if (rm) rebHdrs.push({ key, master: rm });
+            }
+            if (expHdrs.length > 0) {
+                const next: any[] = [];
+                for (const { key, master } of expHdrs) {
+                    const cell = numOrUndef((raw as any)[key]);
+                    if (cell === undefined) continue; // blank → not applied
+                    // Keep the type the SO line already had for this code; fall
+                    // back to the master. Changing percent↔fixed here would
+                    // silently reinterpret the operator's number.
+                    const fromLine = (
+                        poLine?.product_expenses_snapshot || []
+                    ).find((s2: any) => lc(s2.code) === lc(master.code));
+                    next.push({
+                        expense_id: master._id.toString(),
+                        code: master.code,
+                        name: master.name,
+                        type: lc(fromLine?.type || master.type) || 'fixed',
+                        value: cell,
+                    });
+                }
+                expensesSnapshot.length = 0;
+                expensesSnapshot.push(...next);
+            }
+            if (rebHdrs.length > 0) {
+                const next: any[] = [];
+                for (const { key, master } of rebHdrs) {
+                    const cell = numOrUndef((raw as any)[key]);
+                    if (cell === undefined) continue; // blank → not applied
+                    const fromLine = (
+                        poLine?.product_rebates_snapshot || []
+                    ).find((s2: any) => lc(s2.code) === lc(master.code));
+                    next.push({
+                        rebate_id: master._id.toString(),
+                        code: master.code,
+                        name: master.name,
+                        type: lc(fromLine?.type || master.type) || 'percent',
+                        pct: cell,
+                    });
+                }
+                rebatesSnapshot.length = 0;
+                rebatesSnapshot.push(...next);
             }
 
             // Anchor product comes from the SO line itself — never
@@ -688,12 +726,16 @@ export class InvoiceLineImportService {
                     packages: numOrUndef(get('packages')) ?? null,
                     net_weight: numOrUndef(get('net_weight')) ?? null,
                     gross_weight: numOrUndef(get('gross_weight')) ?? null,
+                    // The sheet is authoritative whenever it CARRIES the code
+                    // columns at all: a blank cell then genuinely means "not
+                    // applied", not "unspecified". Only a sheet with no code
+                    // columns whatsoever falls back to the SO line's snapshot.
                     product_rebates_snapshot:
-                        rebateCodes.length > 0
+                        rebHdrs.length > 0
                             ? rebatesSnapshot
                             : poLine?.product_rebates_snapshot || [],
                     product_expenses_snapshot:
-                        expenseCodes.length > 0
+                        expHdrs.length > 0
                             ? expensesSnapshot
                             : poLine?.product_expenses_snapshot || [],
                 },
