@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { UomService } from '@modules/uom/services/uom.service';
 import { FileService } from '@common/file/services/file.service';
 import { ProductService } from './product.service';
 import { ProductRepository } from '../repository/repositories/product.repository';
@@ -8,7 +9,6 @@ import { RebateRepository } from '@modules/rebate/repository/repositories/rebate
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import {
     ENUM_PRODUCT_STATUS,
-    ENUM_PRODUCT_UOM,
 } from '../enums/product.enum';
 
 // Scalar column order mirrors the Product Add form, section by section:
@@ -93,13 +93,10 @@ function buildHeaderRow(): string[] {
     return [...BASE_HEADERS];
 }
 
-// Canonical UOM lookup — accepts any casing, stores the canonical enum value.
-const UOM_BY_LOWER: Record<string, string> = Object.values(
-    ENUM_PRODUCT_UOM
-).reduce((acc, v) => {
-    acc[String(v).toLowerCase()] = v;
-    return acc;
-}, {} as Record<string, string>);
+// The canonical UOM lookup used to be built here from ENUM_PRODUCT_UOM. It is
+// now built per-request from the UOM master, because the client can add units
+// and a module-level constant could never see them. Still case-insensitive:
+// import files have always been allowed to say "kg" and get "KG" stored.
 
 export interface ProductImportRow {
     rowNum: number;
@@ -143,6 +140,7 @@ export class ProductImportExportService {
     constructor(
         private readonly fileService: FileService,
         private readonly productService: ProductService,
+        private readonly uomService: UomService,
         private readonly productRepository: ProductRepository,
         private readonly categoryRepository: CategoryRepository,
         private readonly currencyRepository: CurrencyRepository,
@@ -162,8 +160,10 @@ export class ProductImportExportService {
             aoa.push(BASE_HEADERS.map((h) => r[h] ?? ''));
         }
 
-        // Reference sheet: UOMs (fixed enum) beside the company's categories.
-        const uomValues = Object.values(ENUM_PRODUCT_UOM);
+        // Reference sheet: UOMs from the master (was a fixed enum) beside the
+        // company's categories, so the template always offers what the client
+        // has actually configured.
+        const uomValues = await this.uomService.activeCodes();
         const categories = await this.categoryRepository.findByCompanyId(
             companyId,
         );
@@ -285,11 +285,18 @@ export class ProductImportExportService {
         }
 
         // Relationship lookups — case-insensitive name/code → id.
-        const [categories, currencies, existingProducts] = await Promise.all([
-            this.categoryRepository.findByCompanyId(companyId),
-            this.currencyRepository.findByCompanyId(companyId),
-            this.productRepository.findByCompanyId(companyId),
-        ]);
+        const [categories, currencies, existingProducts, uomCodes] =
+            await Promise.all([
+                this.categoryRepository.findByCompanyId(companyId),
+                this.currencyRepository.findByCompanyId(companyId),
+                this.productRepository.findByCompanyId(companyId),
+                this.uomService.activeCodes(),
+            ]);
+
+        // One lookup for the whole file, not one query per row.
+        const uomByLower = new Map<string, string>(
+            uomCodes.map((c) => [c.toLowerCase(), c]),
+        );
         const categoryIdByName = new Map<string, string>(
             categories.map((c) => [
                 c.name.trim().toLowerCase(),
@@ -381,12 +388,10 @@ export class ProductImportExportService {
             if (!uomRaw) {
                 errors.push('Unit of measure is required');
             } else {
-                unitOfMeasure = UOM_BY_LOWER[uomRaw.toLowerCase()];
+                unitOfMeasure = uomByLower.get(uomRaw.toLowerCase());
                 if (!unitOfMeasure) {
                     errors.push(
-                        `Unit of measure must be one of: ${Object.values(
-                            ENUM_PRODUCT_UOM,
-                        ).join(', ')}`,
+                        `Unit of measure must be one of: ${uomCodes.join(', ')}`,
                     );
                 }
             }

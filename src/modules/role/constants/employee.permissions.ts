@@ -184,6 +184,14 @@ export const EMPLOYEE_DEFAULT_PERMISSIONS = {
         can_update: false,
         can_delete: false,
     },
+    uom: {
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
     countries: {
         can_all: false,
         can_read: true,

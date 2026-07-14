@@ -8,6 +8,7 @@ import { CurrencyModule } from '@modules/currency/currency.module';
 import { RebateModule } from '@modules/rebate/rebate.module';
 import { ExpenseModule } from '@modules/expense/expense.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
+import { UomModule } from '@modules/uom/uom.module';
 
 @Module({
     imports: [
@@ -17,6 +18,8 @@ import { CompanySettingsModule } from '@modules/company-settings/company-setting
         RebateModule,
         ExpenseModule,
         CompanySettingsModule,
+        // Units are validated against the UOM master now, not a hardcoded enum.
+        UomModule,
     ],
     providers: [ProductService, ProductImportExportService],
     exports: [

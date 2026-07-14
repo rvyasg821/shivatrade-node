@@ -1,0 +1,13 @@
+{
+    "list": "Units retrieved successfully.",
+    "get": "Unit details fetched successfully.",
+    "create": "Unit created successfully.",
+    "update": "Unit updated successfully.",
+    "delete": "Unit deleted successfully.",
+    "dropdown": "Units dropdown loaded.",
+    "error": {
+        "exist": "A unit with this code already exists.",
+        "notFound": "Sorry, we couldn't find the requested unit.",
+        "inUse": "This unit is used by existing products and cannot be deleted."
+    }
+}

@@ -26,6 +26,7 @@ import { CurrencyRepository } from '@modules/currency/repository/repositories/cu
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
+import { UomService } from '@modules/uom/services/uom.service';
 import {
     IDatabaseCreateOptions,
     IDatabaseFindAllOptions,
@@ -45,7 +46,8 @@ export class ProductService {
         private readonly expenseRepository: ExpenseRepository,
         private readonly productRebateRepository: ProductRebateRepository,
         private readonly productExpenseRepository: ProductExpenseRepository,
-        private readonly companySettingsService: CompanySettingsService
+        private readonly companySettingsService: CompanySettingsService,
+        private readonly uomService: UomService
     ) {}
 
     /**
@@ -92,6 +94,17 @@ export class ProductService {
         if (nameExists) {
             throw new BadRequestException(
                 `Product name '${data.name.trim()}' already exists for this company`
+            );
+        }
+
+        // Validate the unit against the UOM master. This replaces the old
+        // `@IsEnum(ENUM_PRODUCT_UOM)` on the DTO — the enum could not know about
+        // units the client added themselves. resolveCode() throws on an unknown
+        // or inactive unit and returns the canonical spelling, so a case-variant
+        // ("kg") from the Excel import still stores "KG".
+        if (data.unit_of_measure) {
+            data.unit_of_measure = await this.uomService.resolveCode(
+                data.unit_of_measure
             );
         }
 
@@ -147,6 +160,14 @@ export class ProductService {
         options?: IDatabaseSaveOptions
     ): Promise<ProductDoc> {
         const companyId = product.company_id.toString();
+
+        // Same master check as create(). Only when the caller actually sends a
+        // unit — a partial update that omits it must not touch it.
+        if (data.unit_of_measure) {
+            data.unit_of_measure = await this.uomService.resolveCode(
+                data.unit_of_measure
+            );
+        }
 
         if (data.code && data.code.trim() !== product.code) {
             const codeExists = await this.productRepository.isCodeExists(

@@ -120,6 +120,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
         },
+        uom: {
+            name: "UOM",
+            description: "Manage the unit-of-measure master (code, GST UQC code, decimals allowed) used by products and every line item",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
+        },
         countries: {
             name: "Countries",
             description: "Manage the country master (ISO code, currency, time zone) that feeds every address dropdown",

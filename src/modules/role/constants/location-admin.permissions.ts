@@ -184,6 +184,14 @@ export const LOCATION_ADMIN_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: true,
     },
+    uom: {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: true,
+    },
     countries: {
         can_all: true,
         can_read: true,
