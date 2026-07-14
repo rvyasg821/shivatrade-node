@@ -52,7 +52,17 @@ export class ProductCreateRequestDto {
     @IsString() @IsOptional() quality_parameters?: string;
 
     @IsString() @IsOptional() @MaxLength(50) hsn_code?: string;
-    @IsEnum(ENUM_PRODUCT_UOM) @IsNotEmpty() unit_of_measure: ENUM_PRODUCT_UOM;
+    /**
+     * Validated against the UOM MASTER (`uoms` table), not an enum.
+     *
+     * It used to be `@IsEnum(ENUM_PRODUCT_UOM)`, which meant a unit the client
+     * added under Master → UOM would be accepted by the master screen and then
+     * rejected here with a 400 — the feature would look broken. The real check
+     * now lives in `ProductService`, which calls `UomService.resolveCode()` and
+     * gets back the canonical code (so "kg" from an Excel import still stores
+     * "KG", exactly as it always did).
+     */
+    @IsString() @IsNotEmpty() @MaxLength(30) unit_of_measure: string;
 
     // GST tied to the HSN. Seeds quotation/PFI line tax %.
     @Type(() => Number)
