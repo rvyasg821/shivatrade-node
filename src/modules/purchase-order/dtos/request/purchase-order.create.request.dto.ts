@@ -85,6 +85,36 @@ export class PurchaseOrderLineCreateDto {
     @IsOptional()
     tax_pct?: string;
 
+    // Costing worksheet inputs — the per-line margin and the expense/rebate
+    // heads. These were previously absent from the DTO, so the global
+    // whitelist stripped them and the SO recompute always saw margin_pct = 0
+    // (the costing worksheet's margin/expenses/rebates never persisted). The
+    // service recomputes margin_amount / expenses_amount / rebates_amount from
+    // these raw inputs (see PurchaseOrderService.recompute()).
+    @IsNumberString({}, { message: 'margin_pct must be a numeric string' })
+    @IsOptional()
+    margin_pct?: string;
+
+    @IsArray()
+    @IsOptional()
+    product_rebates_snapshot?: Array<{
+        rebate_id?: string | null;
+        code?: string;
+        name?: string;
+        type: string;
+        pct: string;
+    }>;
+
+    @IsArray()
+    @IsOptional()
+    product_expenses_snapshot?: Array<{
+        expense_id?: string | null;
+        code?: string;
+        name?: string;
+        type: string;
+        value: string;
+    }>;
+
     @IsInt()
     @Min(0)
     @IsOptional()
