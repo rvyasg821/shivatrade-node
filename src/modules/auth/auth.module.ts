@@ -15,6 +15,7 @@ import { SessionModule } from '@modules/session/session.module';
 import { SubscriptionModule } from '@modules/subscription/subscription.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { LocationModule } from '@modules/location/location.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     providers: [AuthService, OTPService],
@@ -23,6 +24,8 @@ import { LocationModule } from '@modules/location/location.module';
     imports: [
         OTPRepositoryModule,
         EmailModule,
+        // AuditLogService — records login / failed-login into the activity feed.
+        TrackingModule,
         forwardRef(() => CompanyModule),
         forwardRef(() => RoleModule),
         forwardRef(() => UserModule),

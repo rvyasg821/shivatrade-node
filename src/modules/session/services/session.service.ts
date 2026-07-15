@@ -26,6 +26,8 @@ import {
 } from '@modules/session/repository/entities/session.entity';
 import { SessionRepository } from '@modules/session/repository/repositories/session.repository';
 import { IUserDoc } from '@modules/user/interfaces/user.interface';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { ENUM_AUDIT_ACTION } from '@modules/tracking/repository/entities/audit-log.entity';
 
 @Injectable()
 export class SessionService implements ISessionService {
@@ -39,7 +41,8 @@ export class SessionService implements ISessionService {
         private readonly configService: ConfigService,
         private readonly helperDateService: HelperDateService,
         private readonly sessionRepository: SessionRepository,
-        private readonly databaseService: DatabaseService
+        private readonly databaseService: DatabaseService,
+        private readonly auditLogService: AuditLogService
     ) {
         this.refreshTokenExpiration = this.configService.get<number>(
             'auth.jwt.refreshToken.expirationTime'
@@ -215,7 +218,21 @@ export class SessionService implements ISessionService {
         repository.status = ENUM_SESSION_STATUS.REVOKED;
         repository.revokeAt = this.helperDateService.create();
 
-        return this.sessionRepository.save(repository, options);
+        const saved = await this.sessionRepository.save(repository, options);
+
+        // Activity feed: a revoked session is a sign-out. Attribute it to the
+        // session's owner (correct even when an admin force-revokes it, and when
+        // the client just drops its tokens the server still has this signal).
+        const userId = String((repository as any).user || '') || undefined;
+        this.auditLogService.recordSummary({
+            entity_name: 'AuthEntity',
+            entity_id: userId,
+            action: ENUM_AUDIT_ACTION.LOGOUT,
+            user_id: userId,
+            summary: { session: sessId },
+        });
+
+        return saved;
     }
 
     async updateManyRevokeByUser(

@@ -138,6 +138,8 @@ export const TRACKING_OWN_ENTITIES: ReadonlySet<string> = new Set([
  * record ONE summary event instead — see `AuditLogService.recordSummary()`.
  */
 export const AUDIT_ENTITY_ALLOWLIST: ReadonlySet<string> = new Set([
+    'LeadEntity',
+    'RfqEntity', // headers only — RfqVendor/RfqVendorPrice lines stay off
     'QuotationEntity',
     'PurchaseOrderEntity', // = Sales Order
     'PoVendorEntity', // = Vendor PO
@@ -147,9 +149,57 @@ export const AUDIT_ENTITY_ALLOWLIST: ReadonlySet<string> = new Set([
     'ProductEntity',
     'VendorEntity',
     'CustomerEntity',
+    'StockMovementEntity', // inventory ledger — MANUAL adjustments only (the
+    // subscriber skips grn/invoice-sourced movements; those are covered by their
+    // audited GRN / Invoice headers)
     'CompanyEntity',
     'UserEntity',
     'RoleEntity',
+    // Geo masters (Country/State/City).
+    'CountryEntity',
+    'StateEntity',
+    'CityEntity',
+    'LocationEntity',
+    // Payroll — headers only; PayslipLineItem lines stay off.
+    'PayRunEntity',
+    'PayslipEntity',
+    'PayScheduleEntity',
+    'PayElementEntity',
+    // Masters / config.
+    'EmployeeEntity',
+    'CategoryEntity',
+    'CurrencyEntity',
+    'UomEntity',
+    'RebateEntity',
+    'ExpenseEntity',
+    'CompanySettingsEntity',
+    // HR. Assigning a designation/department to a person is a field on
+    // EmployeeEntity (covered by the Employee audit); the MASTER list of
+    // available designations/departments lives in CompanyLookupEntity below.
+    'LeaveRequestEntity',
+    'AttendanceRecordEntity', // high volume — one record per employee per day
+    'HolidayCalendarEntity',
+    'HolidayEntity',
+    'CompanyLookupEntity', // designation / department master values
+    // HR setup.
+    'LeaveTypeEntity',
+    'LeavePolicyEntity',
+    'LeaveEntitlementEntity',
+    'ShiftTemplateEntity',
+    'ShiftAssignmentEntity',
+    'ShiftSwapRequestEntity',
+    'AttendanceSettingsEntity',
+    'ContractTemplateEntity',
+    'EmployeeContractEntity',
+    'EmployeeLocationAssignmentEntity',
+    // Finance — child rows, but they move real money, so audited on request.
+    'InvoicePaymentEntity',
+    'PoVendorPaymentEntity',
+    'PoVendorTrackingEventEntity',
+    // Masters.
+    'PortMasterEntity',
+    'DocumentEntity',
+    'DocumentCategoryEntity',
 ]);
 
 /**
@@ -192,6 +242,9 @@ export const AUDIT_LABEL_FIELDS: readonly string[] = [
     'company_name',
     'name',
     'email',
+    // Stock movements have no voucher_no of their own — fall back to the source
+    // document's number so an inventory row reads "STIPL/GRN/0001", not a uuid.
+    'source_voucher_no',
 ];
 
 /** `changes` values longer than this are truncated — an audit row is not a blob store. */
