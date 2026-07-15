@@ -6,6 +6,7 @@
     },
     "usage": "Usage metrics retrieved successfully.",
     "rollup": "Usage rollup completed.",
+    "clear": "API call log cleared.",
     "apiCalls": "API calls retrieved successfully.",
     "apiCallStats": "API call stats retrieved successfully."
 }

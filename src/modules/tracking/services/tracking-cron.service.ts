@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ApiCallLogRepository } from '../repository/repositories/api-call-log.repository';
 import { AuditLogRepository } from '../repository/repositories/audit-log.repository';
@@ -19,7 +19,7 @@ import {
  * forever, and nobody would notice for months. Tracking needs its own guard.
  */
 @Injectable()
-export class TrackingCronService {
+export class TrackingCronService implements OnApplicationBootstrap {
     private readonly logger = new Logger(TrackingCronService.name);
 
     constructor(
@@ -27,6 +27,35 @@ export class TrackingCronService {
         private readonly auditLogRepository: AuditLogRepository,
         private readonly usageDailyRollupRepository: UsageDailyRollupRepository
     ) {}
+
+    /**
+     * CATCH-UP ON BOOT. The `@Cron` below only fires if the process happens to be
+     * alive at 04:00. On a server that is not up 24/7 — or is restarted before
+     * 04:00, which is the norm for this deployment — that tick is simply missed,
+     * and `api_call_logs` grows without bound because nothing else triggers the
+     * prune. Nobody notices for weeks.
+     *
+     * Running the SAME rollup-then-prune shortly after startup drains whatever
+     * backlog accumulated while the process was down, the moment the app is next
+     * brought up, regardless of the wall clock. `rollupPendingDays()` already
+     * rolls up EVERY stale day before deleting, so a single boot run is a full
+     * catch-up, not just "yesterday".
+     *
+     * Deferred a few seconds and fire-and-forget: it must never block bootstrap
+     * nor fight the connection pool during the startup rush. `unref()` so a
+     * pending timer can't keep the process alive on shutdown.
+     */
+    onApplicationBootstrap(): void {
+        if (!this.shouldRun()) return;
+        const timer = setTimeout(() => {
+            this.rollupThenPrune().catch((err: any) =>
+                this.logger.error(
+                    `startup catch-up prune failed: ${err?.message}`
+                )
+            );
+        }, 15_000);
+        timer.unref?.();
+    }
 
     /**
      * Gate on the kill-switch, on CRON_ENABLED, and — under a multi-process PM2
@@ -82,6 +111,47 @@ export class TrackingCronService {
             this.auditLogRepository,
             AUDIT_RETENTION_DAYS
         );
+    }
+
+    /**
+     * MANUAL "Clear now" trigger (API Calls tab button / POST /admin/tracking/
+     * api-calls/clear). Runs the exact same rollup-then-prune the 04:00 cron runs,
+     * but WITHOUT the cron-only guards (`CRON_ENABLED`, PM2 instance): a human who
+     * clicked the button is an explicit "do it here and now", so it must not be
+     * silently short-circuited the way a scheduled tick can be.
+     *
+     * Returns how many rows were deleted so the UI can confirm it actually did
+     * something rather than just claiming success.
+     */
+    async runNow(): Promise<{ deleted: number; rolledCompanies: number }> {
+        let rolledCompanies = 0;
+        let rollupOk = false;
+        try {
+            rolledCompanies = await this.rollupPendingDays();
+            rollupOk = true;
+        } catch (err: any) {
+            this.logger.error(
+                `manual clear — rollup failed, SKIPPING api_call_logs prune so ` +
+                    `the raw rows survive: ${err?.message}`
+            );
+        }
+
+        const deleted = rollupOk
+            ? await this.pruneTable(
+                  'api_call_logs',
+                  this.apiCallLogRepository,
+                  TRACKING_RETENTION_DAYS
+              )
+            : 0;
+
+        // Independent of the rollup — safe to prune either way.
+        await this.pruneTable(
+            'audit_logs',
+            this.auditLogRepository,
+            AUDIT_RETENTION_DAYS
+        );
+
+        return { deleted, rolledCompanies };
     }
 
     /** Yesterday in the server's timezone. Exposed so it can be re-run by hand. */
@@ -176,7 +246,7 @@ export class TrackingCronService {
             vacuumAnalyze(): Promise<void>;
         },
         retentionDays: number
-    ): Promise<void> {
+    ): Promise<number> {
         try {
             const deleted = await this.pruneOlderThan(retentionDays, repository);
             if (deleted > 0) {
@@ -187,8 +257,10 @@ export class TrackingCronService {
             this.logger.log(
                 `${label} prune complete — ${deleted} row(s) older than ${retentionDays}d removed`
             );
+            return deleted;
         } catch (err: any) {
             this.logger.error(`${label} prune failed: ${err?.message}`);
+            return 0;
         }
     }
 

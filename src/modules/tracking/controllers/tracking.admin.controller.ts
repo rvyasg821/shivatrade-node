@@ -166,6 +166,25 @@ export class TrackingAdminController {
     }
 
     /**
+     * "Clear now" button on the API Calls tab. Force-runs the nightly
+     * rollup-then-prune immediately, ignoring the 04:00 schedule and the
+     * cron-only guards, so the platform owner can flush `api_call_logs` on
+     * demand instead of waiting for a night the server happens to be up.
+     *
+     * Returns the deleted-row count so the UI can report exactly what went.
+     */
+    @Response('tracking.clear')
+    @AuthJwtAccessProtected()
+    @Post('/api-calls/clear')
+    async clearApiCalls(
+        @AuthJwtPayload('roleName') roleName: string
+    ): Promise<IResponse<any>> {
+        this.assertPlatformOwner(roleName);
+        const data = await this.trackingCronService.runNow();
+        return { data };
+    }
+
+    /**
      * Full history of one document — what the Phase-5 "History" tab on the
      * Quotation / SO / POV / Invoice detail pages will call.
      */
