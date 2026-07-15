@@ -82,6 +82,8 @@ import { InvoiceModule } from '@modules/invoice/invoice.module';
 import { InvoiceAdminController } from '@modules/invoice/controllers/invoice.admin.controller';
 import { SalesDocImportModule } from '@modules/sales-doc-import/sales-doc-import.module';
 import { SalesDocImportAdminController } from '@modules/sales-doc-import/controllers/sales-doc-import.admin.controller';
+import { ReportsModule } from '@modules/reports/reports.module';
+import { ReportsAdminController } from '@modules/reports/controllers/reports.admin.controller';
 import { TrackingEventModule } from '@modules/tracking-event/tracking-event.module';
 import { TrackingEventAdminController } from '@modules/tracking-event/controllers/tracking-event.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
@@ -216,12 +218,14 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         InvoiceAdminController,
         TrackingEventAdminController,
         SalesDocImportAdminController,
+        ReportsAdminController,
     ],
     providers: [],
     exports: [],
     imports: [
         RoleRepositoryModule,
         SettingModule,
+        ReportsModule,
         RoleModule,
         UserModule,
         AuthModule,

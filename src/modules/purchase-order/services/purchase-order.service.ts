@@ -2251,24 +2251,50 @@ export class PurchaseOrderService {
                             taxable: l.taxable,
                             line_total: l.line_total,
                             seq: l.seq,
+                            // Costing lives on the SO line itself (recompute()
+                            // freezes it there). Prefer the line's own value;
+                            // fall back to the source quotation/PFI line only for
+                            // legacy SOs created before these columns existed.
+                            // (Reading from `src` first was the bug: a standalone
+                            // SO — or any SO whose margin/expenses/rebates were
+                            // edited in the costing worksheet — has no `src`, so
+                            // the response returned 0/[] and the edit form showed
+                            // nothing even though the DB had the values.)
                             margin_pct:
-                                src?.margin_pct != null
+                                (l as any).margin_pct != null &&
+                                (l as any).margin_pct !== ''
+                                    ? String((l as any).margin_pct)
+                                    : src?.margin_pct != null
                                     ? String(src.margin_pct)
                                     : '0',
                             product_rebates_snapshot:
-                                src?.product_rebates_snapshot || [],
+                                Array.isArray(
+                                    (l as any).product_rebates_snapshot
+                                ) && (l as any).product_rebates_snapshot.length
+                                    ? (l as any).product_rebates_snapshot
+                                    : src?.product_rebates_snapshot || [],
                             product_expenses_snapshot:
-                                src?.product_expenses_snapshot || [],
+                                Array.isArray(
+                                    (l as any).product_expenses_snapshot
+                                ) && (l as any).product_expenses_snapshot.length
+                                    ? (l as any).product_expenses_snapshot
+                                    : src?.product_expenses_snapshot || [],
                             product_rebates_amount:
-                                src?.product_rebates_amount != null
+                                (l as any).product_rebates_amount != null
+                                    ? String((l as any).product_rebates_amount)
+                                    : src?.product_rebates_amount != null
                                     ? String(src.product_rebates_amount)
                                     : '0',
                             product_expenses_amount:
-                                src?.product_expenses_amount != null
+                                (l as any).product_expenses_amount != null
+                                    ? String((l as any).product_expenses_amount)
+                                    : src?.product_expenses_amount != null
                                     ? String(src.product_expenses_amount)
                                     : '0',
                             margin_amount:
-                                src?.margin_amount != null
+                                (l as any).margin_amount != null
+                                    ? String((l as any).margin_amount)
+                                    : src?.margin_amount != null
                                     ? String(src.margin_amount)
                                     : '0',
                             // Packing snapshot → consumed by the invoice seed.

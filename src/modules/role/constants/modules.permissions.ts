@@ -144,6 +144,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
         },
+        reports: {
+            name: "Reports",
+            description: "View aggregation reports (Product-wise Profitability; HSN Summary, Customer Turnover, Monthly Turnover, Input-Output GST to follow). Read-only.",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
+        },
         invoices: {
             name: "Invoices",
             description: "Manage Export Commercial Invoices - STIPL{N}/{FY} voucher, IGST-paid + LUT routes, IGST refund footer, multi-bank, Packing List PDF.",

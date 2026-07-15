@@ -224,6 +224,15 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_update: true,
         can_delete: true,
     },
+    reports: {
+        // Read-only module — aggregation reports have no write endpoints.
+        can_all: false,
+        can_read: true,
+        can_add: false,
+        can_create: false,
+        can_update: false,
+        can_delete: false,
+    },
     invoices: {
         can_all: true,
         can_read: true,

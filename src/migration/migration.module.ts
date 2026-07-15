@@ -75,6 +75,13 @@ import { UserService } from '@modules/user/services/user.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { PasswordHistoryService } from '@modules/password-history/services/password-history.service';
 import { SessionService } from '@modules/session/services/session.service';
+// SessionService now records a LOGOUT audit row via AuditLogService, so the CLI
+// bootstrap must provide it too. Pull the tracking REPOSITORY module + the two
+// lightweight providers rather than the full TrackingModule — the CLI has no use
+// for the tracking cron/subscriber/middleware.
+import { TrackingRepositoryModule } from '@modules/tracking/repository/tracking.repository.module';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import { ActivityService } from '@modules/activity/services/activity.service';
 import { SettingService } from '@modules/setting/services/setting.service';
 import { ToolsService } from '@modules/tools/services/tools.service';
@@ -142,6 +149,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         GrnRepositoryModule,
         PoVendorRepositoryModule,
         InventoryRepositoryModule,
+        TrackingRepositoryModule,
 
         // Email module for templates
         EmailModule,
@@ -159,6 +167,8 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         RoleService,
         PasswordHistoryService,
         SessionService,
+        RequestContextService,
+        AuditLogService,
         ActivityService,
         SettingService,
         ToolsService,
