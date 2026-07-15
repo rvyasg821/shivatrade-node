@@ -1,5 +1,6 @@
 {
     "list": "Sessions retrieved successfully.",
+    "logout": "Signed out successfully.",
     "revoke": "Session revoked successfully.",
     "error": {
         "notFound": "Sorry, we couldn't find the session.",

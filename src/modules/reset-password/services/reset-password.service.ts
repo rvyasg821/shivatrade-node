@@ -5,6 +5,8 @@ import { HelperStringService } from '@common/helper/services/helper.string.servi
 import { ResetPasswordRepository } from '@modules/reset-password/repository/repositories/reset-password.repository';
 import { ResetPasswordDoc, ResetPasswordEntity } from '@modules/reset-password/repository/entities/reset-password.entity';
 import { ENUM_RESET_PASSWORD_TYPE } from '@modules/reset-password/enums/reset-password.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { ENUM_AUDIT_ACTION } from '@modules/tracking/repository/entities/audit-log.entity';
 
 @Injectable()
 export class ResetPasswordService {
@@ -18,6 +20,7 @@ export class ResetPasswordService {
         private readonly helperNumberService: HelperNumberService,
         private readonly helperStringService: HelperStringService,
         private readonly configService: ConfigService,
+        private readonly auditLogService: AuditLogService,
     ) {
         this.expiredInMinutes = this.configService.get<number>('resetPassword.expiredInMinutes') || 10;
         this.otpLength = this.configService.get<number>('resetPassword.otpLength') || 6;
@@ -96,6 +99,16 @@ export class ResetPasswordService {
             reference,
         });
 
+        // Activity feed: a "forgot password" request. Fire-and-forget.
+        this.auditLogService.recordSummary({
+            entity_name: 'AuthEntity',
+            entity_label: email,
+            entity_id: userId,
+            action: ENUM_AUDIT_ACTION.PASSWORD_RESET_REQUEST,
+            user_id: userId,
+            summary: { email },
+        });
+
         return {
             resetPassword: created as ResetPasswordEntity,
             created: {
@@ -148,6 +161,17 @@ export class ResetPasswordService {
             isReset: true,
             isActive: false,
             resetDate: new Date(),
+        });
+
+        // Activity feed: the password was actually changed via the reset flow.
+        const userId = String((resetPassword as any).user || '') || undefined;
+        this.auditLogService.recordSummary({
+            entity_name: 'AuthEntity',
+            entity_label: (resetPassword as any).to,
+            entity_id: userId,
+            action: ENUM_AUDIT_ACTION.PASSWORD_RESET,
+            user_id: userId,
+            summary: { email: (resetPassword as any).to },
         });
     }
 

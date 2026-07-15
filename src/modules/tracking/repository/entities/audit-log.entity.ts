@@ -17,6 +17,21 @@ export enum ENUM_AUDIT_ACTION {
      *  e.g. "imported 500 prices". Written by `AuditLogService.recordSummary()`,
      *  never by the subscriber. */
     IMPORT = 'import',
+
+    // ─── Authentication events ───────────────────────────────────────────────
+    // Not entity mutations, so the subscriber never sees them — the auth/session/
+    // reset-password services write these via `AuditLogService.recordSummary()`.
+    // Values MUST stay ≤ 20 chars (the `action` column is varchar(20)).
+    /** A successful sign-in. */
+    LOGIN = 'login',
+    /** A session was revoked (sign-out). */
+    LOGOUT = 'logout',
+    /** A rejected sign-in — wrong password, unknown account, or blocked role. */
+    LOGIN_FAILED = 'login_failed',
+    /** A password-reset email/OTP was requested ("forgot password"). */
+    PASSWORD_RESET_REQUEST = 'pwd_reset_req',
+    /** A password was actually changed through the reset flow. */
+    PASSWORD_RESET = 'pwd_reset',
 }
 
 /**

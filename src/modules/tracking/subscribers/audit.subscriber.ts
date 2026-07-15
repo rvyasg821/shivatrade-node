@@ -122,6 +122,19 @@ export class AuditSubscriber implements EntitySubscriberInterface {
     ): Promise<void> {
         if (this.skip(entityName)) return;
 
+        // Inventory is allowlisted, but only MANUAL stock adjustments deserve a
+        // history row. GRN- and dispatch-sourced movements (and their reversals)
+        // are already represented by their audited GRN / Invoice headers, so
+        // auditing them too would write one ledger row per source line.
+        // `source_type` is 'grn' | 'invoice' | 'manual'; skip everything but
+        // manual (an unknown/partial value fails closed to "don't log").
+        if (
+            entityName === 'StockMovementEntity' &&
+            (entity as any)?.source_type !== 'manual'
+        ) {
+            return;
+        }
+
         let row: Partial<AuditLogEntity>;
         try {
             const entityId = entity?._id ?? (event as RemoveEvent<any>).entityId;

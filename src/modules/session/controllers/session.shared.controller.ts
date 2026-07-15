@@ -4,6 +4,7 @@ import {
     ForbiddenException,
     Get,
     Param,
+    Post,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
@@ -102,5 +103,29 @@ export class SessionSharedController {
         }
 
         await this.sessionService.updateRevoke(session);
+    }
+
+    /**
+     * Sign out: revoke the CALLER'S OWN current session.
+     *
+     * The client logout is otherwise purely local (it just drops its tokens), so
+     * the server never learned about it and no "Signed out" appeared in the
+     * activity feed. The frontend now calls this first — `updateRevoke` both kills
+     * the session and records the LOGOUT audit event. Idempotent: a session that
+     * is already gone (expired/revoked) is a no-op, not an error.
+     */
+    @Response('session.logout')
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/logout')
+    async logout(
+        @AuthJwtPayload('session') sessionFromRequest: string
+    ): Promise<void> {
+        const session = await this.sessionService.findOneActiveById(
+            sessionFromRequest
+        );
+        if (session) {
+            await this.sessionService.updateRevoke(session);
+        }
     }
 }

@@ -34,6 +34,8 @@ import { COMPANY_DEFAULT_PERMISSIONS } from '@modules/role/constants/company.per
 import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { CompanyService } from '@modules/company/services/company.service';
 // import { CompanyService } from '@modules/company/services/company.service';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { ENUM_AUDIT_ACTION } from '@modules/tracking/repository/entities/audit-log.entity';
 
 @Injectable()
 export class AuthService implements IAuthService {
@@ -75,6 +77,7 @@ export class AuthService implements IAuthService {
         private readonly userService: UserService,
         private readonly roleService: RoleService,
         private readonly companyService: CompanyService,
+        private readonly auditLogService: AuditLogService,
     ) {
         this.jwtAccessTokenSecret = this.configService.get<string>(
             'auth.jwt.accessToken.secret'
@@ -391,6 +394,34 @@ export class AuthService implements IAuthService {
     // Unified Authentication Methods
 
     /**
+     * Fire-and-forget audit row for an authentication event (login / failed
+     * login), surfaced in the SUPER_ADMIN activity feed. Never throws — sign-in
+     * must not fail because the activity log did. On failed logins against an
+     * unknown account there is no `userId`, so the email in the summary is the
+     * only thing that identifies the attempt.
+     */
+    private recordAuthEvent(
+        action: ENUM_AUDIT_ACTION,
+        opts: {
+            email: string;
+            userId?: string;
+            companyId?: string;
+            reason?: string;
+        }
+    ): void {
+        this.auditLogService.recordSummary({
+            entity_name: 'AuthEntity',
+            entity_label: opts.email,
+            action,
+            user_id: opts.userId,
+            company_id: opts.companyId,
+            summary: opts.reason
+                ? { email: opts.email, reason: opts.reason }
+                : { email: opts.email },
+        });
+    }
+
+    /**
      * Authenticate directly from the users table.
      * Derives userType from role name.
      */
@@ -407,6 +438,10 @@ export class AuthService implements IAuthService {
 
             if (!user || !user.password) {
                 this.logger.warn(`User not found for email: ${email}`);
+                this.recordAuthEvent(ENUM_AUDIT_ACTION.LOGIN_FAILED, {
+                    email,
+                    reason: 'no_account',
+                });
                 throw new NotFoundException({
                     statusCode: ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR.SHARED_USER_NOT_FOUND,
                     message: 'User not found',
@@ -424,6 +459,12 @@ export class AuthService implements IAuthService {
             const isValidPassword = this.validateUser(password, user.password);
             if (!isValidPassword) {
                 this.logger.warn(`Invalid credentials for: ${email}`);
+                this.recordAuthEvent(ENUM_AUDIT_ACTION.LOGIN_FAILED, {
+                    email: user.email || email,
+                    userId: String(user._id),
+                    companyId: (user as any).companyId || undefined,
+                    reason: 'wrong_password',
+                });
                 throw new BadRequestException({
                     statusCode: ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR.SHARED_USER_INVALID_CREDENTIALS,
                     message: 'Invalid credentials',
@@ -439,6 +480,12 @@ export class AuthService implements IAuthService {
             // the existence of a vendor account.
             if (!this.isLoginAllowedForRole(roleName)) {
                 this.logger.warn(`Login blocked for role '${roleName}': ${email}`);
+                this.recordAuthEvent(ENUM_AUDIT_ACTION.LOGIN_FAILED, {
+                    email: user.email || email,
+                    userId: String(user._id),
+                    companyId: (user as any).companyId || undefined,
+                    reason: 'role_blocked',
+                });
                 throw new BadRequestException({
                     statusCode: ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR.SHARED_USER_INVALID_CREDENTIALS,
                     message: 'Invalid credentials',
@@ -448,6 +495,12 @@ export class AuthService implements IAuthService {
             const userType = this.deriveUserType(roleName);
 
             this.logger.log(`Auth successful for: ${email} (role: ${roleName}, type: ${userType})`);
+
+            this.recordAuthEvent(ENUM_AUDIT_ACTION.LOGIN, {
+                email: user.email || email,
+                userId: String(user._id),
+                companyId: (user as any).companyId || undefined,
+            });
 
             return {
                 _id: String(user._id),

@@ -1,5 +1,6 @@
 {
     "list": "Sessions récupérées avec succès.",
+    "logout": "Déconnexion réussie.",
     "revoke": "Session révoquée avec succès.",
     "error": {
         "notFound": "Désolé, nous n'avons pas pu trouver la session.",
