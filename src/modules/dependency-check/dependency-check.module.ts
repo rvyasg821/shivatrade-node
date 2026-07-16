@@ -7,6 +7,7 @@ import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendo
 import { GrnRepositoryModule } from '@modules/grn/repository/grn.repository.module';
 import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
 import { LeadRepositoryModule } from '@modules/lead/repository/lead.repository.module';
+import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
 import { DependencyCheckService } from './dependency-check.service';
 
 @Module({
@@ -19,6 +20,7 @@ import { DependencyCheckService } from './dependency-check.service';
         GrnRepositoryModule,
         PriceListRepositoryModule,
         LeadRepositoryModule,
+        AdjustmentNoteRepositoryModule,
     ],
     providers: [DependencyCheckService],
     exports: [DependencyCheckService],

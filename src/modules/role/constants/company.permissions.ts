@@ -233,6 +233,14 @@ export const COMPANY_DEFAULT_PERMISSIONS = {
         can_update: false,
         can_delete: false,
     },
+    "adjustment-notes": {
+        can_all: true,
+        can_read: true,
+        can_add: true,
+        can_create: true,
+        can_update: true,
+        can_delete: false,
+    },
     invoices: {
         can_all: true,
         can_read: true,

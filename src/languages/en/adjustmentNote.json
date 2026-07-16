@@ -1,0 +1,6 @@
+{
+    "list": "Adjustment notes retrieved successfully.",
+    "create": "Adjustment note posted.",
+    "void": "Adjustment note voided.",
+    "get": "Adjustment note fetched successfully."
+}

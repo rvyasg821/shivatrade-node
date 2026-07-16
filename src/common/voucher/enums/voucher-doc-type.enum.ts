@@ -16,6 +16,7 @@ export enum ENUM_VOUCHER_DOC_TYPE {
     SHIPPING = 'SHIPPING',
     RECEIPT = 'RECEIPT',
     PAYMENT_VOUCHER = 'PAYMENT_VOUCHER',
+    ADJUSTMENT_NOTE = 'ADJUSTMENT_NOTE',
 }
 
 /**
@@ -68,4 +69,6 @@ export const VOUCHER_DOC_CONFIG: Record<ENUM_VOUCHER_DOC_TYPE, VoucherDocConfig>
     [ENUM_VOUCHER_DOC_TYPE.RECEIPT]: { token: 'RCP', style: 'separated' },
     // Vendor payment voucher → STIPL/PV/0001/2026-27
     [ENUM_VOUCHER_DOC_TYPE.PAYMENT_VOUCHER]: { token: 'PV', style: 'separated' },
+    // Adjustment Note (customer/vendor debit or credit) → STIPL/AN/0001/2026-27
+    [ENUM_VOUCHER_DOC_TYPE.ADJUSTMENT_NOTE]: { token: 'AN', style: 'separated' },
 };

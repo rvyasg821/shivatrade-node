@@ -129,7 +129,9 @@ export class CustomerAdminController {
     @Get('/dropdown')
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string
-    ): Promise<IResponse<{ _id: string; company_name: string }[]>> {
+    ): Promise<
+        IResponse<{ _id: string; company_name: string; currency?: string }[]>
+    > {
         const find: any = { soft_delete: false, is_active: true };
         if (companyId) find.company_id = companyId;
         const customers = await this.customerRepository.findAll(find, {
@@ -139,6 +141,7 @@ export class CustomerAdminController {
             data: customers.map((c) => ({
                 _id: c._id.toString(),
                 company_name: c.company_name,
+                currency: (c as any).currency || undefined,
             })),
         };
     }
