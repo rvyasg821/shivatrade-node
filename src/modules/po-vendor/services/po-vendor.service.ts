@@ -36,6 +36,7 @@ import { ExpenseRepository } from '@modules/expense/repository/repositories/expe
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
 import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
 import { formatLocationAddress } from '@modules/location/utils/format-address';
@@ -75,6 +76,7 @@ export class PoVendorService {
         private readonly priceListRepository: PriceListRepository,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
+        private readonly companyBankAccountRepository: CompanyBankAccountRepository,
         private readonly locationRepository: LocationRepository,
         private readonly currencyService: CurrencyService,
         private readonly voucherService: VoucherService,
@@ -2347,6 +2349,49 @@ export class PoVendorService {
         if (amount <= 0) {
             throw new BadRequestException('Payment amount must be > 0.');
         }
+
+        // ── TDS (Gross → TDS → Net) ──
+        // `amount` is GROSS (settles the vendor in full). Prefer the UI's
+        // rounded tds_amount; else derive from the rate. Net = Gross − TDS.
+        const tdsRate = num(data.tds_rate_pct);
+        const tdsAmount =
+            data.tds_amount != null && data.tds_amount !== ''
+                ? round2(num(data.tds_amount))
+                : round2((amount * tdsRate) / 100);
+        if (tdsAmount < 0) {
+            throw new BadRequestException('TDS amount cannot be negative.');
+        }
+        if (tdsAmount > amount) {
+            throw new BadRequestException(
+                'TDS cannot exceed the gross payment amount.'
+            );
+        }
+        const netPaid = round2(amount - tdsAmount);
+
+        // ── Paying company bank account — freeze a snapshot for the voucher ──
+        let bankSnapshot: any = undefined;
+        if (data.company_bank_account_id) {
+            const bank: any = await this.companyBankAccountRepository.findOneById(
+                data.company_bank_account_id
+            );
+            if (
+                !bank ||
+                bank.soft_delete ||
+                bank.company_id?.toString() !== row.company_id.toString()
+            ) {
+                throw new BadRequestException(
+                    'Selected company bank account was not found.'
+                );
+            }
+            bankSnapshot = {
+                bank_name: bank.bank_name,
+                account_holder_name: bank.account_holder_name,
+                account_number: bank.account_number,
+                ifsc: bank.ifsc,
+                branch_name: bank.branch_name,
+                account_type: bank.account_type,
+            };
+        }
         // NOTE: overpayment is intentionally allowed (vendor advances, rounding,
         // FX drift). We no longer block when prior + amount exceeds the order
         // value — applyPaymentDerived flags the POV as `overpaid` instead and
@@ -2372,6 +2417,12 @@ export class PoVendorService {
             currency_code: row.currency_code,
             invoice_number: data.invoice_number,
             notes: data.notes,
+            company_bank_account_id: data.company_bank_account_id || null,
+            company_bank_snapshot: bankSnapshot || null,
+            tds_section: data.tds_section || null,
+            tds_rate_pct: String(tdsRate),
+            tds_amount: String(tdsAmount),
+            net_paid: String(netPaid),
             payment_voucher_no: paymentVoucherNo,
             created_by: userId,
         } as any);
@@ -2643,6 +2694,13 @@ export class PoVendorService {
                     currency_code: p.currency_code || undefined,
                     invoice_number: p.invoice_number || undefined,
                     notes: p.notes || undefined,
+                    company_bank_account_id:
+                        p.company_bank_account_id?.toString() || undefined,
+                    company_bank_snapshot: p.company_bank_snapshot || undefined,
+                    tds_section: p.tds_section || undefined,
+                    tds_rate_pct: String(p.tds_rate_pct ?? '0'),
+                    tds_amount: String(p.tds_amount ?? '0'),
+                    net_paid: String(p.net_paid ?? p.amount ?? '0'),
                     payment_voucher_no: p.payment_voucher_no || undefined,
                     voided_at: p.voided_at || undefined,
                     voided_reason: p.voided_reason || undefined,

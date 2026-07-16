@@ -503,11 +503,66 @@ function buildPaymentVoucherHtml(
         ['Payment Date', dateOnly(payment.payment_date) || '-'],
     ];
 
-    const summaryRows: Array<[string, string]> = [
-        ['Order Value (Payable)', ccyMoney(sym, pov.order_value || 0)],
-        ['Total Paid', ccyMoney(sym, pov.amount_paid || 0)],
-        ['Balance Payable', ccyMoney(sym, pov.balance_payable || 0)],
-    ];
+    // Paying company bank account (#7) — snapshot frozen at payment time.
+    const bankSnap: any = payment.company_bank_snapshot || null;
+    if (bankSnap?.bank_name) {
+        detailRows.push([
+            'Paid From (Bank)',
+            esc(
+                `${bankSnap.bank_name}${
+                    bankSnap.account_number
+                        ? ' — A/c ' + bankSnap.account_number
+                        : ''
+                }`
+            ),
+        ]);
+    }
+
+    // TDS (#7): Gross (amount) → TDS → Net paid. Shown only when deducted.
+    const hasTds = Number(payment.tds_amount || 0) > 0;
+    const tdsBlock = hasTds
+        ? `<div class="summary" style="margin-top:16px; width:60%; margin-left:auto;">
+    <table>
+      <tr><td class="k">Gross Amount</td><td class="v">${ccyMoney(
+          sym,
+          payment.amount || 0
+      )}</td></tr>
+      <tr><td class="k">TDS${
+          payment.tds_section
+              ? ` (${esc(payment.tds_section)}${
+                    Number(payment.tds_rate_pct || 0) > 0
+                        ? ' @ ' + esc(String(payment.tds_rate_pct)) + '%'
+                        : ''
+                })`
+              : ''
+      }</td><td class="v">− ${ccyMoney(sym, payment.tds_amount || 0)}</td></tr>
+    </table>
+  </div>`
+        : '';
+
+    // POV-level TDS total across all non-voided payments (the summary is the
+    // vendor's running account, so these are aggregates — not this one payment).
+    const povTdsTotal = (pov.payments || [])
+        .filter((pp: any) => !pp.voided_at)
+        .reduce((s: number, pp: any) => s + Number(pp.tds_amount || 0), 0);
+    const grossPaid = Number(pov.amount_paid || 0);
+    const netCashPaid = Math.round((grossPaid - povTdsTotal) * 100) / 100;
+
+    // Gross settles the vendor (balance uses gross). When any TDS was deducted,
+    // spell out TDS → Net cash so the total reconciles with the Net Paid box.
+    const summaryRows: Array<[string, string]> = povTdsTotal > 0
+        ? [
+              ['Order Value (Payable)', ccyMoney(sym, pov.order_value || 0)],
+              ['Total Paid (Gross)', ccyMoney(sym, grossPaid)],
+              ['TDS Deducted', `− ${ccyMoney(sym, povTdsTotal)}`],
+              ['Net Cash Paid', ccyMoney(sym, netCashPaid)],
+              ['Balance Payable', ccyMoney(sym, pov.balance_payable || 0)],
+          ]
+        : [
+              ['Order Value (Payable)', ccyMoney(sym, pov.order_value || 0)],
+              ['Total Paid', ccyMoney(sym, pov.amount_paid || 0)],
+              ['Balance Payable', ccyMoney(sym, pov.balance_payable || 0)],
+          ];
 
     return `<!DOCTYPE html>
 <html>
@@ -580,9 +635,14 @@ function buildPaymentVoucherHtml(
     </table>
   </div>
 
+  ${tdsBlock}
+
   <div class="amount-box">
-    <span class="lbl">Amount Paid</span>
-    <span class="val">${ccyMoney(sym, payment.amount || 0)}</span>
+    <span class="lbl">${hasTds ? 'Net Paid to Vendor' : 'Amount Paid'}</span>
+    <span class="val">${ccyMoney(
+        sym,
+        hasTds ? payment.net_paid || 0 : payment.amount || 0
+    )}</span>
   </div>
 
   <div class="summary">
