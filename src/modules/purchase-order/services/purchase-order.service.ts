@@ -313,6 +313,7 @@ export class PurchaseOrderService {
             remarks: remarks || null,
             currency_code: data.currency_code || 'INR',
             exchange_rate: data.exchange_rate || '1',
+            freight_total: (data as any).freight_total || '0',
             status: data.status || ENUM_PURCHASE_ORDER_STATUS.DRAFT,
         } as any);
 
@@ -1933,6 +1934,9 @@ export class PurchaseOrderService {
                 delivery_address_id: opts?.deliveryAddressId || undefined,
                 currency_code: q.currency_code || 'INR',
                 exchange_rate: q.exchange_rate || '1',
+                // Carry the CNF shipment freight from the quotation onto the SO
+                // (same document currency) so the costing worksheet matches.
+                freight_total: (q as any).freight_total || '0',
                 status: ENUM_PURCHASE_ORDER_STATUS.CONFIRMED,
                 lines: poLinePayload,
             } as any,
@@ -2179,6 +2183,7 @@ export class PurchaseOrderService {
                 currency_code: r.currency_code,
                 currency_symbol: getCurrencySymbol(r.currency_code),
                 exchange_rate: r.exchange_rate,
+                freight_total: (r as any).freight_total ?? '0',
                 subtotal: r.subtotal,
                 cgst_total: r.cgst_total,
                 sgst_total: r.sgst_total,

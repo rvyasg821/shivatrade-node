@@ -153,6 +153,19 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     })
     exchange_rate: string;
 
+    /** Shipment freight for a CNF sales order, in the DOCUMENT currency (same
+     *  basis as the customer-facing amounts). Split by qty across lines at
+     *  display time; NOT part of the costing chain. Carried from the source
+     *  quotation and onto the Invoice's `freight_charges` on Generate Invoice. */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
+    freight_total: string;
+
     // ── Costing snapshot (recomputed on save) ──
     @Column({
         type: 'numeric',

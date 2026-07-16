@@ -265,6 +265,13 @@ export class PurchaseOrderCreateRequestDto {
     @IsOptional()
     exchange_rate?: string;
 
+    /** Shipment freight (document currency) for a CNF sales order. Passed
+     *  through verbatim; split by qty at display time. Whitelist requires this
+     *  to be declared or the global ValidationPipe strips it. */
+    @IsNumberString({}, { message: 'freight_total must be a numeric string' })
+    @IsOptional()
+    freight_total?: string;
+
     @IsEnum(ENUM_PURCHASE_ORDER_STATUS)
     @IsOptional()
     status?: ENUM_PURCHASE_ORDER_STATUS;

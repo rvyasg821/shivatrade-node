@@ -188,6 +188,13 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     exchange_rate?: string;
 
+    /** Shipment freight (document currency) for a CNF quote. Passed through
+     *  verbatim; split by qty at display time. Whitelist requires this to be
+     *  declared or the global ValidationPipe strips it. */
+    @IsNumberString({}, { message: 'freight_total must be a numeric string' })
+    @IsOptional()
+    freight_total?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(100)
