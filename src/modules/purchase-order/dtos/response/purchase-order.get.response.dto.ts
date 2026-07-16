@@ -93,6 +93,8 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: true, type: String }) currency_code: string;
     @ApiProperty({ required: false, type: String }) currency_symbol?: string;
     @ApiProperty({ required: true, type: String }) exchange_rate: string;
+    /** Shipment freight (document currency) for a CNF sales order. */
+    @ApiProperty({ required: false, type: String }) freight_total?: string;
 
     @ApiProperty({ required: true, type: String }) subtotal: string;
     @ApiProperty({ required: true, type: String }) cgst_total: string;

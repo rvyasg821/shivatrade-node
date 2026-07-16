@@ -81,6 +81,8 @@ export class QuotationGetResponseDto {
     currency_code?: string;
     currency_symbol?: string;
     exchange_rate?: string;
+    /** Shipment freight (document currency) for a CNF quote. */
+    freight_total?: string;
     payment_terms?: string;
     delivery_terms?: string;
     delivery_location?: string;

@@ -76,6 +76,13 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
     exchange_rate?: string;
 
+    /** Shipment freight for a CNF quote, in the DOCUMENT currency (same basis
+     *  as grand_total, which is stored × exchange_rate). Split by qty across
+     *  lines at display time; NOT part of the costing chain (sits beside
+     *  margin/tax to form CNF). Carried onto the SO on Generate Sales Order. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    freight_total: string;
+
     @Column({ type: 'varchar', length: 100, nullable: true })
     payment_terms?: string;
 
