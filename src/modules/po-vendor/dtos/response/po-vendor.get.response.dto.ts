@@ -11,6 +11,14 @@ export class PoVendorPaymentResponseDto {
     @ApiProperty({ required: false, type: String }) currency_code?: string;
     @ApiProperty({ required: false, type: String }) invoice_number?: string;
     @ApiProperty({ required: false, type: String }) notes?: string;
+    // ── Paying company bank (#7) ──
+    @ApiProperty({ required: false, type: String }) company_bank_account_id?: string;
+    @ApiProperty({ required: false, type: Object }) company_bank_snapshot?: any;
+    // ── TDS (#7): Gross (amount) → TDS → net_paid ──
+    @ApiProperty({ required: false, type: String }) tds_section?: string;
+    @ApiProperty({ required: false, type: String }) tds_rate_pct?: string;
+    @ApiProperty({ required: false, type: String }) tds_amount?: string;
+    @ApiProperty({ required: false, type: String }) net_paid?: string;
     @ApiProperty({ required: false, type: String }) payment_voucher_no?: string;
     @ApiProperty({ required: false, type: Date }) voided_at?: Date;
     @ApiProperty({ required: false, type: String }) voided_reason?: string;
