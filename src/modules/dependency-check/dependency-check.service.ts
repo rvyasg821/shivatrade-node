@@ -10,6 +10,7 @@ import { PriceListRepository } from '@modules/price-list/repository/repositories
 import { RfqVendorRepository } from '@modules/rfq/repository/repositories/rfq-vendor.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
+import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
 
 export interface DependencySummary {
     total: number;
@@ -43,7 +44,8 @@ export class DependencyCheckService {
         private readonly priceListRepository: PriceListRepository,
         private readonly rfqVendorRepository: RfqVendorRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
-        private readonly leadRepository: LeadRepository
+        private readonly leadRepository: LeadRepository,
+        private readonly adjustmentNoteRepository: AdjustmentNoteRepository
     ) {}
 
     private rulesFor(type: string): DependencyRule[] | null {
@@ -170,6 +172,14 @@ export class DependencyCheckService {
             'Quotations',
             this.quotationLineRepository.getTotal({ vendor_id: vendorId } as any)
         );
+        await check(
+            'Adjustment Notes',
+            this.adjustmentNoteRepository.getTotal({
+                party_type: 'vendor',
+                party_id: vendorId,
+                soft_delete: false,
+            } as any)
+        );
 
         if (used.length > 0) {
             throw new BadRequestException(
@@ -211,6 +221,14 @@ export class DependencyCheckService {
         await check(
             'Invoices',
             this.invoiceRepository.getTotal({ customer_id: customerId, soft_delete: false } as any)
+        );
+        await check(
+            'Adjustment Notes',
+            this.adjustmentNoteRepository.getTotal({
+                party_type: 'customer',
+                party_id: customerId,
+                soft_delete: false,
+            } as any)
         );
 
         if (used.length > 0) {

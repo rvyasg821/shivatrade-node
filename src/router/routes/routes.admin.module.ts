@@ -84,6 +84,10 @@ import { SalesDocImportModule } from '@modules/sales-doc-import/sales-doc-import
 import { SalesDocImportAdminController } from '@modules/sales-doc-import/controllers/sales-doc-import.admin.controller';
 import { ReportsModule } from '@modules/reports/reports.module';
 import { ReportsAdminController } from '@modules/reports/controllers/reports.admin.controller';
+import { AdjustmentNoteModule } from '@modules/adjustment-note/adjustment-note.module';
+import { AdjustmentNoteAdminController } from '@modules/adjustment-note/controllers/adjustment-note.admin.controller';
+import { LedgerModule } from '@modules/ledger/ledger.module';
+import { LedgerAdminController } from '@modules/ledger/controllers/ledger.admin.controller';
 import { TrackingEventModule } from '@modules/tracking-event/tracking-event.module';
 import { TrackingEventAdminController } from '@modules/tracking-event/controllers/tracking-event.admin.controller';
 import { EmployeeModule } from '@modules/employee/employee.module';
@@ -219,6 +223,8 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         TrackingEventAdminController,
         SalesDocImportAdminController,
         ReportsAdminController,
+        AdjustmentNoteAdminController,
+        LedgerAdminController,
     ],
     providers: [],
     exports: [],
@@ -226,6 +232,8 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         RoleRepositoryModule,
         SettingModule,
         ReportsModule,
+        AdjustmentNoteModule,
+        LedgerModule,
         RoleModule,
         UserModule,
         AuthModule,

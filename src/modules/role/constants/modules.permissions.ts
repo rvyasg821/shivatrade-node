@@ -150,6 +150,12 @@ export const MODULES_PERMISSIONS = {
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: true, can_add: false, can_update: false, can_delete: false }
         },
+        "adjustment-notes": {
+            name: "Adjustment Notes",
+            description: "Post off-document debit/credit adjustment notes against a customer or vendor (feeds the party ledgers). Post-on-save; Void to reverse.",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: true, can_add: true, can_update: true, can_delete: false }
+        },
         invoices: {
             name: "Invoices",
             description: "Manage Export Commercial Invoices - STIPL{N}/{FY} voucher, IGST-paid + LUT routes, IGST refund footer, multi-bank, Packing List PDF.",
