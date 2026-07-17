@@ -13,6 +13,10 @@ import {
     GstBalanceRowDto,
 } from '../dtos/response/gst-balance.response.dto';
 import {
+    PurchaseTurnoverResponseDto,
+    PurchaseTurnoverRowDto,
+} from '../dtos/response/purchase-turnover.response.dto';
+import {
     ProductProfitabilityResponseDto,
     ProductProfitabilityRowDto,
 } from '../dtos/response/product-profitability.response.dto';
@@ -35,6 +39,19 @@ export interface IProductProfitabilityQuery {
 export interface IGstBalanceQuery {
     date_from?: string;
     date_to?: string;
+}
+
+export interface IPurchaseTurnoverQuery {
+    group_by?: 'month' | 'vendor';
+    date_from?: string;
+    date_to?: string;
+    vendor_id?: string;
+    /** unpaid | partially_paid | paid | overpaid — derived, filtered post-mapList. */
+    payment_status?: string;
+    order_by?: 'value' | 'paid' | 'outstanding' | 'count';
+    order_direction?: 'asc' | 'desc';
+    page?: number;
+    perPage?: number;
 }
 
 export interface IHsnSummaryQuery {
@@ -808,6 +825,211 @@ export class ReportsService {
         const aoa: (string | number)[][] = [
             [`Input-Output GST Balance — ${result.period_label} (INR)`],
             ['Net ITC = Input Total − Output IGST (positive = refund claimable)'],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    /**
+     * Purchase Turnover (PURCHASE_TURNOVER_VPO_REPORT_PLAN.md) — what we bought,
+     * paid and still owe, grouped **by month** (the trend) or **by vendor** (the
+     * exposure; nothing else in the app aggregates across a vendor's POVs).
+     *
+     * No SQL: a POV's `order_value` / `gst_inr` / `amount_paid` are derived by
+     * `PoVendorService.mapList` (product-master tax fallback + jsonb charge
+     * rates), so re-deriving them in a query would drift from the POV page.
+     *
+     * Scope = dispatched + closed, **every payment status**. Unpaid POVs are IN:
+     * turnover is what was purchased, not what was paid — dropping them would
+     * hide the Outstanding that matters most (plan §6).
+     */
+    async purchaseTurnover(
+        companyId: string,
+        query: IPurchaseTurnoverQuery
+    ): Promise<PurchaseTurnoverResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const groupBy = query.group_by === 'vendor' ? 'vendor' : 'month';
+
+        const find: Record<string, any> = {
+            company_id: companyId,
+            soft_delete: false,
+            status: { $in: ['dispatched', 'closed'] },
+        };
+        if (query.vendor_id) find.vendor_id = query.vendor_id;
+        const povRaw: any[] = await this.povRepository.findAll(find as any);
+
+        // A POV has no purchase-date column — date in JS on dispatch_date ||
+        // createdAt (plan §12.2). No date drops out rather than mis-bucketing.
+        const inRange = povRaw.filter((r) => {
+            const d = povIsoDate(r);
+            return !!d && d >= from && d <= to;
+        });
+        const dateById = new Map<string, string>(
+            inRange.map((r) => [r._id.toString(), povIsoDate(r)])
+        );
+
+        const povs = inRange.length
+            ? ((await this.povService.mapList(inRange as any)) as any[])
+            : [];
+        // payment_status is derived from amount_paid vs order value, not a
+        // column — so it can only be filtered here, after mapList.
+        const scoped = query.payment_status
+            ? povs.filter((p) => p.payment_status === query.payment_status)
+            : povs;
+
+        const bucket = new Map<string, PurchaseTurnoverRowDto>();
+        const rowFor = (key: string, label: string): PurchaseTurnoverRowDto => {
+            if (!bucket.has(key)) {
+                bucket.set(key, {
+                    key,
+                    label,
+                    pov_count: 0,
+                    taxable_inr: 0,
+                    gst_inr: 0,
+                    order_value_inr: 0,
+                    paid_inr: 0,
+                    outstanding_inr: 0,
+                });
+            }
+            return bucket.get(key)!;
+        };
+
+        for (const pov of scoped) {
+            const key =
+                groupBy === 'vendor'
+                    ? String(pov.vendor_id || '—')
+                    : (dateById.get(pov._id) || '').slice(0, 7);
+            if (!key) continue;
+            const label =
+                groupBy === 'vendor'
+                    ? pov.vendor_name || '—'
+                    : monthLabel(key);
+            const row = rowFor(key, label);
+            row.pov_count += 1;
+            row.order_value_inr = r2(row.order_value_inr + n(pov.order_value));
+            row.gst_inr = r2(row.gst_inr + n(pov.gst_inr));
+            // GROSS — net_paid (after TDS) is the bank outflow, but gross is
+            // what settles the vendor, so Outstanding must use it (plan §12.4).
+            row.paid_inr = r2(row.paid_inr + n(pov.amount_paid));
+        }
+
+        // Month mode: emit every month in the range so a quiet month reads 0.00
+        // rather than vanishing. Vendor mode: never invent rows.
+        let rows: PurchaseTurnoverRowDto[];
+        if (groupBy === 'month') {
+            rows = [];
+            const cur = new Date(`${from.slice(0, 7)}-01T00:00:00`);
+            const end = new Date(`${to.slice(0, 7)}-01T00:00:00`);
+            while (cur <= end) {
+                const key = `${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}`;
+                rows.push(rowFor(key, monthLabel(key)));
+                cur.setMonth(cur.getMonth() + 1);
+            }
+            rows.sort((a, b) => (a.key < b.key ? -1 : 1));
+        } else {
+            rows = Array.from(bucket.values());
+            const orderBy = query.order_by || 'value';
+            const dir = query.order_direction === 'asc' ? 1 : -1;
+            const keyOf = (x: PurchaseTurnoverRowDto): number =>
+                orderBy === 'paid'
+                    ? x.paid_inr
+                    : orderBy === 'outstanding'
+                      ? x.outstanding_inr
+                      : orderBy === 'count'
+                        ? x.pov_count
+                        : x.order_value_inr;
+            rows.sort((a, b) => (keyOf(a) - keyOf(b)) * dir);
+        }
+
+        const totals = {
+            pov_count: 0,
+            taxable_inr: 0,
+            gst_inr: 0,
+            order_value_inr: 0,
+            paid_inr: 0,
+            outstanding_inr: 0,
+        };
+        for (const row of rows) {
+            row.taxable_inr = r2(row.order_value_inr - row.gst_inr);
+            row.outstanding_inr = r2(row.order_value_inr - row.paid_inr);
+            totals.pov_count += row.pov_count;
+            totals.taxable_inr = r2(totals.taxable_inr + row.taxable_inr);
+            totals.gst_inr = r2(totals.gst_inr + row.gst_inr);
+            totals.order_value_inr = r2(
+                totals.order_value_inr + row.order_value_inr
+            );
+            totals.paid_inr = r2(totals.paid_inr + row.paid_inr);
+            totals.outstanding_inr = r2(
+                totals.outstanding_inr + row.outstanding_inr
+            );
+        }
+
+        const perPage = Math.max(1, Math.min(100000, Number(query.perPage) || 25));
+        const page = Math.max(1, Number(query.page) || 1);
+        const start = (page - 1) * perPage;
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            group_by: groupBy,
+            rows: rows.slice(start, start + perPage),
+            totals,
+            currency: 'INR',
+            pagination: {
+                total: rows.length,
+                perPage,
+                orderBy: groupBy === 'month' ? 'month' : query.order_by || 'value',
+            },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer, same column order + TOTAL row. */
+    async purchaseTurnoverExcel(
+        companyId: string,
+        query: IPurchaseTurnoverQuery
+    ): Promise<Buffer> {
+        const result = await this.purchaseTurnover(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000, // one page = the whole set for export
+        });
+        const header = [
+            result.group_by === 'vendor' ? 'Vendor' : 'Month',
+            'POVs',
+            'Taxable (INR)',
+            'GST (INR)',
+            'Order Value (INR)',
+            'Paid (INR)',
+            'Outstanding (INR)',
+        ];
+        const body = result.rows.map((r) => [
+            r.label,
+            r.pov_count,
+            r.taxable_inr,
+            r.gst_inr,
+            r.order_value_inr,
+            r.paid_inr,
+            r.outstanding_inr,
+        ]);
+        const totalRow = [
+            'TOTAL',
+            result.totals.pov_count,
+            result.totals.taxable_inr,
+            result.totals.gst_inr,
+            result.totals.order_value_inr,
+            result.totals.paid_inr,
+            result.totals.outstanding_inr,
+        ];
+        const aoa: (string | number)[][] = [
+            [
+                `Purchase Turnover (VPO) — by ${result.group_by} — ${result.period_label} (INR)`,
+            ],
+            ['Dispatched + closed POVs. Paid is gross (before TDS).'],
             [],
             header,
             ...body,
