@@ -38,6 +38,45 @@ interface RawRow {
     cr: number;
 }
 
+export interface LedgerRegisterQuery {
+    party_type?: string;
+    party_id?: string;
+    direction?: string;
+    date_from?: string;
+    date_to?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+}
+
+/** One line of the combined party-transaction register (#8 listing page). */
+export interface LedgerRegisterRow {
+    _id: string;
+    /**
+     * adjustment | receipt (customer, money in) | payment (vendor, money out).
+     * Documents themselves — sales invoices and vendor PO bills — are absent by
+     * the same client rule that keeps them off the party ledgers.
+     */
+    source: string;
+    date: string;
+    /**
+     * Row creation timestamp. Only used to break same-day ties — the document
+     * dates are date-only columns, so two things booked on the same day are
+     * otherwise indistinguishable.
+     */
+    created_at?: string;
+    voucher_no?: string;
+    party_type: string;
+    party_id: string;
+    party_name?: string;
+    direction: string;
+    amount: string;
+    currency_code: string;
+    particulars: string;
+    voided_at?: Date;
+    voided_reason?: string;
+}
+
 @Injectable()
 export class LedgerService {
     constructor(
@@ -76,22 +115,17 @@ export class LedgerService {
             status: { $in: LEDGER_INVOICE_STATUSES },
         } as any);
 
-        // Column convention (matches the vendor ledger for a consistent look):
-        //   CREDIT = a charge that increases what the party owes (invoice)
-        //   DEBIT  = a receipt/relief that reduces it (payment)
-        //   Balance = ΣCR − ΣDR = amount receivable from the customer.
+        // Client rule (2026-07-17): a cash-movement record, mirroring the vendor
+        // ledger. Only receipts and adjustment notes post here — sales invoices
+        // are deliberately NOT rows (the vendor side excludes POV bills the same
+        // way). The invoice total lives in the summary cards instead.
+        //   CREDIT = money received from the customer
+        //   DEBIT  = money returned to them (e.g. a damage refund)
+        //   Balance = ΣCR − ΣDR = net amount received from this customer.
         const rows: RawRow[] = [];
         const invoiceById = new Map<string, any>();
         for (const inv of invoices) {
             invoiceById.set(inv._id.toString(), inv);
-            rows.push({
-                date: inv.invoice_date,
-                type: 'invoice',
-                particulars: 'Sales Invoice',
-                voucher_no: inv.voucher_no,
-                dr: 0,
-                cr: num(inv.grand_total),
-            });
         }
 
         // Customer receipts = InvoicePayments against this customer's invoices.
@@ -107,19 +141,19 @@ export class LedgerService {
                 rows.push({
                     date: p.payment_date,
                     type: 'receipt',
-                    particulars: `Receipt${
-                        inv?.voucher_no ? ` vs ${inv.voucher_no}` : ''
+                    particulars: `Payment${
+                        inv?.voucher_no ? ` of ${inv.voucher_no}` : ''
                     }`,
                     voucher_no: p.receipt_voucher_no,
-                    dr: num(p.amount),
-                    cr: 0,
+                    dr: 0,
+                    cr: num(p.amount),
                 });
             }
         }
 
         // Adjustment notes (customer): the note's own direction maps to the
-        // same column — a Debit note (e.g. a damage refund) → DEBIT (reduces
-        // receivable), a Credit note (extra charge) → CREDIT (increases it).
+        // same column — a Debit note → DEBIT, a Credit note (money returned to
+        // the customer) → CREDIT.
         const notes = await this.adjustmentRepository.findActiveByParty(
             companyId,
             'customer',
@@ -142,7 +176,25 @@ export class LedgerService {
             customer.currency ||
             invoices[0]?.currency_code ||
             'INR';
-        return this.assemble(
+
+        // Mirrors the vendor cards: lifetime totals (never narrowed by from/to)
+        // counting documents and receipts only — adjustment notes stay out, so
+        // Total Received means cash actually received.
+        const totalBilled = round2(
+            invoices.reduce((s, i) => s + num(i.grand_total), 0)
+        );
+        const totalPaid = round2(
+            rows
+                .filter((r) => r.type === 'receipt')
+                .reduce((s, r) => s + num(r.cr), 0)
+        );
+        const summary = {
+            total_billed: totalBilled,
+            total_paid: totalPaid,
+            outstanding: round2(totalBilled - totalPaid),
+        };
+
+        const ledger = this.assemble(
             'customer',
             customerId,
             customer.company_name,
@@ -152,6 +204,7 @@ export class LedgerService {
             to,
             /* debitPositive */ false
         );
+        return { ...ledger, summary };
     }
 
     // ── Vendor ledger (always INR) ──
@@ -170,8 +223,8 @@ export class LedgerService {
             throw new NotFoundException('Vendor not found.');
         }
 
-        // Reuse PoVendorService.mapList so order_value (lines + charges + GST)
-        // and payments match the POV's own computed figures exactly.
+        // Reuse PoVendorService.mapList so the payment rows (gross amount, void
+        // flag, voucher) match the POV Payments tab exactly.
         const povRows: any[] = await this.povRepository.findAll({
             company_id: companyId,
             vendor_id: vendorId,
@@ -179,42 +232,34 @@ export class LedgerService {
             status: { $in: LEDGER_POV_STATUSES },
         } as any);
         const povs = await this.povService.mapList(povRows as any);
-        // po_date (a date-only column) lives on the raw rows, not the mapped
-        // DTO — use it so bills carry a clean date, not the createdAt timestamp.
-        const rawById = new Map(
-            (povRows as any[]).map((r) => [r._id.toString(), r])
-        );
 
-        // Column convention (client rule): the purchase/bill you owe = DEBIT;
-        // your payment and any vendor credit-note (money back) = CREDIT.
-        // Balance = ΣDR − ΣCR = amount payable to the vendor.
+        // Client rule (2026-07-17): the vendor ledger is a cash-movement record,
+        // NOT a payable statement. Only two sources post to it — payments made
+        // from a POV's Payments tab, and adjustment notes. Vendor PO bills are
+        // deliberately NOT rows here.
+        //   DEBIT  = money Shivatrade paid out to the vendor
+        //   CREDIT = money that came back from the vendor (e.g. damage refund)
+        //   Balance = ΣDR − ΣCR = net amount paid to this vendor.
         const rows: RawRow[] = [];
         for (const pov of povs as any[]) {
-            const raw = rawById.get((pov as any)._id?.toString());
-            rows.push({
-                date: raw?.po_date || (pov as any).createdAt,
-                type: 'bill',
-                particulars: 'Vendor PO',
-                voucher_no: pov.voucher_no,
-                dr: num(pov.order_value),
-                cr: 0,
-            });
             for (const pay of pov.payments || []) {
                 if (pay.voided_at) continue;
                 rows.push({
                     date: pay.payment_date,
                     type: 'payment',
                     particulars: `Payment${
-                        pay.invoice_number ? ` vs ${pay.invoice_number}` : ''
+                        pov.voucher_no ? ` of ${pov.voucher_no}` : ''
                     }`,
                     voucher_no: pay.payment_voucher_no,
-                    dr: 0,
-                    cr: num(pay.amount),
+                    dr: num(pay.amount),
+                    cr: 0,
                 });
             }
         }
 
-        // Adjustment notes (vendor): debit → DR (owe more), credit → CR (owe less).
+        // Adjustment notes (vendor): the note's own direction maps to the same
+        // column — a Debit note → DEBIT, a Credit note (money back from the
+        // vendor, e.g. for damaged goods) → CREDIT.
         const notes = await this.adjustmentRepository.findActiveByParty(
             companyId,
             'vendor',
@@ -233,7 +278,26 @@ export class LedgerService {
             });
         }
 
-        return this.assemble(
+        // Headline totals. Computed over ALL rows (not the from/to slice) —
+        // "what do we owe this vendor overall?" isn't a date-range question.
+        // Payments only: adjustment notes are deliberately excluded so that
+        // Total Paid means cash actually paid, and Outstanding equals the sum
+        // of the VPO pages' own Balance Payable cards.
+        const totalBilled = round2(
+            (povs as any[]).reduce((s, p) => s + num(p.order_value), 0)
+        );
+        const totalPaid = round2(
+            rows
+                .filter((r) => r.type === 'payment')
+                .reduce((s, r) => s + num(r.dr), 0)
+        );
+        const summary = {
+            total_billed: totalBilled,
+            total_paid: totalPaid,
+            outstanding: round2(totalBilled - totalPaid),
+        };
+
+        const ledger = this.assemble(
             'vendor',
             vendorId,
             vendor.company_name,
@@ -243,6 +307,186 @@ export class LedgerService {
             to,
             /* debitPositive */ true
         );
+        return { ...ledger, summary };
+    }
+
+    // ── Combined register (Adjustment Notes listing page) ──
+    /**
+     * Every party money-movement in one paginated list: adjustment notes,
+     * vendor payments (POV Payments tab) and customer receipts (Invoice
+     * payments). Voided rows are INCLUDED and flagged — this is an audit
+     * register, unlike the party ledgers which drop them.
+     *
+     * Assembled in memory rather than in SQL: the three sources live in
+     * unrelated tables with no common view, and a single company's volume is
+     * small. If this ever gets slow, a DB view is the fix.
+     */
+    async register(
+        companyId: string,
+        q: LedgerRegisterQuery
+    ): Promise<{ data: LedgerRegisterRow[]; total: number }> {
+        const wantCustomer = !q.party_type || q.party_type === 'customer';
+        const wantVendor = !q.party_type || q.party_type === 'vendor';
+        const rows: LedgerRegisterRow[] = [];
+
+        // Adjustment notes — both party types, direction is the note's own.
+        const noteFind: Record<string, any> = {
+            company_id: companyId,
+            soft_delete: false,
+        };
+        if (q.party_type) noteFind.party_type = q.party_type;
+        if (q.party_id) noteFind.party_id = q.party_id;
+        const notes: any[] = await this.adjustmentRepository.findAll(
+            noteFind as any
+        );
+        for (const n of notes) {
+            rows.push({
+                _id: n._id.toString(),
+                source: 'adjustment',
+                date: toIso(n.note_date),
+                created_at: n.createdAt,
+                voucher_no: n.voucher_no,
+                party_type: n.party_type,
+                party_id: n.party_id?.toString(),
+                party_name: n.party_snapshot?.name,
+                direction: n.direction,
+                amount: String(n.amount ?? '0'),
+                currency_code: n.currency_code,
+                particulars: n.reason || '',
+                voided_at: n.voided_at || undefined,
+                voided_reason: n.voided_reason || undefined,
+            });
+        }
+
+        // Vendor payments — money out of Shivatrade → always DEBIT, INR.
+        if (wantVendor) {
+            const povFind: Record<string, any> = {
+                company_id: companyId,
+                soft_delete: false,
+                status: { $in: LEDGER_POV_STATUSES },
+            };
+            if (q.party_id) povFind.vendor_id = q.party_id;
+            const povRows: any[] = await this.povRepository.findAll(
+                povFind as any
+            );
+            const povs = await this.povService.mapList(povRows as any);
+            for (const pov of povs as any[]) {
+                for (const pay of pov.payments || []) {
+                    rows.push({
+                        _id: pay._id,
+                        source: 'payment',
+                        date: toIso(pay.payment_date),
+                        created_at: pay.createdAt,
+                        voucher_no: pay.payment_voucher_no,
+                        party_type: 'vendor',
+                        party_id: pov.vendor_id,
+                        party_name: pov.vendor_name,
+                        direction: 'debit',
+                        amount: String(pay.amount ?? '0'),
+                        currency_code: pay.currency_code || 'INR',
+                        particulars: `Payment of ${pov.voucher_no || ''}`.trim(),
+                        voided_at: pay.voided_at || undefined,
+                        voided_reason: pay.voided_reason || undefined,
+                    });
+                }
+            }
+        }
+
+        // Customer receipts — money in from the customer → CREDIT, mirroring the
+        // vendor side (payments) and the customer ledger. Sales invoices are NOT
+        // listed: a paid invoice and its receipt carry the same amount, so the
+        // pair read as a duplicate. Invoices live on the Invoices tab.
+        if (wantCustomer) {
+            const invFind: Record<string, any> = {
+                company_id: companyId,
+                soft_delete: false,
+                status: { $in: LEDGER_INVOICE_STATUSES },
+            };
+            if (q.party_id) invFind.customer_id = q.party_id;
+            const invoices: any[] = await this.invoiceRepository.findAll(
+                invFind as any
+            );
+            const invoiceIds = invoices.map((i) => i._id.toString());
+            if (invoiceIds.length) {
+                const custIds = Array.from(
+                    new Set(
+                        invoices
+                            .map((i) => i.customer_id?.toString())
+                            .filter(Boolean)
+                    )
+                );
+                const [payments, customers] = await Promise.all([
+                    this.invoicePaymentRepository.findAll({
+                        invoice_id: { $in: invoiceIds },
+                        soft_delete: false,
+                    } as any),
+                    this.customerRepository.findAll({
+                        _id: { $in: custIds },
+                    } as any),
+                ]);
+                const invById = new Map(
+                    invoices.map((i) => [i._id.toString(), i])
+                );
+                const custById = new Map(
+                    (customers as any[]).map((c) => [c._id.toString(), c])
+                );
+                for (const p of payments as any[]) {
+                    const inv = invById.get(p.invoice_id?.toString());
+                    if (!inv) continue;
+                    const cust = custById.get(inv.customer_id?.toString());
+                    rows.push({
+                        _id: p._id.toString(),
+                        source: 'receipt',
+                        date: toIso(p.payment_date),
+                        created_at: p.createdAt,
+                        voucher_no: p.receipt_voucher_no,
+                        party_type: 'customer',
+                        party_id: inv.customer_id?.toString(),
+                        party_name: cust?.company_name || cust?.name,
+                        direction: 'credit',
+                        amount: String(p.amount ?? '0'),
+                        currency_code:
+                            p.currency_code || inv.currency_code || 'INR',
+                        particulars: `Payment of ${inv.voucher_no || ''}`.trim(),
+                        voided_at: p.voided_at || undefined,
+                        voided_reason: p.voided_reason || undefined,
+                    });
+                }
+            }
+        }
+
+        // Filters that can't be pushed into the per-source queries.
+        const needle = (q.search || '').trim().toLowerCase();
+        const filtered = rows.filter((r) => {
+            if (q.direction && r.direction !== q.direction) return false;
+            if (q.date_from && r.date < q.date_from) return false;
+            if (q.date_to && r.date > q.date_to) return false;
+            if (needle) {
+                const hay = `${r.voucher_no || ''} ${r.particulars || ''} ${
+                    r.party_name || ''
+                }`.toLowerCase();
+                if (!hay.includes(needle)) return false;
+            }
+            return true;
+        });
+
+        // Newest first: this is a paginated work list with no running balance,
+        // so the most recent postings belong on page 1. (The party ledgers sort
+        // oldest-first instead — their balance column only reads downward.)
+        // Same-day ties fall back to created_at, since the document dates are
+        // date-only and can't separate two things booked on one day.
+        const stamp = (r: LedgerRegisterRow) =>
+            r.created_at ? new Date(r.created_at).getTime() : 0;
+        filtered.sort((a, b) =>
+            a.date !== b.date ? (a.date < b.date ? 1 : -1) : stamp(b) - stamp(a)
+        );
+
+        const limit = Math.min(200, Math.max(1, Number(q.limit) || 25));
+        const offset = Math.max(0, Number(q.offset) || 0);
+        return {
+            data: filtered.slice(offset, offset + limit),
+            total: filtered.length,
+        };
     }
 
     // ── Shared: date-filter, sort, running balance, totals ──

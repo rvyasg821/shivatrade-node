@@ -5,9 +5,20 @@ import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
 } from '@modules/auth/decorators/auth.jwt.decorator';
-import { Response } from '@common/response/decorators/response.decorator';
-import { IResponse } from '@common/response/interfaces/response.interface';
-import { LedgerService } from '../services/ledger.service';
+import {
+    Response,
+    ResponsePaging,
+} from '@common/response/decorators/response.decorator';
+import {
+    IResponse,
+    IResponsePaging,
+} from '@common/response/interfaces/response.interface';
+import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
+import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import {
+    LedgerService,
+    LedgerRegisterRow,
+} from '../services/ledger.service';
 import { LedgerResponseDto } from '../dtos/response/ledger.response.dto';
 
 /**
@@ -18,6 +29,45 @@ import { LedgerResponseDto } from '../dtos/response/ledger.response.dto';
 @Controller({ version: '1', path: '/admin/ledger' })
 export class LedgerAdminController {
     constructor(private readonly ledgerService: LedgerService) {}
+
+    /**
+     * Combined party-transaction register for the Adjustment Notes listing —
+     * adjustment notes + vendor payments + customer receipts in one list.
+     */
+    @ResponsePaging('ledger.register')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'party_type', required: false })
+    @ApiQuery({ name: 'party_id', required: false })
+    @ApiQuery({ name: 'direction', required: false })
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @Get('/register')
+    async register(
+        @AuthJwtPayload('companyId') companyId: string,
+        @PaginationQuery() { _limit, _offset }: PaginationListDto,
+        @Query('party_type') partyType?: string,
+        @Query('party_id') partyId?: string,
+        @Query('direction') direction?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('search') search?: string
+    ): Promise<IResponsePaging<LedgerRegisterRow>> {
+        const { data, total } = await this.ledgerService.register(companyId, {
+            party_type: partyType,
+            party_id: partyId,
+            direction,
+            date_from: dateFrom,
+            date_to: dateTo,
+            search,
+            limit: _limit,
+            offset: _offset,
+        });
+        return {
+            data,
+            _pagination: { total, totalPage: Math.ceil(total / (_limit || 25)) },
+        };
+    }
 
     @Response('ledger.customer')
     @AuthJwtAccessProtected()
