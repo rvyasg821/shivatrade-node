@@ -10,6 +10,7 @@ import { IResponse } from '@common/response/interfaces/response.interface';
 import { ReportsService } from '../services/reports.service';
 import { ProductProfitabilityResponseDto } from '../dtos/response/product-profitability.response.dto';
 import { HsnSummaryResponseDto } from '../dtos/response/hsn-summary.response.dto';
+import { GstBalanceResponseDto } from '../dtos/response/gst-balance.response.dto';
 
 /**
  * Read-only aggregation reports, company-scoped by the caller's JWT `companyId`
@@ -158,6 +159,51 @@ export class ReportsAdminController {
             `attachment; filename="hsn-summary-gstr1_${stamp(
                 query.date_from
             )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    /** Input-Output GST Balance — month-wise output GST vs input ITC. */
+    @Response('reports.gstBalance')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @Get('/gst-balance')
+    async gstBalance(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<GstBalanceResponseDto>> {
+        const data = await this.reportsService.gstBalance(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+        });
+        return { data };
+    }
+
+    /** Excel export of the same report (+ TOTAL row). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @Get('/gst-balance/export')
+    async gstBalanceExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.gstBalanceExcel(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+        });
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="gst-balance_${stamp(query.date_from)}_${stamp(
+                query.date_to
+            )}.xlsx"`
         );
         res.end(buffer);
     }

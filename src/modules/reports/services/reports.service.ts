@@ -2,6 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
 import { FileService } from '@common/file/services/file.service';
+import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
+import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
+import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import {
+    GstBalanceResponseDto,
+    GstBalanceRowDto,
+} from '../dtos/response/gst-balance.response.dto';
 import {
     ProductProfitabilityResponseDto,
     ProductProfitabilityRowDto,
@@ -20,6 +30,11 @@ export interface IProductProfitabilityQuery {
     order_direction?: 'asc' | 'desc';
     page?: number;
     perPage?: number;
+}
+
+export interface IGstBalanceQuery {
+    date_from?: string;
+    date_to?: string;
 }
 
 export interface IHsnSummaryQuery {
@@ -44,6 +59,38 @@ const pad2 = (x: number): string => String(x).padStart(2, '0');
 const ddmmyyyy = (d: Date): string =>
     `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()}`;
 
+// ── GST state helpers (Input-Output GST Balance) ─────────────────────────
+/** First 2 chars of a GSTIN = the state code ('24' = Gujarat). */
+const gstStateCode = (gstin?: string): string | null => {
+    const s = (gstin || '').trim();
+    return /^\d{2}/.test(s) ? s.slice(0, 2) : null;
+};
+/** Free-text state names — compare case/whitespace-insensitively. */
+const norm = (s?: string): string => (s || '').trim().toLowerCase();
+const MONTH_ABBR = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+/** '2026-04' → 'Apr 2026' */
+const monthLabel = (key: string): string => {
+    const [y, m] = key.split('-');
+    return `${MONTH_ABBR[Number(m) - 1] || m} ${y}`;
+};
+
+/**
+ * The date a vendor PO counts on. There is NO purchase-date column on
+ * `PoVendorEntity` — `dispatch_date` (a DATE, nullable) is when the goods moved;
+ * `createdAt` (a timestamp) is the fallback. Normalise both to 'YYYY-MM-DD' so
+ * range-filtering and month bucketing agree.
+ */
+const povIsoDate = (row: any): string => {
+    const raw = row?.dispatch_date || row?.createdAt;
+    if (!raw) return '';
+    if (typeof raw === 'string') return raw.slice(0, 10);
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? '' : isoDate(d);
+};
+
 /**
  * Read-only aggregation reports. Reads across tables via raw SQL (mirrors
  * `InvoiceService.salesLeaderboard`). Touches no write path.
@@ -52,7 +99,15 @@ const ddmmyyyy = (d: Date): string =>
 export class ReportsService {
     constructor(
         @InjectDatabaseConnection() private readonly dataSource: DataSource,
-        private readonly fileService: FileService
+        private readonly fileService: FileService,
+        // GST Balance only — a POV's GST is derived, not stored, so the input
+        // side goes through mapList rather than SQL.
+        private readonly povRepository: PoVendorRepository,
+        private readonly povService: PoVendorService,
+        private readonly vendorRepository: VendorRepository,
+        private readonly vendorAddressRepository: VendorAddressRepository,
+        private readonly companyRepository: CompanyRepository,
+        private readonly companyAddressRepository: CompanyAddressRepository
     ) {}
 
     /**
@@ -439,6 +494,320 @@ export class ReportsService {
 
         const aoa: (string | number)[][] = [
             [`HSN Summary (GSTR-1 Table 12) — ${result.period_label} (INR)`],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    /**
+     * Resolves OUR state, once per request. Mirrors the chain the POV/PO PDFs
+     * use (`po-vendor-pdf.service.ts:118-158`): corporate default address →
+     * any corporate → any default → first, then the company record itself.
+     */
+    private async resolveCompanyState(
+        companyId: string
+    ): Promise<{ code: string | null; name: string }> {
+        const company: any = await this.companyRepository.findOneById(companyId);
+        let gstin: string | undefined;
+        let state: string | undefined;
+        try {
+            const addresses: any[] =
+                await this.companyAddressRepository.findByCompanyId(companyId);
+            const corp =
+                (addresses || []).find(
+                    (a) => a.type === 'corporate' && a.is_default
+                ) ||
+                (addresses || []).find((a) => a.type === 'corporate') ||
+                (addresses || []).find((a) => a.is_default) ||
+                (addresses || [])[0];
+            if (corp) {
+                gstin = corp.gstin || undefined;
+                state = corp.state || undefined;
+            }
+        } catch {
+            /* graceful — fall back to the company record */
+        }
+        if (!gstin && company?.tax_number) gstin = company.tax_number;
+        if (!state && company?.state) state = company.state;
+        return { code: gstStateCode(gstin), name: norm(state) };
+    }
+
+    /**
+     * Input-Output GST Balance (INPUT_OUTPUT_GST_BALANCE_REPORT_PLAN.md).
+     *
+     *   Output GST = notional IGST on `igst_paid` exports, 0 under LUT. There is
+     *                no output CGST/SGST — every sale is a zero-rated export.
+     *   Input GST  = GST paid to vendors (goods + charges), split intra/inter
+     *                state (§6): same state → CGST+SGST (half each),
+     *                different → IGST, unresolvable → Unclassified.
+     *   Net ITC    = input total − output IGST → refund claimable (normally
+     *                positive for a merchant exporter; NOT tax payable).
+     */
+    async gstBalance(
+        companyId: string,
+        query: IGstBalanceQuery
+    ): Promise<GstBalanceResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+
+        const bucket = new Map<string, GstBalanceRowDto>();
+        const monthOf = (d: any): string => String(d ?? '').slice(0, 7);
+        const rowFor = (key: string): GstBalanceRowDto => {
+            if (!bucket.has(key)) {
+                bucket.set(key, {
+                    month: key,
+                    month_label: monthLabel(key),
+                    output_igst_inr: 0,
+                    input_igst_inr: 0,
+                    input_cgst_inr: 0,
+                    input_sgst_inr: 0,
+                    input_unclassified_inr: 0,
+                    input_total_inr: 0,
+                    net_itc_inr: 0,
+                });
+            }
+            return bucket.get(key)!;
+        };
+
+        // ── Output: notional IGST by month (same gate as hsnSummary) ──
+        const outRaw: any[] = await this.dataSource.query(
+            `SELECT to_char(i.invoice_date, 'YYYY-MM')                AS month,
+                    COALESCE(SUM(
+                        CASE WHEN i.gst_route = 'igst_paid'
+                             THEN il.taxable_amount * COALESCE(il.igst_rate_pct, 0) / 100.0
+                             ELSE 0 END
+                    ), 0)::float8                                     AS output_igst_inr
+             FROM invoice_lines il
+             JOIN invoices i
+                 ON i._id = il.invoice_id AND i.soft_delete = false
+             WHERE il.company_id = $1
+               AND il.soft_delete = false
+               AND i.status NOT IN ('draft', 'cancelled')
+               AND i.invoice_date BETWEEN $2 AND $3
+             GROUP BY to_char(i.invoice_date, 'YYYY-MM')`,
+            [companyId, from, to]
+        );
+        for (const o of outRaw) {
+            rowFor(o.month).output_igst_inr = r2(n(o.output_igst_inr));
+        }
+
+        // ── Input: POV GST via mapList, split by state ──
+        // A POV has NO purchase-date column — only dispatch_date (nullable) and
+        // createdAt. So the date can't be pushed into the query; fetch the
+        // company's dispatched/closed POVs and bucket in JS on
+        // `dispatch_date || createdAt`, which is when the goods (and the GST)
+        // actually landed.
+        const povRaw: any[] = await this.povRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            status: { $in: ['dispatched', 'closed'] },
+        } as any);
+
+        let unclassifiedPovs = 0;
+        // Date-filter here rather than in the query (see above). Anything with
+        // no resolvable date drops out rather than landing in a wrong month.
+        const povInRange = povRaw.filter((r) => {
+            const d = povIsoDate(r);
+            return !!d && d >= from && d <= to;
+        });
+        if (povInRange.length) {
+            const povs = await this.povService.mapList(povInRange as any);
+            const monthByPov = new Map<string, string>(
+                povInRange.map((r) => [r._id.toString(), monthOf(povIsoDate(r))])
+            );
+
+            const vendorIds = Array.from(
+                new Set(
+                    (povs as any[]).map((p) => p.vendor_id).filter(Boolean)
+                )
+            );
+            const [vendors, addresses, mine] = await Promise.all([
+                vendorIds.length
+                    ? this.vendorRepository.findAll({
+                          _id: { $in: vendorIds },
+                      } as any)
+                    : Promise.resolve([] as any[]),
+                vendorIds.length
+                    ? this.vendorAddressRepository.findAll({
+                          vendor_id: { $in: vendorIds },
+                          // Editing an address soft-deletes the old row and
+                          // writes a new one — without this we read the dead
+                          // one (stale state, no GSTIN) and misclassify.
+                          soft_delete: false,
+                      } as any)
+                    : Promise.resolve([] as any[]),
+                this.resolveCompanyState(companyId),
+            ]);
+
+            const vendorById = new Map<string, any>(
+                (vendors as any[]).map((v) => [v._id.toString(), v])
+            );
+            const addrById = new Map<string, any>(
+                (addresses as any[]).map((a) => [a._id.toString(), a])
+            );
+            // Preferred address per vendor: default bill_from → any bill_from →
+            // any default → first seen. Only used when the POV names no address.
+            const addrByVendor = new Map<string, any>();
+            const rank = (a: any): number =>
+                a.type === 'bill_from' && a.is_default
+                    ? 0
+                    : a.type === 'bill_from'
+                      ? 1
+                      : a.is_default
+                        ? 2
+                        : 3;
+            for (const a of addresses as any[]) {
+                const key = a.vendor_id?.toString();
+                if (!key) continue;
+                const cur = addrByVendor.get(key);
+                if (!cur || rank(a) < rank(cur)) addrByVendor.set(key, a);
+            }
+            // The address this POV actually billed from, when it names one —
+            // same precedence as po-vendor-pdf.service.ts:178-227.
+            const addrIdByPov = new Map<string, string>(
+                povInRange
+                    .filter((r) => r.vendor_address_id)
+                    .map((r) => [
+                        r._id.toString(),
+                        r.vendor_address_id.toString(),
+                    ])
+            );
+
+            for (const pov of povs as any[]) {
+                const gst = r2(n((pov as any).gst_inr));
+                const row = rowFor(monthByPov.get(pov._id) || monthOf(from));
+                if (gst <= 0) continue;
+
+                // GSTIN lives on the ADDRESS first, the vendor master second —
+                // most data fills only the address one.
+                const vendor = vendorById.get(String(pov.vendor_id));
+                const addr =
+                    addrById.get(addrIdByPov.get(pov._id) || '') ||
+                    addrByVendor.get(String(pov.vendor_id));
+                const vendorCode = gstStateCode(addr?.gstin || vendor?.gstin);
+                let intra: boolean | null = null;
+                if (vendorCode && mine.code) {
+                    intra = vendorCode === mine.code;
+                } else {
+                    // Fallback: compare state names (plan §6.2). Vendor state
+                    // exists only on the address — there is no vendor.state.
+                    const vState = norm(addr?.state);
+                    if (vState && mine.name) intra = vState === mine.name;
+                }
+
+                if (intra === null) {
+                    unclassifiedPovs += 1;
+                    row.input_unclassified_inr = r2(
+                        row.input_unclassified_inr + gst
+                    );
+                } else if (intra) {
+                    // Halve the POV's own GST rather than re-deriving per line,
+                    // so CGST + SGST always foots back to it to the paisa.
+                    const half = r2(gst / 2);
+                    row.input_cgst_inr = r2(row.input_cgst_inr + half);
+                    row.input_sgst_inr = r2(row.input_sgst_inr + (gst - half));
+                } else {
+                    row.input_igst_inr = r2(row.input_igst_inr + gst);
+                }
+            }
+        }
+
+        // ── Fill every month in the range, so a gap reads as zero, not absent ──
+        const rows: GstBalanceRowDto[] = [];
+        const cur = new Date(`${from.slice(0, 7)}-01T00:00:00`);
+        const end = new Date(`${to.slice(0, 7)}-01T00:00:00`);
+        while (cur <= end) {
+            const key = `${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}`;
+            rows.push(rowFor(key));
+            cur.setMonth(cur.getMonth() + 1);
+        }
+        rows.sort((a, b) => (a.month < b.month ? -1 : 1));
+
+        const totals = {
+            output_igst_inr: 0,
+            input_igst_inr: 0,
+            input_cgst_inr: 0,
+            input_sgst_inr: 0,
+            input_unclassified_inr: 0,
+            input_total_inr: 0,
+            net_itc_inr: 0,
+        };
+        for (const row of rows) {
+            row.input_total_inr = r2(
+                row.input_igst_inr +
+                    row.input_cgst_inr +
+                    row.input_sgst_inr +
+                    row.input_unclassified_inr
+            );
+            row.net_itc_inr = r2(row.input_total_inr - row.output_igst_inr);
+            totals.output_igst_inr = r2(
+                totals.output_igst_inr + row.output_igst_inr
+            );
+            totals.input_igst_inr = r2(totals.input_igst_inr + row.input_igst_inr);
+            totals.input_cgst_inr = r2(totals.input_cgst_inr + row.input_cgst_inr);
+            totals.input_sgst_inr = r2(totals.input_sgst_inr + row.input_sgst_inr);
+            totals.input_unclassified_inr = r2(
+                totals.input_unclassified_inr + row.input_unclassified_inr
+            );
+            totals.input_total_inr = r2(
+                totals.input_total_inr + row.input_total_inr
+            );
+            totals.net_itc_inr = r2(totals.net_itc_inr + row.net_itc_inr);
+        }
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows,
+            totals,
+            currency: 'INR',
+            unclassified_pov_count: unclassifiedPovs,
+        };
+    }
+
+    /** The same report as an .xlsx Buffer, same column order + TOTAL row. */
+    async gstBalanceExcel(
+        companyId: string,
+        query: IGstBalanceQuery
+    ): Promise<Buffer> {
+        const result = await this.gstBalance(companyId, query);
+        const header = [
+            'Month',
+            'Output IGST (INR)',
+            'Input IGST (INR)',
+            'Input CGST (INR)',
+            'Input SGST (INR)',
+            'Unclassified (INR)',
+            'Input Total (INR)',
+            'Net ITC (INR)',
+        ];
+        const body = result.rows.map((r) => [
+            r.month_label,
+            r.output_igst_inr,
+            r.input_igst_inr,
+            r.input_cgst_inr,
+            r.input_sgst_inr,
+            r.input_unclassified_inr,
+            r.input_total_inr,
+            r.net_itc_inr,
+        ]);
+        const totalRow = [
+            'TOTAL',
+            result.totals.output_igst_inr,
+            result.totals.input_igst_inr,
+            result.totals.input_cgst_inr,
+            result.totals.input_sgst_inr,
+            result.totals.input_unclassified_inr,
+            result.totals.input_total_inr,
+            result.totals.net_itc_inr,
+        ];
+        const aoa: (string | number)[][] = [
+            [`Input-Output GST Balance — ${result.period_label} (INR)`],
+            ['Net ITC = Input Total − Output IGST (positive = refund claimable)'],
             [],
             header,
             ...body,

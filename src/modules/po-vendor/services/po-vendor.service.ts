@@ -2762,6 +2762,10 @@ export class PoVendorService {
                         : [],
 
                 order_value: String(orderValue),
+                // The GST already folded into order_value, surfaced on its own
+                // so the Input-Output GST report can read it instead of
+                // re-deriving the product-master fallback + jsonb charge rates.
+                gst_inr: String(round2(gstInr + chargeGstInr)),
                 amount_paid: String(amountPaid),
                 balance_payable: String(balancePayable),
                 payment_status: paymentStatus,
