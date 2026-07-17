@@ -6,6 +6,10 @@ import {
     ProductProfitabilityResponseDto,
     ProductProfitabilityRowDto,
 } from '../dtos/response/product-profitability.response.dto';
+import {
+    HsnSummaryResponseDto,
+    HsnSummaryRowDto,
+} from '../dtos/response/hsn-summary.response.dto';
 
 export interface IProductProfitabilityQuery {
     date_from?: string;
@@ -13,6 +17,19 @@ export interface IProductProfitabilityQuery {
     category_id?: string;
     search?: string;
     order_by?: 'profit' | 'revenue' | 'cost' | 'qty' | 'margin';
+    order_direction?: 'asc' | 'desc';
+    page?: number;
+    perPage?: number;
+}
+
+export interface IHsnSummaryQuery {
+    date_from?: string;
+    date_to?: string;
+    /** HSN code, ILIKE. */
+    search?: string;
+    /** igst_paid | lut_zero_rated */
+    gst_route?: string;
+    order_by?: 'hsn' | 'taxable' | 'igst' | 'qty';
     order_direction?: 'asc' | 'desc';
     page?: number;
     perPage?: number;
@@ -230,6 +247,205 @@ export class ReportsService {
             currency: 'INR',
             pagination: { total: rows.length, perPage, orderBy },
         };
+    }
+
+    /**
+     * HSN Summary in GSTR-1 Table 12 shape — one row per HSN × rate × UQC.
+     *
+     * IGST is NOTIONAL: the stored `igst_amount` is 0 on both export routes, so
+     * it's derived from `igst_rate_pct` (the HSN GST rate) and only for
+     * `igst_paid` invoices — under LUT no IGST is charged at all. CGST/SGST/Cess
+     * are always 0: every sale is a zero-rated export, there is no domestic
+     * intra-state supply (plan §3.1).
+     *
+     * Same aggregation as `InvoiceService.buildIgstRefundBuckets` (rate buckets
+     * over INR `taxable_amount`), regrouped by HSN + UQC with a `gst_route` gate.
+     */
+    async hsnSummary(
+        companyId: string,
+        query: IHsnSummaryQuery
+    ): Promise<HsnSummaryResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const gstRoute = query.gst_route?.trim() ? query.gst_route.trim() : null;
+
+        // Line `taxable_amount` is already INR base (invoice.service.ts
+        // `recompute()`) — sum it directly, no exchange-rate conversion.
+        const raw: any[] = await this.dataSource.query(
+            `SELECT il.hsn_code                                     AS hsn_code,
+                    MAX(il.product_name)                            AS description,
+                    il.uqc_code                                     AS uqc_code,
+                    COALESCE(il.igst_rate_pct, 0)::float8           AS rate,
+                    COALESCE(SUM(il.qty), 0)::float8                AS total_qty,
+                    COALESCE(SUM(il.taxable_amount), 0)::float8     AS taxable_value_inr,
+                    COALESCE(SUM(
+                        CASE WHEN i.gst_route = 'igst_paid'
+                             THEN il.taxable_amount * COALESCE(il.igst_rate_pct, 0) / 100.0
+                             ELSE 0 END
+                    ), 0)::float8                                   AS igst_inr,
+                    COUNT(*) FILTER (
+                        WHERE il.hsn_code IS NULL OR il.uqc_code IS NULL
+                    )::int                                          AS missing_meta
+             FROM invoice_lines il
+             JOIN invoices i
+                 ON i._id = il.invoice_id AND i.soft_delete = false
+             WHERE il.company_id = $1
+               AND il.soft_delete = false
+               AND i.status NOT IN ('draft', 'cancelled')
+               AND i.invoice_date BETWEEN $2 AND $3
+               AND ($4::text IS NULL OR il.hsn_code ILIKE '%' || $4 || '%')
+               AND ($5::text IS NULL OR i.gst_route = $5)
+             GROUP BY il.hsn_code, il.uqc_code, COALESCE(il.igst_rate_pct, 0)`,
+            [companyId, from, to, search, gstRoute]
+        );
+
+        let missingMeta = 0;
+        const rows: HsnSummaryRowDto[] = raw.map((row) => {
+            const taxable = r2(n(row.taxable_value_inr));
+            const igst = r2(n(row.igst_inr));
+            missingMeta += n(row.missing_meta);
+            return {
+                hsn_code: row.hsn_code ?? null,
+                description: row.description ?? null,
+                uqc_code: row.uqc_code ?? null,
+                rate: r2(n(row.rate)),
+                total_qty: r2(n(row.total_qty)),
+                taxable_value_inr: taxable,
+                igst_inr: igst,
+                // No domestic supply exists — kept for Table-12 completeness.
+                cgst_inr: 0,
+                sgst_inr: 0,
+                cess_inr: 0,
+                total_value_inr: r2(taxable + igst),
+            };
+        });
+
+        // Sort (default hsn asc — Table 12 reads HSN-ordered).
+        const orderBy = query.order_by || 'hsn';
+        const dir = query.order_direction === 'desc' ? -1 : 1;
+        rows.sort((a, b) => {
+            if (orderBy === 'hsn') {
+                const cmp = String(a.hsn_code || '').localeCompare(
+                    String(b.hsn_code || '')
+                );
+                // Same HSN → rate asc keeps the rate buckets readable.
+                return (cmp !== 0 ? cmp : a.rate - b.rate) * dir;
+            }
+            const keyOf = (x: HsnSummaryRowDto): number =>
+                orderBy === 'taxable'
+                    ? x.taxable_value_inr
+                    : orderBy === 'igst'
+                      ? x.igst_inr
+                      : x.total_qty;
+            return (keyOf(a) - keyOf(b)) * dir;
+        });
+
+        // Totals across the WHOLE filtered set (not just the page).
+        const totals = rows.reduce(
+            (acc, x) => {
+                acc.total_qty += x.total_qty;
+                acc.taxable_value_inr += x.taxable_value_inr;
+                acc.igst_inr += x.igst_inr;
+                acc.total_value_inr += x.total_value_inr;
+                return acc;
+            },
+            {
+                total_qty: 0,
+                total_value_inr: 0,
+                taxable_value_inr: 0,
+                igst_inr: 0,
+                cgst_inr: 0,
+                sgst_inr: 0,
+                cess_inr: 0,
+            }
+        );
+        totals.total_qty = r2(totals.total_qty);
+        totals.taxable_value_inr = r2(totals.taxable_value_inr);
+        totals.igst_inr = r2(totals.igst_inr);
+        totals.total_value_inr = r2(totals.total_value_inr);
+
+        // Paginate in JS — an aggregated report is at most a few hundred rows,
+        // and the export legitimately asks for the whole set.
+        const perPage = Math.max(1, Math.min(100000, Number(query.perPage) || 25));
+        const page = Math.max(1, Number(query.page) || 1);
+        const start = (page - 1) * perPage;
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: rows.slice(start, start + perPage),
+            totals,
+            currency: 'INR',
+            missing_hsn_or_uqc_rows: missingMeta,
+            pagination: { total: rows.length, perPage, orderBy },
+        };
+    }
+
+    /**
+     * The same report as an .xlsx Buffer, in the exact Table-12 column order.
+     * Runs unpaginated, then appends a TOTAL row.
+     */
+    async hsnSummaryExcel(
+        companyId: string,
+        query: IHsnSummaryQuery
+    ): Promise<Buffer> {
+        const result = await this.hsnSummary(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000, // one page = the whole set for export
+        });
+
+        const header = [
+            'HSN',
+            'Description',
+            'UQC',
+            'Rate %',
+            'Total Qty',
+            'Total Value (INR)',
+            'Taxable Value (INR)',
+            'IGST (INR)',
+            'CGST (INR)',
+            'SGST (INR)',
+            'Cess (INR)',
+        ];
+        const body = result.rows.map((r) => [
+            r.hsn_code || '',
+            r.description || '',
+            r.uqc_code || '',
+            r.rate,
+            r.total_qty,
+            r.total_value_inr,
+            r.taxable_value_inr,
+            r.igst_inr,
+            r.cgst_inr,
+            r.sgst_inr,
+            r.cess_inr,
+        ]);
+        const totalRow = [
+            'TOTAL',
+            '',
+            '',
+            '',
+            result.totals.total_qty,
+            result.totals.total_value_inr,
+            result.totals.taxable_value_inr,
+            result.totals.igst_inr,
+            result.totals.cgst_inr,
+            result.totals.sgst_inr,
+            result.totals.cess_inr,
+        ];
+
+        const aoa: (string | number)[][] = [
+            [`HSN Summary (GSTR-1 Table 12) — ${result.period_label} (INR)`],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
     }
 }
 
