@@ -12,6 +12,20 @@ export class LedgerRowDto {
     @ApiProperty({ type: Number }) balance: number;
 }
 
+/**
+ * Headline totals shown as cards above the statement. Lifetime figures —
+ * deliberately NOT narrowed by the from/to filter, since "what is still owed?"
+ * isn't a date-range question. The party ledgers each answer it from their own
+ * side; the FE picks the wording.
+ */
+export class LedgerSummaryDto {
+    /** Vendor: Σ order_value of dispatched/closed VPOs. Customer: Σ invoice grand_total. */
+    @ApiProperty({ type: Number }) total_billed: number;
+    /** Σ non-voided payments (vendor) / receipts (customer). Adjustment notes are NOT netted off. */
+    @ApiProperty({ type: Number }) total_paid: number;
+    @ApiProperty({ type: Number }) outstanding: number;
+}
+
 export class LedgerResponseDto {
     @ApiProperty({ type: String }) party_type: string;
     @ApiProperty({ type: String }) party_id: string;
@@ -21,4 +35,6 @@ export class LedgerResponseDto {
     @ApiProperty({ type: Number }) total_dr: number;
     @ApiProperty({ type: Number }) total_cr: number;
     @ApiProperty({ type: Number }) balance: number;
+    @ApiProperty({ required: false, type: LedgerSummaryDto })
+    summary?: LedgerSummaryDto;
 }
