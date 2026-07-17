@@ -130,6 +130,9 @@ export class PoVendorGetResponseDto {
     // ── Vendor payments ──────────────────────────────────────────────────
     /** Live "Order Value (Payable)" = lines (incl tax) + vendor charges. */
     @ApiProperty({ required: false, type: String }) order_value?: string;
+    /** Input GST inside `order_value` = goods GST + per-charge GST. Read-only
+     *  breakout for the Input-Output GST report; does not affect any total. */
+    @ApiProperty({ required: false, type: String }) gst_inr?: string;
     /** Sum of active (non-voided) payments. */
     @ApiProperty({ required: false, type: String }) amount_paid?: string;
     /** order_value − amount_paid. */

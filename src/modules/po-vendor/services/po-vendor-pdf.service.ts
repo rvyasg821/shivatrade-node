@@ -179,9 +179,15 @@ export class PoVendorPdfService {
         let vendorState: string | undefined;
         if (pov.vendor_id) {
             try {
+                // `soft_delete: false` matters: editing a vendor address
+                // soft-deletes the old row and inserts a new one, so the id the
+                // POV snapshotted may point at a dead row. Without this we'd
+                // "find" it, skip the live-address fallback below, and print a
+                // stale/blank GSTIN (then wrongly fall back to vendor.gstin).
                 const addr = pov.vendor_address_id
                     ? await this.vendorAddressRepository.findOne({
                           _id: pov.vendor_address_id,
+                          soft_delete: false,
                       } as any)
                     : null;
                 const fallbacks = !addr
