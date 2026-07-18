@@ -43,9 +43,24 @@ export class AdjustmentNoteEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'date', nullable: false })
     note_date: string;
 
-    /** In the party's currency (customer: their ccy; vendor: always INR). */
+    /**
+     * The BASE value, in the party's currency (customer: their ccy; vendor:
+     * always INR). When GST applies (vendor + debit only), the money that
+     * actually posts to the ledger is `amount + gst_amount` (see below).
+     */
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false })
     amount: string;
+
+    /**
+     * GST — populated ONLY on a VENDOR + DEBIT note (an Indian, INR claim back
+     * on a vendor). Null everywhere else. `gst_amount = round2(amount ×
+     * gst_rate / 100)`; the ledger posts `amount + gst_amount`.
+     */
+    @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+    gst_rate?: string;
+
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
+    gst_amount?: string;
 
     @Column({ type: 'varchar', length: 10, nullable: false, default: 'INR' })
     currency_code: string;

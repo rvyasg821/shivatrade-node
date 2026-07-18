@@ -4,6 +4,7 @@ import {
     IsEnum,
     IsNotEmpty,
     IsNumberString,
+    IsOptional,
     IsString,
     IsUUID,
     MaxLength,
@@ -36,6 +37,16 @@ export class AdjustmentNoteCreateRequestDto {
     @IsNumberString({}, { message: 'amount must be a numeric string' })
     @IsNotEmpty()
     amount: string;
+
+    /**
+     * GST rate %, e.g. '12'. Honoured ONLY on a vendor + debit note; ignored
+     * (stored null) for any other party/direction combination. The server
+     * computes `gst_amount = round2(amount × gst_rate / 100)`.
+     */
+    @ApiProperty({ required: false, type: String, example: '12' })
+    @IsOptional()
+    @IsNumberString({}, { message: 'gst_rate must be a numeric string' })
+    gst_rate?: string;
 
     @ApiProperty({ type: String })
     @IsString()
