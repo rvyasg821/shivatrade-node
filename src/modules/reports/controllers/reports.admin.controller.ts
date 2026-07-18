@@ -12,6 +12,7 @@ import { ProductProfitabilityResponseDto } from '../dtos/response/product-profit
 import { HsnSummaryResponseDto } from '../dtos/response/hsn-summary.response.dto';
 import { GstBalanceResponseDto } from '../dtos/response/gst-balance.response.dto';
 import { PurchaseTurnoverResponseDto } from '../dtos/response/purchase-turnover.response.dto';
+import { SalesTurnoverResponseDto } from '../dtos/response/sales-turnover.response.dto';
 
 /**
  * Read-only aggregation reports, company-scoped by the caller's JWT `companyId`
@@ -205,6 +206,81 @@ export class ReportsAdminController {
             `attachment; filename="gst-balance_${stamp(query.date_from)}_${stamp(
                 query.date_to
             )}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    /** Sales Turnover — by month or by customer, sectioned per currency. */
+    @Response('reports.salesTurnover')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'group_by', required: false, description: 'month | customer' })
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'currency', required: false, description: 'narrow to one currency' })
+    @ApiQuery({
+        name: 'payment_status',
+        required: false,
+        description: 'unpaid | partially_paid | paid | overpaid',
+    })
+    @ApiQuery({
+        name: 'order_by',
+        required: false,
+        description: 'value | received | outstanding | count (customer mode)',
+    })
+    @ApiQuery({ name: 'order_direction', required: false, description: 'asc | desc' })
+    @Get('/sales-turnover')
+    async salesTurnover(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<SalesTurnoverResponseDto>> {
+        const data = await this.reportsService.salesTurnover(companyId, {
+            group_by: query.group_by as any,
+            date_from: query.date_from,
+            date_to: query.date_to,
+            customer_id: query.customer_id,
+            currency: query.currency,
+            payment_status: query.payment_status,
+            order_by: query.order_by as any,
+            order_direction: query.order_direction as any,
+        });
+        return { data };
+    }
+
+    /** Excel export of the same report (one sheet, a section per currency). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'group_by', required: false })
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'currency', required: false })
+    @ApiQuery({ name: 'payment_status', required: false })
+    @Get('/sales-turnover/export')
+    async salesTurnoverExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.salesTurnoverExcel(companyId, {
+            group_by: query.group_by as any,
+            date_from: query.date_from,
+            date_to: query.date_to,
+            customer_id: query.customer_id,
+            currency: query.currency,
+            payment_status: query.payment_status,
+            order_by: query.order_by as any,
+            order_direction: query.order_direction as any,
+        });
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="sales-turnover_${
+                query.group_by || 'month'
+            }_${stamp(query.date_from)}_${stamp(query.date_to)}.xlsx"`
         );
         res.end(buffer);
     }
