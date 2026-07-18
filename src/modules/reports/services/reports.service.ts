@@ -8,6 +8,14 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
+import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
+import { InvoicePaymentRepository } from '@modules/invoice/repository/repositories/invoice-payment.repository';
+import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
+import {
+    SalesTurnoverResponseDto,
+    SalesTurnoverRowDto,
+    CurrencyGroupDto,
+} from '../dtos/response/sales-turnover.response.dto';
 import {
     GstBalanceResponseDto,
     GstBalanceRowDto,
@@ -54,6 +62,19 @@ export interface IPurchaseTurnoverQuery {
     perPage?: number;
 }
 
+export interface ISalesTurnoverQuery {
+    group_by?: 'month' | 'customer';
+    date_from?: string;
+    date_to?: string;
+    customer_id?: string;
+    /** Narrow to one currency section. */
+    currency?: string;
+    /** unpaid | partially_paid | paid | overpaid — derived, filtered in JS. */
+    payment_status?: string;
+    order_by?: 'value' | 'received' | 'outstanding' | 'count';
+    order_direction?: 'asc' | 'desc';
+}
+
 export interface IHsnSummaryQuery {
     date_from?: string;
     date_to?: string;
@@ -88,6 +109,17 @@ const MONTH_ABBR = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
+// ── Sales Turnover helpers ───────────────────────────────────────────────
+/**
+ * Invoice statuses that count as a sale. MUST equal `LEDGER_INVOICE_STATUSES`
+ * in `ledger.service.ts:29` — the customer ledger and this report have to agree
+ * (plan §6, §12.7). Excludes `draft` (not a sale yet) and `cancelled`.
+ */
+const SALES_TURNOVER_STATUSES = ['issued', 'partially_paid', 'paid'];
+/** Currency sort for the sections: INR first, then alphabetical. */
+const currencyRank = (a: string, b: string): number =>
+    a === b ? 0 : a === 'INR' ? -1 : b === 'INR' ? 1 : a < b ? -1 : 1;
+
 /** '2026-04' → 'Apr 2026' */
 const monthLabel = (key: string): string => {
     const [y, m] = key.split('-');
@@ -124,7 +156,11 @@ export class ReportsService {
         private readonly vendorRepository: VendorRepository,
         private readonly vendorAddressRepository: VendorAddressRepository,
         private readonly companyRepository: CompanyRepository,
-        private readonly companyAddressRepository: CompanyAddressRepository
+        private readonly companyAddressRepository: CompanyAddressRepository,
+        // Sales Turnover — invoices, their receipts, customer names.
+        private readonly invoiceRepository: InvoiceRepository,
+        private readonly invoicePaymentRepository: InvoicePaymentRepository,
+        private readonly customerRepository: CustomerRepository
     ) {}
 
     /**
@@ -847,6 +883,285 @@ export class ReportsService {
      * turnover is what was purchased, not what was paid — dropping them would
      * hide the Outstanding that matters most (plan §6).
      */
+    /**
+     * Sales Turnover (SALES_TURNOVER_REPORT_PLAN) — what Shivatrade sold, in the
+     * customer's own currency, By Month or By Customer. Multi-currency by nature:
+     * the report is a STACK of per-currency sections, each with its own subtotal.
+     * Currencies are never summed together (§5). All money is native — this
+     * method never touches `exchange_rate` or `grand_total_inr`.
+     */
+    async salesTurnover(
+        companyId: string,
+        query: ISalesTurnoverQuery
+    ): Promise<SalesTurnoverResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const groupBy = query.group_by === 'customer' ? 'customer' : 'month';
+
+        const find: Record<string, any> = {
+            company_id: companyId,
+            soft_delete: false,
+            status: { $in: SALES_TURNOVER_STATUSES },
+        };
+        if (query.customer_id) find.customer_id = query.customer_id;
+        const invoicesRaw: any[] = await this.invoiceRepository.findAll(
+            find as any
+        );
+
+        // Date filter on the real `invoice_date` column (no POV-style proxy).
+        const invoices = invoicesRaw.filter((inv) => {
+            const d = String(inv.invoice_date || '').slice(0, 10);
+            return !!d && d >= from && d <= to;
+        });
+
+        // Received per invoice — NATIVE. One batched read of non-voided
+        // InvoicePayments, mirroring ledger.service.ts:134.
+        const invoiceIds = invoices.map((i) => i._id.toString());
+        const receivedById = new Map<string, number>();
+        if (invoiceIds.length) {
+            const payments: any[] =
+                await this.invoicePaymentRepository.findAll({
+                    invoice_id: { $in: invoiceIds },
+                    soft_delete: false,
+                } as any);
+            for (const p of payments) {
+                if (p.voided_at) continue; // a voided receipt is not received
+                const id = p.invoice_id?.toString();
+                if (!id) continue;
+                receivedById.set(id, r2(n(receivedById.get(id)) + n(p.amount)));
+            }
+        }
+
+        // Customer names (customer mode only) — one batched read, no N+1.
+        const customerNameById = new Map<string, string>();
+        if (groupBy === 'customer') {
+            const ids = Array.from(
+                new Set(
+                    invoices
+                        .map((i) => i.customer_id?.toString())
+                        .filter(Boolean)
+                )
+            );
+            if (ids.length) {
+                const customers: any[] =
+                    await this.customerRepository.findAll({
+                        _id: { $in: ids },
+                    } as any);
+                for (const c of customers) {
+                    customerNameById.set(
+                        c._id.toString(),
+                        c.company_name || '—'
+                    );
+                }
+            }
+        }
+
+        // Every currency present in range — the dropdown source (§7.3.10).
+        // Computed before the currency narrow so the dropdown is stable.
+        const availableCurrencies = Array.from(
+            new Set(invoices.map((i) => i.currency_code || 'INR'))
+        ).sort(currencyRank);
+
+        // Per-invoice figures + derived payment_status; apply the status filter.
+        const groupMap = new Map<string, CurrencyGroupDto>();
+        const rowMapByCurrency = new Map<string, Map<string, SalesTurnoverRowDto>>();
+        const rowFor = (
+            currency: string,
+            symbol: string | null,
+            key: string,
+            label: string
+        ): SalesTurnoverRowDto => {
+            if (!groupMap.has(currency)) {
+                groupMap.set(currency, {
+                    currency,
+                    currency_symbol: symbol,
+                    rows: [],
+                    totals: {
+                        invoice_count: 0,
+                        sales_value: 0,
+                        received: 0,
+                        outstanding: 0,
+                    },
+                });
+                rowMapByCurrency.set(currency, new Map());
+            }
+            const rm = rowMapByCurrency.get(currency)!;
+            if (!rm.has(key)) {
+                rm.set(key, {
+                    key,
+                    label,
+                    invoice_count: 0,
+                    sales_value: 0,
+                    received: 0,
+                    outstanding: 0,
+                });
+            }
+            return rm.get(key)!;
+        };
+
+        for (const inv of invoices) {
+            const currency = inv.currency_code || 'INR';
+            if (query.currency && currency !== query.currency) continue;
+            const sales = r2(n(inv.grand_total));
+            const received = r2(n(receivedById.get(inv._id.toString())));
+            const status =
+                received <= 0
+                    ? 'unpaid'
+                    : received < sales
+                      ? 'partially_paid'
+                      : received === sales
+                        ? 'paid'
+                        : 'overpaid';
+            if (query.payment_status && status !== query.payment_status) {
+                continue;
+            }
+            const key =
+                groupBy === 'customer'
+                    ? String(inv.customer_id || '—')
+                    : String(inv.invoice_date).slice(0, 7);
+            const label =
+                groupBy === 'customer'
+                    ? customerNameById.get(String(inv.customer_id)) || '—'
+                    : monthLabel(key);
+            const row = rowFor(
+                currency,
+                inv.currency_symbol || null,
+                key,
+                label
+            );
+            row.invoice_count += 1;
+            row.sales_value = r2(row.sales_value + sales);
+            row.received = r2(row.received + received);
+        }
+
+        // Finalise each currency section: month zero-fill / customer sort,
+        // outstanding, and a per-section subtotal (never cross-currency).
+        const orderBy = query.order_by || 'value';
+        const dir = query.order_direction === 'asc' ? 1 : -1;
+        const keyOf = (x: SalesTurnoverRowDto): number =>
+            orderBy === 'received'
+                ? x.received
+                : orderBy === 'outstanding'
+                  ? x.outstanding
+                  : orderBy === 'count'
+                    ? x.invoice_count
+                    : x.sales_value;
+
+        const groups: CurrencyGroupDto[] = Array.from(groupMap.keys())
+            .sort(currencyRank)
+            .map((currency) => {
+                const g = groupMap.get(currency)!;
+                const rm = rowMapByCurrency.get(currency)!;
+                let rows: SalesTurnoverRowDto[];
+                if (groupBy === 'month') {
+                    rows = [];
+                    const cur = new Date(`${from.slice(0, 7)}-01T00:00:00`);
+                    const end = new Date(`${to.slice(0, 7)}-01T00:00:00`);
+                    while (cur <= end) {
+                        const key = `${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}`;
+                        rows.push(
+                            rm.get(key) || {
+                                key,
+                                label: monthLabel(key),
+                                invoice_count: 0,
+                                sales_value: 0,
+                                received: 0,
+                                outstanding: 0,
+                            }
+                        );
+                        cur.setMonth(cur.getMonth() + 1);
+                    }
+                    rows.sort((a, b) => (a.key < b.key ? -1 : 1));
+                } else {
+                    rows = Array.from(rm.values());
+                    rows.sort((a, b) => (keyOf(a) - keyOf(b)) * dir);
+                }
+                const totals = {
+                    invoice_count: 0,
+                    sales_value: 0,
+                    received: 0,
+                    outstanding: 0,
+                };
+                for (const row of rows) {
+                    row.outstanding = r2(row.sales_value - row.received);
+                    totals.invoice_count += row.invoice_count;
+                    totals.sales_value = r2(totals.sales_value + row.sales_value);
+                    totals.received = r2(totals.received + row.received);
+                    totals.outstanding = r2(totals.outstanding + row.outstanding);
+                }
+                g.rows = rows;
+                g.totals = totals;
+                return g;
+            });
+
+        const overallInvoiceCount = groups.reduce(
+            (s, g) => s + g.totals.invoice_count,
+            0
+        );
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            group_by: groupBy,
+            groups,
+            available_currencies: availableCurrencies,
+            overall_invoice_count: overallInvoiceCount,
+        };
+    }
+
+    /**
+     * The same report as an .xlsx Buffer. One sheet, a currency-header row
+     * before each section's rows + its TOTAL — there is deliberately NO
+     * cross-currency total cell (§12.1).
+     */
+    async salesTurnoverExcel(
+        companyId: string,
+        query: ISalesTurnoverQuery
+    ): Promise<Buffer> {
+        const result = await this.salesTurnover(companyId, query);
+        const firstCol = result.group_by === 'customer' ? 'Customer' : 'Month';
+        const header = [
+            firstCol,
+            'Invoices',
+            'Sales Value',
+            'Received',
+            'Outstanding',
+        ];
+
+        const aoa: (string | number)[][] = [
+            [`Sales Turnover — ${result.period_label}`],
+            [`Grouped by: ${firstCol}  ·  Invoices: ${result.overall_invoice_count}`],
+            [],
+        ];
+
+        for (const g of result.groups) {
+            const label = g.currency_symbol
+                ? `${g.currency} (${g.currency_symbol})`
+                : g.currency;
+            aoa.push([label]); // currency section header
+            aoa.push(header);
+            for (const r of g.rows) {
+                aoa.push([
+                    r.label,
+                    r.invoice_count,
+                    r.sales_value,
+                    r.received,
+                    r.outstanding,
+                ]);
+            }
+            aoa.push([
+                'TOTAL',
+                g.totals.invoice_count,
+                g.totals.sales_value,
+                g.totals.received,
+                g.totals.outstanding,
+            ]);
+            aoa.push([]); // blank line between currency sections
+        }
+
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
     async purchaseTurnover(
         companyId: string,
         query: IPurchaseTurnoverQuery
