@@ -70,7 +70,12 @@ export interface LedgerRegisterRow {
     party_id: string;
     party_name?: string;
     direction: string;
+    /** The money that posts — base + GST for a vendor+debit note, else base. */
     amount: string;
+    /** GST breakdown — present only on a vendor + debit adjustment note. */
+    base_amount?: string;
+    gst_rate?: string;
+    gst_amount?: string;
     currency_code: string;
     particulars: string;
     voided_at?: Date;
@@ -268,13 +273,17 @@ export class LedgerService {
         for (const n of notes as any[]) {
             if (n.voided_at) continue;
             const isDebit = n.direction === ENUM_ADJUSTMENT_DIRECTION.DEBIT;
+            // A vendor + debit note may carry GST — the money that posts is the
+            // base + GST. gst_amount is null on every other note, so this equals
+            // the base there (see AdjustmentNote entity).
+            const eff = round2(num(n.amount) + num(n.gst_amount));
             rows.push({
                 date: n.note_date,
                 type: 'adjustment',
                 particulars: `Adjustment: ${n.reason || ''}`.slice(0, 200),
                 voucher_no: n.voucher_no,
-                dr: isDebit ? num(n.amount) : 0,
-                cr: isDebit ? 0 : num(n.amount),
+                dr: isDebit ? eff : 0,
+                cr: isDebit ? 0 : eff,
             });
         }
 
@@ -340,6 +349,7 @@ export class LedgerService {
             noteFind as any
         );
         for (const n of notes) {
+            const hasGst = n.gst_amount != null;
             rows.push({
                 _id: n._id.toString(),
                 source: 'adjustment',
@@ -350,7 +360,11 @@ export class LedgerService {
                 party_id: n.party_id?.toString(),
                 party_name: n.party_snapshot?.name,
                 direction: n.direction,
-                amount: String(n.amount ?? '0'),
+                // Base + GST for a vendor+debit note; base otherwise.
+                amount: String(round2(num(n.amount) + num(n.gst_amount))),
+                base_amount: hasGst ? String(n.amount ?? '0') : undefined,
+                gst_rate: hasGst ? String(n.gst_rate) : undefined,
+                gst_amount: hasGst ? String(n.gst_amount) : undefined,
                 currency_code: n.currency_code,
                 particulars: n.reason || '',
                 voided_at: n.voided_at || undefined,

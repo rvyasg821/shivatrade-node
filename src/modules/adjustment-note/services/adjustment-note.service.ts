@@ -18,6 +18,9 @@ import {
     ENUM_ADJUSTMENT_DIRECTION,
 } from '../enums/adjustment-note.enum';
 
+const round2 = (v: number): number =>
+    Math.round((v + Number.EPSILON) * 100) / 100;
+
 export interface AdjustmentNoteListQuery {
     party_type?: string;
     party_id?: string;
@@ -86,6 +89,18 @@ export class AdjustmentNoteService {
             currencyCode = 'INR';
         }
 
+        // GST applies ONLY to a vendor + debit note (an INR claim back on an
+        // Indian vendor). For any other combination the fields stay null even
+        // if a rate was sent. gst_amount = round2(amount × rate / 100).
+        const gstApplies =
+            dto.party_type === ENUM_ADJUSTMENT_PARTY_TYPE.VENDOR &&
+            dto.direction === ENUM_ADJUSTMENT_DIRECTION.DEBIT &&
+            Number(dto.gst_rate) > 0;
+        const gstRate = gstApplies ? String(Number(dto.gst_rate)) : null;
+        const gstAmount = gstApplies
+            ? String(round2((Number(dto.amount) * Number(dto.gst_rate)) / 100))
+            : null;
+
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucherNo = await this.voucherService.getNext(
             companyId,
@@ -103,6 +118,8 @@ export class AdjustmentNoteService {
             direction: dto.direction,
             note_date: dto.note_date,
             amount: dto.amount,
+            gst_rate: gstRate,
+            gst_amount: gstAmount,
             currency_code: currencyCode,
             reason: dto.reason,
             created_by: userId,
@@ -188,6 +205,12 @@ export class AdjustmentNoteService {
             direction: n.direction,
             note_date: n.note_date,
             amount: String(n.amount ?? '0'),
+            gst_rate: n.gst_rate != null ? String(n.gst_rate) : undefined,
+            gst_amount: n.gst_amount != null ? String(n.gst_amount) : undefined,
+            // Base + GST — what actually posts to the ledger.
+            total_amount: String(
+                round2(Number(n.amount ?? 0) + Number(n.gst_amount ?? 0))
+            ),
             currency_code: n.currency_code,
             reason: n.reason,
             voided_at: (n as any).voided_at || undefined,
