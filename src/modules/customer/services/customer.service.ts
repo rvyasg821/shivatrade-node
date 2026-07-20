@@ -26,6 +26,7 @@ import { AuthService } from '@modules/auth/services/auth.service';
 import { ENUM_SYSTEM_ROLE } from '@modules/role/enums/role.enum';
 import { ENUM_USER_GENDER, ENUM_USER_SIGN_UP_FROM, ENUM_USER_STATUS } from '@modules/user/enums/user.enum';
 import { HelperDateService } from '@common/helper/services/helper.date.service';
+import { ImportContext } from '@common/import/import-context.interface';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import {
@@ -227,8 +228,10 @@ export class CustomerService {
     async create(
         companyId: string,
         data: CustomerCreateRequestDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<CustomerDoc> {
+        const silent = !!ctx?.silent;
         const name = data.company_name.trim();
 
         this.assertContactsValid(data.contacts);
@@ -258,11 +261,24 @@ export class CustomerService {
         const { contacts, addresses, ...customerFields } = data;
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
 
-        // Pre-flight: primary email must be free in users table BEFORE any writes
-        await this.assertPrimaryEmailAvailable(primaryContact.email);
+        // Import mode (silent) backfills historical customers with no login:
+        // skip the users-table email pre-flight and the login-user + welcome
+        // email provisioning (§12.4). Live create (no ctx) is unaffected.
+        let primaryUserId: string | undefined;
+        if (!silent) {
+            // Pre-flight: primary email must be free in users table BEFORE writes
+            await this.assertPrimaryEmailAvailable(primaryContact.email);
+            // Provision the user FIRST so a failure doesn't orphan the customer
+            primaryUserId = await this.provisionCustomerUser(
+                companyId,
+                primaryContact
+            );
+        }
 
-        // Provision the user FIRST so a failure doesn't leave an orphan customer
-        const primaryUserId = await this.provisionCustomerUser(companyId, primaryContact);
+        if (ctx?.status) {
+            (customerFields as any).status = ctx.status;
+            (customerFields as any).is_active = ctx.status === 'active';
+        }
 
         const customer = await this.customerRepository.create({
             ...customerFields,
@@ -750,11 +766,14 @@ export class CustomerService {
         const search =
             typeof filters.search === 'string' ? filters.search.trim() : '';
         if (search) {
+            // Mirror the /list search: only real CustomerEntity columns (city/
+            // country are on the address table, not this entity).
             base.$or = [
                 { company_name: { $regex: search, $options: 'i' } },
                 { website: { $regex: search, $options: 'i' } },
-                { city: { $regex: search, $options: 'i' } },
-                { country: { $regex: search, $options: 'i' } },
+                { gstin: { $regex: search, $options: 'i' } },
+                { pan: { $regex: search, $options: 'i' } },
+                { iec: { $regex: search, $options: 'i' } },
             ];
         }
 

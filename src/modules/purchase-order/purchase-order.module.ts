@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { PurchaseOrderRepositoryModule } from './repository/purchase-order.repository.module';
 import { PurchaseOrderService } from './services/purchase-order.service';
+import { PurchaseOrderImportExportService } from './services/purchase-order.import-export.service';
 import { PoPdfService } from './services/po-pdf.service';
 import { PurchaseOrderAdminController } from './controllers/purchase-order.admin.controller';
 import { VendorModule } from '@modules/vendor/vendor.module';
@@ -15,6 +16,8 @@ import { LeadRepositoryModule } from '@modules/lead/repository/lead.repository.m
 import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
+import { RebateModule } from '@modules/rebate/rebate.module';
+import { ExpenseModule } from '@modules/expense/expense.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
@@ -35,10 +38,21 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         PfiModule,
         PriceListModule,
         PoVendorModule,
+        RebateModule,
+        ExpenseModule,
         CompanySettingsRepositoryModule,
     ],
-    providers: [PurchaseOrderService, PoPdfService],
-    exports: [PurchaseOrderRepositoryModule, PurchaseOrderService, PoPdfService],
+    providers: [
+        PurchaseOrderService,
+        PurchaseOrderImportExportService,
+        PoPdfService,
+    ],
+    exports: [
+        PurchaseOrderRepositoryModule,
+        PurchaseOrderService,
+        PurchaseOrderImportExportService,
+        PoPdfService,
+    ],
     controllers: [PurchaseOrderAdminController],
 })
 export class PurchaseOrderModule {}

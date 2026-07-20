@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { QuotationRepositoryModule } from './repository/quotation.repository.module';
 import { QuotationService } from './services/quotation.service';
+import { QuotationImportExportService } from './services/quotation.import-export.service';
 import { QuotationAdminController } from './controllers/quotation.admin.controller';
 import { CustomerModule } from '@modules/customer/customer.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
@@ -42,8 +43,12 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         RfqRepositoryModule,
         CompanySettingsRepositoryModule,
     ],
-    providers: [QuotationService],
-    exports: [QuotationRepositoryModule, QuotationService],
+    providers: [QuotationService, QuotationImportExportService],
+    exports: [
+        QuotationRepositoryModule,
+        QuotationService,
+        QuotationImportExportService,
+    ],
     controllers: [QuotationAdminController],
 })
 export class QuotationModule {}

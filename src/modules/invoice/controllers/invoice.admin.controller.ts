@@ -33,7 +33,9 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { InvoiceService } from '../services/invoice.service';
+import { InvoiceImportExportService } from '../services/invoice.import-export.service';
 import { InvoiceLineImportService } from '../services/invoice-line-import.service';
+import { IFile } from '@common/file/interfaces/file.interface';
 import { InvoiceEventService } from '../services/invoice-event.service';
 import { InvoiceEventFileService } from '../services/invoice-event-file.service';
 import {
@@ -68,8 +70,164 @@ export class InvoiceAdminController {
         private readonly invoiceLineImportService: InvoiceLineImportService,
         private readonly invoiceEventService: InvoiceEventService,
         private readonly invoiceEventFileService: InvoiceEventFileService,
+        private readonly importExportService: InvoiceImportExportService,
         private readonly creatorScope: CreatorScopeService
     ) {}
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    async downloadSampleExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.generateSampleExcel(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="invoice-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportInvoices(companyId);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="invoices-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+        const validDocs = rows.filter((r) => r.docStatus !== 'error');
+        if (validDocs.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        }
+        const result = await this.importExportService.importInvoices(
+            validDocs,
+            companyId,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            data: { summary, ...result },
+        };
+    }
+
+    // ── Receipts (customer payments against invoices) ──
+    @AuthJwtAccessProtected()
+    @Get('/receipts/sample-excel')
+    async downloadReceiptSample(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateReceiptSample();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="receipt-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/receipts/export')
+    async exportReceipts(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportReceipts(companyId);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="receipts-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/receipts/import')
+    async importReceipts(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } = await this.importExportService.parseReceipts(
+            file.buffer,
+            companyId
+        );
+        if (preview === 'true') {
+            return { statusCode: 200, message: 'Preview', data: { summary, rows } };
+        }
+        const valid = rows.filter((r) => r.status !== 'error');
+        if (!valid.length)
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        const result = await this.importExportService.importReceipts(
+            valid,
+            companyId,
+            userId
+        );
+        const failed = result.errors.length
+            ? `, ${result.errors.length} failed (${result.errors[0].message})`
+            : '';
+        return {
+            statusCode: 200,
+            message: `Receipts: ${result.created} recorded, ${result.skipped} skipped${failed}`,
+            data: { summary, ...result },
+        };
+    }
 
     private static readonly ALLOWED_EVENT_ATTACHMENT_EXTS = new Set([
         'jpg',

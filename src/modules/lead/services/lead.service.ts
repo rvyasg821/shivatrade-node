@@ -31,6 +31,7 @@ import { DependencyCheckService } from '@modules/dependency-check/dependency-che
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { ImportContext } from '@common/import/import-context.interface';
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { ILike } from 'typeorm';
 import {
@@ -96,7 +97,8 @@ export class LeadService {
     async create(
         companyId: string,
         data: LeadCreateRequestDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<LeadDoc> {
         if (data.customer_id) {
             await this.assertCustomerInCompany(companyId, data.customer_id);
@@ -114,7 +116,10 @@ export class LeadService {
         // lead is created FROM an existing customer (customer_id set), the email
         // legitimately belongs to that customer — and a customer may have many
         // leads/opportunities — so skip the uniqueness checks entirely.
-        if (!data.customer_id) {
+        // Import mode legitimately backfills historical leads whose emails may
+        // already belong to a customer or an earlier lead — relax uniqueness
+        // (§12.2). The normal API create path (no ctx) is unaffected.
+        if (!data.customer_id && !ctx?.silent) {
             const normalizedEmail = data.contact_email.trim().toLowerCase();
             const dupLead = await this.leadRepository.findOne({
                 company_id: companyId,
@@ -140,14 +145,21 @@ export class LeadService {
         // `lines` is a child table, not a lead column — keep it out of the write.
         const { lines, ...leadData } = data as any;
         const prefix = await this.resolveCompanyPrefix(companyId);
-        const voucher_no = await this.voucherService.getNext(
+        const voucher_no = await this.voucherService.assignVoucher(
             companyId,
             ENUM_VOUCHER_DOC_TYPE.LEAD,
-            prefix
+            prefix,
+            {
+                explicit: ctx?.voucher_no,
+                // Live path keeps numbering by "today" (unchanged); only import
+                // buckets the voucher into the historical doc's FY.
+                asOfDate: ctx?.voucher_no ? (data as any).lead_date : undefined,
+            }
         );
         const lead = await this.leadRepository.create({
             ...leadData,
             voucher_no,
+            status: ctx?.status || (leadData as any).status,
             company_name: data.company_name.trim(),
             contact_email: data.contact_email.trim().toLowerCase(),
             company_id: companyId,

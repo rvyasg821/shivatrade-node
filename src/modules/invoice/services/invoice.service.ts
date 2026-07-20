@@ -35,6 +35,7 @@ import {
 } from '../dtos/response/invoice.get.response.dto';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { ImportContext } from '@common/import/import-context.interface';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
@@ -240,12 +241,22 @@ export class InvoiceService {
     async create(
         companyId: string,
         data: InvoiceCreateRequestDto,
-        userId: string
+        userId: string,
+        importCtx?: ImportContext
     ): Promise<InvoiceDoc> {
-        await this.assertQtyGuardForLines(data.lines);
+        const silent = !!importCtx?.silent;
+
+        // Qty guard maps each line to its Sales-Order line's ordered qty. In
+        // import mode (decision 5) a back-filled invoice may carry no SO line
+        // (purchase_order_line_id = null), so this guard is skipped — the
+        // imported qty is authoritative. Live create (no ctx) always runs it.
+        if (!silent) {
+            await this.assertQtyGuardForLines(data.lines);
+        }
 
         // Resolve source SOs (POs) + enforce the single-source invariant
-        // (one customer / currency / country) before writing anything.
+        // (one customer / currency / country) before writing anything. Both
+        // are null-safe when lines have no purchase_order_line_id (no SO).
         const source = await this.loadSourcePoContext(data.lines);
         this.assertSingleSourceInvariant(source.pos, data.customer_id);
 
@@ -293,11 +304,14 @@ export class InvoiceService {
         // resolves (falls back to the company name), so this never blocks
         // draft creation; issue() reuses this number rather than minting a new
         // one. Mirrors how Sales Order / Vendor PO number their drafts.
-        const draftVoucherNo = await this.voucherService.getNext(
+        const draftVoucherNo = await this.voucherService.assignVoucher(
             companyId,
             ENUM_VOUCHER_DOC_TYPE.INVOICE_EXPORT,
             ctx.voucher_prefix,
-            new Date(data.invoice_date)
+            {
+                explicit: importCtx?.voucher_no,
+                asOfDate: new Date(data.invoice_date),
+            }
         );
 
         const header = await this.invoiceRepository.create({
@@ -570,7 +584,11 @@ export class InvoiceService {
 
     // ─── Issue (DRAFT → ISSUED) ─────────────────────────────────────────
 
-    async issue(row: InvoiceDoc, userId: string): Promise<InvoiceDoc> {
+    async issue(
+        row: InvoiceDoc,
+        userId: string,
+        importCtx?: ImportContext
+    ): Promise<InvoiceDoc> {
         if (row.status !== ENUM_INVOICE_STATUS.DRAFT) {
             throw new BadRequestException(
                 `Only DRAFT invoices can be issued (current: ${row.status}).`
@@ -705,7 +723,10 @@ export class InvoiceService {
                 (needByProduct.get(l.product_id) || 0) + num(l.qty)
             );
         }
-        if (needByProduct.size > 0) {
+        // Import mode: a historical invoice must not be gated by (or move)
+        // current stock — the goods left the warehouse in the past. Skip both
+        // the pre-issue check and the Goods-Out decrement below.
+        if (needByProduct.size > 0 && !importCtx?.silent) {
             const productIds = [...needByProduct.keys()];
             const have = await this.stockLedger.onHandMap(
                 stockCompanyId,
@@ -745,8 +766,10 @@ export class InvoiceService {
         await this.invoiceRepository.save(row);
 
         // ── Goods Out — deduct stock now that the invoice is ISSUED ─────────
+        // Skipped in import mode (see the pre-issue note above).
         try {
             for (const l of lines as any[]) {
+                if (importCtx?.silent) break;
                 const q = num(l.qty);
                 if (!l.product_id || q <= 0) continue;
                 await this.stockLedger.post(stockCompanyId, {

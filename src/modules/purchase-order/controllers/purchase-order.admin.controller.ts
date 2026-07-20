@@ -8,9 +8,13 @@ import {
     Param,
     Query,
     Res,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
-import { ApiTags, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiQuery, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -28,6 +32,7 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { PurchaseOrderService } from '../services/purchase-order.service';
+import { PurchaseOrderImportExportService } from '../services/purchase-order.import-export.service';
 import { PoPdfService } from '../services/po-pdf.service';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
 import { PurchaseOrderCreateRequestDto } from '../dtos/request/purchase-order.create.request.dto';
@@ -46,8 +51,99 @@ export class PurchaseOrderAdminController {
         private readonly poPdfService: PoPdfService,
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poCoverageService: PoCoverageService,
+        private readonly importExportService: PurchaseOrderImportExportService,
         private readonly creatorScope: CreatorScopeService
     ) {}
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for sales order import' })
+    async downloadSampleExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.generateSampleExcel(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="sales-order-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({
+        summary: 'Export sales orders to Excel (import template shape)',
+    })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportSalesOrders(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="sales-orders-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import sales orders from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+        const validDocs = rows.filter((r) => r.status !== 'error');
+        if (validDocs.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        }
+        const result = await this.importExportService.importSalesOrders(
+            validDocs,
+            companyId,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            data: { summary, ...result },
+        };
+    }
 
     @Response('purchaseOrder.create')
     @AuthJwtAccessProtected()

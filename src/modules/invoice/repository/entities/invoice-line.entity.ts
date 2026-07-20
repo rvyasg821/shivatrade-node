@@ -22,10 +22,16 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 
-    /** Source PO line - Invoice's qty guard is `qty ≤ po_line.qty − already_invoiced`. */
+    /**
+     * Source PO (Sales Order) line — Invoice's qty guard is
+     * `qty ≤ po_line.qty − already_invoiced`. Nullable ONLY to support the
+     * bulk historical-import path (decision 5): a back-filled invoice may have
+     * no Sales Order in the system. The normal API create still requires it
+     * (`@IsNotEmpty` on InvoiceLineDto), so live invoices always carry it.
+     */
     @Index()
-    @Column({ type: 'uuid', nullable: false })
-    purchase_order_line_id: string;
+    @Column({ type: 'uuid', nullable: true })
+    purchase_order_line_id?: string;
 
     /** Source POV line (optional) - Invoice can be raised from a closed POV's lines. */
     @Index()

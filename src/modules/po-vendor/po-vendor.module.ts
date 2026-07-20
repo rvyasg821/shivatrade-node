@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { PoVendorRepositoryModule } from './repository/po-vendor.repository.module';
 import { PoVendorService } from './services/po-vendor.service';
+import { PoVendorImportExportService } from './services/po-vendor.import-export.service';
 import { PoCoverageService } from './services/po-coverage.service';
 import { PoVendorPdfService } from './services/po-vendor-pdf.service';
 import { PoVendorAdminController } from './controllers/po-vendor.admin.controller';
@@ -47,10 +48,16 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
         CompanySettingsRepositoryModule,
         InventoryModule,
     ],
-    providers: [PoVendorService, PoCoverageService, PoVendorPdfService],
+    providers: [
+        PoVendorService,
+        PoVendorImportExportService,
+        PoCoverageService,
+        PoVendorPdfService,
+    ],
     exports: [
         PoVendorRepositoryModule,
         PoVendorService,
+        PoVendorImportExportService,
         PoCoverageService,
         PoVendorPdfService,
     ],

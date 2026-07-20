@@ -8,9 +8,13 @@ import {
     Param,
     Query,
     Res,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -28,6 +32,7 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { QuotationService } from '../services/quotation.service';
+import { QuotationImportExportService } from '../services/quotation.import-export.service';
 import { QuotationRepository } from '../repository/repositories/quotation.repository';
 import { QuotationCreateRequestDto } from '../dtos/request/quotation.create.request.dto';
 import { QuotationUpdateRequestDto } from '../dtos/request/quotation.update.request.dto';
@@ -40,8 +45,99 @@ export class QuotationAdminController {
     constructor(
         private readonly quotationService: QuotationService,
         private readonly quotationRepository: QuotationRepository,
+        private readonly importExportService: QuotationImportExportService,
         private readonly creatorScope: CreatorScopeService
     ) {}
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for quotation import' })
+    async downloadSampleExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.generateSampleExcel(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="quotation-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({
+        summary: 'Export quotations to Excel (import template shape)',
+    })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportQuotations(
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="quotations-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import quotations from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+        const validDocs = rows.filter((r) => r.status !== 'error');
+        if (validDocs.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        }
+        const result = await this.importExportService.importQuotations(
+            validDocs,
+            companyId,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            data: { summary, ...result },
+        };
+    }
 
     @Response('quotation.create')
     @AuthJwtAccessProtected()

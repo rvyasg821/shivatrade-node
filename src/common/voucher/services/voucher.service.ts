@@ -122,6 +122,120 @@ export class VoucherService {
     }
 
     /**
+     * Import-mode voucher assignment. When `explicit` is supplied (bulk
+     * historical import), preserve that exact printed number and reconcile the
+     * sequence counter so future auto-numbers never collide with it. Otherwise
+     * behaves exactly like `getNext`. The FY bucket is taken from the number's
+     * own trailing `/YYYY-YY` segment when present, else from `asOfDate`.
+     */
+    async assignVoucher(
+        companyId: string,
+        docType: ENUM_VOUCHER_DOC_TYPE,
+        companyPrefix: string,
+        opts: { explicit?: string | null; asOfDate?: Date } = {}
+    ): Promise<string> {
+        const explicit = opts.explicit ? String(opts.explicit).trim() : '';
+        if (!explicit) {
+            return this.getNext(companyId, docType, companyPrefix, opts.asOfDate);
+        }
+
+        const overridePrefix = await this.resolvePrefixOverride(
+            companyId,
+            docType
+        );
+        const cleanPrefix =
+            (overridePrefix || companyPrefix || '').trim().toUpperCase() || 'CO';
+
+        const lastSeg = explicit.split('/').pop() || '';
+        const fy = /^\d{4}-\d{2}$/.test(lastSeg)
+            ? lastSeg
+            : this.getIndianFY(opts.asOfDate || new Date());
+
+        const seqNo = this.parseSequenceNo(explicit);
+        if (seqNo != null) {
+            await this.ensureAtLeast(
+                companyId,
+                docType,
+                fy,
+                seqNo,
+                cleanPrefix
+            );
+        } else {
+            this.logger.warn(
+                `assignVoucher: could not parse a sequence integer from "${explicit}"; counter not reconciled (future auto-numbers may collide).`
+            );
+        }
+        return explicit;
+    }
+
+    /**
+     * Extracts the sequence integer from a formatted voucher number across all
+     * three styles by dropping the trailing FY segment and reading the trailing
+     * digit-run of what remains:
+     *   glued     STIPL/QT0042/2026-27  → 42
+     *   separated STIPL/SO/0001/2026-27 → 1
+     *   compact   STIPL007/2025-26      → 7
+     * Returns null when no digits can be found (client's numbering is free-form).
+     */
+    parseSequenceNo(voucherNo?: string | null): number | null {
+        if (!voucherNo) return null;
+        const parts = String(voucherNo).split('/');
+        // Drop the trailing FY segment when there is more than one segment.
+        if (parts.length > 1) parts.pop();
+        const seg = parts[parts.length - 1] || '';
+        const m = seg.match(/(\d+)\s*$/);
+        if (!m) return null;
+        const n = parseInt(m[1], 10);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    /**
+     * Bumps the (company, doc_type, fy) counter up to at least `seqNo`, so a
+     * later `getNext` returns `seqNo + 1` and never reissues an imported
+     * number. Pessimistic-locked exactly like `getNext`; a no-op when the
+     * current counter is already ≥ seqNo. Inserts the row (counter = seqNo)
+     * when the scope has no counter yet.
+     */
+    async ensureAtLeast(
+        companyId: string,
+        docType: ENUM_VOUCHER_DOC_TYPE,
+        fy: string,
+        seqNo: number,
+        companyPrefix?: string
+    ): Promise<void> {
+        if (!Number.isFinite(seqNo) || seqNo < 1) return;
+        await this.dataSource.transaction(async (manager) => {
+            const repo = manager.getRepository(VoucherSequenceEntity);
+            const existing = await repo
+                .createQueryBuilder('seq')
+                .setLock('pessimistic_write')
+                .where('seq.company_id = :companyId', { companyId })
+                .andWhere('seq.doc_type = :docType', { docType })
+                .andWhere('seq.fy = :fy', { fy })
+                .getOne();
+
+            if (existing) {
+                if (seqNo > existing.counter) {
+                    existing.counter = seqNo;
+                    await repo.save(existing);
+                }
+                return;
+            }
+
+            const cleanPrefix =
+                (companyPrefix || '').trim().toUpperCase() || 'CO';
+            const fresh = repo.create({
+                company_id: companyId,
+                doc_type: docType,
+                fy,
+                prefix: cleanPrefix,
+                counter: seqNo,
+            });
+            await repo.save(fresh);
+        });
+    }
+
+    /**
      * Indian Financial Year encoded with hyphenated full years to match
      * ShivaTrades sheet - e.g. `2026-27` for FY 2026-27 (1 Apr 2026 → 31
      * Mar 2027).

@@ -41,6 +41,7 @@ import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { ImportContext } from '@common/import/import-context.interface';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
 import { LocationRepository } from '@modules/location/repository/repositories/location.repository';
@@ -233,7 +234,8 @@ export class PurchaseOrderService {
     async create(
         companyId: string,
         data: PurchaseOrderCreateRequestDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<PurchaseOrderDoc> {
         // Customer required for ad-hoc POs (those with no source PFI /
         // Quotation). createFromPfi / createFromQuotation paths inject
@@ -264,10 +266,16 @@ export class PurchaseOrderService {
         );
 
         const prefix = await this.resolveCompanyPrefix(companyId);
-        const voucher_no = await this.voucherService.getNext(
+        const voucher_no = await this.voucherService.assignVoucher(
             companyId,
             ENUM_VOUCHER_DOC_TYPE.PURCHASE_ORDER,
-            prefix
+            prefix,
+            {
+                explicit: ctx?.voucher_no,
+                // Live path keeps numbering by "today" (unchanged); only import
+                // buckets the voucher into the historical doc's FY.
+                asOfDate: ctx?.voucher_no ? (data.po_date as any) : undefined,
+            }
         );
 
         // SO remarks default from the company's `default_remarks` when the
@@ -314,7 +322,7 @@ export class PurchaseOrderService {
             currency_code: data.currency_code || 'INR',
             exchange_rate: data.exchange_rate || '1',
             freight_total: (data as any).freight_total || '0',
-            status: data.status || ENUM_PURCHASE_ORDER_STATUS.DRAFT,
+            status: ctx?.status || data.status || ENUM_PURCHASE_ORDER_STATUS.DRAFT,
         } as any);
 
         await this.replaceLines(companyId, header._id.toString(), data.lines);
