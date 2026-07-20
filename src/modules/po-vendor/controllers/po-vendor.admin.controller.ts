@@ -9,9 +9,13 @@ import {
     Query,
     Res,
     NotFoundException,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
-import { ApiTags, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiQuery, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -31,6 +35,7 @@ import { CreatorScopeService } from '@modules/creator-scope/creator-scope.servic
 import { PoVendorService } from '../services/po-vendor.service';
 import { PoVendorPdfService } from '../services/po-vendor-pdf.service';
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
+import { PoVendorImportExportService } from '../services/po-vendor.import-export.service';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
 import { PoVendorStandaloneCreateRequestDto } from '../dtos/request/po-vendor.standalone-create.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
@@ -51,8 +56,162 @@ export class PoVendorAdminController {
         private readonly povService: PoVendorService,
         private readonly povRepository: PoVendorRepository,
         private readonly povPdfService: PoVendorPdfService,
+        private readonly importExportService: PoVendorImportExportService,
         private readonly creatorScope: CreatorScopeService
     ) {}
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for VPO import (3 sheets)' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateSampleExcel();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="vpo-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export VPOs to Excel (3-sheet import shape)' })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportVpos(companyId);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="vpos-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({ summary: 'Import VPOs from Excel (preview or confirm)' })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+        const validDocs = rows.filter((r) => r.docStatus !== 'error');
+        if (validDocs.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        }
+        const result = await this.importExportService.importVpos(
+            validDocs,
+            companyId,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            data: { summary, ...result },
+        };
+    }
+
+    // ── Vendor payments (against VPOs) ──
+    @AuthJwtAccessProtected()
+    @Get('/payments/sample-excel')
+    async downloadPaymentSample(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generatePaymentSample();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="vendor-payment-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/payments/export')
+    async exportPayments(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportPayments(companyId);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="vendor-payments-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/payments/import')
+    async importPayments(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } = await this.importExportService.parsePayments(
+            file.buffer,
+            companyId
+        );
+        if (preview === 'true') {
+            return { statusCode: 200, message: 'Preview', data: { summary, rows } };
+        }
+        const valid = rows.filter((r) => r.status !== 'error');
+        if (!valid.length)
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        const result = await this.importExportService.importPayments(
+            valid,
+            companyId,
+            userId
+        );
+        const failed = result.errors.length
+            ? `, ${result.errors.length} failed (${result.errors[0].message})`
+            : '';
+        return {
+            statusCode: 200,
+            message: `Payments: ${result.created} recorded, ${result.skipped} skipped${failed}`,
+            data: { summary, ...result },
+        };
+    }
 
     // ─── Recover (multi-vendor batch) ───────────────────────────────────
     //

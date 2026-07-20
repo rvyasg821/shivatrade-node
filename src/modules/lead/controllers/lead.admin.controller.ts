@@ -7,8 +7,14 @@ import {
     Body,
     Param,
     Query,
+    Res,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -27,6 +33,7 @@ import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 
 import { LeadService } from '../services/lead.service';
+import { LeadImportExportService } from '../services/lead.import-export.service';
 import { LeadRepository } from '../repository/repositories/lead.repository';
 import { LeadCreateRequestDto } from '../dtos/request/lead.create.request.dto';
 import { LeadUpdateRequestDto } from '../dtos/request/lead.update.request.dto';
@@ -40,8 +47,88 @@ export class LeadAdminController {
     constructor(
         private readonly leadService: LeadService,
         private readonly leadRepository: LeadRepository,
+        private readonly importExportService: LeadImportExportService,
         private readonly creatorScope: CreatorScopeService
     ) {}
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for lead import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateSampleExcel();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="lead-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export leads to Excel (import template shape)' })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.importExportService.exportLeads(companyId);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="leads-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({ summary: 'Import leads from Excel/CSV (preview or confirm)' })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(
+                file.buffer,
+                companyId
+            );
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+        const validDocs = rows.filter((r) => r.status !== 'error');
+        if (validDocs.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, skipped: 0, errors: [] },
+            };
+        }
+        const result = await this.importExportService.importLeads(
+            validDocs,
+            companyId,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            data: { summary, ...result },
+        };
+    }
 
     @Response('lead.create')
     @AuthJwtAccessProtected()

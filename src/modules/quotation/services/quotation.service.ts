@@ -49,6 +49,7 @@ import {
 } from '@common/pdf/pdf-letterhead.util';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { ImportContext } from '@common/import/import-context.interface';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
@@ -175,7 +176,8 @@ export class QuotationService {
     async create(
         companyId: string,
         data: QuotationCreateRequestDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<QuotationDoc> {
         // Auto-resolve customer when only a lead is provided. Lead carries
         // company_name, contact, address - enough to materialise a Customer
@@ -229,10 +231,18 @@ export class QuotationService {
         }
 
         const prefix = await this.resolveCompanyPrefix(companyId);
-        const voucher_no = await this.voucherService.getNext(
+        const voucher_no = await this.voucherService.assignVoucher(
             companyId,
             ENUM_VOUCHER_DOC_TYPE.QUOTATION,
-            prefix
+            prefix,
+            {
+                explicit: ctx?.voucher_no,
+                // Live path keeps numbering by "today" (unchanged); only import
+                // buckets the voucher into the historical doc's FY.
+                asOfDate: ctx?.voucher_no
+                    ? (data.quotation_date as any)
+                    : undefined,
+            }
         );
 
         const header = await this.quotationRepository.create({
@@ -258,7 +268,7 @@ export class QuotationService {
             notes_to_client: data.notes_to_client || null,
             internal_notes: data.internal_notes || null,
             margin_pct: data.margin_pct || '0',
-            status: data.status || ENUM_QUOTATION_STATUS.DRAFT,
+            status: ctx?.status || data.status || ENUM_QUOTATION_STATUS.DRAFT,
             version: 1,
         } as any);
 

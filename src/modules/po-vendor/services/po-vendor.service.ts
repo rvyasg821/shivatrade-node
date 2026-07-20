@@ -45,6 +45,7 @@ import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
+import { ImportContext } from '@common/import/import-context.interface';
 
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
@@ -625,8 +626,10 @@ export class PoVendorService {
     async createStandalone(
         companyId: string,
         data: PoVendorStandaloneCreateRequestDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<PoVendorDoc> {
+        const silent = !!ctx?.silent;
         const vendorId = data.vendor_id;
         if (!vendorId) throw new BadRequestException('vendor_id is required.');
 
@@ -690,21 +693,26 @@ export class PoVendorService {
             // Guard: the product must be in the SELECTED VENDOR's price list —
             // a POV line can only reference a product the vendor actually
             // quotes (mirrors the create form's product-pick validation).
-            let priceRow: any = null;
-            try {
-                priceRow = await this.priceListRepository.findCurrentPrice(
-                    companyId,
-                    vendorId,
-                    ln.product_id
-                );
-            } catch {
-                priceRow = null;
-            }
-            if (!priceRow) {
-                const p = productById.get(ln.product_id);
-                throw new BadRequestException(
-                    `Product ${p?.code || p?.name || ln.product_id} is not in the selected vendor's price list.`
-                );
+            // Relaxed in import mode (§12.2): a historical VPO legitimately
+            // references a product that may no longer be in the vendor's
+            // CURRENT price list — the line carries its own historical price.
+            if (!silent) {
+                let priceRow: any = null;
+                try {
+                    priceRow = await this.priceListRepository.findCurrentPrice(
+                        companyId,
+                        vendorId,
+                        ln.product_id
+                    );
+                } catch {
+                    priceRow = null;
+                }
+                if (!priceRow) {
+                    const p = productById.get(ln.product_id);
+                    throw new BadRequestException(
+                        `Product ${p?.code || p?.name || ln.product_id} is not in the selected vendor's price list.`
+                    );
+                }
             }
         }
 
@@ -726,10 +734,18 @@ export class PoVendorService {
 
         // ── Voucher + currency + expense snapshot ──────────────────────
         const prefix = await this.resolveCompanyPrefix(companyId);
-        const voucher_no = await this.voucherService.getNext(
+        const voucher_no = await this.voucherService.assignVoucher(
             companyId,
             ENUM_VOUCHER_DOC_TYPE.PO_VENDOR,
-            prefix
+            prefix,
+            {
+                explicit: ctx?.voucher_no,
+                // Live path keeps numbering by "today" (unchanged); only import
+                // buckets the voucher into the historical doc's FY.
+                asOfDate: ctx?.voucher_no
+                    ? (data as any).dispatch_date
+                    : undefined,
+            }
         );
         const homeCurrency = await this.currencyService
             .getDefaultCurrency(companyId)
@@ -763,7 +779,7 @@ export class PoVendorService {
             delivery_terms: data.delivery_terms || null,
             currency_code,
             exchange_rate: '1',
-            status: ENUM_PO_VENDOR_STATUS.DRAFT,
+            status: (ctx?.status as any) || ENUM_PO_VENDOR_STATUS.DRAFT,
             expenses_snapshot,
         } as any);
 

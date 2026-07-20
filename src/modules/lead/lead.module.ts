@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { LeadRepositoryModule } from './repository/lead.repository.module';
 import { LeadService } from './services/lead.service';
+import { LeadImportExportService } from './services/lead.import-export.service';
 import { LeadActivityService } from './services/lead-activity.service';
 import { LeadAdminController } from './controllers/lead.admin.controller';
 import { LeadActivityAdminController } from './controllers/lead-activity.admin.controller';
@@ -28,8 +29,13 @@ import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module'
         DependencyCheckModule,
         CreatorScopeModule,
     ],
-    providers: [LeadService, LeadActivityService],
-    exports: [LeadRepositoryModule, LeadService, LeadActivityService],
+    providers: [LeadService, LeadImportExportService, LeadActivityService],
+    exports: [
+        LeadRepositoryModule,
+        LeadService,
+        LeadImportExportService,
+        LeadActivityService,
+    ],
     controllers: [LeadAdminController, LeadActivityAdminController],
 })
 export class LeadModule {}

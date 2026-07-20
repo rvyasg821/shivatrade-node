@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { InvoiceRepositoryModule } from './repository/invoice.repository.module';
 import { InvoiceService } from './services/invoice.service';
+import { InvoiceImportExportService } from './services/invoice.import-export.service';
 import { InvoicePdfService } from './services/invoice-pdf.service';
 import { InvoiceLineImportService } from './services/invoice-line-import.service';
 import { InvoiceEventService } from './services/invoice-event.service';
@@ -48,6 +49,7 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
     ],
     providers: [
         InvoiceService,
+        InvoiceImportExportService,
         InvoicePdfService,
         InvoiceLineImportService,
         InvoiceEventService,
@@ -56,6 +58,7 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
     exports: [
         InvoiceRepositoryModule,
         InvoiceService,
+        InvoiceImportExportService,
         InvoicePdfService,
         InvoiceLineImportService,
         InvoiceEventService,
