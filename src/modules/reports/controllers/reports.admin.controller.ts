@@ -229,6 +229,12 @@ export class ReportsAdminController {
         description: 'value | received | outstanding | count (customer mode)',
     })
     @ApiQuery({ name: 'order_direction', required: false, description: 'asc | desc' })
+    @ApiQuery({
+        name: 'currency_mode',
+        required: false,
+        description:
+            'native (default, a section per currency) | inr (all converted to ₹ at each invoice\'s own rate, one section + one grand total)',
+    })
     @Get('/sales-turnover')
     async salesTurnover(
         @AuthJwtPayload('companyId') companyId: string,
@@ -240,6 +246,7 @@ export class ReportsAdminController {
             date_to: query.date_to,
             customer_id: query.customer_id,
             currency: query.currency,
+            currency_mode: query.currency_mode as any,
             payment_status: query.payment_status,
             order_by: query.order_by as any,
             order_direction: query.order_direction as any,
@@ -254,6 +261,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'date_to', required: false })
     @ApiQuery({ name: 'customer_id', required: false })
     @ApiQuery({ name: 'currency', required: false })
+    @ApiQuery({ name: 'currency_mode', required: false, description: 'native | inr' })
     @ApiQuery({ name: 'payment_status', required: false })
     @Get('/sales-turnover/export')
     async salesTurnoverExport(
@@ -267,6 +275,7 @@ export class ReportsAdminController {
             date_to: query.date_to,
             customer_id: query.customer_id,
             currency: query.currency,
+            currency_mode: query.currency_mode as any,
             payment_status: query.payment_status,
             order_by: query.order_by as any,
             order_direction: query.order_direction as any,

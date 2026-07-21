@@ -69,6 +69,14 @@ export interface ISalesTurnoverQuery {
     customer_id?: string;
     /** Narrow to one currency section. */
     currency?: string;
+    /**
+     * 'native' (default) → a section per currency, never summed (§5).
+     * 'inr'              → every invoice converted to ₹ at ITS OWN stored rate
+     *                      and merged into ONE section, so a single grand total
+     *                      is meaningful. Historical rates, so a past report
+     *                      always reproduces.
+     */
+    currency_mode?: 'native' | 'inr';
     /** unpaid | partially_paid | paid | overpaid — derived, filtered in JS. */
     payment_status?: string;
     order_by?: 'value' | 'received' | 'outstanding' | 'count';
@@ -898,6 +906,7 @@ export class ReportsService {
         const from = query.date_from || isoDate(this.currentFyStart(today));
         const to = query.date_to || isoDate(today);
         const groupBy = query.group_by === 'customer' ? 'customer' : 'month';
+        const toInr = query.currency_mode === 'inr';
 
         const find: Record<string, any> = {
             company_id: companyId,
@@ -1000,11 +1009,31 @@ export class ReportsService {
             return rm.get(key)!;
         };
 
+        // INR mode: convert at each invoice's OWN rate. The factor is derived
+        // from the stored `grand_total_inr` snapshot rather than from
+        // exchange_rate directly, so a fully-paid invoice converts to exactly
+        // the INR figure the invoice itself carries — no penny drift. Falls
+        // back to 1/exchange_rate when grand_total is 0 (rate is
+        // foreign-per-₹1, so ₹ = native ÷ rate).
+        const inrFactor = (inv: any): number => {
+            const native = n(inv.grand_total);
+            const inr = n(inv.grand_total_inr);
+            if (native > 0 && inr > 0) return inr / native;
+            const er = n(inv.exchange_rate);
+            return er > 0 ? 1 / er : 1;
+        };
+
         for (const inv of invoices) {
             const currency = inv.currency_code || 'INR';
+            // The currency filter narrows by the invoice's OWN currency in both
+            // modes — in INR mode you are picking which source currencies to
+            // convert, not which output section to see.
             if (query.currency && currency !== query.currency) continue;
-            const sales = r2(n(inv.grand_total));
-            const received = r2(n(receivedById.get(inv._id.toString())));
+            const factor = toInr ? inrFactor(inv) : 1;
+            const sales = r2(n(inv.grand_total) * factor);
+            const received = r2(
+                n(receivedById.get(inv._id.toString())) * factor
+            );
             const status =
                 received <= 0
                     ? 'unpaid'
@@ -1024,12 +1053,11 @@ export class ReportsService {
                 groupBy === 'customer'
                     ? customerNameById.get(String(inv.customer_id)) || '—'
                     : monthLabel(key);
-            const row = rowFor(
-                currency,
-                inv.currency_symbol || null,
-                key,
-                label
-            );
+            // INR mode collapses every currency into one ₹ section, which is
+            // what makes a single grand total meaningful.
+            const row = toInr
+                ? rowFor('INR', '₹', key, label)
+                : rowFor(currency, inv.currency_symbol || null, key, label);
             row.invoice_count += 1;
             row.sales_value = r2(row.sales_value + sales);
             row.received = r2(row.received + received);
@@ -1106,6 +1134,7 @@ export class ReportsService {
             groups,
             available_currencies: availableCurrencies,
             overall_invoice_count: overallInvoiceCount,
+            currency_mode: toInr ? 'inr' : 'native',
         };
     }
 
@@ -1131,8 +1160,15 @@ export class ReportsService {
         const aoa: (string | number)[][] = [
             [`Sales Turnover — ${result.period_label}`],
             [`Grouped by: ${firstCol}  ·  Invoices: ${result.overall_invoice_count}`],
-            [],
         ];
+        // Say so on the sheet — otherwise a converted total is indistinguishable
+        // from a native one once the file leaves the app.
+        if (result.currency_mode === 'inr') {
+            aoa.push([
+                'All amounts converted to INR at each invoice\'s own exchange rate.',
+            ]);
+        }
+        aoa.push([]);
 
         for (const g of result.groups) {
             const label = g.currency_symbol
