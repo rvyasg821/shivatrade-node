@@ -57,6 +57,21 @@ export class PoCoverageLineDto {
     /** min(pending, in_stock) — qty of the pending requirement that can be
      *  fulfilled straight from existing stock instead of a new POV. */
     @ApiProperty({ required: true, type: String }) from_stock: string;
+
+    // ── Cost variance (client #3) ───────────────────────────────────────
+    // A vendor may revise their rate on the POV after the Sales Order was
+    // costed. We deliberately do NOT rewrite the SO line (it is a
+    // customer-facing document); the difference is reported here instead so
+    // the margin can be seen to be stale.
+
+    /** The SO line's costed rate. */
+    @ApiProperty({ required: false, type: String }) so_unit_price?: string;
+    /** Weighted-average rate actually ordered across non-cancelled POVs. */
+    @ApiProperty({ required: false, type: String }) vendor_unit_price?: string;
+    /** vendor_unit_price − so_unit_price (per unit). Positive = costs more. */
+    @ApiProperty({ required: false, type: String }) cost_variance?: string;
+    /** cost_variance × covered qty. */
+    @ApiProperty({ required: false, type: String }) cost_variance_total?: string;
 }
 
 export class PoCoverageTotalsDto {

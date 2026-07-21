@@ -1647,6 +1647,8 @@ export class PoVendorService {
             // GST rates for existing lines. Draft only: once dispatched the PDF
             // is with the vendor and the tax is frozen, same as the terms below.
             'line_taxes',
+            // In-place rate / GST edits (supersedes line_taxes).
+            'line_edits',
             'expenses',
             // Vendor terms — draft only; once dispatched the PDF is out with
             // the vendor and its terms are frozen.
@@ -1665,6 +1667,11 @@ export class PoVendorService {
             'status',
         ]);
         const dispatchedEditable = new Set([
+            // Vendors revise their rates after the PO has gone out, so a
+            // price-only revision stays open once dispatched. The patch loop
+            // below rejects a tax_pct change at this status (the PDF's tax is
+            // frozen) and blocks the whole thing once a GRN exists.
+            'line_edits',
             'expected_arrival_date',
             'transporter_name',
             'vehicle_no',
@@ -1735,7 +1742,8 @@ export class PoVendorService {
         // `line_taxes` must be pulled out here: anything left in `scalar` gets
         // Object.assign'd straight onto the entity, and an array of line patches
         // is not a column.
-        const { lines, line_taxes, expenses, status, ...scalar } = data as any;
+        const { lines, line_taxes, line_edits, expenses, status, ...scalar } =
+            data as any;
         Object.assign(row, scalar);
         if (status) row.status = status;
 
@@ -1781,11 +1789,15 @@ export class PoVendorService {
         // Only the RATE is written. `line_total` stays qty × price with no tax in
         // it, and the PDF derives the GST amount from the rate at render time —
         // so there is no stored amount that could fall out of sync.
-        if (
-            Array.isArray(line_taxes) &&
-            line_taxes.length > 0 &&
-            fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT
-        ) {
+        //
+        // `unit_price` follows the same in-place route (client #3: "prices can
+        // be revised when suppliers update their rates after the PO has been
+        // created"). Unlike the GST rate it stays editable once DISPATCHED —
+        // but only until a GRN exists, because a receipt bakes the cost into
+        // stock valuation. Changing it recomputes line_total, the % vendor
+        // charges and the payment status.
+        const lineEdits = (line_edits ?? line_taxes) as any[] | undefined;
+        if (Array.isArray(lineEdits) && lineEdits.length > 0) {
             const povLines = await this.povLineRepository.findAll({
                 po_vendor_id: row._id.toString(),
             } as any);
@@ -1793,7 +1805,38 @@ export class PoVendorService {
                 (povLines as any[]).map(l => [l._id.toString(), l])
             );
 
-            for (const patch of line_taxes) {
+            const wantsPrice = lineEdits.some(
+                p => p.unit_price != null && p.unit_price !== ''
+            );
+            const wantsTax = lineEdits.some(
+                p => p.tax_pct != null && p.tax_pct !== ''
+            );
+            const isDraft = fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT;
+
+            if (wantsTax && !isDraft) {
+                throw new BadRequestException(
+                    `POV is ${fromStatus}. The GST rate is frozen once the PO is with the vendor — only the rate can be revised.`
+                );
+            }
+            // A GRN means the goods are already costed into stock; re-pricing
+            // afterwards would silently misstate that valuation.
+            if (wantsPrice && !isDraft) {
+                const deps = await this.dependencyCheckService.check(
+                    'po_vendor',
+                    row._id.toString()
+                );
+                const grn = deps.dependents.find(d => d.label === 'GRN');
+                if (grn) {
+                    throw new BadRequestException(
+                        `Prices cannot be revised — this POV already has ${grn.count} GRN${
+                            grn.count > 1 ? 's' : ''
+                        }. Raise a Debit Note for the difference instead.`
+                    );
+                }
+            }
+
+            let priceChanges = 0;
+            for (const patch of lineEdits) {
                 const line = byId.get(String(patch._id));
                 // Refuse a line id from a different POV rather than silently
                 // ignoring it — a caller sending the wrong id should hear about it.
@@ -1802,17 +1845,51 @@ export class PoVendorService {
                         `Line ${patch._id} does not belong to this POV.`
                     );
                 }
-                const pct = num(patch.tax_pct);
-                if (pct < 0 || pct > 100) {
-                    throw new BadRequestException(
-                        `tax_pct must be between 0 and 100 (line ${patch._id}).`
+                if (patch.tax_pct != null && patch.tax_pct !== '') {
+                    const pct = num(patch.tax_pct);
+                    if (pct < 0 || pct > 100) {
+                        throw new BadRequestException(
+                            `tax_pct must be between 0 and 100 (line ${patch._id}).`
+                        );
+                    }
+                    line.tax_pct = String(pct);
+                }
+                if (patch.unit_price != null && patch.unit_price !== '') {
+                    const price = num(patch.unit_price);
+                    if (price < 0) {
+                        throw new BadRequestException(
+                            `unit_price cannot be negative (line ${patch._id}).`
+                        );
+                    }
+                    if (price !== num(line.unit_price)) priceChanges += 1;
+                    line.unit_price = String(price);
+                    // line_total is qty × price with NO tax in it — the PDF
+                    // derives GST from tax_pct at render time.
+                    line.line_total = String(
+                        round2(num(line.ordered_qty) * price)
                     );
                 }
-                line.tax_pct = String(pct);
                 await this.povLineRepository.save(line);
             }
+
+            if (priceChanges > 0) {
+                // Percentage vendor charges are a % OF THE SUBTOTAL, so they
+                // must be re-derived from the new line totals; then the payable
+                // and payment status follow.
+                await this.resnapshotExpensesFromLines(row);
+                await this.applyPaymentDerived(row);
+                if (userId) {
+                    await this.emitSystemEvent(
+                        companyId,
+                        row._id.toString(),
+                        ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+                        userId,
+                        `Vendor rate revised on ${priceChanges} line(s)`
+                    );
+                }
+            }
             this.logger.log(
-                `POV ${row._id}: GST updated on ${line_taxes.length} line(s)`
+                `POV ${row._id}: ${lineEdits.length} line(s) patched (${priceChanges} price change(s))`
             );
         }
 
@@ -1830,6 +1907,34 @@ export class PoVendorService {
             );
         }
         return this.povRepository.findOneById(row._id.toString());
+    }
+
+    /**
+     * Re-derive `expenses_snapshot` from the POV's CURRENT line totals, keeping
+     * each charge's own rule (`type` + `value`) so a percentage charge tracks a
+     * changed subtotal. Called after a vendor-rate revision.
+     */
+    private async resnapshotExpensesFromLines(row: PoVendorDoc): Promise<void> {
+        const snap = ((row as any).expenses_snapshot || []) as any[];
+        if (!snap.length) return;
+        const povLines = await this.povLineRepository.findAll({
+            po_vendor_id: row._id.toString(),
+        } as any);
+        const subtotal = (povLines as any[]).reduce(
+            (s, l) => s + num(l.line_total),
+            0
+        );
+        row.expenses_snapshot = (await this.buildExpensesSnapshot(
+            row.company_id.toString(),
+            snap.map(e => ({
+                expense_id: e.expense_id,
+                type: e.type,
+                value: e.value,
+                gst_pct: e.gst_pct,
+            })),
+            subtotal
+        )) as any;
+        await this.povRepository.save(row);
     }
 
     private async replaceLinesOnDraft(
@@ -1896,7 +2001,13 @@ export class PoVendorService {
             seq += 1;
             const poLine = poLineById.get(ln.purchase_order_line_id);
             const ordered = num(ln.ordered_qty);
-            const unitPrice = num(poLine.unit_price);
+            // The caller's rate wins, the SO line is the fallback — mirroring
+            // the create path, so a vendor rate revision survives a lines
+            // replace instead of silently reverting to the SO's figure.
+            const unitPrice =
+                ln.unit_price != null && ln.unit_price !== ''
+                    ? num(ln.unit_price)
+                    : num(poLine.unit_price);
             await this.povLineRepository.create({
                 company_id: companyId,
                 po_vendor_id: povId,
@@ -1919,7 +2030,7 @@ export class PoVendorService {
                     ln.tax_pct != null && ln.tax_pct !== ''
                         ? String(num(ln.tax_pct))
                         : String(poLine.tax_pct || '0'),
-                unit_price: String(poLine.unit_price || '0'),
+                unit_price: String(unitPrice),
                 ordered_qty: String(ordered),
                 dispatched_qty: '0',
                 received_qty: '0',
