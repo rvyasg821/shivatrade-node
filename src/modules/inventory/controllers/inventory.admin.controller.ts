@@ -1,5 +1,6 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
 
 import {
     AuthJwtAccessProtected,
@@ -72,6 +73,63 @@ export class InventoryAdminController {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data: rows,
         };
+    }
+
+    /**
+     * Closing Inventory Excel (client #5) — the same register as `/list` for the
+     * SAME filters, un-paginated, for period-end reporting/reconciliation.
+     */
+    @AuthJwtAccessProtected()
+    @ApiOperation({ summary: 'Export the closing-inventory register as Excel' })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'category_id', required: false })
+    @ApiQuery({ name: 'vendor_id', required: false })
+    @ApiQuery({ name: 'location_id', required: false })
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'in_stock_only', required: false })
+    @Get('/export')
+    async export(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse,
+        @Query('search') search?: string,
+        @Query('category_id') categoryId?: string,
+        @Query('po_id') poId?: string,
+        @Query('pov_id') povId?: string,
+        @Query('vendor_id') vendorId?: string,
+        @Query('location_id') locationId?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
+        @Query('min_qty') minQty?: string,
+        @Query('in_stock_only') inStockOnly?: string,
+        @Query('orderBy') orderBy?: string,
+        @Query('orderDirection') orderDirection?: string
+    ): Promise<void> {
+        const buffer = await this.inventoryService.exportExcel(companyId, {
+            search: search?.trim() || undefined,
+            category_id: categoryId || undefined,
+            po_id: poId || undefined,
+            pov_id: povId || undefined,
+            vendor_id: vendorId || undefined,
+            location_id: locationId || undefined,
+            date_from: dateFrom || undefined,
+            date_to: dateTo || undefined,
+            min_qty:
+                minQty != null && minQty !== '' ? Number(minQty) : undefined,
+            in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
+            orderBy,
+            orderDirection,
+        } as any);
+        const stamp = (dateTo || new Date().toISOString()).slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="closing-inventory_${stamp}.xlsx"`
+        );
+        res.end(buffer);
     }
 
     /**

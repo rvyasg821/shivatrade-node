@@ -48,6 +48,18 @@ export class InventoryListResponseDto {
     @ApiProperty()
     closing_qty: string;
 
+    /**
+     * closing_qty × avg_rate — the period-end valuation used for closing-stock
+     * reconciliation. Deliberately NOT the same as the "Stock Value" figure,
+     * which is `on_hand × avg_rate` (TODAY). With a To date set the two differ,
+     * and it is this one the accountant needs.
+     *
+     * Not clamped at 0: a negative closing balance is a data problem the
+     * reconciliation must surface, not hide.
+     */
+    @ApiProperty()
+    closing_value: string;
+
     // Most recent receipt date across this product's POVs.
     @ApiProperty({ nullable: true })
     arrival_date: string | null;

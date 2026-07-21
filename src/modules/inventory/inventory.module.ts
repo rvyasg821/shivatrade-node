@@ -4,6 +4,7 @@ import { InventoryService } from './services/inventory.service';
 import { StockLedgerService } from './services/stock-ledger.service';
 import { InventoryAdminController } from './controllers/inventory.admin.controller';
 import { InventoryRepositoryModule } from './repository/inventory.repository.module';
+import { FileModule } from '@common/file/file.module';
 
 /**
  * Inventory (Received-Goods Register) — read-only view over existing POV /
@@ -17,7 +18,8 @@ import { InventoryRepositoryModule } from './repository/inventory.repository.mod
  * with an extra '/admin', producing a stray /admin/admin/inventory route.
  */
 @Module({
-    imports: [InventoryRepositoryModule],
+    // FileModule — the Closing Inventory Excel export (client #5).
+    imports: [InventoryRepositoryModule, FileModule.forRoot()],
     providers: [InventoryService, StockLedgerService],
     controllers: [InventoryAdminController],
     // StockLedgerService is consumed by GRN (in) and Invoice (out) modules.

@@ -1,10 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
+import { FileService } from '@common/file/services/file.service';
 
 import { InventoryListResponseDto } from '../dtos/response/inventory-list.response.dto';
 import { InventoryReceiptDetailResponseDto } from '../dtos/response/inventory-receipt-detail.response.dto';
 import { InventoryStatsResponseDto } from '../dtos/response/inventory-stats.response.dto';
+
+/** 2026-07-21 → 21-07-2026, matching how dates read on screen. */
+const isoToDdmmyyyy = (iso?: string): string => {
+    const s = String(iso || '').slice(0, 10);
+    const [y, m, d] = s.split('-');
+    return y && m && d ? `${d}-${m}-${y}` : s;
+};
 
 export interface InventoryListFilters {
     search?: string;
@@ -54,7 +62,8 @@ const num = (v: any): number => {
 @Injectable()
 export class InventoryService {
     constructor(
-        @InjectDatabaseConnection() private readonly dataSource: DataSource
+        @InjectDatabaseConnection() private readonly dataSource: DataSource,
+        private readonly fileService: FileService
     ) {}
 
     // The join chain shared by the count + page queries. Driving table is
@@ -284,7 +293,106 @@ export class InventoryService {
             ]
         );
 
-        return { rows, total };
+        return { rows: this.withClosingValue(rows), total };
+    }
+
+    /**
+     * Derive `closing_value = closing_qty × avg_rate` in JS rather than SQL —
+     * `avg_rate` is an aggregate alias in the same SELECT, so referencing it
+     * there would mean repeating the whole weighted-average expression.
+     */
+    private withClosingValue(rows: any[]): InventoryListResponseDto[] {
+        for (const r of rows || []) {
+            const qty = Number(r.closing_qty) || 0;
+            const rate = Number(r.avg_rate) || 0;
+            r.closing_value =
+                Math.round((qty * rate + Number.EPSILON) * 100) / 100;
+        }
+        return rows as InventoryListResponseDto[];
+    }
+
+    /**
+     * Closing-Inventory Excel (client #5) — the on-screen register for the
+     * SAME filtered set, un-paginated, for period-end reconciliation.
+     *
+     * Quantities are deliberately NOT totalled: products carry different UOMs
+     * (KG vs Nos), so a quantity total would be meaningless — the same reason
+     * the Sales Turnover report refuses to sum across currencies. Only the
+     * money column and a product count are totalled.
+     */
+    async exportExcel(
+        companyId: string,
+        filters: Omit<InventoryListFilters, 'limit' | 'offset'>
+    ): Promise<Buffer> {
+        const { rows } = await this.list(companyId, {
+            ...filters,
+            // Un-paginated: an export that silently stopped at page 1 would be
+            // worse than no export for reconciliation.
+            limit: 100000,
+            offset: 0,
+        });
+
+        const asAt = filters.date_to ? isoToDdmmyyyy(filters.date_to) : 'today';
+        const period = filters.date_from
+            ? `${isoToDdmmyyyy(filters.date_from)} → ${asAt}`
+            : `up to ${asAt}`;
+
+        const aoa: (string | number)[][] = [
+            [`Closing Inventory — as at ${asAt}`],
+            [`Movement period: ${period}`],
+            [
+                'Closing Value = Closing Qty x Avg Rate. Quantities are not totalled (mixed units of measure).',
+            ],
+            [],
+            [
+                'Product Code',
+                'Product',
+                'Category',
+                'UOM',
+                'Opening',
+                'Inward',
+                'Outward',
+                'Closing',
+                'Avg Rate (INR)',
+                'Closing Value (INR)',
+                'Qty in Stock (today)',
+            ],
+        ];
+
+        let totalClosingValue = 0;
+        for (const r of rows as any[]) {
+            totalClosingValue += Number(r.closing_value) || 0;
+            aoa.push([
+                r.product_code || '',
+                r.product_name || '',
+                r.category_name || '',
+                r.uom || '',
+                Number(r.opening_qty) || 0,
+                Number(r.inward_qty) || 0,
+                Number(r.outward_qty) || 0,
+                Number(r.closing_qty) || 0,
+                Number(r.avg_rate) || 0,
+                Number(r.closing_value) || 0,
+                Number(r.on_hand) || 0,
+            ]);
+        }
+
+        aoa.push([]);
+        aoa.push([
+            `Products: ${rows.length}`,
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            'Total Closing Value',
+            Math.round((totalClosingValue + Number.EPSILON) * 100) / 100,
+            '',
+        ]);
+
+        return this.fileService.writeExcelFromArray(aoa as any);
     }
 
     /**
