@@ -52,4 +52,10 @@ export class SalesTurnoverResponseDto {
      * deliberately NO root-level money total (§12.1).
      */
     @ApiProperty({ type: Number }) overall_invoice_count: number;
+    /**
+     * 'native' → one section per currency, no cross-currency money total.
+     * 'inr'    → a SINGLE ₹ section (every invoice converted at its own stored
+     *            rate), so `groups[0].totals` IS the overall turnover.
+     */
+    @ApiProperty({ type: String }) currency_mode: 'native' | 'inr';
 }
