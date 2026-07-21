@@ -51,6 +51,8 @@ import { PoVendorTrackingEventRepository } from '@modules/tracking-event/reposit
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
+import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
+import { sumAdjustmentEffect } from '@modules/adjustment-note/helpers/adjustment-balance.helper';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -67,6 +69,7 @@ export class PoVendorService {
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly povPaymentRepository: PoVendorPaymentRepository,
+        private readonly adjustmentNoteRepository: AdjustmentNoteRepository,
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly vendorRepository: VendorRepository,
@@ -2504,18 +2507,47 @@ export class PoVendorService {
         const paid = await this.povPaymentRepository.sumActiveByPoVendorId(
             row._id.toString()
         );
+        // Adjustment Notes linked to this POV settle it alongside cash: a
+        // vendor Debit note ("reduce the bill") lowers the payable, a Credit
+        // note raises it. Voided notes drop out, so a void reverses.
+        const adj = sumAdjustmentEffect(
+            (await this.adjustmentNoteRepository.findByDocumentId(
+                row._id.toString()
+            )) as any[]
+        );
         const orderValue = await this.computeOrderValue(row);
+        const settled = round2(paid + adj);
         row.amount_paid = String(round2(paid));
-        if (paid <= 1e-2) {
-            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID;
-        } else if (paid - orderValue > 1e-2) {
-            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.OVERPAID;
-        } else if (orderValue - paid <= 1e-2) {
-            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.PAID;
-        } else {
-            row.payment_status = ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
-        }
+        row.adjustment_total = String(adj);
+        row.payment_status = this.derivePaymentStatus(settled, orderValue);
         await this.povRepository.save(row);
+    }
+
+    /**
+     * Payment status from the SETTLED figure (cash + linked adjustment notes)
+     * against the live order value. Shared by applyPaymentDerived and mapList
+     * so the stored status and the listed one can never disagree.
+     */
+    private derivePaymentStatus(
+        settled: number,
+        orderValue: number
+    ): ENUM_PO_VENDOR_PAYMENT_STATUS {
+        if (settled <= 1e-2) return ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID;
+        if (settled - orderValue > 1e-2)
+            return ENUM_PO_VENDOR_PAYMENT_STATUS.OVERPAID;
+        if (orderValue - settled <= 1e-2)
+            return ENUM_PO_VENDOR_PAYMENT_STATUS.PAID;
+        return ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
+    }
+
+    /**
+     * Re-derive payable + status after an Adjustment Note linked to this POV is
+     * created or voided. Called by AdjustmentNoteService.
+     */
+    async recomputeAfterAdjustment(poVendorId: string): Promise<void> {
+        const row = await this.povRepository.findOneById(poVendorId);
+        if (!row || row.soft_delete) return;
+        await this.applyPaymentDerived(row);
     }
 
     // ─── Hydration / mappers ────────────────────────────────────────────
@@ -2687,17 +2719,13 @@ export class PoVendorService {
                 linesInr + chargesInr + gstInr + chargeGstInr
             );
             const amountPaid = round2(num(r.amount_paid));
+            // Linked Adjustment Notes settle the POV alongside cash.
+            const adjustmentTotal = round2(num((r as any).adjustment_total));
+            const settled = round2(amountPaid + adjustmentTotal);
             // Goes negative when the vendor has been overpaid — the FE shows
             // that as an "Overpaid" amount rather than a payable.
-            const balancePayable = round2(orderValue - amountPaid);
-            const paymentStatus =
-                amountPaid <= 1e-2
-                    ? ENUM_PO_VENDOR_PAYMENT_STATUS.UNPAID
-                    : amountPaid - orderValue > 1e-2
-                      ? ENUM_PO_VENDOR_PAYMENT_STATUS.OVERPAID
-                      : orderValue - amountPaid <= 1e-2
-                        ? ENUM_PO_VENDOR_PAYMENT_STATUS.PAID
-                        : ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
+            const balancePayable = round2(orderValue - settled);
+            const paymentStatus = this.derivePaymentStatus(settled, orderValue);
             const payments = (paymentsByPov.get(r._id.toString()) || [])
                 .slice()
                 .sort((a, b) =>
@@ -2783,6 +2811,7 @@ export class PoVendorService {
                 // re-deriving the product-master fallback + jsonb charge rates.
                 gst_inr: String(round2(gstInr + chargeGstInr)),
                 amount_paid: String(amountPaid),
+                adjustment_total: String(adjustmentTotal),
                 balance_payable: String(balancePayable),
                 payment_status: paymentStatus,
                 payments,

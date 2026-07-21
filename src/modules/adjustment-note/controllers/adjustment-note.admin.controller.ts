@@ -14,7 +14,10 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
-import { AdjustmentNoteService } from '../services/adjustment-note.service';
+import {
+    AdjustmentNoteService,
+    AdjustmentLinkableDocument,
+} from '../services/adjustment-note.service';
 import { AdjustmentNoteCreateRequestDto } from '../dtos/request/adjustment-note.create.request.dto';
 import { AdjustmentNoteVoidRequestDto } from '../dtos/request/adjustment-note.void.request.dto';
 import { AdjustmentNoteResponseDto } from '../dtos/response/adjustment-note.response.dto';
@@ -65,6 +68,30 @@ export class AdjustmentNoteAdminController {
                 totalPage: Math.ceil(total / (_limit || 25)),
             },
         };
+    }
+
+    /**
+     * Documents this note can be applied to — invoices for a customer, Vendor
+     * POs for a vendor. Feeds the "Apply to document" dropdown, which shows the
+     * outstanding balance so the form can preview the change.
+     */
+    @Response('adjustmentNote.documents')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'party_type', required: true })
+    @ApiQuery({ name: 'party_id', required: true })
+    @Get('/documents')
+    async documents(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('party_type') partyType: string,
+        @Query('party_id') partyId: string
+    ): Promise<IResponse<AdjustmentLinkableDocument[]>> {
+        if (!partyType || !partyId) return { data: [] };
+        const data = await this.service.listLinkableDocuments(
+            companyId,
+            partyType,
+            partyId
+        );
+        return { data };
     }
 
     @Response('adjustmentNote.create')

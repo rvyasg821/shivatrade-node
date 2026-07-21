@@ -37,6 +37,22 @@ export class AdjustmentNoteEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'jsonb', nullable: true })
     party_snapshot?: { name?: string };
 
+    /**
+     * OPTIONAL link to the document this note settles — an Invoice when
+     * party_type is customer, a PoVendor when it is vendor. NULL keeps the
+     * original party-level behaviour (the note only moves the ledger).
+     *
+     * When set, the document's own balance moves too: see
+     * `sumAdjustmentEffect` + InvoiceService/PoVendorService.applyPaymentDerived.
+     */
+    @Index()
+    @Column({ type: 'uuid', nullable: true })
+    document_id?: string;
+
+    /** Frozen voucher of the linked document — list/ledger display only. */
+    @Column({ type: 'varchar', length: 60, nullable: true })
+    document_voucher_no?: string;
+
     @Column({ type: 'varchar', length: 6, nullable: false })
     direction: ENUM_ADJUSTMENT_DIRECTION;
 

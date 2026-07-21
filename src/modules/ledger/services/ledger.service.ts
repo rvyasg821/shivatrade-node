@@ -77,6 +77,8 @@ export interface LedgerRegisterRow {
     gst_rate?: string;
     gst_amount?: string;
     currency_code: string;
+    /** Invoice / Vendor PO the adjustment was applied to, if any. */
+    document_voucher_no?: string;
     particulars: string;
     voided_at?: Date;
     voided_reason?: string;
@@ -170,7 +172,13 @@ export class LedgerService {
             rows.push({
                 date: n.note_date,
                 type: 'adjustment',
-                particulars: `Adjustment: ${n.reason || ''}`.slice(0, 200),
+                // Name the document when the note was applied to one, so the
+                // statement shows WHICH invoice/POV it settled.
+                particulars: `${
+                    n.document_voucher_no
+                        ? `Adjustment against ${n.document_voucher_no}`
+                        : 'Adjustment'
+                }: ${n.reason || ''}`.slice(0, 200),
                 voucher_no: n.voucher_no,
                 dr: isDebit ? num(n.amount) : 0,
                 cr: isDebit ? 0 : num(n.amount),
@@ -182,16 +190,20 @@ export class LedgerService {
             invoices[0]?.currency_code ||
             'INR';
 
-        // Mirrors the vendor cards: lifetime totals (never narrowed by from/to)
-        // counting documents and receipts only — adjustment notes stay out, so
-        // Total Received means cash actually received.
+        // Mirrors the vendor cards: lifetime totals, never narrowed by from/to
+        // ("what's still owed" isn't a date-range question).
+        //
+        // Client rule (2026-07-21, supersedes 2026-07-17): adjustment notes ARE
+        // counted, so Outstanding finally agrees with the Balance column below
+        // it. Total Received is therefore the SETTLED total (net of notes), not
+        // pure cash — same ΣCR − ΣDR the balance column uses:
+        //   Credit note (we owe the customer back) → CR → ↓ outstanding
+        //   Debit note   (we charge them more)     → DR → ↑ outstanding
         const totalBilled = round2(
             invoices.reduce((s, i) => s + num(i.grand_total), 0)
         );
         const totalPaid = round2(
-            rows
-                .filter((r) => r.type === 'receipt')
-                .reduce((s, r) => s + num(r.cr), 0)
+            rows.reduce((s, r) => s + num(r.cr) - num(r.dr), 0)
         );
         const summary = {
             total_billed: totalBilled,
@@ -280,7 +292,13 @@ export class LedgerService {
             rows.push({
                 date: n.note_date,
                 type: 'adjustment',
-                particulars: `Adjustment: ${n.reason || ''}`.slice(0, 200),
+                // Name the document when the note was applied to one, so the
+                // statement shows WHICH invoice/POV it settled.
+                particulars: `${
+                    n.document_voucher_no
+                        ? `Adjustment against ${n.document_voucher_no}`
+                        : 'Adjustment'
+                }: ${n.reason || ''}`.slice(0, 200),
                 voucher_no: n.voucher_no,
                 dr: isDebit ? eff : 0,
                 cr: isDebit ? 0 : eff,
@@ -289,16 +307,20 @@ export class LedgerService {
 
         // Headline totals. Computed over ALL rows (not the from/to slice) —
         // "what do we owe this vendor overall?" isn't a date-range question.
-        // Payments only: adjustment notes are deliberately excluded so that
-        // Total Paid means cash actually paid, and Outstanding equals the sum
-        // of the VPO pages' own Balance Payable cards.
+        //
+        // Client rule (2026-07-21, supersedes 2026-07-17): adjustment notes ARE
+        // counted, so Outstanding agrees with the Balance column below it. Same
+        // ΣDR − ΣCR the balance column uses:
+        //   Debit note  (short supply — we owe less) → DR → ↓ outstanding
+        //   Credit note (money back from the vendor) → CR → ↑ outstanding
+        // Consequence: Outstanding no longer equals the plain sum of the VPO
+        // pages' Balance Payable cards once a note exists — the VPO card can't
+        // see party-level notes. That difference is intended.
         const totalBilled = round2(
             (povs as any[]).reduce((s, p) => s + num(p.order_value), 0)
         );
         const totalPaid = round2(
-            rows
-                .filter((r) => r.type === 'payment')
-                .reduce((s, r) => s + num(r.dr), 0)
+            rows.reduce((s, r) => s + num(r.dr) - num(r.cr), 0)
         );
         const summary = {
             total_billed: totalBilled,
@@ -366,6 +388,9 @@ export class LedgerService {
                 gst_rate: hasGst ? String(n.gst_rate) : undefined,
                 gst_amount: hasGst ? String(n.gst_amount) : undefined,
                 currency_code: n.currency_code,
+                // Which invoice / Vendor PO this note was applied to (blank on
+                // a party-level note) — surfaced as its own register column.
+                document_voucher_no: n.document_voucher_no || undefined,
                 particulars: n.reason || '',
                 voided_at: n.voided_at || undefined,
                 voided_reason: n.voided_reason || undefined,

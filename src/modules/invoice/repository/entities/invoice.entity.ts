@@ -252,7 +252,16 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     advance_received: string;
 
-    /** grand_total − advance_received. Maintained on each save. */
+    /**
+     * Net effect of the Adjustment Notes linked to this invoice, as a POSITIVE
+     * number meaning "the receivable is reduced by this much" (a customer
+     * Credit note reduces, a Debit note increases → negative). Derived from
+     * active notes; see `sumAdjustmentEffect`.
+     */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    adjustment_total: string;
+
+    /** grand_total − advance_received − adjustment_total. Maintained on save. */
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     balance_receivable: string;
 

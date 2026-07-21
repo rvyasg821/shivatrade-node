@@ -1059,7 +1059,14 @@ export class InvoiceImportExportService {
                 } else {
                     const priorPaid = priorPaidCache.get(invId) || 0;
                     const running = runningByInvoice.get(invId) || 0;
-                    const outstanding = Number(inv.grand_total) - priorPaid - running;
+                    // Adjustment Notes applied to the invoice settle part of
+                    // it, so they lower the ceiling here too — mirrors
+                    // InvoiceService.recordPayment.
+                    const outstanding =
+                        Number(inv.grand_total) -
+                        Number(inv.adjustment_total || 0) -
+                        priorPaid -
+                        running;
                     if (amountNum > outstanding + 0.01) {
                         errors.push(
                             `amount ${amountNum} exceeds the invoice's outstanding balance ${r2(

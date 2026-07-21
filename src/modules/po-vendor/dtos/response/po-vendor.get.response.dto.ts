@@ -135,7 +135,9 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: false, type: String }) gst_inr?: string;
     /** Sum of active (non-voided) payments. */
     @ApiProperty({ required: false, type: String }) amount_paid?: string;
-    /** order_value − amount_paid. */
+    /** Net effect of linked Adjustment Notes (positive = payable reduced). */
+    @ApiProperty({ required: false, type: String }) adjustment_total?: string;
+    /** order_value − amount_paid − adjustment_total. */
     @ApiProperty({ required: false, type: String }) balance_payable?: string;
     @ApiProperty({ enum: ENUM_PO_VENDOR_PAYMENT_STATUS, required: false })
     payment_status?: ENUM_PO_VENDOR_PAYMENT_STATUS;

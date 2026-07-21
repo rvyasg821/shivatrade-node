@@ -178,9 +178,24 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     })
     amount_paid: string;
 
+    /**
+     * Net effect of the Adjustment Notes linked to this POV, as a POSITIVE
+     * number meaning "the payable is reduced by this much" (a vendor Debit
+     * note reduces, a Credit note increases → negative). Derived from active
+     * notes; see `sumAdjustmentEffect`.
+     */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 2,
+        nullable: false,
+        default: 0,
+    })
+    adjustment_total: string;
+
     /** Vendor payment status — unpaid / partially_paid / paid. Derived from
-     *  amount_paid vs the live order value (payable). Runs independently of
-     *  the dispatch `status`. */
+     *  amount_paid + adjustment_total vs the live order value (payable). Runs
+     *  independently of the dispatch `status`. */
     @Index()
     @Column({
         type: 'varchar',
