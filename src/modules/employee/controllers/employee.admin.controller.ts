@@ -12,7 +12,7 @@ import {
     BadRequestException,
     Logger,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { Response, ResponsePaging } from '@common/response/decorators/response.decorator';
 import { IResponse, IResponsePaging } from '@common/response/interfaces/response.interface';
@@ -325,6 +325,57 @@ export class EmployeeAdminController {
         @Query('status') status?: string,
         @Query('location_id') locationId?: string
     ): Promise<IResponsePaging<any>> {
+        const find = await this.buildEmployeeListFind({
+            userId,
+            companyId,
+            roleName,
+            locationIdFromToken,
+            assignedLocations,
+            search: searchRaw?.trim() || (_search && typeof _search === 'string' ? _search : null),
+            status,
+            locationId,
+        });
+
+        const users = await this.userService.findAll(find, {
+            paging: {
+                limit: _limit,
+                offset: _offset,
+            },
+            order: _order,
+        });
+        return this.hydrateAndPage(users, find, _limit);
+    }
+
+    /**
+     * The employee-listing filter, in one place.
+     *
+     * Extracted so `/list` and `/stats` can never disagree — the KPI cards sit
+     * directly above the table, and a count built from a second, hand-copied
+     * version of this scoping would drift the moment either changed.
+     *
+     * `status` is optional on purpose: /stats omits it so the Active and
+     * Inactive tiles stay meaningful while the table is filtered.
+     */
+    private async buildEmployeeListFind(params: {
+        userId: string;
+        companyId: string;
+        roleName: string;
+        locationIdFromToken: string;
+        assignedLocations: string[];
+        search?: string | null;
+        status?: string;
+        locationId?: string;
+    }): Promise<any> {
+        const {
+            userId,
+            companyId,
+            roleName,
+            locationIdFromToken,
+            assignedLocations,
+            status,
+            locationId,
+        } = params;
+
         // Get Employee role
         const employeeRole = await this.roleService.findOne({
             name: ENUM_SYSTEM_ROLE.EMPLOYEE,
@@ -420,7 +471,7 @@ export class EmployeeAdminController {
         }
 
         // Add search if provided — use raw search string (pipe may not set _search if no availableSearch configured)
-        const searchTerm = searchRaw?.trim() || (_search && typeof _search === 'string' ? _search : null);
+        const searchTerm = params.search || null;
         if (searchTerm) {
             find.$or = [
                 { first_name: { $regex: searchTerm, $options: 'i' } },
@@ -431,14 +482,15 @@ export class EmployeeAdminController {
             ];
         }
 
-        const users = await this.userService.findAll(find, {
-            paging: {
-                limit: _limit,
-                offset: _offset,
-            },
-            order: _order,
-        });
+        return find;
+    }
 
+    /** Location + role hydration and the paging envelope for `/list`. */
+    private async hydrateAndPage(
+        users: any[],
+        find: any,
+        _limit: number
+    ): Promise<IResponsePaging<any>> {
         // Get unique location IDs from users
         const locationIds = [...new Set(
             users
@@ -502,6 +554,73 @@ export class EmployeeAdminController {
         return {
             _pagination: { total, totalPage: Math.ceil(total / _limit) },
             data: enrichedUsers,
+        };
+    }
+
+    /**
+     * KPI tiles above the employee listing.
+     *
+     * Built from the SAME filter as `/list` (via buildEmployeeListFind), so the
+     * numbers always describe the table underneath — search and location narrow
+     * them, and the role/location scoping a Location Admin is subject to
+     * applies here too.
+     *
+     * The `status` filter is deliberately NOT applied: Active and Inactive are
+     * two of the tiles, so filtering the table to ACTIVE must not make the
+     * Inactive tile read 0.
+     */
+    @Response('employee.stats')
+    @AuthJwtAccessProtected()
+    @Get('/stats')
+    @ApiOperation({ summary: 'KPI counts for the employee listing' })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'location_id', required: false })
+    async stats(
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('locationId') locationIdFromToken: string,
+        @AuthJwtPayload('assignedLocations') assignedLocations: string[],
+        @Query('search') searchRaw?: string,
+        @Query('location_id') locationId?: string
+    ): Promise<IResponse<any>> {
+        const find = await this.buildEmployeeListFind({
+            userId,
+            companyId,
+            roleName,
+            locationIdFromToken,
+            assignedLocations,
+            search: searchRaw?.trim() || null,
+            locationId,
+        });
+
+        const [total, active] = await Promise.all([
+            this.userService.getTotal(find),
+            this.userService.getTotal({ ...find, is_active: true }),
+        ]);
+
+        // Distinct locations + roles across the filtered set. Counted in JS
+        // rather than with a DB distinct — the employee count per company is
+        // small, and `find` may already carry an `_id: { $in: [...] }` from the
+        // location-assignment merge above, which a raw distinct would ignore.
+        const all = await this.userService.findAll(find, {});
+        const locationIds = new Set(
+            (all as any[])
+                .map((u) => u.location_id?.toString?.())
+                .filter(Boolean)
+        );
+        const roleIds = new Set(
+            (all as any[]).map((u) => u.role?.toString?.()).filter(Boolean)
+        );
+
+        return {
+            data: {
+                total,
+                active,
+                inactive: Math.max(0, total - active),
+                locations: locationIds.size,
+                roles: roleIds.size,
+            },
         };
     }
 
