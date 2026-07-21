@@ -66,9 +66,21 @@ export class PoVendorLineTaxUpdateDto {
     @IsNotEmpty()
     _id: string;
 
+    /** GST rate. DRAFT only — frozen once the PDF is with the vendor. */
     @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
-    @IsNotEmpty()
-    tax_pct: string;
+    @IsOptional()
+    tax_pct?: string;
+
+    /**
+     * Vendor rate. Editable in DRAFT and — because suppliers revise rates after
+     * the PO has gone out — in DISPATCHED too, but only while no GRN exists
+     * (once goods are received the cost is baked into stock valuation).
+     * The service recomputes line_total, the % vendor charges and the payment
+     * status from it.
+     */
+    @IsNumberString({}, { message: 'unit_price must be a numeric string' })
+    @IsOptional()
+    unit_price?: string;
 }
 
 export class PoVendorUpdateRequestDto {
@@ -80,6 +92,19 @@ export class PoVendorUpdateRequestDto {
     @Type(() => PoVendorLineTaxUpdateDto)
     @IsOptional()
     line_taxes?: PoVendorLineTaxUpdateDto[];
+
+    /**
+     * In-place per-line edits (rate and/or GST rate) keyed by the POV line's own
+     * `_id`. Same shape as `line_taxes`, which it supersedes — both are still
+     * accepted so an older client keeps working. Unlike `lines` this never
+     * deletes/recreates rows and needs no `purchase_order_line_id`, so it works
+     * on a STANDALONE POV too.
+     */
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => PoVendorLineTaxUpdateDto)
+    @IsOptional()
+    line_edits?: PoVendorLineTaxUpdateDto[];
 
     @IsString()
     @IsOptional()

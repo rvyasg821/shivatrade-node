@@ -122,6 +122,39 @@ export class PoCoverageService {
             aggByPoLine.set(k, cur);
         }
 
+        // ── Cost aggregate (cost-variance reporting ONLY) ──────────────
+        // Deliberately separate from the qty aggregation above, which must not
+        // change: the pending/coverage guards are computed from it.
+        //
+        // A POV created by the bulk importer (or any standalone POV later
+        // linked to this PO) has `purchase_order_line_id = NULL` on its lines,
+        // so those lines are invisible to `aggByPoLine`. For COST purposes we
+        // fall back to matching on product_id — but only when that product
+        // appears on exactly ONE PO line, so an ambiguous match is skipped
+        // rather than attributed to the wrong line.
+        const poLineIdByProduct = new Map<string, string | null>();
+        for (const pol of poLines as any[]) {
+            const pid = pol.product_id?.toString();
+            if (!pid) continue;
+            poLineIdByProduct.set(
+                pid,
+                poLineIdByProduct.has(pid) ? null : pol._id.toString()
+            );
+        }
+        const costByPoLine = new Map<string, { qty: number; value: number }>();
+        for (const pl of povLines as any[]) {
+            let k = pl.purchase_order_line_id?.toString();
+            if (!k) {
+                const pid = pl.product_id?.toString();
+                k = pid ? poLineIdByProduct.get(pid) || undefined : undefined;
+            }
+            if (!k) continue;
+            const cur = costByPoLine.get(k) || { qty: 0, value: 0 };
+            cur.qty += num(pl.ordered_qty);
+            cur.value += num(pl.ordered_qty) * num(pl.unit_price);
+            costByPoLine.set(k, cur);
+        }
+
         // ── Hydrate product info for line labels ───────────────────────
         const productIds = unique(
             (poLines as any[])
@@ -194,6 +227,7 @@ export class PoCoverageService {
                     lost: 0,
                     consumed: 0,
                 };
+            const cost = costByPoLine.get(k);
             const ordered = num(pol.qty);
             const pending = round4(ordered - a.consumed);
             // Short = physical loss that actually leaves the ORDER unfulfilled:
@@ -228,6 +262,12 @@ export class PoCoverageService {
             const pendingNet = Math.max(0, round4(pending - fromStock));
             const shortNet = Math.max(0, round4(short - fromStock));
 
+            // Weighted-average vendor rate actually ordered for this line
+            // across non-cancelled POVs; null when no POV covers it yet.
+            const soRate = num(pol.unit_price);
+            const vendorRate =
+                cost && cost.qty > 0 ? cost.value / cost.qty : null;
+
             lines.push({
                 purchase_order_line_id: k,
                 vendor_id: pol.vendor_id?.toString(),
@@ -254,6 +294,24 @@ export class PoCoverageService {
                 invoiceable: String(invoiceable),
                 in_stock: String(round4(inStock)),
                 from_stock: String(fromStock),
+                // ── Cost variance (client #3, option C) ──
+                // The SO line's rate is the COST this order was costed at
+                // (margin sits on top of it). When a vendor revises their rate
+                // on the POV, the two diverge — surfaced here rather than
+                // silently rewriting the customer-facing SO line.
+                so_unit_price: String(round4(soRate)),
+                vendor_unit_price:
+                    vendorRate == null ? undefined : String(round4(vendorRate)),
+                cost_variance:
+                    vendorRate == null
+                        ? undefined
+                        : String(round4(vendorRate - soRate)),
+                cost_variance_total:
+                    vendorRate == null
+                        ? undefined
+                        : String(
+                              round4((vendorRate - soRate) * (cost?.qty || 0))
+                          ),
             });
 
             totOrd += ordered;
