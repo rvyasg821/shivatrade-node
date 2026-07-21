@@ -10,7 +10,10 @@ import { IResponse } from '@common/response/interfaces/response.interface';
 import { ReportsService } from '../services/reports.service';
 import { ProductProfitabilityResponseDto } from '../dtos/response/product-profitability.response.dto';
 import { HsnSummaryResponseDto } from '../dtos/response/hsn-summary.response.dto';
-import { GstBalanceResponseDto } from '../dtos/response/gst-balance.response.dto';
+import {
+    GstBalanceResponseDto,
+    GstBalanceBreakdownResponseDto,
+} from '../dtos/response/gst-balance.response.dto';
 import { PurchaseTurnoverResponseDto } from '../dtos/response/purchase-turnover.response.dto';
 import { SalesTurnoverResponseDto } from '../dtos/response/sales-turnover.response.dto';
 
@@ -179,6 +182,26 @@ export class ReportsAdminController {
             date_from: query.date_from,
             date_to: query.date_to,
         });
+        return { data };
+    }
+
+    /**
+     * Drill-down for one month — the Vendor POs and invoices the month's
+     * figures are actually made of (client #6: "show how these values are
+     * derived").
+     */
+    @Response('reports.gstBalanceBreakdown')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'month', required: true, description: 'YYYY-MM' })
+    @Get('/gst-balance/breakdown')
+    async gstBalanceBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('month') month: string
+    ): Promise<IResponse<GstBalanceBreakdownResponseDto>> {
+        const data = await this.reportsService.gstBalanceBreakdown(
+            companyId,
+            month
+        );
         return { data };
     }
 
