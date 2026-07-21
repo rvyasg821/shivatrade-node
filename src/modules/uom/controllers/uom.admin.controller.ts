@@ -8,8 +8,13 @@ import {
     Post,
     Put,
     Query,
+    Res,
+    UploadedFile,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
 
 import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
 import { UserProtected } from '@modules/user/decorators/user.decorator';
@@ -25,6 +30,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { UomService } from '../services/uom.service';
+import { UomImportExportService } from '../services/uom.import-export.service';
 import { UomCreateRequestDto } from '../dtos/request/uom.create.request.dto';
 import { UomUpdateRequestDto } from '../dtos/request/uom.update.request.dto';
 import { UomDropdownDto, UomResponseDto } from '../dtos/response/uom.response.dto';
@@ -36,7 +42,89 @@ import { ENUM_UOM_STATUS } from '../enums/uom.enum';
     path: '/admin/uom',
 })
 export class UomAdminController {
-    constructor(private readonly uomService: UomService) {}
+    constructor(
+        private readonly uomService: UomService,
+        private readonly importExportService: UomImportExportService
+    ) {}
+
+    // ============ IMPORT / EXPORT ============
+    // Declared BEFORE the parameterised routes below so '/export' is never
+    // swallowed by a '/:id'-style match.
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for UOM import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        const buffer = this.importExportService.generateSampleExcel();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="uom-import-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export units of measure as Excel' })
+    async exportExcel(@Res() res: ExpressResponse) {
+        const buffer = await this.importExportService.exportUoms();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="uom-${
+                new Date().toISOString().split('T')[0]
+            }.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import units of measure from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+
+        const { summary, rows } =
+            await this.importExportService.parseAndValidate(file.buffer);
+
+        if (preview === 'true') {
+            return {
+                statusCode: 200,
+                message: 'Preview',
+                data: { summary, rows },
+            };
+        }
+
+        const validRows = rows.filter((r) => r.status !== 'error');
+        if (validRows.length === 0) {
+            return {
+                statusCode: 200,
+                message: 'No valid rows to import',
+                data: { summary, created: 0, updated: 0, errors: [] },
+            };
+        }
+
+        const result = await this.importExportService.importUoms(validRows);
+        return {
+            statusCode: 200,
+            message: `Imported ${result.created} new, updated ${result.updated}`,
+            data: { summary, ...result },
+        };
+    }
 
     @Response('uom.create')
     @UserProtected()
