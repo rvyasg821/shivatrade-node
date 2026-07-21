@@ -78,6 +78,7 @@ export class SalesDocImportAdminController {
             lines,
             currencyCode: body.currencyCode,
             exchangeRate: body.exchangeRate,
+            freightTotal: body.freightTotal,
             includeComputed: false,
             includeReadme: true,
         });
@@ -114,6 +115,7 @@ export class SalesDocImportAdminController {
             lines: body.lines || [],
             currencyCode: body.currencyCode,
             exchangeRate: body.exchangeRate,
+            freightTotal: body.freightTotal,
             includeComputed: isCosting,
             includeReadme: false,
         });

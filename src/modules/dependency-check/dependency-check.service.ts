@@ -75,6 +75,13 @@ export class DependencyCheckService {
                 return [
                     { label: 'GRN', repo: this.grnRepository, field: 'po_vendor_id' },
                     { label: 'Debit Note', repo: this.debitNoteRepository, field: 'po_vendor_id' },
+                    // An Adjustment Note applied to this POV moves its payable —
+                    // deleting the POV would orphan the note. Void it first.
+                    {
+                        label: 'Adjustment Note',
+                        repo: this.adjustmentNoteRepository,
+                        field: 'document_id',
+                    },
                 ];
             case 'grn':
                 return [

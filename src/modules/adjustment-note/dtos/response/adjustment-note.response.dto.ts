@@ -17,6 +17,9 @@ export class AdjustmentNoteResponseDto {
     /** amount + gst_amount — the figure that posts to the ledger. */
     @ApiProperty({ type: String }) total_amount: string;
     @ApiProperty({ type: String }) currency_code: string;
+    /** Linked document (Invoice / POV) — absent on a party-level note. */
+    @ApiProperty({ required: false, type: String }) document_id?: string;
+    @ApiProperty({ required: false, type: String }) document_voucher_no?: string;
     @ApiProperty({ type: String }) reason: string;
     @ApiProperty({ required: false, type: Date }) voided_at?: Date;
     @ApiProperty({ required: false, type: String }) voided_reason?: string;

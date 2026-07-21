@@ -19,6 +19,7 @@ import { QuotationRepositoryModule } from '@modules/quotation/repository/quotati
 import { RebateRepositoryModule } from '@modules/rebate/repository/rebate.repository.module';
 import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
+import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
 // Stock ledger (Goods Out) — invoice issue/cancel post sale_out / sale_reversal.
 import { InventoryModule } from '@modules/inventory/inventory.module';
 
@@ -46,6 +47,9 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
         RebateRepositoryModule,
         ExpenseRepositoryModule,
         UserRepositoryModule,
+        // Linked Adjustment Notes move balance_receivable — repository only, so
+        // there is no cycle with AdjustmentNoteModule (which imports this one).
+        AdjustmentNoteRepositoryModule,
     ],
     providers: [
         InvoiceService,

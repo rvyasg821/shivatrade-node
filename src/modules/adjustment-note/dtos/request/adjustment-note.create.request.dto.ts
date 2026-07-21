@@ -48,6 +48,16 @@ export class AdjustmentNoteCreateRequestDto {
     @IsNumberString({}, { message: 'gst_rate must be a numeric string' })
     gst_rate?: string;
 
+    /**
+     * OPTIONAL — the document this note settles: an Invoice when party_type is
+     * customer, a PoVendor when it is vendor. Omit for a party-level note (the
+     * original behaviour: ledger only, no document balance moves).
+     */
+    @ApiProperty({ required: false, type: String })
+    @IsOptional()
+    @IsUUID()
+    document_id?: string;
+
     @ApiProperty({ type: String })
     @IsString()
     @IsNotEmpty()

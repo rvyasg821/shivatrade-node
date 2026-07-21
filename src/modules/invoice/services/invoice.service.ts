@@ -53,6 +53,8 @@ import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { In } from 'typeorm';
 import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
 import { ENUM_STOCK_MOVEMENT_TYPE } from '@modules/inventory/enums/stock-movement.enum';
+import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
+import { sumAdjustmentEffect } from '@modules/adjustment-note/helpers/adjustment-balance.helper';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -116,6 +118,7 @@ export class InvoiceService {
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly invoicePaymentRepository: InvoicePaymentRepository,
+        private readonly adjustmentNoteRepository: AdjustmentNoteRepository,
         private readonly stockLedger: StockLedgerService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
@@ -865,11 +868,14 @@ export class InvoiceService {
             row._id.toString()
         );
         const grand = num(row.grand_total);
+        // Adjustment Notes already applied to this invoice settle part of it,
+        // so the payable ceiling is grand − adjustments, not grand.
+        const adj = num(row.adjustment_total);
         // 1¢ slack for FP rounding.
-        if (priorPaid + amount > grand + 1e-2) {
+        if (priorPaid + adj + amount > grand + 1e-2) {
             throw new BadRequestException(
                 `Payment ${amount} exceeds outstanding balance ${round2(
-                    grand - priorPaid
+                    grand - priorPaid - adj
                 )}.`
             );
         }
@@ -954,11 +960,21 @@ export class InvoiceService {
         const paid = await this.invoicePaymentRepository.sumActiveByInvoiceId(
             row._id.toString()
         );
+        // Adjustment Notes linked to this invoice settle it alongside cash: a
+        // customer Credit note ("reduce the bill") lowers the receivable, a
+        // Debit note raises it. Voided notes drop out, so a void reverses.
+        const adj = sumAdjustmentEffect(
+            (await this.adjustmentNoteRepository.findByDocumentId(
+                row._id.toString()
+            )) as any[]
+        );
         const grand = num(row.grand_total);
-        const bal = round2(grand - paid);
+        const settled = round2(paid + adj);
+        const bal = round2(grand - settled);
         row.advance_received = String(round2(paid));
+        row.adjustment_total = String(adj);
         row.balance_receivable = String(bal);
-        if (paid <= 1e-2) {
+        if (settled <= 1e-2) {
             row.status = ENUM_INVOICE_STATUS.ISSUED;
         } else if (bal <= 1e-2) {
             row.status = ENUM_INVOICE_STATUS.PAID;
@@ -966,6 +982,16 @@ export class InvoiceService {
             row.status = ENUM_INVOICE_STATUS.PARTIALLY_PAID;
         }
         await this.invoiceRepository.save(row);
+    }
+
+    /**
+     * Re-derive balance + status after an Adjustment Note linked to this
+     * invoice is created or voided. Called by AdjustmentNoteService.
+     */
+    async recomputeAfterAdjustment(invoiceId: string): Promise<void> {
+        const row = await this.invoiceRepository.findOneById(invoiceId);
+        if (!row || row.soft_delete) return;
+        await this.applyPaymentDerived(row);
     }
 
     // ─── Find ───────────────────────────────────────────────────────────
@@ -1057,7 +1083,11 @@ export class InvoiceService {
         // INR equivalent of the document-currency grand total.
         const grand_total_inr = er > 0 ? round2(grand_total / er) : grand_total;
         const advance = num(row.advance_received);
-        const balance = round2(grand_total - advance);
+        // Linked Adjustment Notes settle the invoice too — keep them in the
+        // balance here so an edit/recompute doesn't undo them.
+        const balance = round2(
+            grand_total - advance - num(row.adjustment_total)
+        );
 
         row.subtotal = String(subtotal_doc);
         row.fob_value = String(fob_value);

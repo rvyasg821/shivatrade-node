@@ -65,6 +65,40 @@ const numOrUndef = (v: any): number | undefined => {
 };
 const lc = (v: any) => String(v ?? '').trim().toLowerCase();
 
+/**
+ * Split a shipment-level freight figure across lines BY QUANTITY.
+ * Mirrors FE splitFreightByQty() — keep in sync with
+ * shivatrade-react/src/views/_shared/sales-doc/_helpers.js
+ *
+ * Returns per-line freight amounts (DOCUMENT currency) aligned to `lines`.
+ * The penny-rounding residual is folded into the last qty-bearing line so
+ * Σ(result) === round2(freightTotal) exactly — customs cross-foots the
+ * invoice, so per-line freight must sum to the entered figure.
+ */
+function splitFreightByQty(
+    lines: SalesDocExportLineDto[],
+    freightTotal: number | string | undefined,
+): number[] {
+    const r2 = (n: number) =>
+        Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
+    const arr = (lines || []).map(() => 0);
+    const total = num(freightTotal);
+    const totalQty = (lines || []).reduce((s, l) => s + num(l?.qty), 0);
+    if (total <= 0 || totalQty <= 0) return arr;
+    const perUnit = total / totalQty;
+    let lastQtyIdx = -1;
+    (lines || []).forEach((l, i) => {
+        const q = num(l?.qty);
+        arr[i] = r2(q * perUnit);
+        if (q > 0) lastQtyIdx = i;
+    });
+    if (lastQtyIdx >= 0) {
+        const assigned = arr.reduce((s, v) => s + v, 0);
+        arr[lastQtyIdx] = r2(arr[lastQtyIdx] + (r2(total) - r2(assigned)));
+    }
+    return arr;
+}
+
 // Mirrors FE computeLineCosting() so exported "computed" columns line up
 // with what the costing card shows. Keep in sync with
 // shivatrade-react/src/views/_shared/sales-doc/_helpers.js
@@ -249,6 +283,11 @@ export class SalesDocImportService {
                 margin_pct: ['margin_pct', 'margin(%)', 'margin'],
                 hs_code: ['hs_code', 'hsncode', 'hsn_code'],
                 part_no: ['part_no', 'partno'],
+                // Per-line share of the shipment freight (document currency).
+                // Header is bare `freight` in every currency so this resolves;
+                // the derived `cnf amt(...)` / `cnf rate(...)` columns have no
+                // alias and are therefore ignored on import.
+                freight: ['freight'],
             };
             const get = (col: string): string => {
                 const cands = COL_ALIASES[col] || [col];
@@ -641,6 +680,11 @@ export class SalesDocImportService {
                 line.hs_code = hsnVal;
                 line.hsn_code = hsnVal;
                 line.part_no = get('part_no') || product.part_no || '';
+                // Freight rides in per-line, but is a header-level figure on
+                // the form — the FE sums these back into freight_total and the
+                // worksheet re-derives the per-line split by qty. Blank cells
+                // stay undefined so an untouched sheet never zeroes freight.
+                line.freight = numOrUndef(get('freight'));
             }
 
             // Lead: simple requirement line. Capture part_no; drop vendor /
@@ -849,6 +893,7 @@ export class SalesDocImportService {
             lines: SalesDocExportLineDto[];
             currencyCode?: string;
             exchangeRate?: number | string;
+            freightTotal?: number | string;
             includeComputed: boolean;
             includeReadme: boolean;
         },
@@ -862,6 +907,14 @@ export class SalesDocImportService {
             !!cur && cur.toUpperCase() !== 'INR' && rate > 0 && rate !== 1;
         const r2 = (n: number) =>
             Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
+        // Shipment freight (DOCUMENT currency) split across lines by qty — the
+        // same figures the on-screen worksheet shows in its Freight / CNF
+        // Amount / CNF Rate columns. `freight` is a round-trip column (blank in
+        // the sample, summed back into freight_total on import); the two CNF
+        // columns are derived and ignored by the importer.
+        const freightTotal = num(opts.freightTotal);
+        const lineFreights = splitFreightByQty(exportLines, freightTotal);
+        const docCur = cur || 'INR';
 
         // Resolve code / name / part_no / hsn from ids when the line omits them.
         const productCodeById = new Map<string, string>();
@@ -968,12 +1021,17 @@ export class SalesDocImportService {
             headerRow.push('grand total');
             if (isForeign) headerRow.push(`rate(${cur})`, `amt(${cur})`);
         }
+        // Freight is an input column (kept bare so the importer's
+        // get('freight') resolves it in any currency); CNF pair is computed.
+        headerRow.push('freight');
+        if (includeComputed)
+            headerRow.push(`cnf amt(${docCur})`, `cnf rate(${docCur})`);
         // Export / packing columns (Quotation & Sales Order). Exact header
         // names so the importer's get('net_weight_kg') etc. resolve them.
         headerRow.push('net_weight_kg', 'gross_weight_kg', 'package_count');
 
         // ── Data rows ──
-        const dataAoa = exportLines.map((l) => {
+        const dataAoa = exportLines.map((l, i) => {
             const expByCode = new Map<string, number>();
             for (const e of (l.product_expenses_snapshot || []) as any[])
                 if (e?.code) expByCode.set(e.code, num(e.value));
@@ -1005,16 +1063,24 @@ export class SalesDocImportService {
             for (const code of rebateCols)
                 row.push(rebByCode.has(code) ? rebByCode.get(code) : '');
             row.push(l.margin_pct ?? '');
+            const grand = r2(
+                c.taxable - c.rebate_total + c.expense_total + c.margin_amt,
+            );
+            // FOB amount in the DOCUMENT currency (INR docs: grand as-is).
+            const amtDoc = isForeign ? r2(grand * rate) : grand;
+            const qty = num(l.qty);
             if (includeComputed) {
-                const grand = r2(
-                    c.taxable - c.rebate_total + c.expense_total + c.margin_amt,
-                );
                 row.push(grand);
-                if (isForeign) {
-                    const q = num(l.qty);
-                    const amtCur = r2(grand * rate);
-                    row.push(q ? r2(amtCur / q) : 0, amtCur);
-                }
+                if (isForeign) row.push(qty ? r2(amtDoc / qty) : 0, amtDoc);
+            }
+            // Freight share + CNF = FOB + this line's qty-share of freight.
+            // Blank (not 0) when the document carries no freight, so an
+            // untouched sample round-trips without setting freight_total.
+            const lineFreight = lineFreights[i] || 0;
+            row.push(freightTotal > 0 ? lineFreight : '');
+            if (includeComputed) {
+                const cnfAmt = r2(amtDoc + lineFreight);
+                row.push(cnfAmt, qty ? r2(cnfAmt / qty) : 0);
             }
             // Export / packing values (aligned with the appended headers).
             row.push(
@@ -1067,6 +1133,21 @@ export class SalesDocImportService {
                 rows[4].push(r2(t.margin * rate));
                 rows[5].push(r2(t.grand * rate));
             }
+            // Freight is entered in the DOCUMENT currency; the INR column is
+            // the back-converted figure (rate is foreign-per-₹1). CNF Total =
+            // FOB grand total + freight, matching the worksheet footer.
+            if (freightTotal > 0) {
+                const freightInr = isForeign
+                    ? r2(freightTotal / rate)
+                    : r2(freightTotal);
+                const grandDoc = isForeign ? r2(t.grand * rate) : r2(t.grand);
+                rows.push(['Freight', freightInr]);
+                rows.push(['CNF Total', r2(t.grand + freightInr)]);
+                if (isForeign) {
+                    rows[6].push(r2(freightTotal));
+                    rows[7].push(r2(grandDoc + freightTotal));
+                }
+            }
             utils.book_append_sheet(
                 workbook,
                 utils.aoa_to_sheet(rows),
@@ -1090,6 +1171,7 @@ export class SalesDocImportService {
             lines: SalesDocExportLineDto[];
             currencyCode?: string;
             exchangeRate?: number | string; // foreign-per-₹1; drives currency cols
+            freightTotal?: number | string; // doc currency; qty-split into freight/CNF cols
             includeComputed: boolean; // export mode adds computed cols + Totals sheet
             includeReadme: boolean; // sample mode adds _README + _ProductsRef
         },

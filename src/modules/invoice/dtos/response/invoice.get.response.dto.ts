@@ -112,6 +112,8 @@ export class InvoiceGetResponseDto {
     grand_total_inr?: string;
     amount_in_words?: string;
     advance_received?: string;
+    /** Net effect of linked Adjustment Notes (positive = receivable reduced). */
+    adjustment_total?: string;
     balance_receivable?: string;
 
     // GST / compliance

@@ -16,6 +16,17 @@ export class AdjustmentNoteRepository extends DatabaseObjectIdRepositoryBase<Adj
         super(adjustmentNoteRepository);
     }
 
+    /**
+     * Notes linked to one document (invoice / POV). Voided rows come back too —
+     * `sumAdjustmentEffect` skips them, so a void reverses the balance.
+     */
+    async findByDocumentId(documentId: string): Promise<AdjustmentNoteDoc[]> {
+        return this.findAll({
+            document_id: documentId,
+            soft_delete: false,
+        } as any);
+    }
+
     /** Non-deleted, non-voided notes for one party — the ledger source. */
     async findActiveByParty(
         companyId: string,

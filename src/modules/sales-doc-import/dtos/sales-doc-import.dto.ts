@@ -105,6 +105,11 @@ export interface ResolvedLine {
     net_weight_kg?: number;
     gross_weight_kg?: number;
     package_count?: number;
+    // Per-line share of the shipment freight (document currency), read from the
+    // sheet's `freight` column. The worksheet keeps freight at header level, so
+    // the FE sums these back into the document's freight_total; the per-line
+    // split is then re-derived by qty (Σ must equal the entered total).
+    freight?: number;
     // Snapshots — seeded from product master, overridden by sheet columns.
     product_rebates_snapshot: ResolvedRebateSnapshot[];
     product_expenses_snapshot: ResolvedExpenseSnapshot[];
@@ -184,6 +189,11 @@ export class SalesDocExportRequestDto {
     // Document currency & exchange — used for currency-formatted columns.
     @ApiPropertyOptional() @IsOptional() @IsString() currencyCode?: string;
     @ApiPropertyOptional() @IsOptional() exchangeRate?: number | string;
+
+    // Shipment freight for a CNF quote/order, in the DOCUMENT currency. Header
+    // level on the form — split across lines BY QTY for the freight / CNF
+    // columns, exactly as the on-screen costing worksheet does.
+    @ApiPropertyOptional() @IsOptional() freightTotal?: number | string;
 
     // Optional meta used in the filename + Totals sheet header.
     @ApiPropertyOptional() @IsOptional() @IsString() docNumber?: string;

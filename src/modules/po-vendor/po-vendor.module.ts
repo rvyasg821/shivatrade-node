@@ -24,6 +24,7 @@ import { CompanySettingsRepositoryModule } from '@modules/company-settings/repos
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 // Stock ledger — Generate POV reads on-hand for In Stock / To Procure.
 import { InventoryModule } from '@modules/inventory/inventory.module';
+import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
 
 /**
  * POV (PO Vendor) module — Phase 5: admin controller wired in.
@@ -47,6 +48,9 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
         PriceListRepositoryModule,
         CompanySettingsRepositoryModule,
         InventoryModule,
+        // Linked Adjustment Notes move balance_payable — repository only, so
+        // there is no cycle with AdjustmentNoteModule (which imports this one).
+        AdjustmentNoteRepositoryModule,
     ],
     providers: [
         PoVendorService,
