@@ -9,7 +9,10 @@ import { Response } from '@common/response/decorators/response.decorator';
 import { IResponse } from '@common/response/interfaces/response.interface';
 import { ReportsService } from '../services/reports.service';
 import { ProductProfitabilityResponseDto } from '../dtos/response/product-profitability.response.dto';
-import { HsnSummaryResponseDto } from '../dtos/response/hsn-summary.response.dto';
+import {
+    HsnSummaryResponseDto,
+    HsnSummaryBreakdownResponseDto,
+} from '../dtos/response/hsn-summary.response.dto';
 import {
     GstBalanceResponseDto,
     GstBalanceBreakdownResponseDto,
@@ -130,6 +133,38 @@ export class ReportsAdminController {
             order_direction: query.order_direction as any,
             page: Number(query.page) || 1,
             perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /**
+     * Drill-down for one HSN row — the invoice lines behind it, in Tally's
+     * GSTR-1 Voucher Register shape. Declared before `/hsn-summary/export` and
+     * after `/hsn-summary`; all three are literal paths, so order is cosmetic.
+     *
+     * `hsn_code` and `uqc_code` are optional on purpose: omitting one means
+     * "the rows with no HSN / no UQC", which is the "—" group on screen.
+     */
+    @Response('reports.hsnSummaryBreakdown')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'hsn_code', required: false })
+    @ApiQuery({ name: 'uqc_code', required: false })
+    @ApiQuery({ name: 'rate', required: true })
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'gst_route', required: false })
+    @Get('/hsn-summary/breakdown')
+    async hsnSummaryBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<HsnSummaryBreakdownResponseDto>> {
+        const data = await this.reportsService.hsnSummaryBreakdown(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            gst_route: query.gst_route,
+            hsn_code: query.hsn_code,
+            uqc_code: query.uqc_code,
+            rate: query.rate,
         });
         return { data };
     }
