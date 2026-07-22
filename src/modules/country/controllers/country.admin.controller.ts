@@ -9,10 +9,20 @@ import {
     Controller,
     ConflictException,
     Patch,
+    Res,
+    UploadedFile,
     BadRequestException,
     InternalServerErrorException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiConsumes, ApiOperation } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
+import {
+    datedFilename,
+    handleImportRequest,
+    sendExcel,
+} from '@common/import/master-import.helper';
 import { PaginationQuery, PaginationQueryFilterInEnum } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 import { PaginationService } from '@common/pagination/services/pagination.service';
@@ -45,6 +55,7 @@ import { CountryListResponseDto } from '@modules/country/dtos/response/country.l
 import { CountryParsePipe } from '@modules/country/pipes/country.parse.pipe';
 import { CountryDoc } from '@modules/country/repository/entities/country.entity';
 import { CountryService } from '@modules/country/services/country.service';
+import { CountryImportExportService } from '@modules/country/services/country.import-export.service';
 import { DatabaseIdResponseDto } from '@common/database/dtos/response/database.id.response.dto';
 import { UserProtected } from '@modules/user/decorators/user.decorator';
 import { CountryIsUsedPipe } from '@modules/country/pipes/country.is-used.pipe';
@@ -65,8 +76,57 @@ export class CountryAdminController {
         private readonly paginationService: PaginationService,
         private readonly countryService: CountryService,
         private readonly stateRepository: StateRepository,
-        private readonly cityRepository: CityRepository
+        private readonly cityRepository: CityRepository,
+        private readonly importExportService: CountryImportExportService
     ) {}
+
+    // ============ IMPORT / EXPORT ============
+    // Declared before the parameterised routes so `/export` is never swallowed
+    // by `/get/:country`.
+
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for country import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            this.importExportService.generateSampleExcel(),
+            'countries-import-sample.xlsx'
+        );
+    }
+
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export countries as Excel' })
+    async exportExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            await this.importExportService.exportCountries(),
+            datedFilename('countries')
+        );
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import countries from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        return handleImportRequest(
+            file,
+            preview,
+            () => this.importExportService.parseAndValidate(file.buffer),
+            (rows) => this.importExportService.importCountries(rows)
+        );
+    }
 
     /**
      * Active countries for the address dropdowns.

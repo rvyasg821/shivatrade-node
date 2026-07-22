@@ -1,5 +1,15 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { FileService } from '@common/file/services/file.service';
+import {
+    assertRequiredHeader,
+    cellReader,
+    indexBy,
+    MasterImportRow,
+    readSheetRows,
+    resolveMatch,
+    runMasterImport,
+    summarise,
+} from '@common/import/master-import.helper';
 import { CategoryService } from './category.service';
 import { CategoryRepository } from '../repository/repositories/category.repository';
 import { ENUM_CATEGORY_STATUS } from '../enums/category.enum';
@@ -20,17 +30,13 @@ const SAMPLE_ROWS = [
     },
 ];
 
-export interface CategoryImportRow {
-    rowNum: number;
-    data: {
-        name: string;
-        description: string;
-        status: ENUM_CATEGORY_STATUS;
-    };
-    status: 'valid_new' | 'valid_update' | 'error';
-    existingId?: string;
-    errors: string[];
+export interface CategoryImportData {
+    name: string;
+    description: string;
+    status: ENUM_CATEGORY_STATUS;
 }
+
+export type CategoryImportRow = MasterImportRow<CategoryImportData>;
 
 @Injectable()
 export class CategoryImportExportService {
@@ -82,62 +88,26 @@ export class CategoryImportExportService {
         fileBuffer: Buffer,
         companyId: string,
     ): Promise<{ summary: any; rows: CategoryImportRow[] }> {
-        let sheets;
-        try {
-            sheets = this.fileService.readExcel(fileBuffer);
-        } catch {
-            throw new BadRequestException(
-                'Unable to read the file. Please upload a valid Excel or CSV file.',
-            );
-        }
-
-        const rawRows = (sheets?.[0]?.data || []) as Record<string, any>[];
-        if (!rawRows.length) {
-            throw new BadRequestException('The file contains no data rows.');
-        }
-
-        const headerKeys = Object.keys(rawRows[0]).map((k) =>
-            k.trim().toLowerCase(),
-        );
-        if (!headerKeys.includes('name')) {
-            throw new BadRequestException(
-                `Missing required column "name". Expected columns: ${EXCEL_HEADERS.join(
-                    ', ',
-                )}.`,
-            );
-        }
+        const rawRows = readSheetRows(this.fileService, fileBuffer, {
+            headers: EXCEL_HEADERS,
+        });
+        assertRequiredHeader(rawRows, ['name'], EXCEL_HEADERS);
 
         // Existing categories for this company — case-insensitive name lookup.
         const existing = await this.categoryRepository.findByCompanyId(
             companyId,
         );
-        const existingByName = new Map<string, any>();
-        for (const c of existing) {
-            existingByName.set(c.name.trim().toLowerCase(), c);
-        }
+        const existingByName = indexBy(existing, (c: any) =>
+            c.name.trim().toLowerCase(),
+        );
 
         const seenInFile = new Set<string>();
         const rows: CategoryImportRow[] = [];
 
         for (let i = 0; i < rawRows.length; i++) {
-            const raw = rawRows[i];
             const rowNum = i + 2; // 1-indexed + header row
             const errors: string[] = [];
-
-            // Case-insensitive column access. Strips outer whitespace
-            // (including non-breaking spaces) and collapses internal runs of
-            // whitespace to a single space — Excel cells often arrive with
-            // pasted padding or   from Word that .trim() alone misses.
-            const get = (col: string): string => {
-                const key = Object.keys(raw).find(
-                    (k) => k.trim().toLowerCase() === col,
-                );
-                if (!key) return '';
-                return String(raw[key] ?? '')
-                    .replace(/ /g, ' ')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-            };
+            const get = cellReader(rawRows[i]);
 
             const name = get('name');
             const description = get('description');
@@ -166,11 +136,19 @@ export class CategoryImportExportService {
             }
             if (name) seenInFile.add(nameKey);
 
-            let rowStatus: 'valid_new' | 'valid_update' | 'error' = 'valid_new';
+            let rowStatus: CategoryImportRow['status'] = 'valid_new';
             let existingId: string | undefined;
-            if (name && existingByName.has(nameKey)) {
-                existingId = existingByName.get(nameKey)._id.toString();
-                rowStatus = 'valid_update';
+            if (name) {
+                const match = resolveMatch(
+                    nameKey,
+                    existingByName,
+                    `'${name}'`,
+                );
+                if (match.error) errors.push(match.error);
+                else if (match.existingId) {
+                    existingId = match.existingId;
+                    rowStatus = 'valid_update';
+                }
             }
             if (errors.length > 0) rowStatus = 'error';
 
@@ -183,15 +161,7 @@ export class CategoryImportExportService {
             });
         }
 
-        const summary = {
-            total: rows.length,
-            valid_new: rows.filter((r) => r.status === 'valid_new').length,
-            valid_update: rows.filter((r) => r.status === 'valid_update')
-                .length,
-            errors: rows.filter((r) => r.status === 'error').length,
-        };
-
-        return { summary, rows };
+        return { summary: summarise(rows), rows };
     }
 
     /** Persist the validated rows. One bad row never aborts the batch. */
@@ -204,52 +174,38 @@ export class CategoryImportExportService {
         updated: number;
         errors: { row: number; message: string }[];
     }> {
-        let created = 0;
-        let updated = 0;
-        const errors: { row: number; message: string }[] = [];
-
-        for (const row of rows) {
-            if (row.status === 'error') continue;
-
-            try {
-                const isActive =
-                    row.data.status === ENUM_CATEGORY_STATUS.ACTIVE;
-
-                if (row.status === 'valid_update' && row.existingId) {
+        return runMasterImport(
+            rows,
+            {
+                update: async (row, existingId) => {
                     const existing = await this.categoryService.findOneById(
-                        row.existingId,
+                        existingId,
                     );
                     const updateData: any = {
                         name: row.data.name,
                         status: row.data.status,
-                        is_active: isActive,
+                        is_active:
+                            row.data.status === ENUM_CATEGORY_STATUS.ACTIVE,
                     };
                     if (row.data.description) {
                         updateData.description = row.data.description;
                     }
-                    await this.categoryService.update(existing, updateData);
-                    updated++;
-                } else {
-                    await this.categoryService.create(
+                    return this.categoryService.update(existing, updateData);
+                },
+                create: async (row) =>
+                    this.categoryService.create(
                         companyId,
                         {
                             name: row.data.name,
                             description: row.data.description || undefined,
                             status: row.data.status,
-                            is_active: isActive,
+                            is_active:
+                                row.data.status === ENUM_CATEGORY_STATUS.ACTIVE,
                         },
                         userId,
-                    );
-                    created++;
-                }
-            } catch (err) {
-                this.logger.error(
-                    `Import row ${row.rowNum} failed: ${err.message}`,
-                );
-                errors.push({ row: row.rowNum, message: err.message });
-            }
-        }
-
-        return { created, updated, errors };
+                    ),
+            },
+            this.logger,
+        );
     }
 }

@@ -7,8 +7,18 @@ import {
     Post,
     Put,
     Query,
+    Res,
+    UploadedFile,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiConsumes, ApiOperation } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
+import {
+    datedFilename,
+    handleImportRequest,
+    sendExcel,
+} from '@common/import/master-import.helper';
 
 import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
 import { UserProtected } from '@modules/user/decorators/user.decorator';
@@ -24,6 +34,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { CityService } from '../services/city.service';
+import { CityImportExportService } from '../services/city.import-export.service';
 import { CityCreateRequestDto } from '../dtos/request/city.create.request.dto';
 import { CityUpdateRequestDto } from '../dtos/request/city.update.request.dto';
 import {
@@ -38,7 +49,58 @@ import { ENUM_CITY_STATUS } from '../enums/city.enum';
     path: '/admin/city',
 })
 export class CityAdminController {
-    constructor(private readonly cityService: CityService) {}
+    constructor(
+        private readonly cityService: CityService,
+        private readonly importExportService: CityImportExportService
+    ) {}
+
+    // ============ IMPORT / EXPORT ============
+    // Declared before the parameterised routes so `/export` is never swallowed
+    // by `/get/:city`.
+
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for city import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            this.importExportService.generateSampleExcel(),
+            'cities-import-sample.xlsx'
+        );
+    }
+
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export cities as Excel' })
+    async exportExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            await this.importExportService.exportCities(),
+            datedFilename('cities')
+        );
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import cities from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        return handleImportRequest(
+            file,
+            preview,
+            () => this.importExportService.parseAndValidate(file.buffer),
+            (rows) => this.importExportService.importCities(rows)
+        );
+    }
 
     @Response('city.create')
     @UserProtected()

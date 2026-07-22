@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { CityRepositoryModule } from './repository/city.repository.module';
 import { CityService } from './services/city.service';
+import { CityImportExportService } from './services/city.import-export.service';
 import { CitySeedService } from './services/city-seed.service';
+import { FileModule } from '@common/file/file.module';
 import { CityAdminController } from './controllers/city.admin.controller';
 import { StateModule } from '@modules/state/state.module';
 import { CountryRepositoryModule } from '@modules/country/repository/country.repository.module';
@@ -12,9 +14,14 @@ import { CountryRepositoryModule } from '@modules/country/repository/country.rep
  * imports CityRepositoryModule, never CityModule.
  */
 @Module({
-    imports: [CityRepositoryModule, StateModule, CountryRepositoryModule],
-    providers: [CityService, CitySeedService],
-    exports: [CityRepositoryModule, CityService],
+    imports: [
+        CityRepositoryModule,
+        StateModule,
+        CountryRepositoryModule,
+        FileModule.forRoot(),
+    ],
+    providers: [CityService, CitySeedService, CityImportExportService],
+    exports: [CityRepositoryModule, CityService, CityImportExportService],
     controllers: [CityAdminController],
 })
 export class CityModule {}

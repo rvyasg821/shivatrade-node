@@ -8,8 +8,18 @@ import {
     Post,
     Put,
     Query,
+    Res,
+    UploadedFile,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiConsumes, ApiOperation } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
+import {
+    datedFilename,
+    handleImportRequest,
+    sendExcel,
+} from '@common/import/master-import.helper';
 
 import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
 import { UserProtected } from '@modules/user/decorators/user.decorator';
@@ -25,6 +35,7 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 
 import { StateService } from '../services/state.service';
+import { StateImportExportService } from '../services/state.import-export.service';
 import { StateCreateRequestDto } from '../dtos/request/state.create.request.dto';
 import { StateUpdateRequestDto } from '../dtos/request/state.update.request.dto';
 import {
@@ -42,8 +53,57 @@ import { CityRepository } from '@modules/city/repository/repositories/city.repos
 export class StateAdminController {
     constructor(
         private readonly stateService: StateService,
-        private readonly cityRepository: CityRepository
+        private readonly cityRepository: CityRepository,
+        private readonly importExportService: StateImportExportService
     ) {}
+
+    // ============ IMPORT / EXPORT ============
+    // Declared before the parameterised routes so `/export` is never swallowed
+    // by `/get/:state`.
+
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for state import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            this.importExportService.generateSampleExcel(),
+            'states-import-sample.xlsx'
+        );
+    }
+
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export states as Excel' })
+    async exportExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            await this.importExportService.exportStates(),
+            datedFilename('states')
+        );
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({
+        summary: 'Import states from Excel/CSV (preview or confirm)',
+    })
+    async importExcel(
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        return handleImportRequest(
+            file,
+            preview,
+            () => this.importExportService.parseAndValidate(file.buffer),
+            (rows) => this.importExportService.importStates(rows)
+        );
+    }
 
     @Response('state.create')
     @UserProtected()
