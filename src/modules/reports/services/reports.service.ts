@@ -21,6 +21,7 @@ import {
     GstBalanceRowDto,
     GstBalanceBreakdownResponseDto,
     GstBalancePurchaseSourceDto,
+    GstBalanceSalesSourceDto,
 } from '../dtos/response/gst-balance.response.dto';
 import {
     PurchaseTurnoverResponseDto,
@@ -33,6 +34,8 @@ import {
 import {
     HsnSummaryResponseDto,
     HsnSummaryRowDto,
+    HsnSummaryBreakdownResponseDto,
+    HsnSummaryVoucherDto,
 } from '../dtos/response/hsn-summary.response.dto';
 
 export interface IProductProfitabilityQuery {
@@ -502,6 +505,192 @@ export class ReportsService {
     }
 
     /**
+     * Drill-down for ONE HSN summary row — the invoice lines it is made of.
+     *
+     * The client's reference is Tally's "GSTR-1 Voucher Register": click an
+     * HSN, see the vouchers behind it. Same idea as the GST Balance month
+     * drill-down, so it reuses that UI pattern (right-side drawer).
+     *
+     * The WHERE clause below is deliberately identical to `hsnSummary`'s,
+     * including the date range and the `gst_route` gate, and the grouping key
+     * is the same triple (HSN × rate × UQC). If the two ever drift, the drawer
+     * stops footing to the row it opened from — which is the one thing it
+     * exists to prove. `IS NOT DISTINCT FROM` is what makes the "—" group
+     * (null HSN / null UQC) openable at all; plain `=` never matches null.
+     */
+    /**
+     * The voucher rows behind HSN summary figures.
+     *
+     * ONE query serving two callers — the drawer (one HSN row) and the export's
+     * second sheet (every HSN row). They must select identically or the export
+     * would stop reconciling with the report it sits next to, so the difference
+     * between them is exactly one optional WHERE clause and nothing else.
+     */
+    private async fetchHsnVoucherRows(
+        companyId: string,
+        opts: {
+            from: string;
+            to: string;
+            gstRoute: string | null;
+            search?: string | null;
+            /** Omit to get every HSN row's vouchers. */
+            triple?: { hsn: string | null; uqc: string | null; rate: number };
+        }
+    ): Promise<(HsnSummaryVoucherDto & { hsn_code: string | null; rate: number })[]> {
+        const params: any[] = [
+            companyId,
+            opts.from,
+            opts.to,
+            opts.gstRoute,
+            opts.search ?? null,
+        ];
+
+        // `IS NOT DISTINCT FROM` rather than `=`: it is what makes the "—"
+        // group (null HSN / null UQC) selectable at all — plain `=` never
+        // matches null, so that row's drawer would come back empty.
+        let tripleClause = '';
+        if (opts.triple) {
+            params.push(opts.triple.hsn, opts.triple.uqc, opts.triple.rate);
+            tripleClause = `
+               AND il.hsn_code IS NOT DISTINCT FROM $6::text
+               AND il.uqc_code IS NOT DISTINCT FROM $7::text
+               AND COALESCE(il.igst_rate_pct, 0)::float8 = $8::float8`;
+        }
+
+        const raw: any[] = await this.dataSource.query(
+            `SELECT i._id::text                                     AS invoice_id,
+                    i.voucher_no                                    AS invoice_no,
+                    -- Formatted in SQL, not JS: invoice_date is a DATE column
+                    -- and the raw pg driver hands DATE back as a JS Date, which
+                    -- stringifies to the full "Wed Apr 22 2026 00:00:00 GMT..."
+                    -- form and would shift across a timezone on the way through.
+                    TO_CHAR(i.invoice_date, 'DD-MM-YYYY')           AS invoice_date,
+                    i.status                                        AS status,
+                    i.gst_route                                     AS gst_route,
+                    COALESCE(i.grand_total_inr, '0')::float8         AS invoice_total_inr,
+                    COALESCE(
+                        i.customer_snapshot->>'company_name',
+                        c.company_name
+                    )                                               AS customer_name,
+                    il.product_name                                 AS product_name,
+                    il.hsn_code                                     AS hsn_code,
+                    il.uqc_code                                     AS uqc_code,
+                    COALESCE(il.igst_rate_pct, 0)::float8           AS rate,
+                    COALESCE(il.qty, 0)::float8                     AS qty,
+                    COALESCE(il.taxable_amount, 0)::float8          AS taxable_value_inr,
+                    CASE WHEN i.gst_route = 'igst_paid'
+                         THEN COALESCE(il.taxable_amount, 0)
+                              * COALESCE(il.igst_rate_pct, 0) / 100.0
+                         ELSE 0 END::float8                         AS igst_inr
+             FROM invoice_lines il
+             JOIN invoices i
+                 ON i._id = il.invoice_id AND i.soft_delete = false
+             LEFT JOIN customers c
+                 ON c._id = i.customer_id
+             WHERE il.company_id = $1
+               AND il.soft_delete = false
+               AND i.status NOT IN ('draft', 'cancelled')
+               AND i.invoice_date BETWEEN $2 AND $3
+               AND ($4::text IS NULL OR i.gst_route = $4)
+               AND ($5::text IS NULL OR il.hsn_code ILIKE '%' || $5 || '%')
+               ${tripleClause}
+             ORDER BY il.hsn_code ASC NULLS FIRST,
+                      COALESCE(il.igst_rate_pct, 0) ASC,
+                      il.uqc_code ASC NULLS FIRST,
+                      i.invoice_date ASC, i.voucher_no ASC, il.seq ASC`,
+            params
+        );
+
+        return raw.map((row) => {
+            const taxable = r2(n(row.taxable_value_inr));
+            const igst = r2(n(row.igst_inr));
+            return {
+                invoice_id: row.invoice_id,
+                invoice_no: row.invoice_no ?? null,
+                invoice_date: row.invoice_date || '',
+                customer_name: row.customer_name ?? null,
+                // Only invoices feed GSTR-1, so this is a constant today. It is
+                // a column rather than a caption so the drawer keeps matching
+                // Tally if credit notes are ever added.
+                voucher_type: 'Sales',
+                status: row.status ?? '',
+                gst_route: row.gst_route ?? '',
+                product_name: row.product_name ?? null,
+                hsn_code: row.hsn_code ?? null,
+                uqc_code: row.uqc_code ?? null,
+                rate: r2(n(row.rate)),
+                qty: r2(n(row.qty)),
+                taxable_value_inr: taxable,
+                igst_inr: igst,
+                cgst_inr: 0,
+                sgst_inr: 0,
+                cess_inr: 0,
+                total_value_inr: r2(taxable + igst),
+                invoice_total_inr: r2(n(row.invoice_total_inr)),
+            };
+        });
+    }
+
+    async hsnSummaryBreakdown(
+        companyId: string,
+        query: IHsnSummaryQuery & {
+            hsn_code?: string | null;
+            uqc_code?: string | null;
+            rate?: number | string;
+        }
+    ): Promise<HsnSummaryBreakdownResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const gstRoute = query.gst_route?.trim() ? query.gst_route.trim() : null;
+
+        // Empty string from a query string means "the null group", not "".
+        const hsn = query.hsn_code ? String(query.hsn_code) : null;
+        const uqc = query.uqc_code ? String(query.uqc_code) : null;
+        const rate = n(query.rate);
+
+        const vouchers = await this.fetchHsnVoucherRows(companyId, {
+            from,
+            to,
+            gstRoute,
+            triple: { hsn, uqc, rate },
+        });
+
+        const totals = vouchers.reduce(
+            (acc, v) => {
+                acc.total_qty += v.qty;
+                acc.taxable_value_inr += v.taxable_value_inr;
+                acc.igst_inr += v.igst_inr;
+                acc.total_value_inr += v.total_value_inr;
+                return acc;
+            },
+            {
+                total_qty: 0,
+                total_value_inr: 0,
+                taxable_value_inr: 0,
+                igst_inr: 0,
+                cgst_inr: 0,
+                sgst_inr: 0,
+                cess_inr: 0,
+            }
+        );
+        totals.total_qty = r2(totals.total_qty);
+        totals.taxable_value_inr = r2(totals.taxable_value_inr);
+        totals.igst_inr = r2(totals.igst_inr);
+        totals.total_value_inr = r2(totals.total_value_inr);
+
+        return {
+            hsn_code: hsn,
+            uqc_code: uqc,
+            rate: r2(rate),
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            vouchers,
+            totals,
+            currency: 'INR',
+        };
+    }
+
+    /**
      * The same report as an .xlsx Buffer, in the exact Table-12 column order.
      * Runs unpaginated, then appends a TOTAL row.
      */
@@ -563,7 +752,106 @@ export class ReportsService {
             [],
             totalRow,
         ];
-        return this.fileService.writeExcelFromArray(aoa);
+
+        // Sheet 2 — the proof. Sheet 1 alone cannot answer "where does this
+        // figure come from"; shipping the register alongside it makes the file
+        // self-contained for a reconciliation or a GST query.
+        //
+        // Flat, with HSN/Rate/UQC as the leading columns, rather than one sheet
+        // per HSN: a 40-HSN period would otherwise be a 40-tab workbook, and
+        // flat is what can be filtered or pivoted.
+        const today = new Date();
+        const registerRows = await this.fetchHsnVoucherRows(companyId, {
+            from: query.date_from || isoDate(this.currentFyStart(today)),
+            to: query.date_to || isoDate(today),
+            gstRoute: query.gst_route?.trim() ? query.gst_route.trim() : null,
+            // Same HSN filter as sheet 1, so the two sheets always describe the
+            // same set of documents.
+            search: query.search?.trim() ? query.search.trim() : null,
+        });
+
+        const registerHeader = [
+            'HSN',
+            'Rate %',
+            'UQC',
+            'Date',
+            'Particulars',
+            'Vch Type',
+            'Vch No.',
+            'Item',
+            'Qty',
+            'Total Value (INR)',
+            'Taxable Value (INR)',
+            'IGST (INR)',
+            'CGST (INR)',
+            'SGST (INR)',
+            'Cess (INR)',
+            'Invoice Amount (INR)',
+        ];
+        const registerBody = registerRows.map((v) => [
+            v.hsn_code || '',
+            v.rate,
+            v.uqc_code || '',
+            v.invoice_date,
+            v.customer_name || '',
+            v.voucher_type,
+            v.invoice_no || '',
+            v.product_name || '',
+            v.qty,
+            v.total_value_inr,
+            v.taxable_value_inr,
+            v.igst_inr,
+            v.cgst_inr,
+            v.sgst_inr,
+            v.cess_inr,
+            v.invoice_total_inr,
+        ]);
+        const registerTotals = registerRows.reduce(
+            (acc, v) => {
+                acc.qty += v.qty;
+                acc.total += v.total_value_inr;
+                acc.taxable += v.taxable_value_inr;
+                acc.igst += v.igst_inr;
+                return acc;
+            },
+            { qty: 0, total: 0, taxable: 0, igst: 0 }
+        );
+        const registerTotalRow: (string | number)[] = [
+            'TOTAL',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            r2(registerTotals.qty),
+            r2(registerTotals.total),
+            r2(registerTotals.taxable),
+            r2(registerTotals.igst),
+            0,
+            0,
+            0,
+            // Blank on purpose: "Invoice Amount" is the whole document repeated
+            // on every line of that invoice, so summing it double-counts.
+            '',
+        ];
+
+        const registerAoa: (string | number)[][] = [
+            [
+                `Voucher Register — ${result.period_label} (INR). One row per invoice LINE; this sheet totals back to the HSN Summary sheet.`,
+            ],
+            [],
+            registerHeader,
+            ...registerBody,
+            [],
+            registerTotalRow,
+        ];
+
+        return this.fileService.writeExcelSheetsFromArray([
+            { sheetName: 'HSN Summary', rows: aoa },
+            { sheetName: 'Voucher Register', rows: registerAoa },
+        ]);
     }
 
     /**
@@ -886,6 +1174,37 @@ export class ReportsService {
         );
         const to = `${key}-${pad2(endDate.getDate())}`;
 
+        const { purchases, sales } = await this.fetchGstBalanceSources(
+            companyId,
+            from,
+            to
+        );
+
+        return {
+            month: key,
+            month_label: monthLabel(key),
+            purchases,
+            sales,
+        };
+    }
+
+    /**
+     * The documents behind GST Balance figures, over any date range.
+     *
+     * ONE fetch serving two callers — the month drawer and the export's detail
+     * sheets. The export runs it ONCE across the whole report period rather
+     * than month-by-month: the purchase side has to load every Vendor PO to
+     * date-filter it in JS (a POV has no purchase-date column), so twelve
+     * monthly calls would be twelve full scans of the same table.
+     */
+    private async fetchGstBalanceSources(
+        companyId: string,
+        from: string,
+        to: string
+    ): Promise<{
+        purchases: GstBalancePurchaseSourceDto[];
+        sales: GstBalanceSalesSourceDto[];
+    }> {
         // ── Purchases (the actual question) ──
         const povRaw: any[] = await this.povRepository.findAll({
             company_id: companyId,
@@ -998,7 +1317,11 @@ export class ReportsService {
             `SELECT i._id::text                                        AS invoice_id,
                     i.voucher_no                                       AS voucher_no,
                     i.status                                           AS status,
-                    i.invoice_date                                     AS invoice_date,
+                    -- Formatted in SQL: invoice_date is a DATE and the raw pg
+                    -- driver returns DATE as a JS Date, whose string form is
+                    -- "Wed Apr 22 2026 00:00:00 GMT..." — slicing 10 characters
+                    -- off that gives "Wed Apr 22", not a date.
+                    TO_CHAR(i.invoice_date, 'YYYY-MM-DD')              AS invoice_date,
                     i.gst_route                                        AS gst_route,
                     COALESCE(c.company_name, '—')                      AS customer_name,
                     COALESCE(SUM(il.taxable_amount), 0)::float8        AS taxable_inr,
@@ -1022,8 +1345,6 @@ export class ReportsService {
         );
 
         return {
-            month: key,
-            month_label: monthLabel(key),
             purchases,
             sales: (salesRaw || []).map((s) => ({
                 invoice_id: s.invoice_id,
@@ -1097,7 +1418,135 @@ export class ReportsService {
             [],
             totalRow,
         ];
-        return this.fileService.writeExcelFromArray(aoa);
+
+        // Sheets 2 and 3 — the documents each monthly figure is made of, the
+        // same thing the month drawer shows, for the whole period at once.
+        // Sheet 1 alone cannot answer "where does the purchase amount come
+        // from" (client #6) once the file has left the screen.
+        //
+        // Fetched ONCE over the whole range and tagged with a Month column,
+        // rather than month-by-month: flat is what can be filtered or pivoted,
+        // and the purchase side would otherwise re-scan every Vendor PO per
+        // month.
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const { purchases, sales } = await this.fetchGstBalanceSources(
+            companyId,
+            from,
+            to
+        );
+
+        const purchaseHeader = [
+            'Month',
+            'Date',
+            'Vendor PO',
+            'Vendor',
+            'Vendor State',
+            'Status',
+            'Taxable (INR)',
+            'GST (INR)',
+            'GST Split',
+        ];
+        const purchaseBody = purchases.map((p) => [
+            monthLabel(String(p.date || '').slice(0, 7)),
+            isoToDdmmyyyy(String(p.date || '')),
+            p.voucher_no,
+            p.vendor_name,
+            p.vendor_state || '—',
+            p.status,
+            p.taxable_inr,
+            p.gst_inr,
+            p.gst_split,
+        ]);
+        const purchaseTotals = purchases.reduce(
+            (acc, p) => {
+                acc.taxable += p.taxable_inr;
+                acc.gst += p.gst_inr;
+                return acc;
+            },
+            { taxable: 0, gst: 0 }
+        );
+        const purchaseAoa: (string | number)[][] = [
+            [
+                `Purchases — Vendor POs behind the Input GST — ${result.period_label} (INR). Totals back to the Purchase Taxable and input-tax columns on the GST Balance sheet.`,
+            ],
+            [
+                'GST Split: igst = inter-state vendor, cgst_sgst = same state as the company, unclassified = vendor state unknown (no GSTIN on file).',
+            ],
+            [],
+            purchaseHeader,
+            ...purchaseBody,
+            [],
+            [
+                'TOTAL',
+                '',
+                '',
+                '',
+                '',
+                '',
+                r2(purchaseTotals.taxable),
+                r2(purchaseTotals.gst),
+                '',
+            ],
+        ];
+
+        const salesHeader = [
+            'Month',
+            'Date',
+            'Invoice',
+            'Customer',
+            'Status',
+            'GST Route',
+            'Taxable (INR)',
+            'Output IGST (INR)',
+        ];
+        const salesBody = sales.map((s) => [
+            monthLabel(String(s.invoice_date || '').slice(0, 7)),
+            isoToDdmmyyyy(String(s.invoice_date || '')),
+            s.voucher_no,
+            s.customer_name,
+            s.status,
+            s.gst_route,
+            s.taxable_inr,
+            s.igst_inr,
+        ]);
+        const salesTotals = sales.reduce(
+            (acc, s) => {
+                acc.taxable += s.taxable_inr;
+                acc.igst += s.igst_inr;
+                return acc;
+            },
+            { taxable: 0, igst: 0 }
+        );
+        const salesAoa: (string | number)[][] = [
+            [
+                `Sales — invoices behind the Output GST — ${result.period_label} (INR). Totals back to the Sales Taxable and Output IGST columns on the GST Balance sheet.`,
+            ],
+            [
+                'Output IGST is notional: charged and refunded on igst_paid exports, and zero under LUT — so LUT invoices show taxable value with no IGST.',
+            ],
+            [],
+            salesHeader,
+            ...salesBody,
+            [],
+            [
+                'TOTAL',
+                '',
+                '',
+                '',
+                '',
+                '',
+                r2(salesTotals.taxable),
+                r2(salesTotals.igst),
+            ],
+        ];
+
+        return this.fileService.writeExcelSheetsFromArray([
+            { sheetName: 'GST Balance', rows: aoa },
+            { sheetName: 'Purchases (Input)', rows: purchaseAoa },
+            { sheetName: 'Sales (Output)', rows: salesAoa },
+        ]);
     }
 
     /**

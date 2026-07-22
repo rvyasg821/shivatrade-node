@@ -1,7 +1,9 @@
 {
     "productProfitability": "Product profitability report generated successfully.",
     "hsnSummary": "HSN summary report generated successfully.",
+    "hsnSummaryBreakdown": "HSN voucher register generated successfully.",
     "gstBalance": "Input-output GST balance report generated successfully.",
+    "gstBalanceBreakdown": "GST balance breakdown generated successfully.",
     "purchaseTurnover": "Purchase turnover report generated successfully.",
     "salesTurnover": "Sales turnover report generated successfully."
 }
