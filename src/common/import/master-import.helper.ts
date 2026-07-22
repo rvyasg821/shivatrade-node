@@ -90,6 +90,58 @@ export function readSheetRows(
 }
 
 /**
+ * Read a workbook whose sheets are named, for importers whose data spans more
+ * than one grain (a vendor and its addresses, banks and contacts).
+ *
+ * Sheets are matched by name, case- and space-insensitively, because Excel
+ * users rename tabs. A sheet that is absent comes back as an empty array —
+ * absent means "nothing to say about this grain", never "delete them all".
+ */
+export function readNamedSheets(
+    fileService: FileService,
+    fileBuffer: Buffer,
+    options?: { maxRowsPerSheet?: number }
+): Map<string, Record<string, any>[]> {
+    let sheets;
+    try {
+        sheets = fileService.readExcel(fileBuffer);
+    } catch {
+        throw new BadRequestException(
+            'Unable to read the file. Please upload a valid Excel or CSV file.'
+        );
+    }
+
+    const out = new Map<string, Record<string, any>[]>();
+    for (const sheet of sheets || []) {
+        const key = String(sheet?.sheetName || '')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, ' ');
+        const rows = (sheet?.data || []) as Record<string, any>[];
+        const max = options?.maxRowsPerSheet;
+        if (max && rows.length > max) {
+            throw new BadRequestException(
+                `Sheet "${sheet.sheetName}" has ${rows.length} rows; the limit is ${max}. Please split it into smaller files.`
+            );
+        }
+        out.set(key, rows);
+    }
+    return out;
+}
+
+/** Look a sheet up by any of its accepted names. Missing ⇒ empty. */
+export function sheetRows(
+    sheets: Map<string, Record<string, any>[]>,
+    ...names: string[]
+): Record<string, any>[] {
+    for (const n of names) {
+        const hit = sheets.get(n.trim().toLowerCase().replace(/\s+/g, ' '));
+        if (hit) return hit;
+    }
+    return [];
+}
+
+/**
  * Fail early when the sheet is missing a column nothing can be done without.
  *
  * Header keys are compared case-insensitively and trimmed, matching the cell

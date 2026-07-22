@@ -20,6 +20,10 @@ import { PaginationQuery } from '@common/pagination/decorators/pagination.decora
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import { IFile } from '@common/file/interfaces/file.interface';
+import {
+    datedFilename,
+    sendExcel,
+} from '@common/import/master-import.helper';
 
 import { VendorService } from '../services/vendor.service';
 import { VendorImportExportService } from '../services/vendor.import-export.service';
@@ -40,22 +44,34 @@ export class VendorAdminController {
         private readonly importExportService: VendorImportExportService
     ) {}
 
-    // ============ IMPORT ============
+    // ============ IMPORT / EXPORT ============
 
     @AuthJwtAccessProtected()
     @Get('/sample-excel')
     @ApiOperation({ summary: 'Download sample Excel for vendor import' })
     async downloadSampleExcel(@Res() res: ExpressResponse) {
-        const buffer = this.importExportService.generateSampleExcel();
-        res.setHeader(
-            'Content-Type',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        sendExcel(
+            res,
+            this.importExportService.generateSampleExcel(),
+            'vendor-import-sample.xlsx'
         );
-        res.setHeader(
-            'Content-Disposition',
-            'attachment; filename="vendor-import-sample.xlsx"'
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({
+        summary:
+            'Export vendors as Excel (Vendors + Addresses + Bank Accounts + Contacts)',
+    })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        sendExcel(
+            res,
+            await this.importExportService.exportVendors(companyId),
+            datedFilename('vendors')
         );
-        res.end(buffer);
     }
 
     @ApiConsumes('multipart/form-data')
@@ -73,39 +89,59 @@ export class VendorAdminController {
     ) {
         if (!file) throw new BadRequestException('No file provided');
 
-        const { summary, rows } =
-            await this.importExportService.parseAndValidate(
-                file.buffer,
-                companyId
-            );
+        // The whole preview object is passed to the commit step, not a filtered
+        // row list: the four sheets are interdependent (a bank account is
+        // meaningless without knowing which vendor row it hangs off), so the
+        // service does the filtering with all four in hand.
+        const parsed = await this.importExportService.parseAndValidate(
+            file.buffer,
+            companyId
+        );
 
         if (preview === 'true') {
-            return {
-                statusCode: 200,
-                message: 'Preview',
-                data: { summary, rows },
-            };
+            return { statusCode: 200, message: 'Preview', data: parsed };
         }
 
-        const validRows = rows.filter(r => r.status !== 'error');
-        if (validRows.length === 0) {
+        const anyWritable = [...parsed.vendors, ...parsed.addresses].some(
+            r => r.status !== 'error'
+        );
+        if (!anyWritable) {
             return {
                 statusCode: 200,
                 message: 'No valid rows to import',
-                data: { summary, created: 0, updated: 0, errors: [] },
+                data: {
+                    summary: parsed.summary,
+                    created: 0,
+                    updated: 0,
+                    errors: [],
+                },
             };
         }
 
         const result = await this.importExportService.importVendors(
-            validRows,
+            parsed,
             companyId,
             userId
         );
 
+        // Failures at COMMIT time (a service-level rule the preview could not
+        // foresee) used to be collected and never shown — the toast reported
+        // counts and the operator had no idea a vendor had been rejected. Name
+        // them in the message.
+        const failed = result.errors.length;
+        const message = failed
+            ? `Import finished with ${failed} failure${
+                  failed > 1 ? 's' : ''
+              }: ${result.created} created, ${result.updated} updated. ${result.errors
+                  .slice(0, 3)
+                  .map(e => (e.row ? `Row ${e.row}: ${e.message}` : e.message))
+                  .join(' | ')}${failed > 3 ? ' …' : ''}`
+            : `Import complete: ${result.created} created, ${result.updated} updated`;
+
         return {
             statusCode: 200,
-            message: `Import complete: ${result.created} created`,
-            data: { summary, ...result },
+            message,
+            data: { summary: parsed.summary, ...result },
         };
     }
 

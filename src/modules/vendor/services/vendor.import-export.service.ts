@@ -1,17 +1,77 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { FileService } from '@common/file/services/file.service';
+import {
+    cellReader,
+    readNamedSheets,
+    sheetRows,
+} from '@common/import/master-import.helper';
 import { VendorService } from './vendor.service';
 import { VendorRepository } from '../repository/repositories/vendor.repository';
-import { ENUM_VENDOR_STATUS } from '../enums/vendor.enum';
+import { VendorAddressRepository } from '../repository/repositories/vendor-address.repository';
+import { VendorBankAccountRepository } from '../repository/repositories/vendor-bank-account.repository';
+import { VendorContactRepository } from '../repository/repositories/vendor-contact.repository';
+import { VendorCategoryRepository } from '../repository/repositories/vendor-category.repository';
+import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
+import {
+    ENUM_VENDOR_ADDRESS_TYPE,
+    ENUM_VENDOR_STATUS,
+} from '../enums/vendor.enum';
 
-// Vendor import is intentionally minimal: a company + its primary contact +
-// one optional address. Vendor `code` is auto-generated (VND-0001), so it is
-// NOT an import column. Required: company_name, name, email, phone.
-const BASE_HEADERS = [
+/**
+ * Vendor import/export — TWO sheets.
+ *
+ * Sheet 1 `Vendors` is one row per vendor: its own fields plus its main contact
+ * and main bank account inline.
+ *
+ * Sheet 2 `Addresses` holds EVERY address, keyed by `company_name` — which the
+ * operator already knows and can copy, so there is no invented handle and no
+ * ids anywhere in the workbook. Addresses live in exactly one place: a vendor
+ * genuinely has several (a bill-from and two ship-from plants is ordinary), and
+ * splitting "the first one" onto sheet 1 made it ambiguous where to look.
+ *
+ * A vendor with more than one bank account or contact adds those in the UI.
+ * That is a deliberate trade: those are rare, they are safer edited one at a
+ * time, and carrying them here would put two more tabs in front of every
+ * client for a case most of them never hit.
+ *
+ * Import NEVER deletes. `VendorService.update` replaces children wholesale, so
+ * this service merges the file onto what the vendor already has and hands over
+ * the COMPLETE list — otherwise importing a vendor with one address would wipe
+ * its other three.
+ */
+
+const SHEET_VENDORS = 'Vendors';
+const SHEET_ADDRESSES = 'Addresses';
+
+const VENDOR_HEADERS = [
     'company_name',
-    'name',
-    'email',
-    'phone',
+    'vendor_code',
+    'gstin',
+    'pan',
+    'website',
+    'payment_terms',
+    'incoterms',
+    'categories',
+    'status',
+    // Main contact — required for a NEW vendor: the primary contact is what
+    // provisions the vendor's login.
+    'contact_name',
+    'contact_email',
+    'contact_phone',
+    'contact_designation',
+    // Main bank account.
+    'bank_name',
+    'account_number',
+    'ifsc',
+    'swift_code',
+    'currency',
+];
+
+const ADDRESS_HEADERS = [
+    'company_name',
+    'type',
+    'label',
     'address_line1',
     'address_line2',
     'city',
@@ -19,65 +79,54 @@ const BASE_HEADERS = [
     'country',
     'postcode',
     'gstin',
-    'pan',
-    'website',
+    'is_default',
 ];
 
-const SAMPLE_ROWS: Record<string, any>[] = [
-    {
-        company_name: 'Acme Steel Pvt Ltd',
-        name: 'Ravi Sharma',
-        email: 'ravi@acmesteel.example.com',
-        phone: '+91 98765 43210',
-        address_line1: 'Plot 12, GIDC Industrial Estate',
-        address_line2: 'Phase II',
-        city: 'Rajkot',
-        state: 'Gujarat',
-        country: 'India',
-        postcode: '360003',
-        gstin: '24ABCDE1234F1Z5',
-        pan: 'ABCDE1234F',
-        website: 'https://acmesteel.example.com',
-    },
-    {
-        company_name: 'Bright Packaging Co',
-        name: 'Neha Patel',
-        email: 'neha@brightpack.example.com',
-        phone: '+91 99887 76655',
-        address_line1: '',
-        address_line2: '',
-        city: '',
-        state: '',
-        country: '',
-        postcode: '',
-        gstin: '',
-        pan: '',
-        website: '',
-    },
-];
+/** Preview hands every row back to the browser. */
+const MAX_ROWS_PER_SHEET = 5000;
+
+const YES = new Set(['yes', 'y', 'true', '1']);
+const NO = new Set(['no', 'n', 'false', '0']);
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export interface VendorImportRow {
+const ADDRESS_FIELDS = [
+    'address_line1',
+    'address_line2',
+    'city',
+    'state',
+    'country',
+    'postcode',
+    'gstin',
+    'label',
+];
+
+export type RowStatus = 'valid_new' | 'valid_update' | 'error';
+
+export interface VendorSheetRow<T> {
     rowNum: number;
-    data: {
-        company_name: string;
-        name: string;
-        email: string;
-        phone: string;
-        address_line1?: string;
-        address_line2?: string;
-        city?: string;
-        state?: string;
-        country?: string;
-        postcode?: string;
-        gstin?: string;
-        pan?: string;
-        website?: string;
-    };
-    status: 'valid_new' | 'error';
+    data: T;
+    status: RowStatus;
     errors: string[];
-    warnings: string[];
+}
+
+export interface SheetCounts {
+    total: number;
+    valid_new: number;
+    valid_update: number;
+    errors: number;
+}
+
+export interface VendorImportPreview {
+    summary: {
+        total: number;
+        valid_new: number;
+        valid_update: number;
+        errors: number;
+        sheets: Record<string, SheetCounts>;
+    };
+    vendors: VendorSheetRow<any>[];
+    addresses: VendorSheetRow<any>[];
 }
 
 @Injectable()
@@ -87,158 +136,659 @@ export class VendorImportExportService {
     constructor(
         private readonly fileService: FileService,
         private readonly vendorService: VendorService,
-        private readonly vendorRepository: VendorRepository
+        private readonly vendorRepository: VendorRepository,
+        private readonly addressRepository: VendorAddressRepository,
+        private readonly bankAccountRepository: VendorBankAccountRepository,
+        private readonly contactRepository: VendorContactRepository,
+        private readonly vendorCategoryRepository: VendorCategoryRepository,
+        private readonly currencyRepository: CurrencyRepository,
+        private readonly categoryRepository: CategoryRepository
     ) {}
 
-    /** Sample Excel — the columns with two filled example rows. */
+    // ── Sample ──────────────────────────────────────────────────────────
+
     generateSampleExcel(): Buffer {
-        const aoa: any[][] = [[...BASE_HEADERS]];
-        for (const r of SAMPLE_ROWS) {
-            aoa.push(BASE_HEADERS.map(h => r[h] ?? ''));
-        }
-        return this.fileService.writeExcelFromArray(aoa);
+        return this.fileService.writeExcelSheetsFromArray([
+            {
+                sheetName: SHEET_VENDORS,
+                rows: [
+                    VENDOR_HEADERS,
+                    [
+                        'Acme Steel Pvt Ltd',
+                        '',
+                        '24AAACA1234A1Z5',
+                        'AAACA1234A',
+                        'https://acmesteel.example.com',
+                        '30 days',
+                        'FOB',
+                        // Comma-separated names from the Category master. They
+                        // must already exist — import never creates one.
+                        'Chemicals, BEARINGS',
+                        'active',
+                        'Ravi Sharma',
+                        'ravi@acmesteel.example.com',
+                        '9876543210',
+                        'Sales Manager',
+                        'HDFC Bank',
+                        '50100012345678',
+                        'HDFC0001234',
+                        '',
+                        'INR',
+                    ],
+                    [
+                        'Topaz Multi-Industries',
+                        '',
+                        '27BBBCB5678B1Z3',
+                        'BBBCB5678B',
+                        '',
+                        'Advance',
+                        'CIF',
+                        '',
+                        'active',
+                        'Imran Qureshi',
+                        'imran@topaz.example.com',
+                        '9820011223',
+                        'Director',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                    ],
+                ],
+            },
+            {
+                sheetName: SHEET_ADDRESSES,
+                rows: [
+                    ADDRESS_HEADERS,
+                    // EVERY address goes here — one row per address, with the
+                    // vendor's company name repeated. Mark one is_default per
+                    // type.
+                    [
+                        'Acme Steel Pvt Ltd',
+                        'bill_from',
+                        'Head Office',
+                        'Plot 12, GIDC Industrial Estate',
+                        'Phase II',
+                        'Vadodara',
+                        'Gujarat',
+                        'India',
+                        '390010',
+                        '24AAACA1234A1Z5',
+                        'yes',
+                    ],
+                    [
+                        'Acme Steel Pvt Ltd',
+                        'ship_from',
+                        'Plant 2',
+                        'Survey 88, Hazira Road',
+                        '',
+                        'Surat',
+                        'Gujarat',
+                        'India',
+                        '394270',
+                        '',
+                        'no',
+                    ],
+                    [
+                        'Topaz Multi-Industries',
+                        'bill_from',
+                        'Registered Office',
+                        '4th Floor, Nariman Point',
+                        '',
+                        'Mumbai',
+                        'Maharashtra',
+                        'India',
+                        '400021',
+                        '',
+                        'yes',
+                    ],
+                ],
+            },
+        ]);
     }
 
+    // ── Export ──────────────────────────────────────────────────────────
+
     /**
-     * Parse + validate an uploaded file. Row-level problems land in each row's
-     * `errors`; only file-level problems throw. Import is create-only — a row
-     * whose company name already exists is flagged as an error.
+     * Every vendor, unfiltered (inactive included) so a round trip cannot look
+     * like a purge. The main contact / address / bank go inline on sheet 1; any
+     * REMAINING addresses go on sheet 2, so the file reads the way it is meant
+     * to be filled in.
+     *
+     * Extra bank accounts and contacts are not in the file. They are also never
+     * touched by an import, so nothing is lost by their absence — but this
+     * export is not a full backup of them, and that is deliberate.
      */
+    async exportVendors(companyId: string): Promise<Buffer> {
+        const vendors = ((await this.vendorRepository.findByCompanyId(
+            companyId
+        )) as any[]).sort((a, b) =>
+            String(a.company_name || '').localeCompare(
+                String(b.company_name || '')
+            )
+        );
+        const vendorIds = vendors.map((v) => v._id.toString());
+
+        const [
+            addresses,
+            banks,
+            contactLists,
+            vendorCategories,
+            allCategories,
+            currencies,
+        ] = await Promise.all([
+            vendorIds.length
+                ? this.addressRepository.findByVendorIds(vendorIds)
+                : Promise.resolve([] as any[]),
+            vendorIds.length
+                ? this.bankAccountRepository.findByVendorIds(vendorIds)
+                : Promise.resolve([] as any[]),
+            Promise.all(
+                vendorIds.map((id) => this.contactRepository.findByVendorId(id))
+            ),
+            vendorIds.length
+                ? this.vendorCategoryRepository.findByVendorIds(vendorIds)
+                : Promise.resolve([] as any[]),
+            this.categoryRepository.findByCompanyId(companyId),
+            this.currencyRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+        ]);
+        const contacts = contactLists.flat();
+
+        const groupBy = <T extends { vendor_id?: any }>(rows: T[]) => {
+            const m = new Map<string, T[]>();
+            for (const r of rows) {
+                const k = r.vendor_id?.toString();
+                if (!k) continue;
+                m.set(k, [...(m.get(k) || []), r]);
+            }
+            return m;
+        };
+        const addrByVendor = groupBy(addresses as any[]);
+        const bankByVendor = groupBy(banks as any[]);
+        const contactByVendor = groupBy(contacts as any[]);
+
+        const categoryNameById = new Map<string, string>(
+            (allCategories as any[]).map((c) => [c._id.toString(), c.name])
+        );
+        const categoriesByVendor = new Map<string, string[]>();
+        for (const vc of vendorCategories as any[]) {
+            const vid = vc.vendor_id?.toString();
+            const name = categoryNameById.get(vc.category_id?.toString());
+            if (!vid || !name) continue;
+            categoriesByVendor.set(vid, [
+                ...(categoriesByVendor.get(vid) || []),
+                name,
+            ]);
+        }
+        const currencyCodeById = new Map<string, string>(
+            (currencies as any[]).map((c) => [c._id.toString(), c.code])
+        );
+
+        const vendorRows: any[][] = [];
+        const addressRows: any[][] = [];
+
+        for (const v of vendors) {
+            const vid = v._id.toString();
+            const vAddresses = addrByVendor.get(vid) || [];
+            const vBanks = bankByVendor.get(vid) || [];
+            const vContacts = contactByVendor.get(vid) || [];
+
+            // "Main" = the one the app itself treats as default/primary, so the
+            // exported row matches what the vendor's screens show.
+            const mainBank =
+                vBanks.find((b: any) => b.is_default) || vBanks[0];
+            const mainContact =
+                vContacts.find((c: any) => c.is_primary) || vContacts[0];
+
+            vendorRows.push([
+                v.company_name || '',
+                v.vendor_code || '',
+                v.gstin || '',
+                v.pan || '',
+                v.website || '',
+                v.payment_terms || '',
+                v.incoterms || '',
+                (categoriesByVendor.get(vid) || []).join(', '),
+                v.status || ENUM_VENDOR_STATUS.ACTIVE,
+                mainContact?.name || '',
+                mainContact?.email || '',
+                mainContact?.phone || '',
+                mainContact?.designation || '',
+                mainBank?.bank_name || '',
+                mainBank?.account_number || '',
+                mainBank?.ifsc || '',
+                mainBank?.swift_code || '',
+                currencyCodeById.get(mainBank?.currency_id?.toString()) || '',
+            ]);
+
+            for (const a of vAddresses) {
+                addressRows.push([
+                    v.company_name || '',
+                    a.type || '',
+                    a.label || '',
+                    a.address_line1 || '',
+                    a.address_line2 || '',
+                    a.city || '',
+                    a.state || '',
+                    a.country || '',
+                    a.postcode || '',
+                    a.gstin || '',
+                    a.is_default ? 'yes' : 'no',
+                ]);
+            }
+        }
+
+        return this.fileService.writeExcelSheetsFromArray([
+            { sheetName: SHEET_VENDORS, rows: [VENDOR_HEADERS, ...vendorRows] },
+            {
+                sheetName: SHEET_ADDRESSES,
+                rows: [ADDRESS_HEADERS, ...addressRows],
+            },
+        ]);
+    }
+
+    // ── Parse + validate ────────────────────────────────────────────────
+
     async parseAndValidate(
         fileBuffer: Buffer,
         companyId: string
-    ): Promise<{ summary: any; rows: VendorImportRow[] }> {
-        let sheets;
-        try {
-            sheets = this.fileService.readExcel(fileBuffer);
-        } catch {
-            throw new BadRequestException(
-                'Unable to read the file. Please upload a valid Excel or CSV file.'
-            );
+    ): Promise<VendorImportPreview> {
+        const sheets = readNamedSheets(this.fileService, fileBuffer, {
+            maxRowsPerSheet: MAX_ROWS_PER_SHEET,
+        });
+        const rawVendors = sheetRows(sheets, SHEET_VENDORS, 'vendor');
+        const rawAddresses = sheetRows(sheets, SHEET_ADDRESSES, 'address');
+
+        const existing = (await this.vendorRepository.findByCompanyId(
+            companyId
+        )) as any[];
+        const byCode = new Map<string, any[]>();
+        const byName = new Map<string, any[]>();
+        for (const v of existing) {
+            const code = String(v.vendor_code || '').trim().toLowerCase();
+            const name = String(v.company_name || '').trim().toLowerCase();
+            if (code) byCode.set(code, [...(byCode.get(code) || []), v]);
+            if (name) byName.set(name, [...(byName.get(name) || []), v]);
         }
 
-        const rawRows = (sheets?.[0]?.data || []) as Record<string, any>[];
-        if (!rawRows.length) {
-            throw new BadRequestException('The file contains no data rows.');
-        }
-
-        const headerKeys = Object.keys(rawRows[0]).map(k =>
-            k.trim().toLowerCase()
-        );
-        const requiredCols = ['company_name', 'name', 'email', 'phone'];
-        const missing = requiredCols.filter(c => !headerKeys.includes(c));
-        if (missing.length > 0) {
-            throw new BadRequestException(
-                `Missing required column(s): ${missing.join(
-                    ', '
-                )}. Expected columns: ${BASE_HEADERS.join(', ')}.`
-            );
-        }
-
-        const existing = await this.vendorRepository.findByCompanyId(companyId);
-        const existingByName = new Set<string>(
-            (existing as any[]).map(v =>
-                (v.company_name || '').trim().toLowerCase()
-            )
+        // Scoped exactly like `VendorService.assertBankAccountsValid`, which
+        // re-checks the resolved ids against company_id + soft_delete. An
+        // unscoped lookup could resolve 'INR' to a row validation then rejects.
+        const currencies = (await this.currencyRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any)) as any[];
+        const currencyByCode = new Map<string, any>(
+            currencies.map((c) => [String(c.code || '').toUpperCase(), c])
         );
 
-        const seenNames = new Set<string>();
-        const rows: VendorImportRow[] = [];
+        const categoryList = (await this.categoryRepository.findByCompanyId(
+            companyId
+        )) as any[];
+        const categoryIdByName = new Map<string, string>(
+            categoryList.map((c) => [
+                String(c.name || '').trim().toLowerCase(),
+                c._id.toString(),
+            ])
+        );
 
-        for (let i = 0; i < rawRows.length; i++) {
-            const raw = rawRows[i];
-            const rowNum = i + 2; // 1-indexed + header row
+        const vendors: VendorSheetRow<any>[] = [];
+        const rowByName = new Map<string, VendorSheetRow<any>>();
+
+        for (let i = 0; i < rawVendors.length; i++) {
+            const get = cellReader(rawVendors[i]);
             const errors: string[] = [];
-            const warnings: string[] = [];
-
-            const get = (col: string): string => {
-                const key = Object.keys(raw).find(
-                    k => k.trim().toLowerCase() === col
-                );
-                return key ? String(raw[key] ?? '').trim() : '';
-            };
-
             const companyName = get('company_name');
-            const name = get('name');
-            const email = get('email');
-            const phone = get('phone');
-
-            // ── Required fields ──
-            if (!companyName) errors.push('Company name is required');
-            else if (companyName.length > 200)
-                errors.push('Company name must not exceed 200 characters');
-
-            if (!name) errors.push('Contact name is required');
-            else if (name.length > 150)
-                errors.push('Contact name must not exceed 150 characters');
-
-            if (!email) errors.push('Email is required');
-            else if (!EMAIL_RE.test(email))
-                errors.push('Email is not a valid email address');
-
-            if (!phone) errors.push('Phone is required');
-
-            // ── Optional caps ──
-            const gstin = get('gstin');
-            if (gstin && gstin.length > 15)
-                errors.push('GSTIN must not exceed 15 characters');
-            const pan = get('pan');
-            if (pan && pan.length > 10)
-                errors.push('PAN must not exceed 10 characters');
-            const website = get('website');
-            if (website && website.length > 500)
-                errors.push('Website must not exceed 500 characters');
-
-            // ── Duplicate company name within the file ──
             const nameKey = companyName.toLowerCase();
-            if (companyName && seenNames.has(nameKey)) {
+
+            if (!companyName) errors.push('company_name is required');
+            else if (companyName.length > 200) {
+                errors.push('company_name must not exceed 200 characters');
+            }
+            if (companyName && rowByName.has(nameKey)) {
                 errors.push('Duplicate company name in file');
             }
-            if (companyName) seenNames.add(nameKey);
 
-            // ── Already exists (create-only import) ──
-            if (companyName && existingByName.has(nameKey)) {
-                errors.push('A vendor with this company name already exists');
+            const statusRaw = get('status').toLowerCase();
+            let status = ENUM_VENDOR_STATUS.ACTIVE;
+            if (statusRaw) {
+                if (statusRaw === 'active' || statusRaw === 'inactive') {
+                    status = statusRaw as ENUM_VENDOR_STATUS;
+                } else {
+                    errors.push("status must be 'active' or 'inactive'");
+                }
             }
 
-            rows.push({
-                rowNum,
+            const vendorCode = get('vendor_code');
+            const match = this.resolveVendor(
+                vendorCode,
+                companyName,
+                byCode,
+                byName
+            );
+            if (match.error) errors.push(match.error);
+            const isNew = !match.id;
+
+            // Categories: comma-separated NAMES. Blank = leave alone, because
+            // `category_ids` is a replace list on the service.
+            const categoriesRaw = get('categories');
+            let categoryIds: string[] | undefined;
+            if (categoriesRaw) {
+                const unknown: string[] = [];
+                const ids: string[] = [];
+                for (const nm of categoriesRaw
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean)) {
+                    const id = categoryIdByName.get(nm.toLowerCase());
+                    if (id) ids.push(id);
+                    else unknown.push(nm);
+                }
+                if (unknown.length) {
+                    errors.push(
+                        `Unknown categor${
+                            unknown.length > 1 ? 'ies' : 'y'
+                        }: ${unknown.join(', ')} — add them to the Category master first`
+                    );
+                }
+                categoryIds = Array.from(new Set(ids));
+            }
+
+            // ── Inline contact ──
+            const contactName = get('contact_name');
+            const contactEmail = get('contact_email');
+            if (isNew && (!contactName || !contactEmail)) {
+                errors.push(
+                    'contact_name and contact_email are required for a new vendor — the main contact creates its login'
+                );
+            }
+            if (contactEmail && !EMAIL_RE.test(contactEmail)) {
+                errors.push('contact_email is not a valid email address');
+            }
+            const contact = contactEmail
+                ? {
+                      name: contactName || contactEmail,
+                      email: contactEmail,
+                      phone: get('contact_phone') || undefined,
+                      designation: get('contact_designation') || undefined,
+                      is_primary: true,
+                  }
+                : undefined;
+
+            // ── Inline bank ──
+            const bankName = get('bank_name');
+            const accountNumber = get('account_number');
+            let bank: any;
+            if (bankName || accountNumber) {
+                if (!bankName) errors.push('bank_name is required when an account number is given');
+                if (!accountNumber) {
+                    errors.push('account_number is required when a bank name is given');
+                }
+                const currencyCode = get('currency').toUpperCase();
+                let currencyId: string | undefined;
+                if (!currencyCode) {
+                    errors.push('currency is required for a bank account (e.g. INR)');
+                } else {
+                    const cur = currencyByCode.get(currencyCode);
+                    if (!cur) {
+                        errors.push(
+                            `Currency '${currencyCode}' is not in the Currency master`
+                        );
+                    } else currencyId = cur._id.toString();
+                }
+                bank = {
+                    bank_name: bankName || undefined,
+                    account_number: accountNumber || undefined,
+                    ifsc: get('ifsc') || undefined,
+                    swift_code: get('swift_code') || undefined,
+                    currency_id: currencyId,
+                    is_default: true,
+                    is_active: true,
+                };
+            }
+
+            const row: VendorSheetRow<any> = {
+                rowNum: i + 2,
                 data: {
                     company_name: companyName,
-                    name,
-                    email,
-                    phone,
+                    vendor_code: vendorCode || undefined,
+                    gstin: get('gstin') || undefined,
+                    pan: get('pan') || undefined,
+                    website: get('website') || undefined,
+                    payment_terms: get('payment_terms') || undefined,
+                    incoterms: get('incoterms') || undefined,
+                    category_ids: categoryIds,
+                    status,
+                    _existingId: match.id,
+                    _contact: contact,
+                    _bank: bank,
+                },
+                status: errors.length
+                    ? 'error'
+                    : isNew
+                      ? 'valid_new'
+                      : 'valid_update',
+                errors,
+            };
+            vendors.push(row);
+            if (companyName) rowByName.set(nameKey, row);
+        }
+
+        // ── Addresses sheet — extra addresses only ──
+        const addresses: VendorSheetRow<any>[] = rawAddresses.map((raw, i) => {
+            const get = cellReader(raw);
+            const errors: string[] = [];
+            const companyName = get('company_name');
+            const nameKey = companyName.toLowerCase();
+
+            let targetVendorId: string | undefined;
+            if (!companyName) {
+                errors.push('company_name is required');
+            } else {
+                const inFile = rowByName.get(nameKey);
+                if (inFile) {
+                    targetVendorId = inFile.data._existingId;
+                    if (inFile.status === 'error') {
+                        errors.push(
+                            `Its vendor '${companyName}' has errors on the Vendors sheet`
+                        );
+                    }
+                } else {
+                    const match = this.resolveVendor(
+                        '',
+                        companyName,
+                        byCode,
+                        byName
+                    );
+                    if (match.error) errors.push(match.error);
+                    else if (!match.id) {
+                        errors.push(
+                            `'${companyName}' is not on the Vendors sheet and is not an existing vendor`
+                        );
+                    } else targetVendorId = match.id;
+                }
+            }
+
+            const typeRaw = (get('type') || 'bill_from').toLowerCase();
+            const validTypes = Object.values(
+                ENUM_VENDOR_ADDRESS_TYPE
+            ) as string[];
+            if (!validTypes.includes(typeRaw)) {
+                errors.push(`type must be one of: ${validTypes.join(', ')}`);
+            }
+            // NOT "address_line1 is required" — it is nullable on the entity and
+            // vendors created in the UI routinely have a city-only address.
+            // Requiring it would make our own export un-importable.
+            if (!ADDRESS_FIELDS.some((f) => !!get(f))) {
+                errors.push(
+                    'The address row is empty — fill at least one of address_line1, city, state, country or postcode'
+                );
+            }
+
+            return {
+                rowNum: i + 2,
+                data: {
+                    // Carried for the preview's error table only — stripped
+                    // before the payload reaches the service.
+                    company_name: companyName,
+                    type: typeRaw,
+                    label: get('label') || '',
                     address_line1: get('address_line1') || undefined,
                     address_line2: get('address_line2') || undefined,
                     city: get('city') || undefined,
                     state: get('state') || undefined,
-                    // Country defaults to India when the column is blank.
-                    country: get('country') || 'India',
+                    country: get('country') || undefined,
                     postcode: get('postcode') || undefined,
-                    gstin: gstin || undefined,
-                    pan: pan || undefined,
-                    website: website || undefined,
+                    gstin: get('gstin') || undefined,
+                    is_default: this.parseBool(
+                        get('is_default'),
+                        false,
+                        'is_default',
+                        errors
+                    ),
+                    _nameKey: nameKey,
+                    _targetVendorId: targetVendorId,
                 },
-                status: errors.length > 0 ? 'error' : 'valid_new',
+                status: errors.length ? 'error' : 'valid_new',
                 errors,
-                warnings,
-            });
-        }
+            };
+        });
 
-        const summary = {
+        await this.markAddressStatuses(addresses);
+
+        const count = (rows: VendorSheetRow<any>[]): SheetCounts => ({
             total: rows.length,
-            valid_new: rows.filter(r => r.status === 'valid_new').length,
-            valid_update: 0,
-            errors: rows.filter(r => r.status === 'error').length,
-            warnings: rows.reduce((n, r) => n + r.warnings.length, 0),
-        };
+            valid_new: rows.filter((r) => r.status === 'valid_new').length,
+            valid_update: rows.filter((r) => r.status === 'valid_update').length,
+            errors: rows.filter((r) => r.status === 'error').length,
+        });
+        const vendorCounts = count(vendors);
 
-        return { summary, rows };
+        return {
+            summary: {
+                ...vendorCounts,
+                sheets: {
+                    vendors: vendorCounts,
+                    addresses: count(addresses),
+                },
+            },
+            vendors,
+            addresses,
+        };
     }
 
-    /** Persist the validated rows. One bad row never aborts the batch. */
+    /**
+     * New-vs-update for the Addresses sheet, using the SAME natural key the
+     * commit merges on. Without this a round trip reports every address as
+     * "New", which reads as though the import is about to duplicate them all.
+     */
+    private async markAddressStatuses(
+        addresses: VendorSheetRow<any>[]
+    ): Promise<void> {
+        const vendorIds = Array.from(
+            new Set(
+                addresses
+                    .filter((r) => r.status !== 'error')
+                    .map((r) => r.data._targetVendorId)
+                    .filter(Boolean) as string[]
+            )
+        );
+        if (!vendorIds.length) return;
+
+        const existing = await this.addressRepository.findByVendorIds(
+            vendorIds
+        );
+        const index = new Map<string, Set<string>>();
+        for (const a of existing as any[]) {
+            const vid = a.vendor_id?.toString();
+            if (!vid) continue;
+            if (!index.has(vid)) index.set(vid, new Set());
+            index.get(vid).add(this.addressKey(a));
+        }
+
+        for (const r of addresses) {
+            if (r.status === 'error') continue;
+            const vid = r.data._targetVendorId;
+            r.status =
+                vid && index.get(vid)?.has(this.addressKey(r.data))
+                    ? 'valid_update'
+                    : 'valid_new';
+        }
+    }
+
+    /**
+     * type + label + line 1. Label alone is too weak — the inline address has
+     * no label, and placeholder data often has none either, so two unrelated
+     * addresses would collide on `bill_from::`.
+     */
+    private addressKey(a: any): string {
+        return [
+            String(a.type || '').toLowerCase(),
+            String(a.label || '').trim().toLowerCase(),
+            String(a.address_line1 || '').trim().toLowerCase(),
+        ].join('::');
+    }
+
+    /** vendor_code first (stable), then exact company name. */
+    private resolveVendor(
+        vendorCode: string,
+        companyName: string,
+        byCode: Map<string, any[]>,
+        byName: Map<string, any[]>
+    ): { id?: string; error?: string } {
+        const tries: Array<[string, Map<string, any[]>]> = [];
+        if (vendorCode) tries.push([vendorCode.trim().toLowerCase(), byCode]);
+        if (companyName) {
+            tries.push([companyName.trim().toLowerCase(), byName]);
+            tries.push([companyName.trim().toLowerCase(), byCode]);
+        }
+
+        for (const [key, index] of tries) {
+            const hits = index.get(key);
+            if (!hits?.length) continue;
+            if (hits.length > 1) {
+                // Company-name uniqueness is a service-level check, not a DB
+                // index, so a legacy duplicate is possible. Refuse rather than
+                // pick one at random.
+                return {
+                    error: `'${key}' matches more than one existing vendor — clean up the vendor master first`,
+                };
+            }
+            return { id: hits[0]._id.toString() };
+        }
+        return {};
+    }
+
+    private parseBool(
+        raw: string,
+        fallback: boolean,
+        label: string,
+        errors: string[]
+    ): boolean {
+        const v = String(raw || '').trim().toLowerCase();
+        if (!v) return fallback;
+        if (YES.has(v)) return true;
+        if (NO.has(v)) return false;
+        errors.push(`${label} must be 'yes' or 'no'`);
+        return fallback;
+    }
+
+    // ── Commit ──────────────────────────────────────────────────────────
+
+    /**
+     * Persist the workbook. One bad vendor never aborts the batch.
+     *
+     * Children are MERGED onto whatever the vendor already has — addresses by
+     * type + label + line 1, banks by account number, contacts by email — and
+     * the COMPLETE merged list is handed to the service, whose update path
+     * replaces children wholesale. Nothing on record is ever dropped.
+     */
     async importVendors(
-        rows: VendorImportRow[],
+        preview: VendorImportPreview,
         companyId: string,
         userId: string
     ): Promise<{
@@ -247,66 +797,250 @@ export class VendorImportExportService {
         errors: { row: number; message: string }[];
     }> {
         let created = 0;
+        let updated = 0;
         const errors: { row: number; message: string }[] = [];
 
-        for (const row of rows) {
-            if (row.status === 'error') continue;
-            const d = row.data;
+        const okAddresses = preview.addresses.filter(
+            (r) => r.status !== 'error'
+        );
+        const strip = (d: any) => {
+            const { _nameKey, _targetVendorId, company_name, ...clean } = d;
+            return clean;
+        };
+
+        // Vendors that only appear on the Addresses sheet — "add a second
+        // address to a vendor already in the system".
+        const addressOnlyVendorIds = new Set<string>(
+            okAddresses
+                .map((r) => r.data._targetVendorId)
+                .filter(Boolean) as string[]
+        );
+
+        for (const v of preview.vendors) {
+            if (v.status === 'error') continue;
+            const nameKey = String(v.data.company_name || '').toLowerCase();
+            const existingId = v.data._existingId as string | undefined;
+            if (existingId) addressOnlyVendorIds.delete(existingId);
+
+            const { _existingId, _contact, _bank, ...scalar } = v.data;
+
+            // Addresses come only from the Addresses sheet — there is no inline
+            // address on the Vendors row, so there is exactly one place a
+            // vendor's addresses can come from.
+            const incomingAddresses = okAddresses
+                .filter((r) => r.data._nameKey === nameKey)
+                .map((r) => strip(r.data));
+            const incomingBanks = _bank ? [_bank] : [];
+            const incomingContacts = _contact ? [_contact] : [];
+
             try {
-                // Include an address only when at least one address field is set.
-                const hasAddress = !!(
-                    d.address_line1 ||
-                    d.address_line2 ||
-                    d.city ||
-                    d.state ||
-                    d.postcode
-                );
-                await this.vendorService.create(
-                    companyId,
-                    {
-                        company_name: d.company_name,
-                        // Code auto-generated (VND-0001).
-                        website: d.website,
-                        gstin: d.gstin,
-                        pan: d.pan,
-                        status: ENUM_VENDOR_STATUS.ACTIVE,
-                        contacts: [
-                            {
-                                name: d.name,
-                                email: d.email,
-                                phone: d.phone,
-                                is_primary: true,
-                            },
-                        ],
-                        addresses: hasAddress
-                            ? [
-                                  {
-                                      address_line1: d.address_line1,
-                                      address_line2: d.address_line2,
-                                      city: d.city,
-                                      state: d.state,
-                                      country: d.country,
-                                      postcode: d.postcode,
-                                      gstin: d.gstin,
-                                      is_default: true,
-                                  },
-                              ]
-                            : [],
-                    } as any,
-                    userId
-                );
-                created++;
-            } catch (err: any) {
+                if (existingId) {
+                    const vendor =
+                        await this.vendorService.findOneById(existingId);
+                    await this.vendorService.update(vendor, {
+                        ...scalar,
+                        ...(await this.mergedChildren(
+                            existingId,
+                            incomingAddresses,
+                            incomingBanks,
+                            incomingContacts
+                        )),
+                    } as any);
+                    updated++;
+                } else {
+                    // Same normalisation as the update path — a new vendor is
+                    // just as capable of arriving with two ticked defaults.
+                    this.normaliseAddressDefaults(incomingAddresses);
+                    this.normaliseBankDefaults(incomingBanks);
+                    this.normaliseContactPrimary(incomingContacts);
+                    await this.vendorService.create(
+                        companyId,
+                        {
+                            ...scalar,
+                            contacts: incomingContacts,
+                            addresses: incomingAddresses,
+                            bank_accounts: incomingBanks,
+                        } as any,
+                        userId
+                    );
+                    created++;
+                }
+            } catch (err) {
                 this.logger.error(
-                    `Vendor import row ${row.rowNum} failed: ${err?.message}`
+                    `Vendor import row ${v.rowNum} failed: ${err.message}`
                 );
-                errors.push({
-                    row: row.rowNum,
-                    message: err?.message || 'Import failed',
-                });
+                errors.push({ row: v.rowNum, message: err.message });
             }
         }
 
-        return { created, updated: 0, errors };
+        for (const vendorId of addressOnlyVendorIds) {
+            try {
+                const vendor = await this.vendorService.findOneById(vendorId);
+                const mine = okAddresses
+                    .filter((r) => r.data._targetVendorId === vendorId)
+                    .map((r) => strip(r.data));
+                await this.vendorService.update(vendor, {
+                    ...(await this.mergedChildren(vendorId, mine, [], [])),
+                } as any);
+                updated++;
+            } catch (err) {
+                this.logger.error(
+                    `Vendor ${vendorId} address import failed: ${err.message}`
+                );
+                errors.push({ row: 0, message: err.message });
+            }
+        }
+
+        return { created, updated, errors };
+    }
+
+    /**
+     * "Last one wins" for a flag that must be unique.
+     *
+     * These run on BOTH the create and the update path. The service enforces
+     * the same rules by THROWING (`Only one default address allowed per type`),
+     * so without normalising here a spreadsheet with two ticked boxes would
+     * fail the whole vendor — including its contact and bank — over something
+     * we can resolve. Iterating backwards means the later row keeps the flag,
+     * which is what an operator editing a sheet top-to-bottom expects.
+     */
+    private normaliseAddressDefaults(list: any[]): void {
+        const seen = new Set<string>();
+        for (const a of (list || []).slice().reverse()) {
+            if (!a.is_default) continue;
+            const type = a.type || ENUM_VENDOR_ADDRESS_TYPE.BILL_FROM;
+            if (seen.has(type)) a.is_default = false;
+            else seen.add(type);
+        }
+    }
+
+    /** One default per currency — the service rejects more. */
+    private normaliseBankDefaults(list: any[]): void {
+        const seen = new Set<string>();
+        for (const b of (list || []).slice().reverse()) {
+            if (!b.is_default) continue;
+            if (seen.has(b.currency_id)) b.is_default = false;
+            else seen.add(b.currency_id);
+        }
+    }
+
+    /** Exactly one primary — the vendor's login hangs off it. */
+    private normaliseContactPrimary(list: any[]): void {
+        const rows = list || [];
+        let kept = false;
+        for (const c of rows) {
+            if (!c.is_primary) continue;
+            if (!kept) kept = true;
+            else c.is_primary = false;
+        }
+        if (rows.length && !kept) rows[0].is_primary = true;
+    }
+
+    /**
+     * A grain with NO incoming rows is left out of the payload entirely — the
+     * service only touches an array it is given, so a Vendors-only import
+     * cannot disturb a vendor's other addresses, banks or contacts.
+     */
+    private async mergedChildren(
+        vendorId: string,
+        addresses: any[],
+        banks: any[],
+        contacts: any[]
+    ): Promise<Record<string, any>> {
+        const out: Record<string, any> = {};
+
+        if (addresses.length) {
+            out.addresses = this.mergeByKey(
+                await this.addressRepository.findByVendorId(vendorId),
+                addresses,
+                (a) => this.addressKey(a),
+                [
+                    'type',
+                    'label',
+                    'address_line1',
+                    'address_line2',
+                    'city',
+                    'state',
+                    'country',
+                    'postcode',
+                    'gstin',
+                    'is_default',
+                ]
+            );
+            this.normaliseAddressDefaults(out.addresses);
+        }
+
+        if (banks.length) {
+            out.bank_accounts = this.mergeByKey(
+                await this.bankAccountRepository.findByVendorId(vendorId),
+                banks,
+                (b) => String(b.account_number || '').trim().toLowerCase(),
+                [
+                    'bank_name',
+                    'account_holder_name',
+                    'account_number',
+                    'account_type',
+                    'ifsc',
+                    'swift_code',
+                    'iban',
+                    'currency_id',
+                    'branch_name',
+                    'branch_address',
+                    'is_default',
+                    'is_active',
+                    'notes',
+                ]
+            );
+            this.normaliseBankDefaults(out.bank_accounts);
+        }
+
+        if (contacts.length) {
+            out.contacts = this.mergeByKey(
+                await this.contactRepository.findByVendorId(vendorId),
+                contacts,
+                (c) => String(c.email || '').trim().toLowerCase(),
+                ['name', 'designation', 'email', 'phone', 'is_primary']
+            );
+            this.normaliseContactPrimary(out.contacts);
+        }
+
+        return out;
+    }
+
+    /**
+     * Existing rows first, patched in place by the incoming ones; genuinely new
+     * rows appended. Never removes an existing row — that is the whole point.
+     * A blank incoming cell leaves the stored value alone.
+     */
+    private mergeByKey(
+        existingRows: any[],
+        incoming: any[],
+        keyOf: (row: any) => string,
+        fields: string[]
+    ): any[] {
+        const merged = existingRows.map((e) => {
+            const plain: any = {};
+            for (const f of fields) plain[f] = (e as any)[f];
+            return plain;
+        });
+        const index = new Map<string, any>(merged.map((m) => [keyOf(m), m]));
+
+        for (const inc of incoming) {
+            const hit = index.get(keyOf(inc));
+            if (hit) {
+                for (const f of fields) {
+                    const v = inc[f];
+                    // `false` is a value, not a blank — booleans always apply.
+                    if (typeof v === 'boolean') hit[f] = v;
+                    else if (v !== undefined && v !== '') hit[f] = v;
+                }
+            } else {
+                const fresh: any = {};
+                for (const f of fields) fresh[f] = inc[f];
+                merged.push(fresh);
+                index.set(keyOf(fresh), fresh);
+            }
+        }
+        return merged;
     }
 }
