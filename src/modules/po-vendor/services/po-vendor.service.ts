@@ -588,7 +588,14 @@ export class PoVendorService {
                 product_id: poLine.product_id?.toString(),
                 description: poLine.description || null,
                 part_no: poLine.part_no || null,
-                hsn_code: poLine.hsn_code || null,
+                // Caller may override the HSN (generate-POV screen), same as
+                // GST% below. LOCAL to this POV — the SO line and the product
+                // master are left alone.
+                hsn_code:
+                    (ln as any).hsn_code != null &&
+                    String((ln as any).hsn_code).trim() !== ''
+                        ? String((ln as any).hsn_code).trim()
+                        : poLine.hsn_code || null,
                 unit: poLine.unit || null,
                 // Caller may override GST% (generate-POV screen lets the
                 // operator correct a wrong/blank master rate). Fall back to the
@@ -1282,6 +1289,7 @@ export class PoVendorService {
                 purchase_order_line_id: string;
                 vendor_id: string;
                 tax_pct?: string;
+                hsn_code?: string;
             }>;
             delivery_address_id?: string;
             delivery_address?: string;
@@ -1333,6 +1341,11 @@ export class PoVendorService {
         const seenLines = new Set<string>();
         // Per-line GST% override (operator-edited on the generate-POV screen).
         const taxOverrideByLine = new Map<string, string>();
+        // Per-line HSN override, same screen, same rule. Kept in its own map
+        // for the same reason as tax: `linesPayload` below is rebuilt from the
+        // PO line, so anything the operator typed has to be carried across
+        // explicitly or it is silently dropped on the way to createFromPo.
+        const hsnOverrideByLine = new Map<string, string>();
         for (const a of data.assignments) {
             if (!a.purchase_order_line_id || !a.vendor_id) {
                 throw new BadRequestException(
@@ -1347,6 +1360,12 @@ export class PoVendorService {
             seenLines.add(a.purchase_order_line_id);
             if (a.tax_pct != null && a.tax_pct !== '') {
                 taxOverrideByLine.set(a.purchase_order_line_id, String(a.tax_pct));
+            }
+            if (a.hsn_code != null && String(a.hsn_code).trim() !== '') {
+                hsnOverrideByLine.set(
+                    a.purchase_order_line_id,
+                    String(a.hsn_code).trim()
+                );
             }
             const arr = byVendor.get(a.vendor_id) || [];
             arr.push(a.purchase_order_line_id);
@@ -1484,6 +1503,7 @@ export class PoVendorService {
                             ordered_qty: String(round4(toProcure)),
                             unit_price: unitPrice,
                             tax_pct: taxOverrideByLine.get(lid),
+                            hsn_code: hsnOverrideByLine.get(lid),
                         };
                     })
                 )
@@ -1811,11 +1831,22 @@ export class PoVendorService {
             const wantsTax = lineEdits.some(
                 p => p.tax_pct != null && p.tax_pct !== ''
             );
+            // `!= null` only — '' is a real value for these two (clear the
+            // field), unlike the numeric ones where '' means "not sent".
+            const wantsDescriptive = lineEdits.some(
+                p => p.hsn_code != null || p.part_no != null
+            );
             const isDraft = fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT;
 
             if (wantsTax && !isDraft) {
                 throw new BadRequestException(
                     `POV is ${fromStatus}. The GST rate is frozen once the PO is with the vendor — only the rate can be revised.`
+                );
+            }
+            // Both print on the vendor PDF, so they freeze with it.
+            if (wantsDescriptive && !isDraft) {
+                throw new BadRequestException(
+                    `POV is ${fromStatus}. HSN and part number are frozen once the PO is with the vendor — only the rate can be revised.`
                 );
             }
             // A GRN means the goods are already costed into stock; re-pricing
@@ -1868,6 +1899,15 @@ export class PoVendorService {
                     line.line_total = String(
                         round2(num(line.ordered_qty) * price)
                     );
+                }
+                // Descriptive fields: `!= null` is the test, so an empty string
+                // clears the field. Stored as null rather than '' to match how
+                // every other write path leaves them.
+                if (patch.hsn_code != null) {
+                    line.hsn_code = String(patch.hsn_code).trim() || null;
+                }
+                if (patch.part_no != null) {
+                    line.part_no = String(patch.part_no).trim() || null;
                 }
                 await this.povLineRepository.save(line);
             }

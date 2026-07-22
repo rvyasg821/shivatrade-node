@@ -81,6 +81,21 @@ export class PoVendorLineTaxUpdateDto {
     @IsNumberString({}, { message: 'unit_price must be a numeric string' })
     @IsOptional()
     unit_price?: string;
+
+    /**
+     * HSN and part number. DRAFT only — both print on the vendor PDF, so they
+     * are frozen for the same reason the header terms are.
+     *
+     * An empty string is a real value here (clear the field), which is why they
+     * are plain optional strings rather than being skipped when falsy.
+     */
+    @IsString()
+    @IsOptional()
+    hsn_code?: string;
+
+    @IsString()
+    @IsOptional()
+    part_no?: string;
 }
 
 export class PoVendorUpdateRequestDto {
