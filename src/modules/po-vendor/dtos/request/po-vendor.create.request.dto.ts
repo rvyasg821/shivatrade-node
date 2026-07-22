@@ -62,6 +62,18 @@ export class PoVendorLineCreateDto {
     @IsOptional()
     unit_price?: string;
 
+    /**
+     * Optional HSN override for this POV line. Omitted when the operator did
+     * not touch it, so the PO line → product master fallback still applies.
+     *
+     * LOCAL to this POV: the Sales Order line and the product master are never
+     * written back, because the vendor-facing document can legitimately carry a
+     * different classification.
+     */
+    @IsString()
+    @IsOptional()
+    hsn_code?: string;
+
     @IsInt()
     @Min(0)
     @IsOptional()

@@ -35,6 +35,20 @@ export class PoVendorRecoverAssignmentDto {
     @IsNumberString({}, { message: 'tax_pct must be a numeric string' })
     @IsOptional()
     tax_pct?: string;
+
+    /**
+     * Optional HSN override for the spawned POV line. Omitted when the operator
+     * did not touch it, so the existing fallback chain (SO line → product
+     * master) still applies.
+     *
+     * LOCAL to this POV: neither the Sales Order line nor the product master is
+     * written back, because a line can legitimately be classified differently
+     * on the vendor-facing document.
+     */
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    hsn_code?: string;
 }
 
 /**
