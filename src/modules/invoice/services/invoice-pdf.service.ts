@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
 import { docDate } from '@common/pdf/tally-pdf.util';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
 import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
@@ -612,7 +613,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
     const subtitle = isLut
         ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
         : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
-    const sym = esc(inv.currency_symbol || inv.currency_code || '');
+    const sym = esc(inv.currency_symbol || getCurrencySymbol(inv.currency_code) || '');
 
     // Per-line IGST is shown in INR (matches the refund bucket basis).
     // For LUT route IGST is 0% — we drop the two columns entirely.
@@ -790,7 +791,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
     const subtitle = isLut
         ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
         : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
-    const sym = esc(inv.currency_symbol || inv.currency_code || '');
+    const sym = esc(inv.currency_symbol || getCurrencySymbol(inv.currency_code) || '');
     // Line values are stored in INR; show them in the document currency.
     const er = Number(inv.exchange_rate || 0);
     const erMul = er > 0 ? er : 1;
@@ -937,7 +938,7 @@ function buildReceiptHtml(
     const inv = d.invoice || {};
     const c = d.company || {};
     const ca = d.companyAddr || {};
-    const sym = esc(inv.currency_symbol || inv.currency_code || '');
+    const sym = esc(inv.currency_symbol || getCurrencySymbol(inv.currency_code) || '');
 
     const companyLines = [
         ca.address_line1,
