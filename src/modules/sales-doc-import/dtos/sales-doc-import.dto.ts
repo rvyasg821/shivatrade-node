@@ -1,5 +1,6 @@
 import {
     IsArray,
+    IsBoolean,
     IsEnum,
     IsOptional,
     IsString,
@@ -203,4 +204,10 @@ export class SalesDocExportRequestDto {
     // and adds the _README and _ProductsRef sheets so the file is meant for
     // editing + re-importing rather than as a data snapshot.
     @ApiPropertyOptional() @IsOptional() @IsString() mode?: string;
+
+    // `true` → build the presentation "costing report" workbook (grouped
+    // header bands, pretty currency labels, computed amounts, TOTAL row). This
+    // file is NOT re-importable — it is the client-facing report layout, kept
+    // entirely separate from the round-trip data export above.
+    @ApiPropertyOptional() @IsOptional() @IsBoolean() formatted?: boolean;
 }

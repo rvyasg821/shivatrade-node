@@ -8,6 +8,7 @@ import { RebateRepository } from '@modules/rebate/repository/repositories/rebate
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 import {
     ENUM_SALES_DOC_TYPE,
@@ -1158,6 +1159,374 @@ export class SalesDocImportService {
         // (The _README helper sheet was removed — the sample now ships with just
         // the LineItems sheet. Import still targets "LineItems" by name.)
 
+        return write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Costing REPORT workbook — PRESENTATION ONLY, NOT re-importable.
+    //
+    // The client-facing layout from the on-screen worksheet: two-row grouped
+    // header (Logistics FOB Cost Elements / Government Benefits / <CUR>
+    // Realization bands over their sub-columns), pretty currency labels,
+    // per-line COMPUTED amounts, and a TOTAL row. Deliberately separate from
+    // buildCostingWorkbook so the round-trip import is never touched — this
+    // sheet is a snapshot to print/share, never re-uploaded.
+    // ──────────────────────────────────────────────────────────────────
+    async buildCostingReportWorkbook(
+        companyId: string,
+        opts: {
+            docType: ENUM_SALES_DOC_TYPE;
+            lines: SalesDocExportLineDto[];
+            currencyCode?: string;
+            exchangeRate?: number | string;
+            freightTotal?: number | string;
+        },
+    ): Promise<Buffer> {
+        const exportLines = opts.lines || [];
+        const rate = num(opts.exchangeRate) || 1;
+        const cur = (opts.currencyCode || '').trim();
+        // exchange_rate is stored foreign-per-₹1; foreign docs carry a non-1 rate.
+        const isForeign =
+            !!cur && cur.toUpperCase() !== 'INR' && rate > 0 && rate !== 1;
+        const docCur = (cur || 'INR').toUpperCase();
+        const docSym = getCurrencySymbol(docCur) || docCur;
+        const r2 = (n: number) =>
+            Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
+        // Shipment freight (DOCUMENT currency), split across lines by qty — the
+        // Freight / CNF Amount / CNF Rate columns mirror the on-screen worksheet.
+        // Shown only when the doc actually carries freight.
+        const freightTotal = num(opts.freightTotal);
+        const hasFreight = freightTotal > 0;
+        const lineFreights = hasFreight
+            ? splitFreightByQty(exportLines, freightTotal)
+            : [];
+        // Money formatters — the report is text/presentation, so amounts carry
+        // their currency symbol exactly like the on-screen worksheet.
+        const inr = (n: number) =>
+            `₹${Number(r2(n)).toLocaleString('en-IN', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+            })}`;
+        const fx = (n: number, dp: number) =>
+            `${docSym}${Number(n).toLocaleString('en-US', {
+                minimumFractionDigits: dp,
+                maximumFractionDigits: dp,
+            })}`;
+        // Freight / CNF are in the DOCUMENT currency (₹ for INR docs, else the
+        // foreign symbol) — same as the worksheet's Freight / CNF columns.
+        const docMoney = (n: number) => (isForeign ? fx(n, 2) : inr(n));
+
+        // Display fields (name / part / hsn / uom) resolved from ids if omitted.
+        const nameById = new Map<string, string>();
+        const partById = new Map<string, string>();
+        const hsnById = new Map<string, string>();
+        const uomById = new Map<string, string>();
+        if (exportLines.some((l) => l.product_id)) {
+            const prods = await this.productRepository.findByCompanyId(companyId);
+            for (const p of prods as any[]) {
+                nameById.set(p._id.toString(), p.name || '');
+                partById.set(p._id.toString(), p.part_no || '');
+                hsnById.set(p._id.toString(), p.hsn_code || '');
+                uomById.set(p._id.toString(), p.unit_of_measure || '');
+            }
+        }
+        const pName = (l: SalesDocExportLineDto) =>
+            (l as any).product_name ||
+            (l.product_id ? nameById.get(String(l.product_id)) : '') ||
+            '';
+        const pPart = (l: SalesDocExportLineDto) =>
+            (l as any).part_no ||
+            (l.product_id ? partById.get(String(l.product_id)) : '') ||
+            '';
+        const pHsn = (l: SalesDocExportLineDto) =>
+            l.hs_code ||
+            (l as any).hsn_code ||
+            (l.product_id ? hsnById.get(String(l.product_id)) : '') ||
+            '';
+        const pUom = (l: SalesDocExportLineDto) =>
+            (l as any).unit ||
+            (l.product_id ? uomById.get(String(l.product_id)) : '') ||
+            '';
+
+        // Dynamic expense / rebate code columns (active masters ∪ codes in use).
+        const [expenseMasters, rebateMasters] = await Promise.all([
+            this.expenseRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+            this.rebateRepository.findAll({
+                company_id: companyId,
+                soft_delete: false,
+            } as any),
+        ]);
+        const isActive = (m: any): boolean =>
+            m?.is_active !== false &&
+            String(m?.status ?? '').toUpperCase() !== 'INACTIVE';
+        const expenseTypes = new Map<string, string>();
+        for (const m of expenseMasters as any[])
+            if (isActive(m) && m.code)
+                expenseTypes.set(m.code, lc(m.type) || 'fixed');
+        const rebateTypes = new Map<string, string>();
+        for (const m of rebateMasters as any[])
+            if (isActive(m) && m.code)
+                rebateTypes.set(m.code, lc(m.type) || 'percent');
+        for (const l of exportLines) {
+            for (const e of (l.product_expenses_snapshot || []) as any[])
+                if (e?.code && !expenseTypes.has(e.code))
+                    expenseTypes.set(e.code, lc(e.type) || 'fixed');
+            for (const r of (l.product_rebates_snapshot || []) as any[])
+                if (r?.code && !rebateTypes.has(r.code))
+                    rebateTypes.set(r.code, lc(r.type) || 'percent');
+        }
+        const expenseCols = Array.from(expenseTypes.keys()).sort();
+        const rebateCols = Array.from(rebateTypes.keys()).sort();
+        const E = expenseCols.length;
+        const R = rebateCols.length;
+
+        // ── Column index plan ──
+        const expStart = 10;
+        const expEnd = expStart + E - 1;
+        const totalFobIdx = expStart + E;
+        const rebStart = totalFobIdx + 1;
+        const rebEnd = rebStart + R - 1;
+        const marginIdx = rebStart + R;
+        const grandIdx = marginIdx + 1;
+        const rateIdx = grandIdx + 1;
+        const amtIdx = grandIdx + 2;
+        const realizationEnd = isForeign ? amtIdx : grandIdx;
+        // Freight / CNF columns come after the realization group when present.
+        const freightIdx = realizationEnd + 1;
+        const cnfAmtIdx = realizationEnd + 2;
+        const cnfRateIdx = realizationEnd + 3;
+        const lastCol = hasFreight ? cnfRateIdx : realizationEnd;
+        const width = lastCol + 1;
+
+        // ── Meta banner + two-row grouped header ──
+        const bannerR = 0;
+        const headerR1 = 2;
+        const headerR2 = 3;
+        const dataR = 4;
+
+        const h1: any[] = new Array(width).fill('');
+        h1[0] = 'No';
+        h1[1] = 'Product Name / Specifications';
+        h1[2] = 'Part No';
+        h1[3] = 'HSN Code';
+        h1[4] = 'Qty';
+        h1[5] = 'UOM';
+        h1[6] = 'Rate';
+        h1[7] = 'Disc';
+        h1[8] = 'Price after Disc';
+        h1[9] = 'Value (INR)';
+        if (E > 0) h1[expStart] = 'Logistics FOB Cost Elements';
+        h1[totalFobIdx] = 'Total FOB (INR)';
+        if (R > 0) h1[rebStart] = 'Government Benefits';
+        h1[marginIdx] = 'Margin';
+        h1[grandIdx] = 'Grand Total (INR)';
+        if (isForeign) h1[rateIdx] = `${docCur} Realization`;
+        if (hasFreight) {
+            h1[freightIdx] = `Freight (${docCur})`;
+            h1[cnfAmtIdx] = `CNF Amount (${docCur})`;
+            h1[cnfRateIdx] = `CNF Rate (${docCur})`;
+        }
+
+        const h2: any[] = new Array(width).fill('');
+        for (let k = 0; k < E; k++) h2[expStart + k] = expenseCols[k];
+        for (let k = 0; k < R; k++) h2[rebStart + k] = rebateCols[k];
+        if (isForeign) {
+            h2[rateIdx] = `Rate ${docCur}`;
+            h2[amtIdx] = `Amt ${docCur}`;
+        }
+
+        // ── Data rows + running totals ──
+        const totals = {
+            qty: 0,
+            value: 0,
+            totalFob: 0,
+            margin: 0,
+            grand: 0,
+            amt: 0,
+            freight: 0,
+            cnf: 0,
+            exp: new Map<string, number>(),
+            reb: new Map<string, number>(),
+        };
+        const dataAoa = exportLines.map((l, i) => {
+            const qty = num(l.qty);
+            const price = num(l.unit_price);
+            const disc = num(l.discount_pct);
+            const gross = qty * price;
+            const taxable = r2(gross - (gross * disc) / 100);
+            const priceDisc = r2(price * (1 - disc / 100));
+
+            const expAmt = new Map<string, number>();
+            for (const e of (l.product_expenses_snapshot || []) as any[]) {
+                if (!e?.code) continue;
+                const a =
+                    lc(e.type) === 'percent'
+                        ? (taxable * num(e.value)) / 100
+                        : num(e.value);
+                expAmt.set(e.code, r2((expAmt.get(e.code) || 0) + a));
+            }
+            let expensesAmt = 0;
+            for (const v of expAmt.values()) expensesAmt += v;
+            const totalFob = r2(taxable + expensesAmt);
+
+            const rebAmt = new Map<string, number>();
+            for (const r of (l.product_rebates_snapshot || []) as any[]) {
+                if (!r?.code) continue;
+                const a =
+                    lc(r.type) === 'fixed'
+                        ? num(r.pct)
+                        : (totalFob * num(r.pct)) / 100;
+                rebAmt.set(r.code, r2((rebAmt.get(r.code) || 0) + a));
+            }
+            let rebatesAmt = 0;
+            for (const v of rebAmt.values()) rebatesAmt += v;
+            const afterReb = r2(totalFob - rebatesAmt);
+            const marginAmt = r2((afterReb * num(l.margin_pct)) / 100);
+            const grand = r2(afterReb + marginAmt);
+            const amtDoc = isForeign ? r2(grand * rate) : grand;
+            const rateDoc = qty ? r2(amtDoc / qty) : 0;
+            // CNF (Cost + Freight) = realization amount + this line's freight
+            // share, both in document currency — mirrors the worksheet.
+            const lineFreight = hasFreight ? num(lineFreights[i]) : 0;
+            const cnfAmt = r2(amtDoc + lineFreight);
+            const cnfRate = qty ? r2(cnfAmt / qty) : 0;
+
+            totals.qty += qty;
+            totals.value += taxable;
+            totals.totalFob += totalFob;
+            totals.margin += marginAmt;
+            totals.grand += grand;
+            totals.amt += amtDoc;
+            totals.freight += lineFreight;
+            totals.cnf += cnfAmt;
+            for (const [c, v] of expAmt)
+                totals.exp.set(c, (totals.exp.get(c) || 0) + v);
+            for (const [c, v] of rebAmt)
+                totals.reb.set(c, (totals.reb.get(c) || 0) + v);
+
+            const row: any[] = new Array(width).fill('');
+            row[0] = i + 1;
+            row[1] = pName(l);
+            row[2] = pPart(l);
+            row[3] = pHsn(l);
+            row[4] = qty ? qty.toLocaleString('en-IN') : '';
+            row[5] = pUom(l);
+            row[6] = inr(price);
+            row[7] = `${disc}%`;
+            row[8] = inr(priceDisc);
+            row[9] = inr(taxable);
+            for (let k = 0; k < E; k++)
+                row[expStart + k] = expAmt.has(expenseCols[k])
+                    ? inr(expAmt.get(expenseCols[k])!)
+                    : '—';
+            row[totalFobIdx] = inr(totalFob);
+            for (let k = 0; k < R; k++)
+                row[rebStart + k] = rebAmt.has(rebateCols[k])
+                    ? inr(rebAmt.get(rebateCols[k])!)
+                    : '—';
+            row[marginIdx] = inr(marginAmt);
+            row[grandIdx] = inr(grand);
+            if (isForeign) {
+                row[rateIdx] = fx(rateDoc, 4);
+                row[amtIdx] = fx(amtDoc, 2);
+            }
+            if (hasFreight) {
+                row[freightIdx] = docMoney(lineFreight);
+                row[cnfAmtIdx] = docMoney(cnfAmt);
+                row[cnfRateIdx] = isForeign
+                    ? fx(cnfRate, 4)
+                    : docMoney(cnfRate);
+            }
+            return row;
+        });
+
+        // ── TOTAL row ──
+        const totalRow: any[] = new Array(width).fill('');
+        totalRow[0] = 'TOTAL AMOUNT:';
+        totalRow[4] = totals.qty ? totals.qty.toLocaleString('en-IN') : '';
+        totalRow[9] = inr(totals.value);
+        for (let k = 0; k < E; k++) {
+            const v = totals.exp.get(expenseCols[k]);
+            totalRow[expStart + k] = v ? inr(v) : '—';
+        }
+        totalRow[totalFobIdx] = inr(totals.totalFob);
+        for (let k = 0; k < R; k++) {
+            const v = totals.reb.get(rebateCols[k]);
+            totalRow[rebStart + k] = v ? inr(v) : '—';
+        }
+        totalRow[marginIdx] = inr(totals.margin);
+        totalRow[grandIdx] = inr(totals.grand);
+        if (isForeign) totalRow[amtIdx] = fx(totals.amt, 2);
+        if (hasFreight) {
+            totalRow[freightIdx] = docMoney(totals.freight);
+            totalRow[cnfAmtIdx] = docMoney(totals.cnf);
+            const cnfRateTot = totals.qty ? r2(totals.cnf / totals.qty) : 0;
+            totalRow[cnfRateIdx] = isForeign
+                ? fx(cnfRateTot, 4)
+                : docMoney(cnfRateTot);
+        }
+
+        // ── Assemble sheet ── banner row: exchange rate + shipment freight
+        // (the freight figure the worksheet carries; 0 when the doc has none).
+        const banner: any[] = new Array(width).fill('');
+        banner[0] = `Exchange Rate (INR/${docCur})`;
+        banner[4] = isForeign ? r2(1 / rate) : 1;
+        banner[6] = `Freight (${docCur})`;
+        banner[8] = r2(freightTotal);
+
+        const noteRow: any[] = new Array(width).fill('');
+        noteRow[0] =
+            'Grand Total (INR) = Total FOB (Value + Expenses) + Margin − Rebates';
+
+        const aoa: any[][] = [banner, [], h1, h2, ...dataAoa, totalRow, [], noteRow];
+        const ws = utils.aoa_to_sheet(aoa);
+
+        // ── Merges: single-column headers span both header rows; each band
+        //    spans its sub-columns on the top row; the banner/total/note labels
+        //    span the leading columns. ──
+        const merges: any[] = [];
+        const singleCols = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, totalFobIdx, marginIdx, grandIdx,
+            ...(hasFreight ? [freightIdx, cnfAmtIdx, cnfRateIdx] : []),
+        ];
+        for (const c of singleCols)
+            merges.push({ s: { r: headerR1, c }, e: { r: headerR2, c } });
+        if (E > 0)
+            merges.push({
+                s: { r: headerR1, c: expStart },
+                e: { r: headerR1, c: expEnd },
+            });
+        if (R > 0)
+            merges.push({
+                s: { r: headerR1, c: rebStart },
+                e: { r: headerR1, c: rebEnd },
+            });
+        if (isForeign)
+            merges.push({
+                s: { r: headerR1, c: rateIdx },
+                e: { r: headerR1, c: amtIdx },
+            });
+        const totalRowIdx = dataR + dataAoa.length;
+        merges.push({ s: { r: totalRowIdx, c: 0 }, e: { r: totalRowIdx, c: 3 } });
+        merges.push({
+            s: { r: totalRowIdx + 2, c: 0 },
+            e: { r: totalRowIdx + 2, c: Math.min(width - 1, grandIdx) },
+        });
+        ws['!merges'] = merges;
+
+        // Column widths for readability.
+        ws['!cols'] = Array.from({ length: width }, (_, c) => {
+            if (c === 1) return { wch: 28 };
+            if (c === 0) return { wch: 5 };
+            if (c === 3) return { wch: 12 };
+            return { wch: 13 };
+        });
+
+        const workbook = utils.book_new();
+        utils.book_append_sheet(workbook, ws, 'Costing Report');
         return write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     }
 
