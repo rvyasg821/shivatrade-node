@@ -7,8 +7,12 @@ import {
     Body,
     Param,
     Query,
+    Res,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiConsumes, ApiOperation } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -23,8 +27,16 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
+import {
+    datedFilename,
+    handleImportRequest,
+    sendExcel,
+} from '@common/import/master-import.helper';
 
 import { RebateService } from '../services/rebate.service';
+import { RebateImportExportService } from '../services/rebate.import-export.service';
 import { RebateRepository } from '../repository/repositories/rebate.repository';
 import { RebateCreateRequestDto } from '../dtos/request/rebate.create.request.dto';
 import { RebateUpdateRequestDto } from '../dtos/request/rebate.update.request.dto';
@@ -36,8 +48,61 @@ import { RebateListResponseDto } from '../dtos/response/rebate.list.response.dto
 export class RebateAdminController {
     constructor(
         private readonly rebateService: RebateService,
-        private readonly rebateRepository: RebateRepository
+        private readonly rebateRepository: RebateRepository,
+        private readonly importExportService: RebateImportExportService
     ) {}
+
+    // ============ IMPORT / EXPORT ============
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for rebate import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            this.importExportService.generateSampleExcel(),
+            'rebate-import-sample.xlsx'
+        );
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export rebates as Excel' })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        sendExcel(
+            res,
+            await this.importExportService.exportRebates(companyId),
+            datedFilename('rebates')
+        );
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({ summary: 'Import rebates from Excel/CSV (preview or confirm)' })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        return handleImportRequest(
+            file,
+            preview,
+            () => this.importExportService.parseAndValidate(file.buffer, companyId),
+            (validRows) =>
+                this.importExportService.importRebates(
+                    validRows,
+                    companyId,
+                    userId
+                )
+        );
+    }
 
     @Response('rebate.create')
     @AuthJwtAccessProtected()
