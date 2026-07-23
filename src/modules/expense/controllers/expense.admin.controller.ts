@@ -7,8 +7,12 @@ import {
     Body,
     Param,
     Query,
+    Res,
+    UploadedFile,
+    BadRequestException,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiConsumes, ApiOperation } from '@nestjs/swagger';
+import { Response as ExpressResponse } from 'express';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -23,8 +27,16 @@ import {
 } from '@common/response/interfaces/response.interface';
 import { PaginationQuery } from '@common/pagination/decorators/pagination.decorator';
 import { PaginationListDto } from '@common/pagination/dtos/pagination.list.dto';
+import { FileUploadSingle } from '@common/file/decorators/file.decorator';
+import { IFile } from '@common/file/interfaces/file.interface';
+import {
+    datedFilename,
+    handleImportRequest,
+    sendExcel,
+} from '@common/import/master-import.helper';
 
 import { ExpenseService } from '../services/expense.service';
+import { ExpenseImportExportService } from '../services/expense.import-export.service';
 import { ExpenseRepository } from '../repository/repositories/expense.repository';
 import { ExpenseCreateRequestDto } from '../dtos/request/expense.create.request.dto';
 import { ExpenseUpdateRequestDto } from '../dtos/request/expense.update.request.dto';
@@ -36,8 +48,61 @@ import { ExpenseListResponseDto } from '../dtos/response/expense.list.response.d
 export class ExpenseAdminController {
     constructor(
         private readonly expenseService: ExpenseService,
-        private readonly expenseRepository: ExpenseRepository
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly importExportService: ExpenseImportExportService
     ) {}
+
+    // ============ IMPORT / EXPORT ============
+
+    @AuthJwtAccessProtected()
+    @Get('/sample-excel')
+    @ApiOperation({ summary: 'Download sample Excel for expense import' })
+    async downloadSampleExcel(@Res() res: ExpressResponse) {
+        sendExcel(
+            res,
+            this.importExportService.generateSampleExcel(),
+            'expense-import-sample.xlsx'
+        );
+    }
+
+    @AuthJwtAccessProtected()
+    @Get('/export')
+    @ApiOperation({ summary: 'Export expenses as Excel' })
+    async exportExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Res() res: ExpressResponse
+    ) {
+        sendExcel(
+            res,
+            await this.importExportService.exportExpenses(companyId),
+            datedFilename('expenses')
+        );
+    }
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @AuthJwtAccessProtected()
+    @Post('/import')
+    @ApiOperation({ summary: 'Import expenses from Excel/CSV (preview or confirm)' })
+    async importExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile,
+        @Query('preview') preview?: string
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        return handleImportRequest(
+            file,
+            preview,
+            () => this.importExportService.parseAndValidate(file.buffer, companyId),
+            (validRows) =>
+                this.importExportService.importExpenses(
+                    validRows,
+                    companyId,
+                    userId
+                )
+        );
+    }
 
     @Response('expense.create')
     @AuthJwtAccessProtected()

@@ -59,6 +59,9 @@ const VENDOR_HEADERS = [
     'contact_name',
     'contact_email',
     'contact_phone',
+    // Dial/country code for the phone, e.g. "+91". Optional; blank defaults to
+    // +91 (India). The flag shown in the UI is derived from this dial code.
+    'contact_phone_code',
     'contact_designation',
     // Main bank account.
     'bank_name',
@@ -89,6 +92,53 @@ const YES = new Set(['yes', 'y', 'true', '1']);
 const NO = new Set(['no', 'n', 'false', '0']);
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Dial code (without the leading +) → ISO-2 country, used only to render the
+// right flag in the phone widget on import. The digits and the dial code are
+// stored verbatim regardless, so an unmapped dial code still imports correctly
+// (the widget just falls back to its default flag). Ambiguous shared codes
+// (+1, +7) resolve to the most common country; edit the vendor to correct the
+// flag in that rare case.
+const DIAL_TO_ISO: Record<string, string> = {
+    '91': 'IN', '1': 'US', '44': 'GB', '86': 'CN', '81': 'JP', '49': 'DE',
+    '33': 'FR', '39': 'IT', '34': 'ES', '7': 'RU', '971': 'AE', '966': 'SA',
+    '974': 'QA', '973': 'BH', '968': 'OM', '965': 'KW', '65': 'SG', '60': 'MY',
+    '62': 'ID', '66': 'TH', '84': 'VN', '63': 'PH', '880': 'BD', '94': 'LK',
+    '92': 'PK', '977': 'NP', '95': 'MM', '852': 'HK', '886': 'TW', '82': 'KR',
+    '61': 'AU', '64': 'NZ', '27': 'ZA', '234': 'NG', '254': 'KE', '20': 'EG',
+    '212': 'MA', '90': 'TR', '98': 'IR', '972': 'IL', '31': 'NL', '32': 'BE',
+    '41': 'CH', '43': 'AT', '46': 'SE', '47': 'NO', '45': 'DK', '358': 'FI',
+    '351': 'PT', '30': 'GR', '48': 'PL', '420': 'CZ', '36': 'HU', '40': 'RO',
+    '380': 'UA', '55': 'BR', '52': 'MX', '54': 'AR', '56': 'CL', '57': 'CO',
+    '51': 'PE', '598': 'UY',
+};
+
+/** "+91" / "91" / " 0091 " → "+91", or "" when nothing usable. */
+function normaliseDial(raw: string): string {
+    const digits = (raw || '').replace(/[^\d]/g, '').replace(/^0+/, '');
+    return digits ? `+${digits}` : '';
+}
+
+/**
+ * Build the Vendor-contact `country_code` object (the app's "Option A" shape:
+ * { dial_code, phone, formatted, country_iso }) from an imported dial code and
+ * the raw phone digits. Returns undefined when there is nothing to store.
+ */
+function buildContactCountryCode(
+    dialRaw: string,
+    phone: string
+): any | undefined {
+    const dial = normaliseDial(dialRaw);
+    if (!dial && !phone) return undefined;
+    const effectiveDial = dial || '+91';
+    const iso = DIAL_TO_ISO[effectiveDial.replace('+', '')] || 'IN';
+    return {
+        dial_code: effectiveDial,
+        phone: phone || '',
+        formatted: phone ? `${effectiveDial} ${phone}` : effectiveDial,
+        country_iso: iso,
+    };
+}
 
 const ADDRESS_FIELDS = [
     'address_line1',
@@ -168,6 +218,7 @@ export class VendorImportExportService {
                         'Ravi Sharma',
                         'ravi@acmesteel.example.com',
                         '9876543210',
+                        '+91',
                         'Sales Manager',
                         'HDFC Bank',
                         '50100012345678',
@@ -188,6 +239,7 @@ export class VendorImportExportService {
                         'Imran Qureshi',
                         'imran@topaz.example.com',
                         '9820011223',
+                        '+91',
                         'Director',
                         '',
                         '',
@@ -357,6 +409,9 @@ export class VendorImportExportService {
                 mainContact?.name || '',
                 mainContact?.email || '',
                 mainContact?.phone || '',
+                mainContact?.country_code?.dial_code ||
+                    mainContact?.country_code?.dialCode ||
+                    '',
                 mainContact?.designation || '',
                 mainBank?.bank_name || '',
                 mainBank?.account_number || '',
@@ -509,11 +564,18 @@ export class VendorImportExportService {
             if (contactEmail && !EMAIL_RE.test(contactEmail)) {
                 errors.push('contact_email is not a valid email address');
             }
+            const contactPhone = get('contact_phone');
+            const contactPhoneCode = get('contact_phone_code');
+            const contactCountryCode = buildContactCountryCode(
+                contactPhoneCode,
+                contactPhone
+            );
             const contact = contactEmail
                 ? {
                       name: contactName || contactEmail,
                       email: contactEmail,
-                      phone: get('contact_phone') || undefined,
+                      phone: contactPhone || undefined,
+                      country_code: contactCountryCode,
                       designation: get('contact_designation') || undefined,
                       is_primary: true,
                   }
@@ -999,7 +1061,14 @@ export class VendorImportExportService {
                 await this.contactRepository.findByVendorId(vendorId),
                 contacts,
                 (c) => String(c.email || '').trim().toLowerCase(),
-                ['name', 'designation', 'email', 'phone', 'is_primary']
+                [
+                    'name',
+                    'designation',
+                    'email',
+                    'phone',
+                    'country_code',
+                    'is_primary',
+                ]
             );
             this.normaliseContactPrimary(out.contacts);
         }
