@@ -291,11 +291,13 @@ export class PoPdfService {
                 ? companyGstin.slice(0, 2)
                 : '';
 
-        // Amount in words — grand total in customer currency, rounded to a
-        // whole number to match the printed Grand Total (and the on-screen SO).
+        // Amount in words — grand total in customer currency, rounded to two
+        // decimals to match the printed Grand Total exactly (which prints the
+        // unrounded value, e.g. "9.44 $"). Rounding to a whole number here used
+        // to drop the fractional part ("Nine Dollars Only" for 9.44).
         const rate = Number(po.exchange_rate) || 1;
         const amountInWords = numberToIndianWords(
-            Math.round(linesInrTotal * rate),
+            Math.round(linesInrTotal * rate * 100) / 100,
             po.currency_code || 'INR'
         );
 

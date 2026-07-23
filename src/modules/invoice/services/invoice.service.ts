@@ -37,6 +37,7 @@ import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { ImportContext } from '@common/import/import-context.interface';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
@@ -365,7 +366,12 @@ export class InvoiceService {
             company_address_id: companyAddr.id,
             company_address_snapshot: companyAddr.snapshot,
             currency_code: data.currency_code,
-            currency_symbol: data.currency_symbol,
+            // Fall back to the master symbol when the caller didn't send one —
+            // invoices generated from an SO forward the code but not the symbol,
+            // which left the PDF printing "USD" instead of "$".
+            currency_symbol:
+                data.currency_symbol ||
+                getCurrencySymbol(data.currency_code),
             exchange_rate: data.exchange_rate || '1',
             discount_total: data.discount_total || '0',
             freight_charges: data.freight_charges || '0',
@@ -1074,10 +1080,10 @@ export class InvoiceService {
         const freight = num(row.freight_charges);
         const insurance = num(row.insurance_charges);
         const other = num(row.other_charges);
-        // Round the customer-currency grand total to a whole number so the
-        // final invoice carries the same clean figure as the quotation/SO
-        // (e.g. $80, not $80.44) — the amount the customer actually pays.
-        const grand_total = Math.round(
+        // Keep the exact 2-decimal total: FOB + freight + insurance + other.
+        // Rounding to a whole number used to make the total disagree with its
+        // own components (67.65 + 500 + 200 shown as 768 instead of 767.65).
+        const grand_total = round2(
             fob_value + freight + insurance + other
         );
         // INR equivalent of the document-currency grand total.
