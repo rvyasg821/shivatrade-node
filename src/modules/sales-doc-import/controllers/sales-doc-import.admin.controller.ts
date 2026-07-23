@@ -110,6 +110,39 @@ export class SalesDocImportAdminController {
         const isCosting =
             body.docType === ENUM_SALES_DOC_TYPE.QUOTATION ||
             body.docType === ENUM_SALES_DOC_TYPE.PO;
+
+        // `formatted` → the presentation "costing report" (grouped header bands,
+        // pretty currency labels, computed amounts, TOTAL row). NOT re-importable
+        // and only offered for the costing docs; everything else falls through to
+        // the normal round-trip export below.
+        const datePart = new Date().toISOString().slice(0, 10);
+        const prefix = this.filenamePrefix(body.docType);
+        const id = body.docNumber || 'draft';
+
+        if (body.formatted && isCosting) {
+            const report = await this.importService.buildCostingReportWorkbook(
+                companyId,
+                {
+                    docType: body.docType,
+                    lines: body.lines || [],
+                    currencyCode: body.currencyCode,
+                    exchangeRate: body.exchangeRate,
+                    freightTotal: body.freightTotal,
+                },
+            );
+            const reportName = `${prefix}-costing-report-${id}-${datePart}.xlsx`;
+            res.setHeader(
+                'Content-Type',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            );
+            res.setHeader(
+                'Content-Disposition',
+                `attachment; filename="${reportName}"`,
+            );
+            res.end(report);
+            return;
+        }
+
         const buffer = await this.importService.buildWorkbook(companyId, {
             docType: body.docType,
             lines: body.lines || [],
@@ -119,9 +152,6 @@ export class SalesDocImportAdminController {
             includeComputed: isCosting,
             includeReadme: false,
         });
-        const datePart = new Date().toISOString().slice(0, 10);
-        const prefix = this.filenamePrefix(body.docType);
-        const id = body.docNumber || 'draft';
         const fname = `${prefix}-lines-${id}-${datePart}.xlsx`;
         res.setHeader(
             'Content-Type',
