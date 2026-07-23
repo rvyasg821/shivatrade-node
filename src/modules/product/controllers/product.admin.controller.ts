@@ -23,6 +23,7 @@ import { IFile } from '@common/file/interfaces/file.interface';
 
 import { ProductService } from '../services/product.service';
 import { ProductImportExportService } from '../services/product.import-export.service';
+import { HsnPropagationService } from '@modules/hsn-propagation/hsn-propagation.service';
 import { ProductRepository } from '../repository/repositories/product.repository';
 import { ProductRebateRepository } from '../repository/repositories/product-rebate.repository';
 import { ProductExpenseRepository } from '../repository/repositories/product-expense.repository';
@@ -46,7 +47,8 @@ export class ProductAdminController {
         private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly rebateRepository: RebateRepository,
         private readonly expenseRepository: ExpenseRepository,
-        private readonly importExportService: ProductImportExportService
+        private readonly importExportService: ProductImportExportService,
+        private readonly hsnPropagationService: HsnPropagationService
     ) {}
 
     // ============ IMPORT / EXPORT ============
@@ -386,6 +388,36 @@ export class ProductAdminController {
         const updated = await this.productService.update(product, body);
         const data = await this.productService.mapGetWithCategory(updated);
         return { data };
+    }
+
+    // Apply this product's HSN code to EVERY existing document line that uses
+    // it (all statuses, overwriting any per-line value). Saves the given HSN on
+    // the product first, then cascades. Returns per-document counts for the UI.
+    @AuthJwtAccessProtected()
+    @Post('/apply-hsn/:productId')
+    @ApiOperation({
+        summary: 'Apply product HSN to all documents using this product',
+    })
+    async applyHsn(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('productId') productId: string,
+        @Body('hsn_code') hsnCode: string
+    ) {
+        const product = await this.productService.findOneById(productId);
+        const value = (hsnCode ?? '').trim();
+        await this.productService.update(product, { hsn_code: value } as any);
+        const result = await this.hsnPropagationService.propagate(
+            companyId,
+            productId,
+            value
+        );
+        return {
+            statusCode: 200,
+            message: `HSN applied to ${result.total} document line${
+                result.total === 1 ? '' : 's'
+            }`,
+            data: result,
+        };
     }
 
     @Response('product.delete')

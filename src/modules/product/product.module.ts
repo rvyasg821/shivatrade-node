@@ -9,6 +9,7 @@ import { RebateModule } from '@modules/rebate/rebate.module';
 import { ExpenseModule } from '@modules/expense/expense.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { UomModule } from '@modules/uom/uom.module';
+import { HsnPropagationModule } from '@modules/hsn-propagation/hsn-propagation.module';
 
 @Module({
     imports: [
@@ -20,12 +21,17 @@ import { UomModule } from '@modules/uom/uom.module';
         CompanySettingsModule,
         // Units are validated against the UOM master now, not a hardcoded enum.
         UomModule,
+        // Cascade a product's HSN onto every document line that uses it.
+        HsnPropagationModule,
     ],
     providers: [ProductService, ProductImportExportService],
     exports: [
         ProductRepositoryModule,
         ProductService,
         ProductImportExportService,
+        // Re-exported so ProductAdminController (registered in RoutesAdminModule)
+        // can inject HsnPropagationService.
+        HsnPropagationModule,
     ],
     controllers: [ProductAdminController],
 })

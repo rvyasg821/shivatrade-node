@@ -1043,7 +1043,8 @@ function buildPackingListHtml(d: RenderData): string {
             <tr>
                 <td class="center">${i + 1}</td>
                 <td class="center">${esc(l.part_no)}</td>
-                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}${l.description ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td class="center">${esc(l.hsn_code)}</td>
+                <td>${esc(l.product_name)}${l.product_code ? ' (' + esc(l.product_code) + ')' : ''}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${l.packages != null && l.packages !== '' ? esc(String(l.packages)) : '-'}</td>
                 <td class="right">${l.net_weight != null && l.net_weight !== '' ? fmt(l.net_weight, 3) + ' kg' : '-'}</td>
@@ -1073,6 +1074,7 @@ function buildPackingListHtml(d: RenderData): string {
         <tr>
             <th style="width:36px;">SR NO</th>
             <th style="width:70px;">PART NO</th>
+            <th style="width:80px;">HSN CODE</th>
             <th>DESCRIPTION OF GOODS</th>
             <th style="width:120px;">QTY / UNIT</th>
             <th style="width:90px;">NO. OF PKGS</th>
@@ -1081,7 +1083,7 @@ function buildPackingListHtml(d: RenderData): string {
         </tr>
         ${linesHtml}
         <tr>
-            <td colspan="4" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
+            <td colspan="5" class="right strong" style="background:#f0f0f0;">GRAND TOTAL</td>
             <td class="right strong" style="background:#f0f0f0;">${
                 inv.total_packages != null
                     ? esc(String(inv.total_packages))
