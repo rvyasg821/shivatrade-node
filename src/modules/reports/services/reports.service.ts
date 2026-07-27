@@ -37,6 +37,10 @@ import {
     HsnSummaryBreakdownResponseDto,
     HsnSummaryVoucherDto,
 } from '../dtos/response/hsn-summary.response.dto';
+import {
+    SoInvoiceReconciliationResponseDto,
+    SoInvoiceReconRowDto,
+} from '../dtos/response/so-invoice-reconciliation.response.dto';
 
 export interface IProductProfitabilityQuery {
     date_from?: string;
@@ -52,6 +56,16 @@ export interface IProductProfitabilityQuery {
 export interface IGstBalanceQuery {
     date_from?: string;
     date_to?: string;
+}
+
+export interface ISoInvoiceReconQuery {
+    date_from?: string;
+    date_to?: string;
+    customer_id?: string;
+    /** Free text over product name/code. */
+    search?: string;
+    page?: number;
+    perPage?: number;
 }
 
 export interface IPurchaseTurnoverQuery {
@@ -2052,6 +2066,272 @@ export class ReportsService {
                 `Purchase Turnover (VPO) — by ${result.group_by} — ${result.period_label} (INR)`,
             ],
             ['Dispatched + closed POVs. Paid is gross (before TDS).'],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── SO vs Invoice — Price Reconciliation ────────────────────────────
+    /**
+     * Per invoiced line, compares the FINAL CUSTOMER SELLING price on the
+     * source Sales Order line against the actual invoiced price. Selling value
+     * is defined identically on both sides so the comparison is fair:
+     *   invoice line = invoice_line.taxable_amount                        (INR)
+     *   SO line      = pol.taxable + expenses − rebates + margin          (INR)
+     * Per-unit rate = value ÷ qty, expressed in the invoice's currency
+     * (× exchange_rate). When the SO and invoice share a currency the SO uses
+     * its OWN rate, so a rate change shows up as a difference (FX included). A
+     * mismatched-currency SO is converted at the invoice rate and flagged.
+     * Totals are kept in INR so they stay summable across currencies.
+     */
+    async soInvoiceReconciliation(
+        companyId: string,
+        query: ISoInvoiceReconQuery
+    ): Promise<SoInvoiceReconciliationResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const customerId = query.customer_id || null;
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const perPage = query.perPage || 25;
+        const page = query.page || 1;
+
+        const raw: any[] = await this.dataSource.query(
+            `SELECT i._id                                          AS invoice_id,
+                    i.voucher_no                                   AS invoice_no,
+                    i.invoice_type                                 AS invoice_type,
+                    i.invoice_date                                 AS invoice_date,
+                    COALESCE(i.currency_code, 'INR')               AS inv_currency,
+                    COALESCE(i.currency_symbol, '')                AS inv_symbol,
+                    COALESCE(i.exchange_rate, '1')::float8         AS inv_fx,
+                    c.company_name                                 AS customer_name,
+                    po.voucher_no                                  AS so_no,
+                    COALESCE(po.currency_code, 'INR')              AS so_currency,
+                    COALESCE(po.exchange_rate, '1')::float8        AS so_fx,
+                    il.product_id                                  AS product_id,
+                    COALESCE(p.name, il.product_name, '—')         AS product_name,
+                    il.product_code                                AS product_code,
+                    il.hsn_code                                    AS hsn_code,
+                    il.seq                                         AS seq,
+                    COALESCE(il.qty, 0)::float8                    AS inv_qty,
+                    COALESCE(il.taxable_amount, 0)::float8         AS inv_value_inr,
+                    COALESCE(pol.qty, 0)::float8                   AS so_qty,
+                    (COALESCE(pol.taxable, 0)
+                       + COALESCE(pol.product_expenses_amount, 0)
+                       - COALESCE(pol.product_rebates_amount, 0)
+                       + COALESCE(pol.margin_amount, 0))::float8   AS so_value_inr
+             FROM invoice_lines il
+             JOIN invoices i
+                 ON i._id = il.invoice_id AND i.soft_delete = false
+             JOIN purchase_order_lines pol
+                 ON pol._id = il.purchase_order_line_id
+             JOIN purchase_orders po
+                 ON po._id = pol.purchase_order_id
+             LEFT JOIN products p  ON p._id = il.product_id
+             LEFT JOIN customers c ON c._id = i.customer_id
+             WHERE il.company_id = $1
+               AND il.soft_delete = false
+               AND i.status NOT IN ('draft', 'cancelled')
+               AND i.invoice_date BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR i.customer_id = $4)
+               AND ($5::text IS NULL
+                    OR il.product_name ILIKE '%' || $5 || '%'
+                    OR il.product_code ILIKE '%' || $5 || '%')
+             ORDER BY i.invoice_date DESC, i.voucher_no, il.seq`,
+            [companyId, from, to, customerId, search]
+        );
+
+        // Count invoice lines in range with NO Sales Order link — surfaced so
+        // the report never looks like it silently dropped rows.
+        const unlinked: any[] = await this.dataSource.query(
+            `SELECT COUNT(*)::int AS c
+             FROM invoice_lines il
+             JOIN invoices i
+                 ON i._id = il.invoice_id AND i.soft_delete = false
+             WHERE il.company_id = $1
+               AND il.soft_delete = false
+               AND il.purchase_order_line_id IS NULL
+               AND i.status NOT IN ('draft', 'cancelled')
+               AND i.invoice_date BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR i.customer_id = $4)`,
+            [companyId, from, to, customerId]
+        );
+
+        const rows: SoInvoiceReconRowDto[] = raw.map((r) => {
+            const invQty = n(r.inv_qty);
+            const soQty = n(r.so_qty);
+            const invValueInr = n(r.inv_value_inr);
+            const soValueInrFull = n(r.so_value_inr);
+
+            // Per-unit selling value (INR) on each side.
+            const soRateInr = soQty > 0 ? soValueInrFull / soQty : null;
+            const invRateInr = invQty > 0 ? invValueInr / invQty : null;
+
+            // Express in the invoice currency. Same currency → SO keeps its own
+            // FX (rate change becomes a visible difference). Different currency
+            // → convert the SO at the invoice's rate and flag it.
+            const invFx = n(r.inv_fx) || 1;
+            const soFx = n(r.so_fx) || 1;
+            const mismatch =
+                String(r.so_currency) !== String(r.inv_currency);
+            const soFxUsed = mismatch ? invFx : soFx;
+
+            const invRate = invRateInr != null ? r2(invRateInr * invFx) : null;
+            const soRate = soRateInr != null ? r2(soRateInr * soFxUsed) : null;
+            const rateDiff =
+                invRate != null && soRate != null
+                    ? r2(invRate - soRate)
+                    : null;
+            const amountDiff =
+                rateDiff != null ? r2(rateDiff * invQty) : null;
+            const diffPct =
+                rateDiff != null && soRate && soRate !== 0
+                    ? r2((rateDiff / soRate) * 100)
+                    : null;
+
+            // INR totals base: the SO's expected value for the INVOICED qty
+            // (like-for-like), and the actual invoiced value.
+            const soValueForInvInr =
+                soRateInr != null ? r2(soRateInr * invQty) : null;
+            const varianceInr =
+                soValueForInvInr != null
+                    ? r2(invValueInr - soValueForInvInr)
+                    : null;
+
+            return {
+                invoice_id: r.invoice_id,
+                invoice_no: r.invoice_no,
+                invoice_type: r.invoice_type,
+                invoice_date: r.invoice_date,
+                customer_name: r.customer_name ?? null,
+                so_no: r.so_no ?? null,
+                product_id: r.product_id ?? null,
+                product_name: r.product_name ?? '—',
+                product_code: r.product_code ?? null,
+                hsn_code: r.hsn_code ?? null,
+                currency_code: r.inv_currency,
+                currency_symbol: r.inv_symbol || r.inv_currency,
+                currency_mismatch: mismatch,
+                so_qty: soQty || null,
+                so_rate: soRate,
+                inv_qty: invQty,
+                inv_rate: invRate ?? 0,
+                rate_diff: rateDiff,
+                amount_diff: amountDiff,
+                diff_pct: diffPct,
+                so_value_inr: soValueForInvInr,
+                invoice_value_inr: r2(invValueInr),
+                variance_inr: varianceInr,
+            };
+        });
+
+        // Totals in INR, over rows that are actually comparable (SO value known).
+        const totals = rows.reduce(
+            (acc, x) => {
+                if (x.so_value_inr != null) {
+                    acc.lines += 1;
+                    acc.so_value_inr += x.so_value_inr;
+                    acc.invoice_value_inr += x.invoice_value_inr;
+                    acc.variance_inr += x.variance_inr || 0;
+                }
+                return acc;
+            },
+            {
+                lines: 0,
+                so_value_inr: 0,
+                invoice_value_inr: 0,
+                variance_inr: 0,
+                unlinked_lines: n(unlinked?.[0]?.c),
+            }
+        );
+        totals.so_value_inr = r2(totals.so_value_inr);
+        totals.invoice_value_inr = r2(totals.invoice_value_inr);
+        totals.variance_inr = r2(totals.variance_inr);
+
+        const start = (page - 1) * perPage;
+        const paged = rows.slice(start, start + perPage);
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: paged,
+            totals,
+            pagination: { total: rows.length, perPage },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer (whole filtered set + TOTAL row). */
+    async soInvoiceReconciliationExcel(
+        companyId: string,
+        query: ISoInvoiceReconQuery
+    ): Promise<Buffer> {
+        const result = await this.soInvoiceReconciliation(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000, // one page = the whole set for export
+        });
+        const header = [
+            'Invoice No',
+            'Type',
+            'Date',
+            'Customer',
+            'SO No',
+            'Product',
+            'Code',
+            'HSN',
+            'Currency',
+            'SO Qty',
+            'SO Sell Rate',
+            'Inv Qty',
+            'Inv Sell Rate',
+            'Rate Diff',
+            'Amount Diff',
+            'Diff %',
+        ];
+        const body = result.rows.map((r) => [
+            r.invoice_no,
+            r.invoice_type,
+            isoToDdmmyyyy(r.invoice_date),
+            r.customer_name || '',
+            r.so_no || '',
+            r.product_name,
+            r.product_code || '',
+            r.hsn_code || '',
+            r.currency_code + (r.currency_mismatch ? ' *' : ''),
+            r.so_qty ?? '',
+            r.so_rate ?? '',
+            r.inv_qty,
+            r.inv_rate,
+            r.rate_diff ?? '',
+            r.amount_diff ?? '',
+            r.diff_pct ?? '',
+        ]);
+        const totalRow = [
+            'TOTAL (INR)',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            result.totals.so_value_inr,
+            '',
+            result.totals.invoice_value_inr,
+            '',
+            result.totals.variance_inr,
+            '',
+        ];
+        const aoa: (string | number)[][] = [
+            [`SO vs Invoice — Price Reconciliation — ${result.period_label}`],
+            [
+                'Row amounts are in each invoice’s currency (* = SO currency differed, converted at invoice rate). Totals are INR.',
+            ],
             [],
             header,
             ...body,
