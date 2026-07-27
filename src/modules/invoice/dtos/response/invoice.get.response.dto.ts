@@ -175,6 +175,9 @@ export class InvoiceListResponseDto {
     customer_contact_phone?: string;
     customer_contact_country_code?: any;
     purchase_order_voucher_no?: string;
+    /** Every source Sales Order this invoice draws from — id + voucher — so the
+     *  listing can link each SO to its OWN page (an invoice can span several). */
+    source_orders?: Array<{ id: string; voucher_no: string }>;
     reference_no?: string;
     currency_code?: string;
     currency_symbol?: string;

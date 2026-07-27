@@ -77,8 +77,11 @@ export interface LedgerRegisterRow {
     gst_rate?: string;
     gst_amount?: string;
     currency_code: string;
-    /** Invoice / Vendor PO the adjustment was applied to, if any. */
+    /** Invoice / Vendor PO this row relates to, if any — its voucher + id so the
+     *  listing can deep-link to that document's page. Set on adjustments (the
+     *  applied-to doc), receipts (the invoice) and payments (the Vendor PO). */
     document_voucher_no?: string;
+    document_id?: string;
     particulars: string;
     voided_at?: Date;
     voided_reason?: string;
@@ -389,8 +392,10 @@ export class LedgerService {
                 gst_amount: hasGst ? String(n.gst_amount) : undefined,
                 currency_code: n.currency_code,
                 // Which invoice / Vendor PO this note was applied to (blank on
-                // a party-level note) — surfaced as its own register column.
+                // a party-level note) — surfaced as its own register column,
+                // linked to that document's page.
                 document_voucher_no: n.document_voucher_no || undefined,
+                document_id: (n as any).document_id?.toString() || undefined,
                 particulars: n.reason || '',
                 voided_at: n.voided_at || undefined,
                 voided_reason: n.voided_reason || undefined,
@@ -424,6 +429,9 @@ export class LedgerService {
                         amount: String(pay.amount ?? '0'),
                         currency_code: pay.currency_code || 'INR',
                         particulars: `Payment of ${pov.voucher_no || ''}`.trim(),
+                        // Vendor PO this payment settles → deep-link target.
+                        document_voucher_no: pov.voucher_no || undefined,
+                        document_id: pov._id?.toString?.() || pov._id || undefined,
                         voided_at: pay.voided_at || undefined,
                         voided_reason: pay.voided_reason || undefined,
                     });
@@ -487,6 +495,9 @@ export class LedgerService {
                         currency_code:
                             p.currency_code || inv.currency_code || 'INR',
                         particulars: `Payment of ${inv.voucher_no || ''}`.trim(),
+                        // Invoice this receipt settles → deep-link target.
+                        document_voucher_no: inv.voucher_no || undefined,
+                        document_id: inv._id?.toString() || undefined,
                         voided_at: p.voided_at || undefined,
                         voided_reason: p.voided_reason || undefined,
                     });
