@@ -83,6 +83,16 @@ export class PoVendorLineTaxUpdateDto {
     unit_price?: string;
 
     /**
+     * Ordered quantity for the line. DRAFT only — once the PO is with the vendor
+     * the quantity is committed (and a GRN would cost it into stock), so it is
+     * frozen alongside HSN/GST. Blank = not sent; a value re-derives line_total,
+     * vendor charges and the payable.
+     */
+    @IsNumberString({}, { message: 'ordered_qty must be a numeric string' })
+    @IsOptional()
+    ordered_qty?: string;
+
+    /**
      * HSN and part number. DRAFT only — both print on the vendor PDF, so they
      * are frozen for the same reason the header terms are.
      *

@@ -9,7 +9,7 @@ import {
     IsObject,
     MaxLength,
     ValidateNested,
-    ArrayMinSize,
+    ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -28,11 +28,20 @@ export class CustomerSocialMediaDto {
 export class CustomerContactRequestDto {
     @IsString() @IsOptional() _id?: string;
 
-    @IsString() @IsNotEmpty() @MaxLength(150) name: string;
+    // Contact person is now fully optional — the only required field on a
+    // customer is company_name. Name may be blank / omitted.
+    @IsString() @IsOptional() @MaxLength(150) name?: string;
 
     @IsString() @IsOptional() @MaxLength(100) designation?: string;
 
-    @IsEmail() @IsNotEmpty() @MaxLength(200) email: string;
+    // Email is optional too, but still format-checked when a value is present.
+    // ValidateIf skips @IsEmail entirely for undefined / null / '' so a blank
+    // contact email is accepted (no login is provisioned in that case).
+    @ValidateIf((o) => o.email !== undefined && o.email !== null && o.email !== '')
+    @IsEmail()
+    @IsOptional()
+    @MaxLength(200)
+    email?: string;
 
     @IsString() @IsOptional() @MaxLength(50) phone?: string;
 
@@ -91,11 +100,12 @@ export class CustomerCreateRequestDto {
 
     @IsBoolean() @IsOptional() is_active?: boolean;
 
+    // Contacts are optional — a customer may be created with company_name only.
     @IsArray()
-    @ArrayMinSize(1)
     @ValidateNested({ each: true })
     @Type(() => CustomerContactRequestDto)
-    contacts: CustomerContactRequestDto[];
+    @IsOptional()
+    contacts?: CustomerContactRequestDto[];
 
     @IsArray()
     @ValidateNested({ each: true })

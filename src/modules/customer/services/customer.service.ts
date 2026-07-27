@@ -96,7 +96,10 @@ export class CustomerService {
         );
         const passwordData = this.authService.createPassword(defaultPassword);
 
-        const fullName = contact.name.trim();
+        // Harden against a missing name: fall back to the email local part so we
+        // never call .trim() on undefined. Callers only reach here with an email.
+        const fullName =
+            (contact.name || '').trim() || (contact.email || '').trim();
         const [firstName, ...rest] = fullName.split(/\s+/);
 
         const user = await this.userService.create(
@@ -105,7 +108,7 @@ export class CustomerService {
                 name: fullName,
                 first_name: firstName || fullName,
                 last_name: rest.join(' ') || '',
-                email: contact.email.trim().toLowerCase(),
+                email: (contact.email || '').trim().toLowerCase(),
                 country_code: this.toUserCountryCode(contact.country_code),
                 mobile: contact.phone || '',
                 gender: ENUM_USER_GENDER.MALE,
@@ -127,13 +130,15 @@ export class CustomerService {
         const user = await this.userService.findOneById(userId);
         if (!user) return false;
 
-        const fullName = contact.name.trim();
+        // Harden against a missing name (see provisionCustomerUser).
+        const fullName =
+            (contact.name || '').trim() || (contact.email || '').trim();
         const [firstName, ...rest] = fullName.split(/\s+/);
 
         user.name = fullName;
         user.first_name = firstName || fullName;
         user.last_name = rest.join(' ') || '';
-        user.email = contact.email.trim().toLowerCase();
+        user.email = (contact.email || '').trim().toLowerCase();
         user.mobile = contact.phone || '';
         if (contact.country_code) {
             user.country_code = this.toUserCountryCode(contact.country_code);
@@ -258,14 +263,23 @@ export class CustomerService {
 
         await this.assertContactEmailsUnique(companyId, data.contacts);
 
-        const { contacts, addresses, ...customerFields } = data;
+        const { contacts: contactsRaw, addresses, ...customerFields } = data;
+        const contacts = contactsRaw || [];
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
+        const primaryHasEmail = !!(
+            primaryContact &&
+            primaryContact.email &&
+            primaryContact.email.trim()
+        );
 
         // Import mode (silent) backfills historical customers with no login:
         // skip the users-table email pre-flight and the login-user + welcome
         // email provisioning (§12.4). Live create (no ctx) is unaffected.
+        //
+        // A customer with no contact — or a contact with a blank email — simply
+        // gets NO portal login (primaryUserId stays undefined).
         let primaryUserId: string | undefined;
-        if (!silent) {
+        if (!silent && primaryHasEmail) {
             // Pre-flight: primary email must be free in users table BEFORE writes
             await this.assertPrimaryEmailAvailable(primaryContact.email);
             // Provision the user FIRST so a failure doesn't orphan the customer
@@ -290,7 +304,7 @@ export class CustomerService {
         for (const c of contacts) {
             await this.contactRepository.create({
                 ...c,
-                email: c.email.trim().toLowerCase(),
+                email: c.email ? c.email.trim().toLowerCase() : undefined,
                 customer_id: customer._id.toString(),
                 company_id: companyId,
                 user_id: c === primaryContact ? primaryUserId : undefined,
@@ -387,14 +401,23 @@ export class CustomerService {
         }
 
         if (nextContacts) {
-            const nextPrimary = nextContacts.find((c) => c.is_primary) || nextContacts[0];
-
-            // Pre-flight: new primary email must be free in users table BEFORE wiping contacts.
-            // The current customer's existing primary user is exempt.
-            await this.assertPrimaryEmailAvailable(
-                nextPrimary.email,
-                customer._id.toString()
+            const nextPrimary =
+                nextContacts.find((c) => c.is_primary) || nextContacts[0];
+            const nextPrimaryHasEmail = !!(
+                nextPrimary &&
+                nextPrimary.email &&
+                nextPrimary.email.trim()
             );
+
+            // Pre-flight: new primary email must be free in users table BEFORE
+            // wiping contacts. The current customer's existing primary user is
+            // exempt. Skip entirely when the new primary has no email.
+            if (nextPrimaryHasEmail) {
+                await this.assertPrimaryEmailAvailable(
+                    nextPrimary.email,
+                    customer._id.toString()
+                );
+            }
 
             const existingContacts = await this.contactRepository.findByCustomerId(
                 customer._id.toString()
@@ -402,15 +425,29 @@ export class CustomerService {
             const existingPrimary = existingContacts.find((c) => c.is_primary);
             const existingUserId = existingPrimary?.user_id?.toString();
 
-            // Resolve / sync / provision user BEFORE wiping old contacts
+            // Resolve / sync / provision user BEFORE wiping old contacts. Only
+            // touch login provisioning when the new primary actually has an
+            // email; otherwise leave any existing user link as-is (no login is
+            // created for an email-less contact).
             let primaryUserId = existingUserId;
-            if (primaryUserId) {
-                const synced = await this.syncCustomerUser(primaryUserId, nextPrimary);
-                if (!synced) {
-                    primaryUserId = await this.provisionCustomerUser(companyId, nextPrimary);
+            if (nextPrimaryHasEmail) {
+                if (primaryUserId) {
+                    const synced = await this.syncCustomerUser(
+                        primaryUserId,
+                        nextPrimary
+                    );
+                    if (!synced) {
+                        primaryUserId = await this.provisionCustomerUser(
+                            companyId,
+                            nextPrimary
+                        );
+                    }
+                } else {
+                    primaryUserId = await this.provisionCustomerUser(
+                        companyId,
+                        nextPrimary
+                    );
                 }
-            } else {
-                primaryUserId = await this.provisionCustomerUser(companyId, nextPrimary);
             }
 
             await this.contactRepository.softDeleteByCustomerId(
@@ -421,7 +458,7 @@ export class CustomerService {
                 await this.contactRepository.create({
                     name: c.name,
                     designation: c.designation,
-                    email: c.email.trim().toLowerCase(),
+                    email: c.email ? c.email.trim().toLowerCase() : undefined,
                     phone: c.phone,
                     country_code: c.country_code,
                     is_primary: !!c.is_primary,
@@ -519,17 +556,19 @@ export class CustomerService {
     }
 
     private assertContactsValid(contacts: CustomerContactRequestDto[]): void {
-        if (!contacts || contacts.length === 0) {
-            throw new BadRequestException('At least one contact person is required');
-        }
+        // A customer may now have no contact at all — only company_name is
+        // required. When contacts are present we still guard consistency, but
+        // nothing here is mandatory.
+        if (!contacts || contacts.length === 0) return;
         const primaryCount = contacts.filter((c) => c.is_primary).length;
-        if (primaryCount === 0) {
-            throw new BadRequestException('One contact must be marked as primary');
-        }
         if (primaryCount > 1) {
             throw new BadRequestException('Only one contact can be marked as primary');
         }
-        const emails = contacts.map((c) => c.email.trim().toLowerCase());
+        // Duplicate-email guard only applies to contacts that actually carry an
+        // email; blank emails are never a collision.
+        const emails = contacts
+            .filter((c) => c.email && c.email.trim())
+            .map((c) => c.email.trim().toLowerCase());
         const dup = emails.find((e, i) => emails.indexOf(e) !== i);
         if (dup) {
             throw new BadRequestException(`Duplicate contact email: ${dup}`);
@@ -548,9 +587,12 @@ export class CustomerService {
         updatedBy: string
     ): Promise<CustomerDoc | null> {
         // Look for the first email in the payload that maps to a
-        // soft-deleted contact in this company.
+        // soft-deleted contact in this company. Contacts with no email can't
+        // match anything — skip them (and safely no-op when there are none).
+        const payloadContacts = data.contacts || [];
         let matchedCustomerId: string | null = null;
-        for (const c of data.contacts) {
+        for (const c of payloadContacts) {
+            if (!c.email || !c.email.trim()) continue;
             const email = c.email.trim().toLowerCase();
             const stale = await this.contactRepository.findSoftDeletedByEmail(
                 companyId,
@@ -573,14 +615,24 @@ export class CustomerService {
         if (!customer || !(customer as any).soft_delete) return null;
 
         // Provision (or reuse) the primary user row up front. If this
-        // fails we haven't touched any existing data yet.
+        // fails we haven't touched any existing data yet. Only provision when
+        // the primary contact actually carries an email; otherwise the revived
+        // customer simply has no portal login.
         const primaryContact =
-            data.contacts.find((c) => c.is_primary) || data.contacts[0];
-        await this.assertPrimaryEmailAvailable(primaryContact.email);
-        const primaryUserId = await this.provisionCustomerUser(
-            companyId,
-            primaryContact
+            payloadContacts.find((c) => c.is_primary) || payloadContacts[0];
+        const primaryHasEmail = !!(
+            primaryContact &&
+            primaryContact.email &&
+            primaryContact.email.trim()
         );
+        let primaryUserId: string | undefined;
+        if (primaryHasEmail) {
+            await this.assertPrimaryEmailAvailable(primaryContact.email);
+            primaryUserId = await this.provisionCustomerUser(
+                companyId,
+                primaryContact
+            );
+        }
 
         // Overwrite scalar fields with the new payload — same shape used
         // by the regular create path.
@@ -607,7 +659,7 @@ export class CustomerService {
         for (const c of contacts) {
             await this.contactRepository.create({
                 ...c,
-                email: c.email.trim().toLowerCase(),
+                email: c.email ? c.email.trim().toLowerCase() : undefined,
                 customer_id: customer._id.toString(),
                 company_id: companyId,
                 user_id: c === primaryContact ? primaryUserId : undefined,
@@ -632,7 +684,9 @@ export class CustomerService {
         contacts: CustomerContactRequestDto[],
         excludeCustomerId?: string
     ): Promise<void> {
-        for (const c of contacts) {
+        for (const c of contacts || []) {
+            // Blank contact emails can't collide — skip them.
+            if (!c.email || !c.email.trim()) continue;
             const email = c.email.trim().toLowerCase();
             const exists = await this.contactRepository.isEmailExists(companyId, email);
             if (exists) {

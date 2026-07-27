@@ -62,6 +62,10 @@ export interface ISoInvoiceReconQuery {
     date_from?: string;
     date_to?: string;
     customer_id?: string;
+    /** Narrow to a single invoice (dropdown). */
+    invoice_id?: string;
+    /** Narrow to a single Sales Order / purchase_order (dropdown). */
+    purchase_order_id?: string;
     /** Free text over product name/code. */
     search?: string;
     page?: number;
@@ -2096,6 +2100,8 @@ export class ReportsService {
         const from = query.date_from || isoDate(this.currentFyStart(today));
         const to = query.date_to || isoDate(today);
         const customerId = query.customer_id || null;
+        const invoiceId = query.invoice_id || null;
+        const soId = query.purchase_order_id || null;
         const search = query.search?.trim() ? query.search.trim() : null;
         const perPage = query.perPage || 25;
         const page = query.page || 1;
@@ -2109,6 +2115,7 @@ export class ReportsService {
                     COALESCE(i.currency_symbol, '')                AS inv_symbol,
                     COALESCE(i.exchange_rate, '1')::float8         AS inv_fx,
                     c.company_name                                 AS customer_name,
+                    po._id                                         AS so_id,
                     po.voucher_no                                  AS so_no,
                     COALESCE(po.currency_code, 'INR')              AS so_currency,
                     COALESCE(po.exchange_rate, '1')::float8        AS so_fx,
@@ -2161,7 +2168,35 @@ export class ReportsService {
             [companyId, from, to, customerId]
         );
 
-        const rows: SoInvoiceReconRowDto[] = raw.map((r) => {
+        // Dropdown sources — distinct invoices and SOs across the FULL
+        // date/customer/search set, computed BEFORE the invoice/SO narrow so the
+        // options stay stable while you pick one (same idea as the Sales Turnover
+        // currency dropdown).
+        const invMap = new Map<string, string>();
+        const soMap = new Map<string, string>();
+        for (const r of raw) {
+            if (r.invoice_id && !invMap.has(String(r.invoice_id)))
+                invMap.set(String(r.invoice_id), r.invoice_no);
+            if (r.so_id && !soMap.has(String(r.so_id)))
+                soMap.set(String(r.so_id), r.so_no);
+        }
+        const byNoDesc = (a: { no: string }, b: { no: string }) =>
+            String(b.no || '').localeCompare(String(a.no || ''));
+        const invoice_options = Array.from(invMap, ([id, no]) => ({
+            id,
+            no,
+        })).sort(byNoDesc);
+        const so_options = Array.from(soMap, ([id, no]) => ({ id, no })).sort(
+            byNoDesc
+        );
+
+        // Apply the invoice / Sales Order narrows (dropdown filters).
+        let narrowed = raw;
+        if (invoiceId)
+            narrowed = narrowed.filter((r) => String(r.invoice_id) === invoiceId);
+        if (soId) narrowed = narrowed.filter((r) => String(r.so_id) === soId);
+
+        const rows: SoInvoiceReconRowDto[] = narrowed.map((r) => {
             const invQty = n(r.inv_qty);
             const soQty = n(r.so_qty);
             const invValueInr = n(r.inv_value_inr);
@@ -2259,6 +2294,8 @@ export class ReportsService {
             period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
             rows: paged,
             totals,
+            invoice_options,
+            so_options,
             pagination: { total: rows.length, perPage },
         };
     }

@@ -10,7 +10,7 @@ import {
     IsObject,
     MaxLength,
     ValidateNested,
-    ArrayMinSize,
+    ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -52,19 +52,22 @@ export class VendorContactRequestDto {
     _id?: string;
 
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     @MaxLength(150)
-    name: string;
+    name?: string;
 
     @IsString()
     @IsOptional()
     @MaxLength(100)
     designation?: string;
 
+    // Email is optional; format-checked only when a non-empty value is supplied.
+    // A vendor may have a contact with no email (it simply gets no portal login).
+    @ValidateIf((o) => o.email !== undefined && o.email !== null && o.email !== '')
     @IsEmail()
-    @IsNotEmpty()
+    @IsOptional()
     @MaxLength(200)
-    email: string;
+    email?: string;
 
     @IsString()
     @IsOptional()
@@ -171,11 +174,12 @@ export class VendorCreateRequestDto {
     @IsOptional()
     is_active?: boolean;
 
+    // Contacts are optional — a vendor may be created with only a company_name.
     @IsArray()
-    @ArrayMinSize(1)
+    @IsOptional()
     @ValidateNested({ each: true })
     @Type(() => VendorContactRequestDto)
-    contacts: VendorContactRequestDto[];
+    contacts?: VendorContactRequestDto[];
 
     @IsArray()
     @ValidateNested({ each: true })

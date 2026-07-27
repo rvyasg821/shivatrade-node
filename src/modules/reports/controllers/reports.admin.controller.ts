@@ -437,6 +437,8 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'date_from', required: false })
     @ApiQuery({ name: 'date_to', required: false })
     @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'invoice_id', required: false })
+    @ApiQuery({ name: 'purchase_order_id', required: false })
     @ApiQuery({ name: 'search', required: false })
     @ApiQuery({ name: 'page', required: false })
     @ApiQuery({ name: 'perPage', required: false })
@@ -451,6 +453,8 @@ export class ReportsAdminController {
                 date_from: query.date_from,
                 date_to: query.date_to,
                 customer_id: query.customer_id,
+                invoice_id: query.invoice_id,
+                purchase_order_id: query.purchase_order_id,
                 search: query.search,
                 page: Number(query.page) || 1,
                 perPage: Number(query.perPage) || 25,
@@ -464,6 +468,8 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'date_from', required: false })
     @ApiQuery({ name: 'date_to', required: false })
     @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'invoice_id', required: false })
+    @ApiQuery({ name: 'purchase_order_id', required: false })
     @ApiQuery({ name: 'search', required: false })
     @Get('/so-invoice-reconciliation/export')
     async soInvoiceReconciliationExport(
@@ -476,6 +482,8 @@ export class ReportsAdminController {
                 date_from: query.date_from,
                 date_to: query.date_to,
                 customer_id: query.customer_id,
+                invoice_id: query.invoice_id,
+                purchase_order_id: query.purchase_order_id,
                 search: query.search,
             });
         const stamp = (s?: string) => (s || '').slice(0, 10);

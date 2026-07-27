@@ -1862,6 +1862,9 @@ export class PoVendorService {
             const wantsTax = lineEdits.some(
                 p => p.tax_pct != null && p.tax_pct !== ''
             );
+            const wantsQty = lineEdits.some(
+                p => p.ordered_qty != null && p.ordered_qty !== ''
+            );
             // `!= null` only — '' is a real value for these two (clear the
             // field), unlike the numeric ones where '' means "not sent".
             const wantsDescriptive = lineEdits.some(
@@ -1872,6 +1875,13 @@ export class PoVendorService {
             if (wantsTax && !isDraft) {
                 throw new BadRequestException(
                     `POV is ${fromStatus}. The GST rate is frozen once the PO is with the vendor — only the rate can be revised.`
+                );
+            }
+            // Quantity is a commitment once the PO leaves draft (and a GRN would
+            // cost it into stock), so it is editable in DRAFT only — like GST.
+            if (wantsQty && !isDraft) {
+                throw new BadRequestException(
+                    `POV is ${fromStatus}. Quantity is frozen once the PO is with the vendor — only the rate can be revised.`
                 );
             }
             // Both print on the vendor PDF, so they freeze with it.
@@ -1898,6 +1908,7 @@ export class PoVendorService {
             }
 
             let priceChanges = 0;
+            let qtyChanges = 0;
             for (const patch of lineEdits) {
                 const line = byId.get(String(patch._id));
                 // Refuse a line id from a different POV rather than silently
@@ -1931,6 +1942,27 @@ export class PoVendorService {
                         round2(num(line.ordered_qty) * price)
                     );
                 }
+                // Quantity — draft only (guarded above). Runs AFTER the price
+                // block so line_total reflects the final qty × final price.
+                if (patch.ordered_qty != null && patch.ordered_qty !== '') {
+                    const q = num(patch.ordered_qty);
+                    if (q <= 0) {
+                        throw new BadRequestException(
+                            `ordered_qty must be > 0 (line ${patch._id}).`
+                        );
+                    }
+                    // Never below what a GRN already received against this line.
+                    if (q < num(line.received_qty)) {
+                        throw new BadRequestException(
+                            `ordered_qty (${q}) cannot be below the received qty (${round4(
+                                num(line.received_qty)
+                            )}) on line ${patch._id}.`
+                        );
+                    }
+                    if (q !== num(line.ordered_qty)) qtyChanges += 1;
+                    line.ordered_qty = String(q);
+                    line.line_total = String(round2(q * num(line.unit_price)));
+                }
                 // Descriptive fields: `!= null` is the test, so an empty string
                 // clears the field. Stored as null rather than '' to match how
                 // every other write path leaves them.
@@ -1943,19 +1975,25 @@ export class PoVendorService {
                 await this.povLineRepository.save(line);
             }
 
-            if (priceChanges > 0) {
+            if (priceChanges > 0 || qtyChanges > 0) {
                 // Percentage vendor charges are a % OF THE SUBTOTAL, so they
                 // must be re-derived from the new line totals; then the payable
-                // and payment status follow.
+                // and payment status follow. Quantity edits move the subtotal
+                // exactly like a rate change, so they trigger the same re-derive.
                 await this.resnapshotExpensesFromLines(row);
                 await this.applyPaymentDerived(row);
                 if (userId) {
+                    const parts: string[] = [];
+                    if (priceChanges > 0)
+                        parts.push(`rate on ${priceChanges} line(s)`);
+                    if (qtyChanges > 0)
+                        parts.push(`qty on ${qtyChanges} line(s)`);
                     await this.emitSystemEvent(
                         companyId,
                         row._id.toString(),
                         ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
                         userId,
-                        `Vendor rate revised on ${priceChanges} line(s)`
+                        `Vendor ${parts.join(' & ')} revised`
                     );
                 }
             }
