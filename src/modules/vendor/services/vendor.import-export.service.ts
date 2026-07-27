@@ -54,8 +54,8 @@ const VENDOR_HEADERS = [
     'incoterms',
     'categories',
     'status',
-    // Main contact — required for a NEW vendor: the primary contact is what
-    // provisions the vendor's login.
+    // Main contact — optional. When an email is supplied the primary contact
+    // provisions the vendor's login; with no email the vendor has no login.
     'contact_name',
     'contact_email',
     'contact_phone',
@@ -560,23 +560,14 @@ export class VendorImportExportService {
                 categoryIds = Array.from(new Set(ids));
             }
 
-            // GST number is required for a new vendor (client rule: the base
-            // required set is company_name, gstin, status, contact name/email).
-            // Not forced on updates so an existing vendor's other fields can be
-            // edited without re-supplying it.
+            // GSTIN is optional — company_name is the only required field.
             const gstin = get('gstin');
-            if (isNew && !gstin) {
-                errors.push('gstin is required');
-            }
 
-            // ── Inline contact ──
+            // ── Inline contact ── name and email are both optional. When an
+            // email is supplied it must be a valid address; a vendor with no
+            // contact email simply gets no portal login.
             const contactName = get('contact_name');
             const contactEmail = get('contact_email');
-            if (isNew && (!contactName || !contactEmail)) {
-                errors.push(
-                    'contact_name and contact_email are required for a new vendor — the main contact creates its login'
-                );
-            }
             if (contactEmail && !EMAIL_RE.test(contactEmail)) {
                 errors.push('contact_email is not a valid email address');
             }

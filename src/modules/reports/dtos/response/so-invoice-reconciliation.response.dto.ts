@@ -69,9 +69,20 @@ export class SoInvoiceReconTotalsDto {
     unlinked_lines: number;
 }
 
+/** A filter-dropdown option — a document's id and its voucher number. */
+export class SoInvoiceReconOptionDto {
+    id: string;
+    no: string;
+}
+
 export class SoInvoiceReconciliationResponseDto {
     period_label: string;
     rows: SoInvoiceReconRowDto[];
     totals: SoInvoiceReconTotalsDto;
+    /** Distinct invoices in range (before the invoice/SO narrow) — feeds the
+     *  Invoice filter dropdown. */
+    invoice_options: SoInvoiceReconOptionDto[];
+    /** Distinct Sales Orders in range — feeds the Sales Order filter dropdown. */
+    so_options: SoInvoiceReconOptionDto[];
     pagination: { total: number; perPage: number };
 }

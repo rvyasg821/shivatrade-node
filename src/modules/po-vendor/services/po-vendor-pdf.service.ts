@@ -606,8 +606,8 @@ function buildPaymentVoucherHtml(
     margin-top: 14px; padding: 8px 14px; border: 1px solid #fecaca; background: #fef2f2;
     color: #b91c1c; font-weight: 700; border-radius: 6px; text-align: center; letter-spacing: 1px;
   }
-  .sign { margin-top: 48px; text-align: right; }
-  .sign .line { display: inline-block; border-top: 1px solid #9ca3af; padding-top: 4px; min-width: 200px; text-align: center; color: #374151; }
+  /* Signature block layout uses INLINE styles on a table (below) so it never
+     depends on class-CSS reaching this PDF renderer. */
 </style>
 </head>
 <body>
@@ -672,9 +672,23 @@ function buildPaymentVoucherHtml(
           : ''
   }
 
-  <div class="sign"><div class="line">${esc(
-      company.signatory || 'Authorised Signatory'
-  )}</div></div>
+  <table style="width:100%;border-collapse:collapse;margin-top:28px;">
+    <tr>
+      <td style="width:45%;vertical-align:top;text-align:center;color:#374151;">
+        <div style="border-top:1px solid #9ca3af;margin-top:44px;padding-top:4px;min-height:34px;">Receiver Signature</div>
+        <div style="border-top:1px solid #9ca3af;margin-top:44px;padding-top:4px;">Checked by</div>
+      </td>
+      <td style="width:10%;">&nbsp;</td>
+      <td style="width:45%;vertical-align:top;text-align:center;color:#374151;">
+        <div style="border-top:1px solid #9ca3af;margin-top:44px;padding-top:4px;min-height:34px;">${
+            company.signatory
+                ? `<b>${esc(company.signatory)}</b><br/>`
+                : ''
+        }Authorised Signature</div>
+        <div style="border-top:1px solid #9ca3af;margin-top:44px;padding-top:4px;">Verified by</div>
+      </td>
+    </tr>
+  </table>
 </div>
 </body>
 </html>`;

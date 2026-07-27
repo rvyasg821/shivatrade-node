@@ -111,7 +111,10 @@ export class VendorService {
         );
         const passwordData = this.authService.createPassword(defaultPassword);
 
-        const fullName = contact.name.trim();
+        // Harden against a missing name — never call .trim() on undefined.
+        // Callers only reach here when an email exists, so email is the fallback.
+        const fullName =
+            (contact.name || '').trim() || (contact.email || '').trim();
         const [firstName, ...rest] = fullName.split(/\s+/);
 
         const user = await this.userService.create(
@@ -120,7 +123,7 @@ export class VendorService {
                 name: fullName,
                 first_name: firstName || fullName,
                 last_name: rest.join(' ') || '',
-                email: contact.email.trim().toLowerCase(),
+                email: (contact.email || '').trim().toLowerCase(),
                 country_code: this.toUserCountryCode(contact.country_code),
                 mobile: contact.phone || '',
                 gender: ENUM_USER_GENDER.MALE,
@@ -146,13 +149,15 @@ export class VendorService {
         const user = await this.userService.findOneById(userId);
         if (!user) return false;
 
-        const fullName = contact.name.trim();
+        // Harden against a missing name — fall back to the email.
+        const fullName =
+            (contact.name || '').trim() || (contact.email || '').trim();
         const [firstName, ...rest] = fullName.split(/\s+/);
 
         user.name = fullName;
         user.first_name = firstName || fullName;
         user.last_name = rest.join(' ') || '';
-        user.email = contact.email.trim().toLowerCase();
+        user.email = (contact.email || '').trim().toLowerCase();
         user.mobile = contact.phone || '';
         if (contact.country_code) {
             user.country_code = contact.country_code as any;
@@ -193,10 +198,12 @@ export class VendorService {
      * exempt (it will be re-synced rather than re-created).
      */
     private async assertPrimaryEmailAvailable(
-        email: string,
+        email: string | undefined,
         vendorId?: string
     ): Promise<void> {
-        const normalized = email.trim().toLowerCase();
+        // No email → no login to provision → nothing to collide with.
+        const normalized = (email || '').trim().toLowerCase();
+        if (!normalized) return;
         const existingUser = await this.userService.findOneByEmail(normalized);
         // Only a genuinely ACTIVE user blocks re-use. Soft-deleted or inactive
         // rows are revived + overwritten by userService.create() (same recipe
@@ -269,17 +276,25 @@ export class VendorService {
         this.assertAddressesValid(data.addresses);
         await this.assertBankAccountsValid(companyId, data.bank_accounts);
 
-        const { contacts, category_ids, addresses, bank_accounts, ...vendorFields } = data;
+        const { contacts: rawContacts, category_ids, addresses, bank_accounts, ...vendorFields } = data;
+        const contacts = rawContacts || [];
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
+        const primaryHasEmail = !!(primaryContact && (primaryContact.email || '').trim());
 
-        // Pre-flight: primary email must be free in the users table BEFORE any writes
-        await this.assertPrimaryEmailAvailable(primaryContact.email);
+        // Provision a login only when the primary contact actually has an email.
+        // With no contact (or a blank-email contact) the vendor simply has no
+        // portal login and primaryUserId stays undefined.
+        let primaryUserId: string | undefined;
+        if (primaryHasEmail) {
+            // Pre-flight: primary email must be free in the users table BEFORE any writes
+            await this.assertPrimaryEmailAvailable(primaryContact.email);
 
-        // Provision the user FIRST so a failure here doesn't leave an orphan vendor
-        const primaryUserId = await this.provisionVendorUser(
-            companyId,
-            primaryContact
-        );
+            // Provision the user FIRST so a failure here doesn't leave an orphan vendor
+            primaryUserId = await this.provisionVendorUser(
+                companyId,
+                primaryContact
+            );
+        }
 
         const vendor = await this.vendorRepository.create({
             ...vendorFields,
@@ -298,7 +313,7 @@ export class VendorService {
         for (const c of contacts) {
             await this.contactRepository.create({
                 ...c,
-                email: c.email.trim().toLowerCase(),
+                email: c.email ? c.email.trim().toLowerCase() : undefined,
                 vendor_id: vendor._id.toString(),
                 company_id: companyId,
                 user_id: c === primaryContact ? primaryUserId : undefined,
@@ -445,14 +460,10 @@ export class VendorService {
         }
 
         if (nextContacts) {
-            const nextPrimary = nextContacts.find((c) => c.is_primary) || nextContacts[0];
-
-            // Pre-flight: validate the new primary email against the users
-            // table BEFORE we soft-delete contacts or touch any rows. The
-            // current vendor's existing primary user is exempt.
-            await this.assertPrimaryEmailAvailable(
-                nextPrimary.email,
-                vendor._id.toString()
+            const nextPrimary =
+                nextContacts.find((c) => c.is_primary) || nextContacts[0];
+            const nextPrimaryHasEmail = !!(
+                nextPrimary && (nextPrimary.email || '').trim()
             );
 
             // Capture the existing primary's user_id so we can sync vs re-create.
@@ -462,21 +473,41 @@ export class VendorService {
             const existingPrimary = existingContacts.find((c) => c.is_primary);
             const existingUserId = existingPrimary?.user_id?.toString();
 
-            // Resolve / sync / provision user BEFORE wiping old contacts
-            let primaryUserId = existingUserId;
-            if (primaryUserId) {
-                const synced = await this.syncVendorUser(primaryUserId, nextPrimary);
-                if (!synced) {
+            // Only touch the users table when the new primary has an email. With
+            // no email there is no login to provision — the vendor keeps whatever
+            // (if any) it had, and no new user is created.
+            let primaryUserId: string | undefined = existingUserId;
+            if (nextPrimaryHasEmail) {
+                // Pre-flight: validate the new primary email against the users
+                // table BEFORE we soft-delete contacts or touch any rows. The
+                // current vendor's existing primary user is exempt.
+                await this.assertPrimaryEmailAvailable(
+                    nextPrimary.email,
+                    vendor._id.toString()
+                );
+
+                // Resolve / sync / provision user BEFORE wiping old contacts
+                if (primaryUserId) {
+                    const synced = await this.syncVendorUser(
+                        primaryUserId,
+                        nextPrimary
+                    );
+                    if (!synced) {
+                        primaryUserId = await this.provisionVendorUser(
+                            companyId,
+                            nextPrimary
+                        );
+                    }
+                } else {
                     primaryUserId = await this.provisionVendorUser(
                         companyId,
                         nextPrimary
                     );
                 }
             } else {
-                primaryUserId = await this.provisionVendorUser(
-                    companyId,
-                    nextPrimary
-                );
+                // No email on the new primary → do not carry a stale login link
+                // onto the rebuilt contact rows.
+                primaryUserId = undefined;
             }
 
             await this.contactRepository.softDeleteByVendorId(
@@ -487,7 +518,7 @@ export class VendorService {
                 await this.contactRepository.create({
                     name: c.name,
                     designation: c.designation,
-                    email: c.email.trim().toLowerCase(),
+                    email: c.email ? c.email.trim().toLowerCase() : undefined,
                     phone: c.phone,
                     country_code: c.country_code,
                     is_primary: !!c.is_primary,
@@ -697,17 +728,22 @@ export class VendorService {
     }
 
     private assertContactsValid(contacts: VendorContactRequestDto[]): void {
+        // Contacts are optional now — only company_name is required. An empty /
+        // missing list is allowed (the vendor simply has no contact and no login).
         if (!contacts || contacts.length === 0) {
-            throw new BadRequestException('At least one contact person is required');
+            return;
         }
         const primaryCount = contacts.filter((c) => c.is_primary).length;
-        if (primaryCount === 0) {
-            throw new BadRequestException('One contact must be marked as primary');
-        }
+        // Zero primaries is fine — the create/update path falls back to the
+        // first contact. Only more than one is ambiguous.
         if (primaryCount > 1) {
             throw new BadRequestException('Only one contact can be marked as primary');
         }
-        const emails = contacts.map((c) => c.email.trim().toLowerCase());
+        // Only non-empty emails participate in the duplicate check; blank emails
+        // are allowed and never collide with each other.
+        const emails = contacts
+            .map((c) => (c.email || '').trim().toLowerCase())
+            .filter(Boolean);
         const dup = emails.find((e, i) => emails.indexOf(e) !== i);
         if (dup) {
             throw new BadRequestException(`Duplicate contact email: ${dup}`);
@@ -719,8 +755,11 @@ export class VendorService {
         contacts: VendorContactRequestDto[],
         excludeVendorId?: string
     ): Promise<void> {
+        if (!contacts || contacts.length === 0) return;
         for (const c of contacts) {
-            const email = c.email.trim().toLowerCase();
+            const email = (c.email || '').trim().toLowerCase();
+            // A contact with no email cannot collide with anything — skip it.
+            if (!email) continue;
             const exists = await this.contactRepository.isEmailExists(companyId, email);
             if (exists) {
                 if (!excludeVendorId) {

@@ -144,7 +144,8 @@ export class CustomerImportExportService {
         const headerKeys = Object.keys(rawRows[0]).map((k) =>
             k.trim().toLowerCase()
         );
-        const requiredCols = ['company_name', 'contact_name', 'contact_email'];
+        // Only company_name is required; contact name / email are optional.
+        const requiredCols = ['company_name'];
         const missing = requiredCols.filter((c) => !headerKeys.includes(c));
         if (missing.length > 0) {
             throw new BadRequestException(
@@ -183,17 +184,17 @@ export class CustomerImportExportService {
             const contactName = get('contact_name');
             const contactEmail = get('contact_email');
 
-            // ── Required fields ──
+            // ── Required fields (company_name is the ONLY required field) ──
             if (!companyName) errors.push('Company name is required');
             else if (companyName.length > 200)
                 errors.push('Company name must not exceed 200 characters');
 
-            if (!contactName) errors.push('Contact name is required');
-            else if (contactName.length > 150)
+            // Contact name / email are optional — only length / format checked
+            // when a value is actually present.
+            if (contactName && contactName.length > 150)
                 errors.push('Contact name must not exceed 150 characters');
 
-            if (!contactEmail) errors.push('Contact email is required');
-            else if (!EMAIL_RE.test(contactEmail))
+            if (contactEmail && !EMAIL_RE.test(contactEmail))
                 errors.push('Contact email is not a valid email address');
 
             // ── Status ──
@@ -340,6 +341,21 @@ export class CustomerImportExportService {
         userId: string,
         d: CustomerImportRow['data']
     ): Promise<void> {
+        // Build a primary contact only when the row actually carries a contact
+        // name or email. A company-only row imports with NO contact (and hence
+        // no login), mirroring the create flow.
+        const contacts =
+            d.contact_name || d.contact_email
+                ? [
+                      {
+                          name: d.contact_name || undefined,
+                          email: d.contact_email || undefined,
+                          phone: d.contact_phone,
+                          is_primary: true,
+                      },
+                  ]
+                : [];
+
         await this.customerService.create(
             companyId,
             {
@@ -349,14 +365,7 @@ export class CustomerImportExportService {
                 iec: d.iec,
                 currency: d.currency,
                 status: d.status,
-                contacts: [
-                    {
-                        name: d.contact_name,
-                        email: d.contact_email,
-                        phone: d.contact_phone,
-                        is_primary: true,
-                    },
-                ],
+                contacts,
                 addresses: this.buildAddresses(d),
             } as any,
             userId,
@@ -394,15 +403,19 @@ export class CustomerImportExportService {
         )) as any[];
         const primary =
             contacts.find((c) => c.is_primary) || contacts[0] || null;
+        const contactEmail = d.contact_email
+            ? d.contact_email.trim().toLowerCase()
+            : null;
         if (primary) {
-            primary.name = d.contact_name;
-            primary.email = d.contact_email.trim().toLowerCase();
+            primary.name = d.contact_name || null;
+            primary.email = contactEmail;
             primary.phone = d.contact_phone ?? null;
             await this.contactRepository.save(primary);
-        } else {
+        } else if (d.contact_name || d.contact_email) {
+            // Only create a fresh contact when the sheet actually carries one.
             await this.contactRepository.create({
-                name: d.contact_name,
-                email: d.contact_email.trim().toLowerCase(),
+                name: d.contact_name || null,
+                email: contactEmail,
                 phone: d.contact_phone,
                 is_primary: true,
                 customer_id: target._id.toString(),
