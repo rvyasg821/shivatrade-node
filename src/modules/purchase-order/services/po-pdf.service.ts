@@ -529,6 +529,13 @@ function buildPoHtml(ctx: PoPdfContext): string {
           <td class="meta" style="width:50%">${meta('Voucher No.', po.voucher_no)}</td>
           <td class="meta" style="width:50%">${meta('Dated', docDate(po.po_date))}</td>
         </tr>
+        ${
+            (po as any).reference_no
+                ? `<tr>
+          <td class="meta" colspan="2">${meta('Reference No.', (po as any).reference_no)}</td>
+        </tr>`
+                : ''
+        }
         <tr>
           <td class="meta">${meta('Lead Ref.', (po as any).lead_voucher_no)}</td>
           <td class="meta">${meta('Mode/Terms of Payment', po.payment_terms)}</td>

@@ -422,7 +422,11 @@ export class PoVendorService {
                 );
             }
             const avail = pending.get(ln.purchase_order_line_id) || 0;
-            if (req > avail + 1e-6) {
+            // `allow_over_pending` is set only when the operator deliberately
+            // adjusted the quantity above the SO's pending on the Generate-POV
+            // screen (over-procurement / MOQ). Every other caller leaves it
+            // unset, so the over-shipment guard still applies there.
+            if (!(ln as any).allow_over_pending && req > avail + 1e-6) {
                 throw new BadRequestException(
                     `Cannot create POV: ordered_qty (${req}) exceeds pending (${round4(
                         avail
@@ -1290,6 +1294,7 @@ export class PoVendorService {
                 vendor_id: string;
                 tax_pct?: string;
                 hsn_code?: string;
+                ordered_qty?: string;
             }>;
             delivery_address_id?: string;
             delivery_address?: string;
@@ -1346,6 +1351,10 @@ export class PoVendorService {
         // PO line, so anything the operator typed has to be carried across
         // explicitly or it is silently dropped on the way to createFromPo.
         const hsnOverrideByLine = new Map<string, string>();
+        // Per-line quantity override (operator edited the "To Procure" column).
+        // When set, it replaces the computed pending − stock qty for that line
+        // and may exceed pending (over-procurement) — see the toProcure loop.
+        const qtyOverrideByLine = new Map<string, number>();
         for (const a of data.assignments) {
             if (!a.purchase_order_line_id || !a.vendor_id) {
                 throw new BadRequestException(
@@ -1360,6 +1369,12 @@ export class PoVendorService {
             seenLines.add(a.purchase_order_line_id);
             if (a.tax_pct != null && a.tax_pct !== '') {
                 taxOverrideByLine.set(a.purchase_order_line_id, String(a.tax_pct));
+            }
+            if (a.ordered_qty != null && String(a.ordered_qty) !== '') {
+                qtyOverrideByLine.set(
+                    a.purchase_order_line_id,
+                    Math.max(0, round4(num(a.ordered_qty)))
+                );
             }
             if (a.hsn_code != null && String(a.hsn_code).trim() !== '') {
                 hsnOverrideByLine.set(
@@ -1426,6 +1441,17 @@ export class PoVendorService {
         const stockRemaining = new Map<string, number>(freeStock);
         const toProcureByLine = new Map<string, number>();
         for (const a of data.assignments) {
+            // Operator edited the qty on the Generate-POV screen → trust it
+            // verbatim (their default already reflected any stock they wanted to
+            // net off). We don't consume the free-stock pool for such lines, so
+            // sibling lines of the same product keep their auto-deduct intact.
+            if (qtyOverrideByLine.has(a.purchase_order_line_id)) {
+                toProcureByLine.set(
+                    a.purchase_order_line_id,
+                    qtyOverrideByLine.get(a.purchase_order_line_id) || 0
+                );
+                continue;
+            }
             const pl = poLineById.get(a.purchase_order_line_id);
             const pendingQty = pending.get(a.purchase_order_line_id) || 0;
             const pid = pl?.product_id ? pl.product_id.toString() : null;
@@ -1498,12 +1524,17 @@ export class PoVendorService {
                                 unitPrice = String(priceRow.unit_price || '0');
                             }
                         }
+                        // Bypass the over-shipment guard only when the operator's
+                        // adjusted qty is above what the SO line still needs.
+                        const overPending =
+                            toProcure > (pending.get(lid) || 0) + 1e-6;
                         return {
                             purchase_order_line_id: lid,
                             ordered_qty: String(round4(toProcure)),
                             unit_price: unitPrice,
                             tax_pct: taxOverrideByLine.get(lid),
                             hsn_code: hsnOverrideByLine.get(lid),
+                            allow_over_pending: overPending || undefined,
                         };
                     })
                 )

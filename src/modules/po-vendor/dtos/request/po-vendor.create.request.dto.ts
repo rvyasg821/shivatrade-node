@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
     ArrayMinSize,
     IsArray,
+    IsBoolean,
     IsIn,
     IsInt,
     IsNotEmpty,
@@ -78,6 +79,17 @@ export class PoVendorLineCreateDto {
     @Min(0)
     @IsOptional()
     seq?: number;
+
+    /**
+     * When true, skip the `ordered_qty ≤ pending_qty` over-shipment guard (§8)
+     * for this line. Set ONLY by the Generate-POV flow when the operator has
+     * explicitly edited the "To Procure" quantity above what the Sales Order
+     * still needs (deliberate over-procurement / MOQ). Standalone create and the
+     * source-generation flow leave it unset, so the guard still holds there.
+     */
+    @IsBoolean()
+    @IsOptional()
+    allow_over_pending?: boolean;
 }
 
 /**

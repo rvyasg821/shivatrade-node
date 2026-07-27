@@ -53,6 +53,7 @@ export class QuotationLineResponseDto {
 export class QuotationGetResponseDto {
     _id?: string;
     voucher_no?: string;
+    reference_no?: string;
     lead_id?: string;
     lead_voucher_no?: string;
     rfq_id?: string;

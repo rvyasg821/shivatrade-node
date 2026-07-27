@@ -89,6 +89,14 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 100, nullable: true })
     customer_po_number?: string;
 
+    /** Manual, free-text tracking reference typed by the operator (alphanumeric).
+     *  Distinct from the system `voucher_no` and from the buyer's
+     *  `customer_po_number`. Printed on the SO PDF and carried onto the Invoice
+     *  at Generate Invoice. Not unique. */
+    @Index()
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    reference_no?: string;
+
     /** Advance / down-payment received against this sales order. */
     @Column({
         type: 'numeric',

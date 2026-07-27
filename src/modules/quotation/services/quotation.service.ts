@@ -245,10 +245,27 @@ export class QuotationService {
             }
         );
 
+        // Manual tracking reference: use what the form sent, else inherit the
+        // source Lead's reference_no so it flows Lead → Quotation → SO → Invoice.
+        let referenceNo: string | null =
+            (data as any).reference_no?.trim() || null;
+        if (!referenceNo && data.lead_id) {
+            try {
+                const srcLead: any = await this.leadRepository.findOne({
+                    _id: data.lead_id,
+                    company_id: companyId,
+                } as any);
+                referenceNo = (srcLead as any)?.reference_no || null;
+            } catch {
+                /* non-fatal — reference stays null */
+            }
+        }
+
         const header = await this.quotationRepository.create({
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
+            reference_no: referenceNo,
             lead_id: data.lead_id || null,
             rfq_id: data.rfq_id || null,
             customer_id: data.customer_id,
@@ -862,6 +879,7 @@ export class QuotationService {
             const dto: QuotationGetResponseDto = {
                 _id: qid,
                 voucher_no: r.voucher_no,
+                reference_no: (r as any).reference_no || undefined,
                 lead_id: r.lead_id?.toString(),
                 lead_voucher_no: lead?.voucher_no,
                 rfq_id: (r as any).rfq_id?.toString(),
@@ -1294,6 +1312,9 @@ export class QuotationService {
             signatory,
             sourceVoucher,
             sourceLabel,
+            // Manual tracking reference (carried Lead → Quotation). Printed in
+            // the header meta; only shown when set.
+            referenceNo: (full as any).reference_no || '',
             logoDataUri,
         });
         const buffer = await this.pdfService.generateFromHtml(html, {
@@ -1331,6 +1352,7 @@ export class QuotationService {
             signatory?: string;
             sourceVoucher?: string;
             sourceLabel?: string;
+            referenceNo?: string;
             logoDataUri?: string;
         }
     ): string {
@@ -1421,6 +1443,9 @@ export class QuotationService {
                 voucherNo: q.voucher_no || '-',
                 metaLines: [
                     `Date: ${dateOnly(q.quotation_date)} · Currency: ${this.esc(sym)} ${this.esc(q.currency_code || '-')}`,
+                    extras.referenceNo
+                        ? `Reference No.: ${this.esc(extras.referenceNo)}`
+                        : '',
                     extras.sourceVoucher
                         ? `${this.esc(extras.sourceLabel || 'Source')}: ${this.esc(extras.sourceVoucher)}`
                         : '',
@@ -1552,6 +1577,7 @@ export class QuotationService {
             find.$or = [
                 { voucher_no: { $regex: searchTerm, $options: 'i' } },
                 { notes_to_client: { $regex: searchTerm, $options: 'i' } },
+                { reference_no: { $regex: searchTerm, $options: 'i' } },
             ];
         }
         return find;
@@ -1631,7 +1657,7 @@ export class QuotationService {
                     : '';
             if (searchTerm) {
                 qb.andWhere(
-                    '(entity.voucher_no ILIKE :q OR entity.notes_to_client ILIKE :q)',
+                    '(entity.voucher_no ILIKE :q OR entity.notes_to_client ILIKE :q OR entity.reference_no ILIKE :q)',
                     { q: `%${searchTerm}%` }
                 );
             }

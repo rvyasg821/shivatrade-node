@@ -58,6 +58,7 @@ const round4 = (n: number): number =>
 /** Customer-side order reference + advance captured at SO generation (S4). */
 type CustomerOrderInput = {
     customer_po_number?: string;
+    reference_no?: string;
     advance_amount?: string;
     advance_date?: string;
     advance_notes?: string;
@@ -309,6 +310,7 @@ export class PurchaseOrderService {
             po_date: data.po_date,
             expected_delivery_date: data.expected_delivery_date || null,
             customer_po_number: (data as any).customer_po_number || null,
+            reference_no: (data as any).reference_no || null,
             advance_amount: (data as any).advance_amount ?? '0',
             advance_date: (data as any).advance_date || null,
             advance_notes: (data as any).advance_notes || null,
@@ -1932,6 +1934,13 @@ export class PurchaseOrderService {
                 quotation_id: quotationId,
                 po_date: today,
                 customer_po_number: opts?.customerOrder?.customer_po_number,
+                // Carry the manual tracking reference Quotation → Sales Order
+                // (chain: Lead → Quotation → SO → Invoice). The generate-SO form
+                // may override; else inherit the quotation's.
+                reference_no:
+                    (opts?.customerOrder as any)?.reference_no ||
+                    (q as any).reference_no ||
+                    undefined,
                 advance_amount: opts?.customerOrder?.advance_amount,
                 advance_date: opts?.customerOrder?.advance_date,
                 advance_notes: opts?.customerOrder?.advance_notes,
@@ -2178,6 +2187,7 @@ export class PurchaseOrderService {
                 po_date: r.po_date,
                 expected_delivery_date: r.expected_delivery_date,
                 customer_po_number: (r as any).customer_po_number,
+                reference_no: (r as any).reference_no,
                 advance_amount: (r as any).advance_amount,
                 advance_date: (r as any).advance_date,
                 advance_notes: (r as any).advance_notes,
@@ -2365,6 +2375,7 @@ export class PurchaseOrderService {
         if (searchTerm) {
             find.$or = [
                 { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { reference_no: { $regex: searchTerm, $options: 'i' } },
             ];
         }
         return find;
@@ -2443,9 +2454,10 @@ export class PurchaseOrderService {
                     ? filters.search.trim()
                     : '';
             if (searchTerm) {
-                qb.andWhere('entity.voucher_no ILIKE :q', {
-                    q: `%${searchTerm}%`,
-                });
+                qb.andWhere(
+                    '(entity.voucher_no ILIKE :q OR entity.reference_no ILIKE :q)',
+                    { q: `%${searchTerm}%` }
+                );
             }
             return qb
                 .select('entity.status', 'status')

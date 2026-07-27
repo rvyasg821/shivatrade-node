@@ -60,6 +60,7 @@ export class InvoiceGetResponseDto {
     quotation_id?: string;
     quotation_voucher_no?: string;
     customer_po_no?: string;
+    reference_no?: string;
 
     // Destination
     country_of_destination?: string;
@@ -174,6 +175,7 @@ export class InvoiceListResponseDto {
     customer_contact_phone?: string;
     customer_contact_country_code?: any;
     purchase_order_voucher_no?: string;
+    reference_no?: string;
     currency_code?: string;
     currency_symbol?: string;
     grand_total?: string;

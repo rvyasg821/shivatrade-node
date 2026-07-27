@@ -416,6 +416,8 @@ function referencesBlock(d: RenderData): string {
         [
             ['Quotation No.', quotationNo],
             ['Sales Order No.', poNo],
+            // Manual tracking reference carried from the Sales Order.
+            ['Reference No.', inv.reference_no],
             ['Shipping No.', inv.shipping_voucher_no],
         ] as Array<[string, any]>
     ).filter(([, v]) => !!v);
@@ -1064,6 +1066,13 @@ function buildPackingListHtml(d: RenderData): string {
             <td style="width:60%;"><span class="lbl">Packing List No.:</span> ${esc(inv.voucher_no || '(DRAFT)')}</td>
             <td><span class="lbl">Date:</span> ${esc(docDate(inv.invoice_date))}</td>
         </tr>
+        ${
+            inv.reference_no
+                ? `<tr>
+            <td colspan="2"><span class="lbl">Reference No.:</span> ${esc(inv.reference_no)}</td>
+        </tr>`
+                : ''
+        }
     </table>
 
     ${partiesBlock(d, true)}

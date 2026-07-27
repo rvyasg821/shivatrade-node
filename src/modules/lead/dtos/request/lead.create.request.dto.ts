@@ -22,6 +22,9 @@ import { LeadLineRequestDto } from './lead-line.request.dto';
 export class LeadCreateRequestDto {
     @IsUUID() @IsOptional() customer_id?: string;
 
+    /** Manual alphanumeric tracking reference (free text, optional). */
+    @IsString() @IsOptional() @MaxLength(100) reference_no?: string;
+
     @IsString() @IsNotEmpty() @MaxLength(200) company_name: string;
 
     @IsString() @IsNotEmpty() @MaxLength(150) contact_name: string;

@@ -129,6 +129,13 @@ export class QuotationCreateRequestDto {
     @IsOptional()
     lead_id?: string;
 
+    /** Manual alphanumeric tracking reference (free text, optional). Defaults
+     *  from the source Lead's reference_no when omitted. */
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    reference_no?: string;
+
     /** Source RFQ this quotation was seeded from (Sales S3). */
     @IsUUID()
     @IsOptional()

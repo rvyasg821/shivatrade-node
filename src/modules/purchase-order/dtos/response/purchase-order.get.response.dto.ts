@@ -78,6 +78,7 @@ export class PurchaseOrderGetResponseDto {
 
     // ── Customer order reference + advance (S4) ──
     @ApiProperty({ required: false, type: String }) customer_po_number?: string;
+    @ApiProperty({ required: false, type: String }) reference_no?: string;
     @ApiProperty({ required: false, type: String }) advance_amount?: string;
     @ApiProperty({ required: false, type: String }) advance_date?: string;
     @ApiProperty({ required: false, type: String }) advance_notes?: string;

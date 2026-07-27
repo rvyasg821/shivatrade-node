@@ -208,6 +208,13 @@ export class InvoiceCreateRequestDto {
     @MaxLength(60)
     customer_po_no?: string;
 
+    /** Manual alphanumeric tracking reference. Defaults from the source Sales
+     *  Order's reference_no on Generate Invoice; operator can override. */
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    reference_no?: string;
+
     // Destination snapshot (defaults from Customer/Consignee on backend if omitted)
     @IsString()
     @IsOptional()
