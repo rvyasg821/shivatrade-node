@@ -201,6 +201,13 @@ export class PurchaseOrderCreateRequestDto {
     @MaxLength(100)
     customer_po_number?: string;
 
+    /** Manual alphanumeric tracking reference (free text, optional). Distinct
+     *  from the system voucher_no and from the buyer's customer_po_number. */
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    reference_no?: string;
+
     @IsNumberString({}, { message: 'advance_amount must be a numeric string' })
     @IsOptional()
     advance_amount?: string;

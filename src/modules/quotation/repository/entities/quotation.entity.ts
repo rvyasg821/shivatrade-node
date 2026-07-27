@@ -17,6 +17,13 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
+    /** Manual, free-text tracking reference (alphanumeric). Defaults from the
+     *  source Lead's `reference_no` at creation; carried onto the Sales Order at
+     *  Generate Sales Order. Distinct from `voucher_no`. Not unique. */
+    @Index()
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    reference_no?: string;
+
     /** Source lead - nullable for quotations created without going through Leads. */
     @Index()
     @Column({ type: 'uuid', nullable: true })

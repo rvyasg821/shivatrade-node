@@ -88,6 +88,14 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: true })
     customer_po_no?: string;
 
+    /** Manual, free-text tracking reference. Carried from the source Sales
+     *  Order's `reference_no` at Generate Invoice (operator can override);
+     *  printed on all three invoice PDFs. Distinct from voucher_no /
+     *  customer_po_no. Not unique. */
+    @Index()
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    reference_no?: string;
+
     // ── Destination snapshot (visible on Commercial Invoice header) ──
     @Column({ type: 'varchar', length: 80, nullable: true })
     country_of_destination?: string;

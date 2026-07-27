@@ -77,6 +77,13 @@ export class PurchaseOrderAutoSplitRequestDto {
     @MaxLength(100)
     customer_po_number?: string;
 
+    /** Manual alphanumeric tracking reference. Defaults from the quotation's
+     *  reference_no when omitted (Lead → Quotation → SO → Invoice chain). */
+    @IsString()
+    @IsOptional()
+    @MaxLength(100)
+    reference_no?: string;
+
     @IsNumberString({}, { message: 'advance_amount must be a numeric string' })
     @IsOptional()
     advance_amount?: string;

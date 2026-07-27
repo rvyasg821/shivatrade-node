@@ -18,6 +18,13 @@ export class LeadEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 50, nullable: true })
     voucher_no?: string;
 
+    /** Manual, free-text tracking reference typed by the operator (alphanumeric).
+     *  Distinct from the system `voucher_no` — this is the user's own reference
+     *  for cross-referencing the lead against external records. Not unique. */
+    @Index()
+    @Column({ type: 'varchar', length: 100, nullable: true })
+    reference_no?: string;
+
     @Column({ type: 'uuid', nullable: true })
     created_by: string;
 

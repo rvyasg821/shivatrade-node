@@ -37,6 +37,19 @@ export class PoVendorRecoverAssignmentDto {
     tax_pct?: string;
 
     /**
+     * Optional quantity override for the spawned POV line. Sent only when the
+     * operator edits the "To Procure" column on the generate-POV screen. When
+     * omitted, the service computes the qty as pending − free stock (the default
+     * auto-deduct behaviour). May exceed the SO line's pending qty (deliberate
+     * over-procurement); the service flags such lines so the over-shipment guard
+     * is bypassed for them.
+     */
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'ordered_qty must be a numeric string' })
+    @IsOptional()
+    ordered_qty?: string;
+
+    /**
      * Optional HSN override for the spawned POV line. Omitted when the operator
      * did not touch it, so the existing fallback chain (SO line → product
      * master) still applies.

@@ -338,6 +338,12 @@ export class InvoiceService {
                 (source.pos || []).find((p) => p?.customer_po_number)
                     ?.customer_po_number ||
                 undefined,
+            // Manual tracking reference — carried from the source Sales Order
+            // (S: Lead Reference Number). Operator can override on the invoice.
+            reference_no:
+                data.reference_no ||
+                (source.pos || []).find((p) => p?.reference_no)?.reference_no ||
+                undefined,
             country_of_destination: data.country_of_destination,
             country_of_origin: data.country_of_origin || 'India',
             customer_id: data.customer_id,
@@ -1120,6 +1126,57 @@ export class InvoiceService {
      * stock is enforced at ISSUE time (assertQtyGuardForLines runs on
      * draft/edit; the pre-issue stock check in issue() is the real guard).
      */
+    /**
+     * Dispatched qty per SO (PO) line, summed across that line's Vendor PO(s)
+     * in DISPATCHED/CLOSED status (mirrors getInvoiceableLines). Used to raise
+     * the invoice ceiling above the SO line's ordered qty when the operator
+     * deliberately over-procured on Generate POV (editable "To Procure", which
+     * may exceed SO pending — see the editable-POV feature). Returns a map;
+     * callers take max(SO ordered qty, dispatched) so sell-from-stock (no
+     * dispatch) is never capped below the SO line qty.
+     */
+    private async dispatchedByPoLineId(
+        poLineIds: string[]
+    ): Promise<Map<string, number>> {
+        const dispatched = new Map<string, number>();
+        if (!poLineIds.length) return dispatched;
+        const povLinesAll = (await this.povLineRepository.findAll({
+            purchase_order_line_id: { $in: poLineIds },
+        } as any)) as any[];
+        const povIds = Array.from(
+            new Set(
+                povLinesAll
+                    .map((pl: any) => pl.po_vendor_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const povs = povIds.length
+            ? ((await this.povRepository.findAll({
+                  _id: { $in: povIds },
+                  soft_delete: false,
+              } as any)) as any[])
+            : [];
+        const allowedPovIds = new Set(
+            povs
+                .filter(
+                    (p: any) =>
+                        p.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+                        p.status === ENUM_PO_VENDOR_STATUS.CLOSED
+                )
+                .map((p: any) => p._id.toString())
+        );
+        for (const pl of povLinesAll) {
+            if (!allowedPovIds.has(pl.po_vendor_id?.toString())) continue;
+            const k = pl.purchase_order_line_id?.toString();
+            if (!k) continue;
+            dispatched.set(
+                k,
+                (dispatched.get(k) || 0) + num(pl.dispatched_qty)
+            );
+        }
+        return dispatched;
+    }
+
     private async assertQtyGuardForLines(
         lines: InvoiceLineDto[],
         excludeInvoiceId?: string
@@ -1141,6 +1198,10 @@ export class InvoiceService {
         for (const pl of poLines) {
             orderedByPoLine.set(pl._id.toString(), num(pl.qty));
         }
+        // Over-procured lines (POV "To Procure" edited above SO pending) can be
+        // dispatched — and therefore invoiced — beyond the SO line's ordered
+        // qty. Raise the ceiling to the dispatched qty when it is higher.
+        const dispatchedByPoLine = await this.dispatchedByPoLineId(poLineIds);
 
         for (const [poLineId, reqQty] of requested.entries()) {
             if (reqQty < 0) {
@@ -1171,9 +1232,17 @@ export class InvoiceService {
                 );
             }
             const ordered = orderedByPoLine.get(poLineId) || 0;
-            if (reqQty + availableHistorical > ordered + 1e-6) {
+            // Ceiling = SO ordered qty, or the (higher) dispatched qty when the
+            // line was over-procured. Never below SO qty (sell-from-stock).
+            const ceiling = Math.max(
+                ordered,
+                dispatchedByPoLine.get(poLineId) || 0
+            );
+            if (reqQty + availableHistorical > ceiling + 1e-6) {
                 throw new BadRequestException(
-                    `Invoice qty (${reqQty}) exceeds the Sales Order line qty (${ordered}) on PO line ${poLineId}. Reduce qty.`
+                    `Invoice qty (${reqQty}) exceeds the invoiceable qty (${round2(
+                        ceiling - availableHistorical
+                    )}) for PO line ${poLineId}. Reduce qty.`
                 );
             }
         }
@@ -1610,12 +1679,15 @@ export class InvoiceService {
         for (const l of poLines as any[]) {
             const k = l._id.toString();
             const ordered = num(l.qty);
-            // Dispatched is now informational only — no longer the gate.
             const dispatched = dispatchedByPoLine.get(k) || 0;
             const invoicedAll = await this.invoiceRepository.sumQtyByPoLineId(k);
             const invoicedOthers = invoicedAll - (selfQtyByPoLine.get(k) || 0);
-            // Sell-from-stock: available = SO-line ordered qty − already invoiced.
-            const available = ordered - invoicedOthers - (selfQtyByPoLine.get(k) || 0);
+            // Ceiling = SO-line ordered qty, raised to the dispatched qty when
+            // the line was over-procured (editable POV "To Procure" above SO
+            // pending). Never below SO qty so sell-from-stock still works.
+            const ceiling = Math.max(ordered, dispatched);
+            const available =
+                ceiling - invoicedOthers - (selfQtyByPoLine.get(k) || 0);
             if (available <= 1e-6) continue;
             const prod = productById.get(l.product_id?.toString());
             result.push({
@@ -1825,7 +1897,7 @@ export class InvoiceService {
                 typeof filters.search === 'string' ? filters.search.trim() : '';
             if (searchTerm) {
                 qb.andWhere(
-                    '(entity.voucher_no ILIKE :q OR entity.purchase_order_voucher_no ILIKE :q)',
+                    '(entity.voucher_no ILIKE :q OR entity.purchase_order_voucher_no ILIKE :q OR entity.reference_no ILIKE :q)',
                     { q: `%${searchTerm}%` }
                 );
             }

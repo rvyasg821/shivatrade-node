@@ -338,6 +338,7 @@ export class PurchaseOrderAdminController {
                 vendorExpenses: body.vendor_expenses,
                 customerOrder: {
                     customer_po_number: body.customer_po_number,
+                    reference_no: body.reference_no,
                     advance_amount: body.advance_amount,
                     advance_date: body.advance_date,
                     advance_notes: body.advance_notes,
@@ -374,6 +375,7 @@ export class PurchaseOrderAdminController {
                 deliveryAddressText: body.delivery_address,
                 customerOrder: {
                     customer_po_number: body.customer_po_number,
+                    reference_no: body.reference_no,
                     advance_amount: body.advance_amount,
                     advance_date: body.advance_date,
                     advance_notes: body.advance_notes,

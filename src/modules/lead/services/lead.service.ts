@@ -1158,6 +1158,8 @@ export class LeadService {
                 { company_name: { $regex: searchTerm, $options: 'i' } },
                 { contact_name: { $regex: searchTerm, $options: 'i' } },
                 { contact_email: { $regex: searchTerm, $options: 'i' } },
+                { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { reference_no: { $regex: searchTerm, $options: 'i' } },
             ];
         }
         return find;
@@ -1217,7 +1219,7 @@ export class LeadService {
                     : '';
             if (searchTerm) {
                 qb.andWhere(
-                    '(entity.company_name ILIKE :q OR entity.contact_name ILIKE :q OR entity.contact_email ILIKE :q)',
+                    '(entity.company_name ILIKE :q OR entity.contact_name ILIKE :q OR entity.contact_email ILIKE :q OR entity.voucher_no ILIKE :q OR entity.reference_no ILIKE :q)',
                     { q: `%${searchTerm}%` }
                 );
             }
