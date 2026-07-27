@@ -71,6 +71,14 @@ const VENDOR_HEADERS = [
     'currency',
 ];
 
+// Headers for the downloadable SAMPLE template. Same as VENDOR_HEADERS but
+// WITHOUT `vendor_code` — the code is auto-generated on create, so it must not
+// appear as a fillable column in the blank template. (The EXPORT still includes
+// vendor_code for reference / round-tripping existing vendors.)
+const VENDOR_SAMPLE_HEADERS = VENDOR_HEADERS.filter(
+    (h) => h !== 'vendor_code'
+);
+
 const ADDRESS_HEADERS = [
     'company_name',
     'type',
@@ -202,10 +210,10 @@ export class VendorImportExportService {
             {
                 sheetName: SHEET_VENDORS,
                 rows: [
-                    VENDOR_HEADERS,
+                    VENDOR_SAMPLE_HEADERS,
                     [
                         'Acme Steel Pvt Ltd',
-                        '',
+                        // vendor_code column removed — auto-generated on create.
                         '24AAACA1234A1Z5',
                         'AAACA1234A',
                         'https://acmesteel.example.com',
@@ -228,7 +236,6 @@ export class VendorImportExportService {
                     ],
                     [
                         'Topaz Multi-Industries',
-                        '',
                         '27BBBCB5678B1Z3',
                         'BBBCB5678B',
                         '',
@@ -553,6 +560,15 @@ export class VendorImportExportService {
                 categoryIds = Array.from(new Set(ids));
             }
 
+            // GST number is required for a new vendor (client rule: the base
+            // required set is company_name, gstin, status, contact name/email).
+            // Not forced on updates so an existing vendor's other fields can be
+            // edited without re-supplying it.
+            const gstin = get('gstin');
+            if (isNew && !gstin) {
+                errors.push('gstin is required');
+            }
+
             // ── Inline contact ──
             const contactName = get('contact_name');
             const contactEmail = get('contact_email');
@@ -618,7 +634,7 @@ export class VendorImportExportService {
                 data: {
                     company_name: companyName,
                     vendor_code: vendorCode || undefined,
-                    gstin: get('gstin') || undefined,
+                    gstin: gstin || undefined,
                     pan: get('pan') || undefined,
                     website: get('website') || undefined,
                     payment_terms: get('payment_terms') || undefined,
