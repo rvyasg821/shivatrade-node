@@ -1820,6 +1820,53 @@ export class InvoiceService {
             const existing = primaryByCustomer.get(key);
             if (!existing || c.is_primary) primaryByCustomer.set(key, c);
         }
+
+        // ── Source Sales Orders per invoice (id + voucher) ──────────────────
+        // An invoice can span several SOs; resolve them via its lines'
+        // purchase_order_line_id → SO line → SO, so the listing links each SO to
+        // its own page (not just the header's single purchase_order_id).
+        const invoiceIds = rows
+            .map((r) => r._id?.toString())
+            .filter((v: any): v is string => !!v);
+        const invLines = invoiceIds.length
+            ? ((await this.invoiceLineRepository.findAll({
+                  invoice_id: { $in: invoiceIds },
+                  soft_delete: false,
+              } as any)) as any[])
+            : [];
+        const poLineIdsByInvoice = new Map<string, Set<string>>();
+        const allPoLineIds = new Set<string>();
+        for (const l of invLines) {
+            const invId = l.invoice_id?.toString();
+            const polId = l.purchase_order_line_id?.toString();
+            if (!invId || !polId) continue;
+            if (!poLineIdsByInvoice.has(invId))
+                poLineIdsByInvoice.set(invId, new Set());
+            poLineIdsByInvoice.get(invId).add(polId);
+            allPoLineIds.add(polId);
+        }
+        const srcPoLines = allPoLineIds.size
+            ? ((await this.poLineRepository.findAll({
+                  _id: { $in: Array.from(allPoLineIds) },
+              } as any)) as any[])
+            : [];
+        const poIdByPoLine = new Map<string, string>();
+        const allPoIds = new Set<string>();
+        for (const pl of srcPoLines) {
+            const poId = pl.purchase_order_id?.toString();
+            if (!poId) continue;
+            poIdByPoLine.set(pl._id.toString(), poId);
+            allPoIds.add(poId);
+        }
+        const srcPos = allPoIds.size
+            ? ((await this.poRepository.findAll({
+                  _id: { $in: Array.from(allPoIds) },
+              } as any)) as any[])
+            : [];
+        const poVoucherById = new Map<string, string>(
+            srcPos.map((p: any) => [p._id.toString(), p.voucher_no])
+        );
+
         return rows.map((r) => {
             const cid = r.customer_id?.toString();
             const c = cid ? custById.get(cid) : null;
@@ -1830,6 +1877,22 @@ export class InvoiceService {
             dto.customer_contact_email = ct?.email;
             dto.customer_contact_phone = ct?.phone;
             dto.customer_contact_country_code = ct?.country_code;
+            // Distinct source SOs (in first-seen order) → {id, voucher}.
+            const polIds = poLineIdsByInvoice.get(r._id?.toString());
+            const seenPo = new Set<string>();
+            const sourceOrders: Array<{ id: string; voucher_no: string }> = [];
+            if (polIds) {
+                for (const polId of polIds) {
+                    const poId = poIdByPoLine.get(polId);
+                    if (!poId || seenPo.has(poId)) continue;
+                    seenPo.add(poId);
+                    sourceOrders.push({
+                        id: poId,
+                        voucher_no: poVoucherById.get(poId) || '',
+                    });
+                }
+            }
+            dto.source_orders = sourceOrders;
             return dto;
         });
     }
