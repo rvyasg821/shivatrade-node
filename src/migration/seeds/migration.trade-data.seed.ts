@@ -148,8 +148,9 @@ export class MigrationTradeDataSeed {
     //   customers. KEEPS vendors, products, categories and masters
     //   (currencies / exchange rates / expenses / rebates) intact.
     //   Deletes: leads, RFQs, quotations, sales orders, invoices, vendor POs,
-    //   GRNs, debit notes, their tracking events, and customers (+ the
-    //   auto-created customer login users). Also clears the stock_movements
+    //   GRNs, debit notes, adjustment notes, their tracking events, and
+    //   customers (+ the auto-created customer login users). Also clears the
+    //   stock_movements
     //   ledger so on-hand / Coverage "In Stock" resets to zero.
     //   PFI is intentionally NOT touched (retired / hide-only).
     //   Also clears voucher_sequences so document numbering restarts fresh.
@@ -187,6 +188,10 @@ export class MigrationTradeDataSeed {
             this.logger.log(
                 `  Found ${customerUserIds.length} customer-linked users to clean up`
             );
+
+            // ── Adjustment Notes (off-doc customer/vendor ledger postings) ──
+            this.logger.log('━━━ Adjustment Notes ━━━');
+            await this.del(mgr, 'adjustment_notes', scope);
 
             // ── Invoices (+ payments / events / lines) ──
             this.logger.log('━━━ Invoices ━━━');
