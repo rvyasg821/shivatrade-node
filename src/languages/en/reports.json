@@ -8,5 +8,6 @@
     "salesTurnover": "Sales turnover report generated successfully.",
     "soInvoiceReconciliation": "Sales Order vs Invoice price reconciliation generated successfully.",
     "stockTurnover": "Stock turnover ratio report generated successfully.",
-    "inventoryHoldingDays": "Inventory holding days report generated successfully."
+    "inventoryHoldingDays": "Inventory holding days report generated successfully.",
+    "inventoryAging": "Inventory aging report generated successfully."
 }

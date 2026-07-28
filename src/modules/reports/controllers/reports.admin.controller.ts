@@ -22,6 +22,7 @@ import { SalesTurnoverResponseDto } from '../dtos/response/sales-turnover.respon
 import { SoInvoiceReconciliationResponseDto } from '../dtos/response/so-invoice-reconciliation.response.dto';
 import { StockTurnoverResponseDto } from '../dtos/response/stock-turnover.response.dto';
 import { InventoryHoldingDaysResponseDto } from '../dtos/response/inventory-holding-days.response.dto';
+import { InventoryAgingResponseDto } from '../dtos/response/inventory-aging.response.dto';
 
 /**
  * Read-only aggregation reports, company-scoped by the caller's JWT `companyId`
@@ -639,6 +640,73 @@ export class ReportsAdminController {
             `attachment; filename="inventory-holding-days_${stamp(
                 query.date_from
             )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Inventory Aging ──────────────────────────────────────────────────
+    @Response('reports.inventoryAging')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'as_of', required: false })
+    @ApiQuery({ name: 'aging_days', required: false })
+    @ApiQuery({ name: 'category_id', required: false })
+    @ApiQuery({ name: 'product_id', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'order_by', required: false })
+    @ApiQuery({ name: 'order_direction', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/inventory-aging')
+    async inventoryAging(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<InventoryAgingResponseDto>> {
+        const data = await this.reportsService.inventoryAging(companyId, {
+            as_of: query.as_of,
+            aging_days: Number(query.aging_days) || undefined,
+            category_id: query.category_id,
+            product_id: query.product_id,
+            search: query.search,
+            order_by: query.order_by as any,
+            order_direction: query.order_direction as any,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Excel export of the inventory-aging report (whole set + TOTAL). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'as_of', required: false })
+    @ApiQuery({ name: 'aging_days', required: false })
+    @ApiQuery({ name: 'category_id', required: false })
+    @ApiQuery({ name: 'product_id', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'order_by', required: false })
+    @ApiQuery({ name: 'order_direction', required: false })
+    @Get('/inventory-aging/export')
+    async inventoryAgingExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.inventoryAgingExcel(companyId, {
+            as_of: query.as_of,
+            aging_days: Number(query.aging_days) || undefined,
+            category_id: query.category_id,
+            product_id: query.product_id,
+            search: query.search,
+            order_by: query.order_by as any,
+            order_direction: query.order_direction as any,
+        });
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="inventory-aging_${stamp(query.as_of)}.xlsx"`
         );
         res.end(buffer);
     }

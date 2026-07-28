@@ -49,6 +49,10 @@ import {
     InventoryHoldingDaysResponseDto,
     InventoryHoldingDaysRowDto,
 } from '../dtos/response/inventory-holding-days.response.dto';
+import {
+    InventoryAgingResponseDto,
+    InventoryAgingRowDto,
+} from '../dtos/response/inventory-aging.response.dto';
 
 export interface IProductProfitabilityQuery {
     date_from?: string;
@@ -80,6 +84,19 @@ export interface IInventoryHoldingDaysQuery {
     product_id?: string;
     search?: string;
     order_by?: 'days' | 'sold' | 'name';
+    order_direction?: 'asc' | 'desc';
+    page?: number;
+    perPage?: number;
+}
+
+export interface IInventoryAgingQuery {
+    as_of?: string;
+    /** Aged-over threshold in days — 30 | 60 | 90 | 120. Default 90. */
+    aging_days?: number;
+    category_id?: string;
+    product_id?: string;
+    search?: string;
+    order_by?: 'aged_value' | 'aged_qty' | 'closing_value' | 'oldest' | 'name';
     order_direction?: 'asc' | 'desc';
     page?: number;
     perPage?: number;
@@ -2989,6 +3006,326 @@ export class ReportsService {
             [`Inventory Holding Days — ${result.period_label}`],
             [
                 'Avg days a unit was held (GRN receipt → sale) via FIFO matching, for units sold (invoice issued) in the period.',
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Inventory Aging ──────────────────────────────────────────────────
+    /**
+     * Aging of CLOSING stock as of a snapshot date. The on-hand qty is
+     * FIFO-attributed to its GRN receipt cohorts (oldest left first, so what
+     * remains is the newest receipts); any remaining unit whose receipt is
+     * ≥ `aging_days` old counts as AGED (slow-moving). Value = qty × the
+     * product's weighted-average vendor cost (INR).
+     *
+     * Reconciliation: the FIFO leftover is trimmed/topped-up to the true
+     * `stock_movements` on-hand. A shortfall (opening / non-GRN inflow with no
+     * receipt date) becomes `undated_qty` — treated as oldest, always aged.
+     */
+    async inventoryAging(
+        companyId: string,
+        query: IInventoryAgingQuery
+    ): Promise<InventoryAgingResponseDto> {
+        const asOf = query.as_of || isoDate(new Date());
+        const allowedDays = [30, 60, 90, 120];
+        const agingDays = allowedDays.includes(Number(query.aging_days))
+            ? Number(query.aging_days)
+            : 90;
+
+        // Product metadata + weighted-avg cost + filters.
+        const params: any[] = [companyId];
+        const filters: string[] = [];
+        if (query.category_id) {
+            params.push(query.category_id);
+            filters.push(`AND p.category_id = $${params.length}`);
+        }
+        if (query.product_id) {
+            params.push(query.product_id);
+            filters.push(`AND p._id = $${params.length}`);
+        }
+        if (query.search && query.search.trim()) {
+            params.push(`%${query.search.trim()}%`);
+            filters.push(
+                `AND (p.name ILIKE $${params.length} OR p.code ILIKE $${params.length})`
+            );
+        }
+        const prods: any[] = await this.dataSource.query(
+            `SELECT p._id                       AS product_id,
+                    p.code                      AS product_code,
+                    p.name                      AS product_name,
+                    cat.name                    AS category_name,
+                    COALESCE(cost.cost_sum, 0)  AS cost_sum,
+                    COALESCE(cost.qty_sum, 0)   AS cost_qty_sum
+             FROM products p
+             LEFT JOIN categories cat ON cat._id = p.category_id
+             LEFT JOIN (
+                 SELECT gl.product_id,
+                        SUM(gl.accepted_qty::numeric * povl.unit_price::numeric) AS cost_sum,
+                        SUM(gl.accepted_qty::numeric)                            AS qty_sum
+                 FROM grn_lines gl
+                 JOIN grns g
+                   ON g._id = gl.grn_id
+                  AND g.company_id = $1
+                  AND g.soft_delete = false
+                  AND g.status = 'confirmed'
+                 JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+                 WHERE gl.accepted_qty::numeric > 0
+                 GROUP BY gl.product_id
+             ) cost ON cost.product_id = p._id
+             WHERE p.company_id = $1 AND p.soft_delete = false
+             ${filters.join('\n             ')}`,
+            params
+        );
+        const metaById = new Map<string, any>(
+            prods.map((r) => [r.product_id, r])
+        );
+
+        // Closing on-hand + total outflow as of the snapshot, per product.
+        const ohRaw: any[] = metaById.size
+            ? await this.dataSource.query(
+                  `SELECT product_id,
+                          SUM(CASE WHEN "createdAt" < ($2::date + INTERVAL '1 day')
+                                   THEN qty::numeric ELSE 0 END) AS closing,
+                          SUM(CASE WHEN qty::numeric < 0
+                                    AND "createdAt" < ($2::date + INTERVAL '1 day')
+                                   THEN -qty::numeric ELSE 0 END) AS out_qty
+                   FROM stock_movements
+                   WHERE company_id = $1 AND deleted = false
+                   GROUP BY product_id`,
+                  [companyId, asOf]
+              )
+            : [];
+        const ohById = new Map<string, { closing: number; out: number }>(
+            ohRaw.map((r) => [
+                r.product_id,
+                { closing: n(r.closing), out: n(r.out_qty) },
+            ])
+        );
+
+        // Receipt cohorts up to the snapshot, per product + grn_date.
+        const recvRaw: any[] = metaById.size
+            ? await this.dataSource.query(
+                  `SELECT gl.product_id AS product_id,
+                          g.grn_date AS d,
+                          SUM(gl.accepted_qty::numeric) AS qty
+                   FROM grn_lines gl
+                   JOIN grns g
+                     ON g._id = gl.grn_id
+                    AND g.company_id = $1
+                    AND g.soft_delete = false
+                    AND g.status = 'confirmed'
+                   WHERE gl.accepted_qty::numeric > 0
+                     AND g.grn_date <= $2
+                   GROUP BY gl.product_id, g.grn_date`,
+                  [companyId, asOf]
+              )
+            : [];
+
+        const isoOf = (x: any): string =>
+            !x ? '' : x instanceof Date ? isoDate(x) : String(x).slice(0, 10);
+        const dayDiff = (a: string, b: string): number =>
+            Math.round(
+                (new Date(`${b}T00:00:00`).getTime() -
+                    new Date(`${a}T00:00:00`).getTime()) /
+                    86400000
+            );
+
+        const recvByProduct = new Map<string, Array<{ d: string; qty: number }>>();
+        for (const r of recvRaw) {
+            const arr = recvByProduct.get(r.product_id) || [];
+            arr.push({ d: isoOf(r.d), qty: n(r.qty) });
+            recvByProduct.set(r.product_id, arr);
+        }
+
+        let rows: InventoryAgingRowDto[] = [];
+        for (const [pid, meta] of metaById.entries()) {
+            const oh = ohById.get(pid) || { closing: 0, out: 0 };
+            const closing = round4(oh.closing);
+            if (closing <= 1e-9) continue; // aging is about stock ON HAND
+
+            const costQty = n(meta.cost_qty_sum);
+            const unitCost = costQty > 0 ? r2(n(meta.cost_sum) / costQty) : 0;
+
+            // FIFO: consume the oldest receipt cohorts by the total outflow.
+            const cohorts = (recvByProduct.get(pid) || [])
+                .map((c) => ({ d: c.d, qty: c.qty }))
+                .sort((a, b) => (a.d < b.d ? -1 : 1));
+            let out = round4(oh.out);
+            for (let i = 0; i < cohorts.length && out > 1e-9; i += 1) {
+                const take = Math.min(cohorts[i].qty, out);
+                cohorts[i].qty = round4(cohorts[i].qty - take);
+                out = round4(out - take);
+            }
+            let leftover = cohorts.filter((c) => c.qty > 1e-9);
+            let datedQty = round4(leftover.reduce((s, c) => s + c.qty, 0));
+
+            // Reconcile the FIFO leftover with the true on-hand.
+            let undated = round4(closing - datedQty);
+            if (undated < 0) {
+                // More dated stock than the ledger shows on hand → the excess
+                // left untracked; drop it from the OLDEST leftover cohorts.
+                let excess = -undated;
+                undated = 0;
+                for (const c of leftover) {
+                    if (excess <= 1e-9) break;
+                    const take = Math.min(c.qty, excess);
+                    c.qty = round4(c.qty - take);
+                    excess = round4(excess - take);
+                }
+                leftover = leftover.filter((c) => c.qty > 1e-9);
+                datedQty = round4(leftover.reduce((s, c) => s + c.qty, 0));
+            }
+
+            // Age the dated leftover; undated is always aged (treated oldest).
+            let agedQty = undated;
+            let oldest: number | null = null;
+            for (const c of leftover) {
+                const age = Math.max(0, dayDiff(c.d, asOf));
+                oldest = oldest == null ? age : Math.max(oldest, age);
+                if (age >= agingDays) agedQty = round4(agedQty + c.qty);
+            }
+
+            const closingValue = r2(closing * unitCost);
+            const agedValue = r2(agedQty * unitCost);
+            const agedPct = closing > 0 ? r2((agedQty / closing) * 100) : 0;
+
+            rows.push({
+                product_id: pid,
+                product_code: meta.product_code || undefined,
+                product_name: meta.product_name,
+                category_name: meta.category_name || undefined,
+                closing_qty: r2(closing),
+                closing_value_inr: closingValue,
+                unit_cost: unitCost,
+                aged_qty: r2(agedQty),
+                aged_value_inr: agedValue,
+                aged_pct: agedPct,
+                undated_qty: r2(undated),
+                oldest_days: oldest,
+            });
+        }
+
+        const dir = query.order_direction === 'asc' ? 1 : -1;
+        const orderBy = query.order_by || 'aged_value';
+        const numOr = (v: number | null, f: number): number => (v == null ? f : v);
+        rows.sort((a, b) => {
+            switch (orderBy) {
+                case 'name':
+                    return (
+                        (a.product_name || '').localeCompare(
+                            b.product_name || ''
+                        ) * dir
+                    );
+                case 'aged_qty':
+                    return (a.aged_qty - b.aged_qty) * dir;
+                case 'closing_value':
+                    return (a.closing_value_inr - b.closing_value_inr) * dir;
+                case 'oldest':
+                    return (
+                        (numOr(a.oldest_days, -1) - numOr(b.oldest_days, -1)) *
+                        dir
+                    );
+                case 'aged_value':
+                default:
+                    return (a.aged_value_inr - b.aged_value_inr) * dir;
+            }
+        });
+
+        const totals = {
+            product_count: rows.length,
+            closing_qty: r2(rows.reduce((s, r) => s + r.closing_qty, 0)),
+            closing_value_inr: r2(
+                rows.reduce((s, r) => s + r.closing_value_inr, 0)
+            ),
+            aged_qty: r2(rows.reduce((s, r) => s + r.aged_qty, 0)),
+            aged_value_inr: r2(rows.reduce((s, r) => s + r.aged_value_inr, 0)),
+            undated_qty: r2(rows.reduce((s, r) => s + r.undated_qty, 0)),
+            aged_pct: 0,
+        };
+        totals.aged_pct =
+            totals.closing_value_inr > 0
+                ? r2((totals.aged_value_inr / totals.closing_value_inr) * 100)
+                : 0;
+
+        const perPage = Math.max(
+            1,
+            Math.min(100000, Number(query.perPage) || 25)
+        );
+        const page = Math.max(1, Number(query.page) || 1);
+        const start = (page - 1) * perPage;
+
+        return {
+            as_of_label: isoToDdmmyyyy(asOf),
+            aging_days: agingDays,
+            rows: rows.slice(start, start + perPage),
+            totals,
+            currency: 'INR',
+            pagination: {
+                total: rows.length,
+                perPage,
+                orderBy,
+            },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer, same column order + TOTAL row. */
+    async inventoryAgingExcel(
+        companyId: string,
+        query: IInventoryAgingQuery
+    ): Promise<Buffer> {
+        const result = await this.inventoryAging(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000,
+        });
+        const header = [
+            'Product',
+            'Code',
+            'Category',
+            'Closing Qty',
+            'Closing Value (INR)',
+            `Aged Qty (≥${result.aging_days}d)`,
+            `Aged Value (INR)`,
+            '% Aged',
+            'Oldest (days)',
+            'Undated Qty',
+        ];
+        const body = result.rows.map((r) => [
+            r.product_name,
+            r.product_code || '',
+            r.category_name || '',
+            r.closing_qty,
+            r.closing_value_inr,
+            r.aged_qty,
+            r.aged_value_inr,
+            r.aged_pct,
+            r.oldest_days == null ? '—' : r.oldest_days,
+            r.undated_qty,
+        ]);
+        const totalRow = [
+            'TOTAL',
+            '',
+            '',
+            result.totals.closing_qty,
+            result.totals.closing_value_inr,
+            result.totals.aged_qty,
+            result.totals.aged_value_inr,
+            result.totals.aged_pct,
+            '',
+            result.totals.undated_qty,
+        ];
+        const aoa: (string | number)[][] = [
+            [
+                `Inventory Aging — as of ${result.as_of_label} — aged over ${result.aging_days} days (INR)`,
+            ],
+            [
+                'Closing stock FIFO-aged from GRN receipts, valued at weighted-avg vendor cost. Undated = opening / non-GRN stock, treated as oldest.',
             ],
             [],
             header,
