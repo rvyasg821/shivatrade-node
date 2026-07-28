@@ -269,6 +269,33 @@ export class ProductService {
         return updated;
     }
 
+    /**
+     * Bulk soft-delete. Loops the SAME guarded single-delete (findOneById +
+     * softDelete) so a product that cannot be deleted is skipped, not
+     * force-deleted. Returns the ids actually deleted and the ones skipped
+     * with a reason.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const product = await this.findOneById(id);
+                await this.softDelete(product, deletedBy);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     async deleteAllByCompanyId(companyId: string): Promise<number> {
         return this.productRepository.deleteAllByCompanyId(companyId);
     }

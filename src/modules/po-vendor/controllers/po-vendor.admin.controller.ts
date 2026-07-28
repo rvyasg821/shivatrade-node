@@ -599,4 +599,25 @@ export class PoVendorAdminController {
         await this.povService.deleteWithGuard(row);
         return { data: null };
     }
+
+    /** Bulk delete (draft-only; server guard skips non-drafts / in-use rows). */
+    @Response('poVendor.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @Body() body: { ids: string[] },
+        @AuthJwtPayload('user') userId: string
+    ): Promise<
+        IResponse<{
+            deleted: string[];
+            skipped: Array<{ id: string; reason: string }>;
+        }>
+    > {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.povService.deleteMany(ids, userId);
+        return { data };
+    }
 }

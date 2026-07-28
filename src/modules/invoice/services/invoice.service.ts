@@ -1021,6 +1021,32 @@ export class InvoiceService {
         return this.invoiceRepository.save(row);
     }
 
+    /**
+     * Bulk delete: loops the guarded single-delete so every row honours the
+     * same delete policy. Rows that cannot be deleted are skipped with a
+     * reason rather than failing the batch.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.softDelete(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     // ─── Recompute totals ───────────────────────────────────────────────
 
     /**

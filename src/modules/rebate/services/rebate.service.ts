@@ -127,6 +127,32 @@ export class RebateService {
         return updated;
     }
 
+    /**
+     * Bulk soft-delete. Loops the SAME guarded single-delete so a rebate that
+     * cannot be deleted is skipped, not force-deleted. Returns the ids actually
+     * deleted and the ones skipped with a reason.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.softDelete(row, deletedBy);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     mapGet(rebate: RebateDoc): RebateGetResponseDto {
         return plainToInstance(RebateGetResponseDto, rebate);
     }

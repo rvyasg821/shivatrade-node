@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     Body,
     Controller,
     Delete,
@@ -20,7 +21,7 @@ import {
     sendExcel,
 } from '@common/import/master-import.helper';
 
-import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
+import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { UserProtected } from '@modules/user/decorators/user.decorator';
 import {
     Response,
@@ -188,6 +189,22 @@ export class CityAdminController {
     async delete(@Param('cityId') cityId: string): Promise<void> {
         const row = await this.cityService.findOneById(cityId);
         await this.cityService.softDelete(row);
+    }
+
+    @Response('city.delete')
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.cityService.deleteMany(ids, userId);
+        return { data };
     }
 
     private parseStatus(status?: string): ENUM_CITY_STATUS | undefined {

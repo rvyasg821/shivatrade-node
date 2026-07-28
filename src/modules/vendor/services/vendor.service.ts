@@ -581,6 +581,32 @@ export class VendorService {
         return updated;
     }
 
+    /**
+     * Bulk soft-delete. Loops the SAME guarded single-delete so a vendor still
+     * used by any live document is skipped (via assertVendorNotInUse), not
+     * force-deleted. Returns the ids actually deleted and the skipped ones.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const vendor = await this.findOneById(id);
+                await this.softDelete(vendor, deletedBy);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     async findVendorIdsByCategoryId(
         companyId: string,
         categoryId: string

@@ -511,6 +511,33 @@ export class CustomerService {
         return updated;
     }
 
+    /**
+     * Bulk soft-delete. Loops the SAME guarded single-delete so a customer that
+     * is still used by a live document (Lead / Quotation / Sales Order /
+     * Invoice) is skipped, not force-deleted. Returns the ids actually deleted
+     * and the ones skipped with a reason.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const customer = await this.findOneById(id);
+                await this.softDelete(customer, deletedBy);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     private assertAddressesValid(
         addresses: CustomerAddressRequestDto[] | undefined
     ): void {

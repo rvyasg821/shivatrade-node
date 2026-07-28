@@ -116,6 +116,32 @@ export class PoVendorService {
     }
 
     /**
+     * Bulk delete: loops the guarded single-delete so every VPO is subject to
+     * the same draft-only / no-dependents rules. Never bypasses deleteWithGuard.
+     * Ids that are missing or fail the guard are reported in `skipped`.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.deleteWithGuard(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
+    /**
      * Append an auto-generated lifecycle event to a POV's tracking timeline.
      * Failures are logged but never rethrown — tracking is observability,
      * not part of the transactional invariant of the action that triggered

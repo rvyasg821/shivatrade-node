@@ -205,4 +205,19 @@ export class RebateAdminController {
         const rebate = await this.rebateService.findOneById(rebateId);
         await this.rebateService.softDelete(rebate, userId);
     }
+
+    @Response('rebate.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.rebateService.deleteMany(ids, userId);
+        return { data };
+    }
 }

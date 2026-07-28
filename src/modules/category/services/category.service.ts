@@ -140,6 +140,32 @@ export class CategoryService {
         return updated;
     }
 
+    /**
+     * Bulk soft-delete. Loops the SAME guarded single-delete so a category in
+     * use (e.g. with sub-categories) is skipped, not force-deleted. Returns the
+     * ids actually deleted and the ones skipped with a reason.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const category = await this.findOneById(id);
+                await this.softDelete(category, deletedBy);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     async restore(category: CategoryDoc): Promise<CategoryDoc> {
         category.soft_delete = false;
         category.is_active = true;

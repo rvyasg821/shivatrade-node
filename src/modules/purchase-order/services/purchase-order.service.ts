@@ -119,6 +119,32 @@ export class PurchaseOrderService {
         await this.poRepository.delete({ _id: row._id } as any);
     }
 
+    /**
+     * Bulk delete: loops the guarded single-delete for each id. Sales Orders
+     * that cannot be deleted (downstream deps, or not a draft) are skipped with
+     * a reason rather than failing the batch. Never bypasses the delete guard.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.deleteWithGuard(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     // ─── Reference validation ───────────────────────────────────────────
 
     private async assertReferences(

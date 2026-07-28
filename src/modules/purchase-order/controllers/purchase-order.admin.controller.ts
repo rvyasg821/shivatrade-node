@@ -291,6 +291,21 @@ export class PurchaseOrderAdminController {
         return { data: null };
     }
 
+    @Response('purchaseOrder.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.poService.deleteMany(ids, userId);
+        return { data };
+    }
+
     // ─── Auto-split from PFI / Quotation ────────────────────────────────
 
     @Response('purchaseOrder.previewFromPfi')

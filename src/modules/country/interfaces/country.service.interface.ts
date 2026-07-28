@@ -75,10 +75,17 @@ export interface ICountryService {
         repository: CountryDoc,
         options?: IDatabaseSaveOptions
     ): Promise<CountryDoc>;
-    deleteMany(
+    deleteManyByQuery(
         find?: Record<string, any>,
         options?: IDatabaseDeleteManyOptions
     ): Promise<boolean>;
+    deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }>;
     createMany(
         data: CountryCreateRequestDto[],
         options?: IDatabaseCreateManyOptions
