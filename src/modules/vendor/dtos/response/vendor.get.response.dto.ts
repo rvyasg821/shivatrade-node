@@ -90,6 +90,13 @@ export class VendorGetResponseDto {
     })
     categories: { _id: string; name: string }[];
 
+    @ApiProperty({
+        required: false,
+        type: 'array',
+        items: { type: 'object', properties: { _id: { type: 'string' }, name: { type: 'string' } } },
+    })
+    product_categories?: { _id: string; name: string }[];
+
     @ApiProperty({ required: false, type: String })
     gstin?: string;
 

@@ -1,0 +1,16 @@
+{
+    "list": "Vendor categories retrieved successfully.",
+    "get": "Vendor category details fetched successfully.",
+    "create": "Vendor category created successfully.",
+    "update": "Vendor category updated successfully.",
+    "delete": "Vendor category deleted successfully.",
+    "dropdown": "Vendor categories dropdown loaded.",
+    "import": "Vendor categories imported successfully.",
+    "export": "Vendor categories exported successfully.",
+    "error": {
+        "exist": "A vendor category with this name already exists.",
+        "codeExist": "A vendor category with this code already exists.",
+        "inUse": "Cannot delete a vendor category that is assigned to vendors.",
+        "notFound": "Sorry, we couldn't find the requested vendor category."
+    }
+}
