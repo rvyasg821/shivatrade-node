@@ -61,6 +61,9 @@ export class InvoiceGetResponseDto {
     quotation_voucher_no?: string;
     customer_po_no?: string;
     reference_no?: string;
+    /** Distinct reference numbers across every source SO + the invoice's own —
+     *  a comma-joined list for multi-SO invoices (same as the PDFs). */
+    reference_nos?: string;
 
     // Destination
     country_of_destination?: string;

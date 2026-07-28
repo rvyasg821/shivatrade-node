@@ -1606,6 +1606,59 @@ export class InvoiceService {
             row._id.toString()
         );
         (dto as any).payments = payments;
+
+        // Multi-SO reference numbers: the distinct union of the invoice's own
+        // reference_no + every source SO's reference_no (via the lines' SOs) —
+        // the same list the PDFs print. Comma-joined for the detail panel.
+        const refList: string[] = [];
+        const seenRef = new Set<string>();
+        const pushRef = (r?: string) => {
+            const v = (r || '').trim();
+            if (v && !seenRef.has(v)) {
+                seenRef.add(v);
+                refList.push(v);
+            }
+        };
+        pushRef((row as any).reference_no);
+        const refPoLineIds = Array.from(
+            new Set(
+                (lines as any[])
+                    .map((l) => l.purchase_order_line_id?.toString())
+                    .filter(Boolean)
+            )
+        );
+        if (refPoLineIds.length) {
+            try {
+                const refPoLines = await this.poLineRepository.findAll({
+                    _id: { $in: refPoLineIds },
+                } as any);
+                const refPoIds = Array.from(
+                    new Set(
+                        (refPoLines as any[])
+                            .map((pl) => pl.purchase_order_id?.toString())
+                            .filter(Boolean)
+                    )
+                );
+                if (refPoIds.length) {
+                    const refPos = await this.poRepository.findAll({
+                        _id: { $in: refPoIds },
+                    } as any);
+                    (refPos as any[])
+                        .slice()
+                        .sort((a, b) =>
+                            String(a.voucher_no || '').localeCompare(
+                                String(b.voucher_no || '')
+                            )
+                        )
+                        .forEach((po) => pushRef(po.reference_no));
+                }
+            } catch {
+                /* non-fatal — fall back to the invoice's own reference_no */
+            }
+        }
+        (dto as any).reference_nos =
+            refList.join(', ') || (row as any).reference_no || undefined;
+
         return dto;
     }
 

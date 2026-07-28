@@ -648,7 +648,6 @@ export class ReportsAdminController {
     @Response('reports.inventoryAging')
     @AuthJwtAccessProtected()
     @ApiQuery({ name: 'as_of', required: false })
-    @ApiQuery({ name: 'aging_days', required: false })
     @ApiQuery({ name: 'category_id', required: false })
     @ApiQuery({ name: 'product_id', required: false })
     @ApiQuery({ name: 'search', required: false })
@@ -663,7 +662,6 @@ export class ReportsAdminController {
     ): Promise<IResponse<InventoryAgingResponseDto>> {
         const data = await this.reportsService.inventoryAging(companyId, {
             as_of: query.as_of,
-            aging_days: Number(query.aging_days) || undefined,
             category_id: query.category_id,
             product_id: query.product_id,
             search: query.search,
@@ -678,7 +676,6 @@ export class ReportsAdminController {
     /** Excel export of the inventory-aging report (whole set + TOTAL). */
     @AuthJwtAccessProtected()
     @ApiQuery({ name: 'as_of', required: false })
-    @ApiQuery({ name: 'aging_days', required: false })
     @ApiQuery({ name: 'category_id', required: false })
     @ApiQuery({ name: 'product_id', required: false })
     @ApiQuery({ name: 'search', required: false })
@@ -692,7 +689,6 @@ export class ReportsAdminController {
     ): Promise<void> {
         const buffer = await this.reportsService.inventoryAgingExcel(companyId, {
             as_of: query.as_of,
-            aging_days: Number(query.aging_days) || undefined,
             category_id: query.category_id,
             product_id: query.product_id,
             search: query.search,

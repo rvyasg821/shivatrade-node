@@ -91,12 +91,10 @@ export interface IInventoryHoldingDaysQuery {
 
 export interface IInventoryAgingQuery {
     as_of?: string;
-    /** Aged-over threshold in days — 30 | 60 | 90 | 120. Default 90. */
-    aging_days?: number;
     category_id?: string;
     product_id?: string;
     search?: string;
-    order_by?: 'aged_value' | 'aged_qty' | 'closing_value' | 'oldest' | 'name';
+    order_by?: 'oldest' | 'closing_value' | 'name';
     order_direction?: 'asc' | 'desc';
     page?: number;
     perPage?: number;
@@ -3033,10 +3031,21 @@ export class ReportsService {
         query: IInventoryAgingQuery
     ): Promise<InventoryAgingResponseDto> {
         const asOf = query.as_of || isoDate(new Date());
-        const allowedDays = [30, 60, 90, 120];
-        const agingDays = allowedDays.includes(Number(query.aging_days))
-            ? Number(query.aging_days)
-            : 90;
+
+        // Fixed age buckets (days). Undated stock lands in the oldest (>120).
+        const BUCKETS = [
+            { key: 'd0_30', label: '0-30', max: 30 },
+            { key: 'd31_60', label: '31-60', max: 60 },
+            { key: 'd61_90', label: '61-90', max: 90 },
+            { key: 'd91_120', label: '91-120', max: 120 },
+            { key: 'd120_plus', label: '>120', max: Infinity },
+        ];
+        const bucketIndex = (age: number): number => {
+            for (let i = 0; i < BUCKETS.length; i += 1) {
+                if (age <= BUCKETS[i].max) return i;
+            }
+            return BUCKETS.length - 1;
+        };
 
         // Product metadata + weighted-avg cost + filters.
         const params: any[] = [companyId];
@@ -3182,18 +3191,23 @@ export class ReportsService {
                 datedQty = round4(leftover.reduce((s, c) => s + c.qty, 0));
             }
 
-            // Age the dated leftover; undated is always aged (treated oldest).
-            let agedQty = undated;
-            let oldest: number | null = null;
+            // Distribute the remaining on-hand across the fixed age buckets.
+            const bq = BUCKETS.map(() => 0);
             for (const c of leftover) {
                 const age = Math.max(0, dayDiff(c.d, asOf));
-                oldest = oldest == null ? age : Math.max(oldest, age);
-                if (age >= agingDays) agedQty = round4(agedQty + c.qty);
+                const i = bucketIndex(age);
+                bq[i] = round4(bq[i] + c.qty);
             }
+            // Undated (opening / non-GRN) stock has no receipt date → oldest.
+            bq[BUCKETS.length - 1] = round4(bq[BUCKETS.length - 1] + undated);
 
+            const buckets = BUCKETS.map((b, i) => ({
+                key: b.key,
+                label: b.label,
+                qty: r2(bq[i]),
+                value: r2(bq[i] * unitCost),
+            }));
             const closingValue = r2(closing * unitCost);
-            const agedValue = r2(agedQty * unitCost);
-            const agedPct = closing > 0 ? r2((agedQty / closing) * 100) : 0;
 
             rows.push({
                 product_id: pid,
@@ -3203,17 +3217,16 @@ export class ReportsService {
                 closing_qty: r2(closing),
                 closing_value_inr: closingValue,
                 unit_cost: unitCost,
-                aged_qty: r2(agedQty),
-                aged_value_inr: agedValue,
-                aged_pct: agedPct,
                 undated_qty: r2(undated),
-                oldest_days: oldest,
+                buckets,
             });
         }
 
         const dir = query.order_direction === 'asc' ? 1 : -1;
-        const orderBy = query.order_by || 'aged_value';
-        const numOr = (v: number | null, f: number): number => (v == null ? f : v);
+        const orderBy = query.order_by || 'oldest';
+        // >120 (oldest) bucket value — the slow-mover signal — is the default sort.
+        const over120 = (r: InventoryAgingRowDto): number =>
+            r.buckets[r.buckets.length - 1]?.value || 0;
         rows.sort((a, b) => {
             switch (orderBy) {
                 case 'name':
@@ -3222,36 +3235,29 @@ export class ReportsService {
                             b.product_name || ''
                         ) * dir
                     );
-                case 'aged_qty':
-                    return (a.aged_qty - b.aged_qty) * dir;
                 case 'closing_value':
                     return (a.closing_value_inr - b.closing_value_inr) * dir;
                 case 'oldest':
-                    return (
-                        (numOr(a.oldest_days, -1) - numOr(b.oldest_days, -1)) *
-                        dir
-                    );
-                case 'aged_value':
                 default:
-                    return (a.aged_value_inr - b.aged_value_inr) * dir;
+                    return (over120(a) - over120(b)) * dir;
             }
         });
 
+        const totalBuckets = BUCKETS.map((b, i) => ({
+            key: b.key,
+            label: b.label,
+            qty: r2(rows.reduce((s, r) => s + (r.buckets[i]?.qty || 0), 0)),
+            value: r2(rows.reduce((s, r) => s + (r.buckets[i]?.value || 0), 0)),
+        }));
         const totals = {
             product_count: rows.length,
             closing_qty: r2(rows.reduce((s, r) => s + r.closing_qty, 0)),
             closing_value_inr: r2(
                 rows.reduce((s, r) => s + r.closing_value_inr, 0)
             ),
-            aged_qty: r2(rows.reduce((s, r) => s + r.aged_qty, 0)),
-            aged_value_inr: r2(rows.reduce((s, r) => s + r.aged_value_inr, 0)),
             undated_qty: r2(rows.reduce((s, r) => s + r.undated_qty, 0)),
-            aged_pct: 0,
+            buckets: totalBuckets,
         };
-        totals.aged_pct =
-            totals.closing_value_inr > 0
-                ? r2((totals.aged_value_inr / totals.closing_value_inr) * 100)
-                : 0;
 
         const perPage = Math.max(
             1,
@@ -3262,7 +3268,6 @@ export class ReportsService {
 
         return {
             as_of_label: isoToDdmmyyyy(asOf),
-            aging_days: agingDays,
             rows: rows.slice(start, start + perPage),
             totals,
             currency: 'INR',
@@ -3284,16 +3289,17 @@ export class ReportsService {
             page: 1,
             perPage: 100000,
         });
+        const bucketLabels = (result.totals.buckets || []).map((b) => b.label);
         const header = [
             'Product',
             'Code',
             'Category',
             'Closing Qty',
             'Closing Value (INR)',
-            `Aged Qty (≥${result.aging_days}d)`,
-            `Aged Value (INR)`,
-            '% Aged',
-            'Oldest (days)',
+            ...bucketLabels.flatMap((l) => [
+                `${l}d Qty`,
+                `${l}d Value (INR)`,
+            ]),
             'Undated Qty',
         ];
         const body = result.rows.map((r) => [
@@ -3302,10 +3308,7 @@ export class ReportsService {
             r.category_name || '',
             r.closing_qty,
             r.closing_value_inr,
-            r.aged_qty,
-            r.aged_value_inr,
-            r.aged_pct,
-            r.oldest_days == null ? '—' : r.oldest_days,
+            ...r.buckets.flatMap((b) => [b.qty, b.value]),
             r.undated_qty,
         ]);
         const totalRow = [
@@ -3314,18 +3317,13 @@ export class ReportsService {
             '',
             result.totals.closing_qty,
             result.totals.closing_value_inr,
-            result.totals.aged_qty,
-            result.totals.aged_value_inr,
-            result.totals.aged_pct,
-            '',
+            ...result.totals.buckets.flatMap((b) => [b.qty, b.value]),
             result.totals.undated_qty,
         ];
         const aoa: (string | number)[][] = [
+            [`Inventory Aging — as of ${result.as_of_label} (INR)`],
             [
-                `Inventory Aging — as of ${result.as_of_label} — aged over ${result.aging_days} days (INR)`,
-            ],
-            [
-                'Closing stock FIFO-aged from GRN receipts, valued at weighted-avg vendor cost. Undated = opening / non-GRN stock, treated as oldest.',
+                'Closing stock FIFO-aged from GRN receipts into 0-30 / 31-60 / 61-90 / 91-120 / >120 day buckets, valued at weighted-avg vendor cost. Undated = opening / non-GRN stock, treated as oldest.',
             ],
             [],
             header,
