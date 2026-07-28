@@ -26,6 +26,7 @@ import {
 } from '../dtos/response/vendor.get.response.dto';
 import { VendorListResponseDto } from '../dtos/response/vendor.list.response.dto';
 import { ENUM_VENDOR_ADDRESS_TYPE } from '../enums/vendor.enum';
+import { VendorCategoryMasterRepository } from '@modules/vendor-category/repository/repositories/vendor-category.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
@@ -51,7 +52,8 @@ export class VendorService {
         private readonly vendorCategoryRepository: VendorCategoryRepository,
         private readonly addressRepository: VendorAddressRepository,
         private readonly bankAccountRepository: VendorBankAccountRepository,
-        private readonly categoryRepository: CategoryRepository,
+        private readonly categoryRepository: VendorCategoryMasterRepository,
+        private readonly productCategoryRepository: CategoryRepository,
         private readonly currencyRepository: CurrencyRepository,
         private readonly userService: UserService,
         private readonly roleService: RoleService,
@@ -271,12 +273,16 @@ export class VendorService {
         }
 
         await this.assertCategoriesValid(companyId, data.category_ids);
+        await this.assertProductCategoriesValid(
+            companyId,
+            data.product_category_ids
+        );
         this.assertContactsValid(data.contacts);
         await this.assertContactEmailsUnique(companyId, data.contacts);
         this.assertAddressesValid(data.addresses);
         await this.assertBankAccountsValid(companyId, data.bank_accounts);
 
-        const { contacts: rawContacts, category_ids, addresses, bank_accounts, ...vendorFields } = data;
+        const { contacts: rawContacts, category_ids, product_category_ids, addresses, bank_accounts, ...vendorFields } = data;
         const contacts = rawContacts || [];
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
         const primaryHasEmail = !!(primaryContact && (primaryContact.email || '').trim());
@@ -307,7 +313,8 @@ export class VendorService {
         await this.replaceVendorCategories(
             vendor._id.toString(),
             companyId,
-            category_ids
+            category_ids,
+            product_category_ids
         );
 
         for (const c of contacts) {
@@ -397,6 +404,13 @@ export class VendorService {
             await this.assertCategoriesValid(companyId, data.category_ids);
         }
 
+        if (data.product_category_ids) {
+            await this.assertProductCategoriesValid(
+                companyId,
+                data.product_category_ids
+            );
+        }
+
         let nextContacts: VendorContactRequestDto[] | undefined;
         if (data.contacts) {
             this.assertContactsValid(data.contacts);
@@ -416,12 +430,14 @@ export class VendorService {
         }
 
         const nextCategoryIds = data.category_ids;
+        const nextProductCategoryIds = data.product_category_ids;
         const wasActive = !!vendor.is_active;
 
         // Strip relations from the body before assigning scalar fields
         const {
             contacts: _c,
             category_ids: _ci,
+            product_category_ids: _pci,
             addresses: _a,
             bank_accounts: _ba,
             ...scalarFields
@@ -451,11 +467,30 @@ export class VendorService {
             }
         }
 
-        if (nextCategoryIds) {
+        // Replace the category links when either side is supplied. The side the
+        // caller did NOT send is preserved from what is currently stored, so an
+        // update that only carries vendor categories (e.g. an import) never
+        // wipes the vendor's product categories, and vice-versa.
+        if (nextCategoryIds || nextProductCategoryIds) {
+            const existingLinks =
+                await this.vendorCategoryRepository.findByVendorId(
+                    vendor._id.toString()
+                );
+            const finalVendorCatIds = nextCategoryIds
+                ? nextCategoryIds
+                : existingLinks
+                      .filter((l) => l.category_type !== 'product')
+                      .map((l) => l.category_id.toString());
+            const finalProductCatIds = nextProductCategoryIds
+                ? nextProductCategoryIds
+                : existingLinks
+                      .filter((l) => l.category_type === 'product')
+                      .map((l) => l.category_id.toString());
             await this.replaceVendorCategories(
                 vendor._id.toString(),
                 companyId,
-                nextCategoryIds
+                finalVendorCatIds,
+                finalProductCatIds
             );
         }
 
@@ -620,15 +655,28 @@ export class VendorService {
     private async replaceVendorCategories(
         vendorId: string,
         companyId: string,
-        categoryIds: string[]
+        vendorCategoryIds: string[],
+        productCategoryIds: string[]
     ): Promise<void> {
         await this.vendorCategoryRepository.deleteByVendorId(vendorId);
-        const unique = Array.from(new Set(categoryIds));
-        for (const cid of unique) {
+
+        const uniqueVendorCats = Array.from(new Set(vendorCategoryIds || []));
+        for (const cid of uniqueVendorCats) {
             await this.vendorCategoryRepository.create({
                 vendor_id: vendorId,
                 category_id: cid,
                 company_id: companyId,
+                category_type: 'vendor',
+            } as any);
+        }
+
+        const uniqueProductCats = Array.from(new Set(productCategoryIds || []));
+        for (const cid of uniqueProductCats) {
+            await this.vendorCategoryRepository.create({
+                vendor_id: vendorId,
+                category_id: cid,
+                company_id: companyId,
+                category_type: 'product',
             } as any);
         }
     }
@@ -753,6 +801,26 @@ export class VendorService {
         }
     }
 
+    private async assertProductCategoriesValid(
+        companyId: string,
+        categoryIds: string[]
+    ): Promise<void> {
+        // Product categories are optional on a vendor — an empty / missing list
+        // is allowed. Only validate the IDs that are actually supplied.
+        if (!categoryIds || categoryIds.length === 0) return;
+        const unique = Array.from(new Set(categoryIds));
+        const found = await this.productCategoryRepository.findAll({
+            _id: { $in: unique },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (found.length !== unique.length) {
+            throw new BadRequestException(
+                'One or more product categories are invalid'
+            );
+        }
+    }
+
     private assertContactsValid(contacts: VendorContactRequestDto[]): void {
         // Contacts are optional now — only company_name is required. An empty /
         // missing list is allowed (the vendor simply has no contact and no login).
@@ -820,6 +888,19 @@ export class VendorService {
         return map;
     }
 
+    private async buildProductCategoryNameMap(
+        categoryIds: string[]
+    ): Promise<Record<string, string>> {
+        if (categoryIds.length === 0) return {};
+        const cats = await this.productCategoryRepository.findAll({
+            _id: { $in: categoryIds },
+            soft_delete: false,
+        } as any);
+        const map: Record<string, string> = {};
+        for (const c of cats) map[c._id.toString()] = c.name;
+        return map;
+    }
+
     private hydrateWithContacts(
         dto: VendorGetResponseDto,
         contacts: VendorContactDoc[]
@@ -862,11 +943,22 @@ export class VendorService {
         const links = await this.vendorCategoryRepository.findByVendorId(
             vendor._id.toString()
         );
-        const catIds = links.map((l) => l.category_id.toString());
-        const catMap = await this.buildCategoryNameMap(catIds);
-        dto.categories = catIds
+        const vendorCatIds = links
+            .filter((l) => l.category_type !== 'product')
+            .map((l) => l.category_id.toString());
+        const productCatIds = links
+            .filter((l) => l.category_type === 'product')
+            .map((l) => l.category_id.toString());
+        const [catMap, productCatMap] = await Promise.all([
+            this.buildCategoryNameMap(vendorCatIds),
+            this.buildProductCategoryNameMap(productCatIds),
+        ]);
+        dto.categories = vendorCatIds
             .filter((id) => catMap[id])
             .map((id) => ({ _id: id, name: catMap[id] }));
+        dto.product_categories = productCatIds
+            .filter((id) => productCatMap[id])
+            .map((id) => ({ _id: id, name: productCatMap[id] }));
 
         const [contacts, addresses, bankAccounts] = await Promise.all([
             this.contactRepository.findByVendorId(vendor._id.toString()),
@@ -930,10 +1022,24 @@ export class VendorService {
         );
         const currencyCodeMap = await this.buildCurrencyCodeMap(allCurrencyIds);
 
-        const allCategoryIds = Array.from(
-            new Set(allLinks.map((l) => l.category_id.toString()))
+        const allVendorCategoryIds = Array.from(
+            new Set(
+                allLinks
+                    .filter((l) => l.category_type !== 'product')
+                    .map((l) => l.category_id.toString())
+            )
         );
-        const catMap = await this.buildCategoryNameMap(allCategoryIds);
+        const allProductCategoryIds = Array.from(
+            new Set(
+                allLinks
+                    .filter((l) => l.category_type === 'product')
+                    .map((l) => l.category_id.toString())
+            )
+        );
+        const [catMap, productCatMap] = await Promise.all([
+            this.buildCategoryNameMap(allVendorCategoryIds),
+            this.buildProductCategoryNameMap(allProductCategoryIds),
+        ]);
 
         const linksByVendor: Record<string, VendorCategoryDoc[]> = {};
         for (const l of allLinks) {
@@ -959,10 +1065,17 @@ export class VendorService {
         return vendors.map((v) => {
             const dto = plainToInstance(VendorListResponseDto, v);
             const vid = v._id.toString();
-            dto.categories = (linksByVendor[vid] || [])
+            const vLinks = linksByVendor[vid] || [];
+            dto.categories = vLinks
+                .filter((l) => l.category_type !== 'product')
                 .map((l) => l.category_id.toString())
                 .filter((cid) => catMap[cid])
                 .map((cid) => ({ _id: cid, name: catMap[cid] }));
+            dto.product_categories = vLinks
+                .filter((l) => l.category_type === 'product')
+                .map((l) => l.category_id.toString())
+                .filter((cid) => productCatMap[cid])
+                .map((cid) => ({ _id: cid, name: productCatMap[cid] }));
             this.hydrateWithContacts(dto, contactsByVendor[vid] || []);
             dto.addresses = (addressesByVendor[vid] || []).map((a) =>
                 plainToInstance(VendorAddressResponseDto, a)

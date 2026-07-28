@@ -110,7 +110,13 @@ export const MODULES_PERMISSIONS = {
         },
         categories: {
             name: "Categories",
-            description: "Manage product and vendor categories",
+            description: "Manage product categories",
+            permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
+            default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
+        },
+        "vendor-categories": {
+            name: "Vendor Categories",
+            description: "Manage the vendor category master (used to classify vendors)",
             permissions: ["can_all", "can_read", "can_add", "can_update", "can_delete"],
             default: { can_all: false, can_read: false, can_add: false, can_update: false, can_delete: false }
         },

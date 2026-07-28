@@ -32,7 +32,11 @@ export class VendorCategoryRepository extends DatabaseObjectIdRepositoryBase<Ven
         categoryId: string
     ): Promise<string[]> {
         const rows = await this._repository.find({
-            where: { company_id: companyId, category_id: categoryId } as any,
+            where: {
+                company_id: companyId,
+                category_id: categoryId,
+                category_type: 'vendor',
+            } as any,
             select: ['vendor_id'] as any,
         });
         return rows.map((r) => r.vendor_id.toString());

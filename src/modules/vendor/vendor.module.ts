@@ -3,6 +3,7 @@ import { VendorRepositoryModule } from './repository/vendor.repository.module';
 import { VendorService } from './services/vendor.service';
 import { VendorImportExportService } from './services/vendor.import-export.service';
 import { VendorAdminController } from './controllers/vendor.admin.controller';
+import { VendorCategoryModule } from '@modules/vendor-category/vendor-category.module';
 import { CategoryModule } from '@modules/category/category.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { UserModule } from '@modules/user/user.module';
@@ -15,6 +16,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
     imports: [
         VendorRepositoryModule,
         DependencyCheckModule,
+        VendorCategoryModule,
         CategoryModule,
         CurrencyModule,
         UserModule,

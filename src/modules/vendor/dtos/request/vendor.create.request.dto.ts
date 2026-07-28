@@ -151,6 +151,11 @@ export class VendorCreateRequestDto {
     @IsUUID('4', { each: true })
     category_ids?: string[];
 
+    @IsArray()
+    @IsOptional()
+    @IsUUID('4', { each: true })
+    product_category_ids?: string[];
+
     // ── Tax & Compliance (all optional) ──
     @IsString() @IsOptional() @MaxLength(15) gstin?: string;
     @IsString() @IsOptional() @MaxLength(10) pan?: string;

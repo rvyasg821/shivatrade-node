@@ -16,6 +16,10 @@ export class VendorCategoryEntity extends DatabaseObjectIdEntityBase {
     @Index()
     @Column({ type: 'uuid', nullable: false })
     company_id: string;
+
+    @Index()
+    @Column({ type: 'varchar', length: 10, nullable: false, default: 'vendor' })
+    category_type: string; // 'vendor' | 'product'
 }
 
 export type VendorCategoryDoc = VendorCategoryEntity;

@@ -12,6 +12,7 @@ import { VendorBankAccountRepository } from '../repository/repositories/vendor-b
 import { VendorContactRepository } from '../repository/repositories/vendor-contact.repository';
 import { VendorCategoryRepository } from '../repository/repositories/vendor-category.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { VendorCategoryMasterRepository } from '@modules/vendor-category/repository/repositories/vendor-category.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import {
     ENUM_VENDOR_ADDRESS_TYPE,
@@ -53,6 +54,7 @@ const VENDOR_HEADERS = [
     'payment_terms',
     'incoterms',
     'categories',
+    'product_categories',
     'status',
     // Main contact — optional. When an email is supplied the primary contact
     // provisions the vendor's login; with no email the vendor has no login.
@@ -200,7 +202,8 @@ export class VendorImportExportService {
         private readonly contactRepository: VendorContactRepository,
         private readonly vendorCategoryRepository: VendorCategoryRepository,
         private readonly currencyRepository: CurrencyRepository,
-        private readonly categoryRepository: CategoryRepository
+        private readonly categoryRepository: VendorCategoryMasterRepository,
+        private readonly productCategoryRepository: CategoryRepository
     ) {}
 
     // ── Sample ──────────────────────────────────────────────────────────
@@ -219,9 +222,12 @@ export class VendorImportExportService {
                         'https://acmesteel.example.com',
                         '30 days',
                         'FOB',
-                        // Comma-separated names from the Category master. They
-                        // must already exist — import never creates one.
+                        // Comma-separated names from the Vendor Category master.
+                        // They must already exist — import never creates one.
                         'Chemicals, BEARINGS',
+                        // Comma-separated names from the (product) Category
+                        // master. Must already exist — import never creates one.
+                        'Steel, Fasteners',
                         'active',
                         'Ravi Sharma',
                         'ravi@acmesteel.example.com',
@@ -241,6 +247,7 @@ export class VendorImportExportService {
                         '',
                         'Advance',
                         'CIF',
+                        '',
                         '',
                         'active',
                         'Imran Qureshi',
@@ -335,6 +342,7 @@ export class VendorImportExportService {
             contactLists,
             vendorCategories,
             allCategories,
+            allProductCategories,
             currencies,
         ] = await Promise.all([
             vendorIds.length
@@ -350,6 +358,7 @@ export class VendorImportExportService {
                 ? this.vendorCategoryRepository.findByVendorIds(vendorIds)
                 : Promise.resolve([] as any[]),
             this.categoryRepository.findByCompanyId(companyId),
+            this.productCategoryRepository.findByCompanyId(companyId),
             this.currencyRepository.findAll({
                 company_id: companyId,
                 soft_delete: false,
@@ -373,15 +382,37 @@ export class VendorImportExportService {
         const categoryNameById = new Map<string, string>(
             (allCategories as any[]).map((c) => [c._id.toString(), c.name])
         );
+        const productCategoryNameById = new Map<string, string>(
+            (allProductCategories as any[]).map((c) => [
+                c._id.toString(),
+                c.name,
+            ])
+        );
+        // Split each vendor's category links by discriminator: vendor-category
+        // names resolve against the vendor master, product-category names
+        // against the product master.
         const categoriesByVendor = new Map<string, string[]>();
+        const productCategoriesByVendor = new Map<string, string[]>();
         for (const vc of vendorCategories as any[]) {
             const vid = vc.vendor_id?.toString();
-            const name = categoryNameById.get(vc.category_id?.toString());
-            if (!vid || !name) continue;
-            categoriesByVendor.set(vid, [
-                ...(categoriesByVendor.get(vid) || []),
-                name,
-            ]);
+            if (!vid) continue;
+            if (vc.category_type === 'product') {
+                const name = productCategoryNameById.get(
+                    vc.category_id?.toString()
+                );
+                if (!name) continue;
+                productCategoriesByVendor.set(vid, [
+                    ...(productCategoriesByVendor.get(vid) || []),
+                    name,
+                ]);
+            } else {
+                const name = categoryNameById.get(vc.category_id?.toString());
+                if (!name) continue;
+                categoriesByVendor.set(vid, [
+                    ...(categoriesByVendor.get(vid) || []),
+                    name,
+                ]);
+            }
         }
         const currencyCodeById = new Map<string, string>(
             (currencies as any[]).map((c) => [c._id.toString(), c.code])
@@ -412,6 +443,7 @@ export class VendorImportExportService {
                 v.payment_terms || '',
                 v.incoterms || '',
                 (categoriesByVendor.get(vid) || []).join(', '),
+                (productCategoriesByVendor.get(vid) || []).join(', '),
                 v.status || ENUM_VENDOR_STATUS.ACTIVE,
                 mainContact?.name || '',
                 mainContact?.email || '',
@@ -498,6 +530,17 @@ export class VendorImportExportService {
             ])
         );
 
+        const productCategoryList =
+            (await this.productCategoryRepository.findByCompanyId(
+                companyId
+            )) as any[];
+        const productCategoryIdByName = new Map<string, string>(
+            productCategoryList.map((c) => [
+                String(c.name || '').trim().toLowerCase(),
+                c._id.toString(),
+            ])
+        );
+
         const vendors: VendorSheetRow<any>[] = [];
         const rowByName = new Map<string, VendorSheetRow<any>>();
 
@@ -554,10 +597,35 @@ export class VendorImportExportService {
                     errors.push(
                         `Unknown categor${
                             unknown.length > 1 ? 'ies' : 'y'
-                        }: ${unknown.join(', ')} — add them to the Category master first`
+                        }: ${unknown.join(', ')} — add them to the Vendor Category master first`
                     );
                 }
                 categoryIds = Array.from(new Set(ids));
+            }
+
+            // Product categories: comma-separated NAMES resolved against the
+            // (product) Category master. Blank = leave alone (replace list).
+            const productCategoriesRaw = get('product_categories');
+            let productCategoryIds: string[] | undefined;
+            if (productCategoriesRaw) {
+                const unknown: string[] = [];
+                const ids: string[] = [];
+                for (const nm of productCategoriesRaw
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean)) {
+                    const id = productCategoryIdByName.get(nm.toLowerCase());
+                    if (id) ids.push(id);
+                    else unknown.push(nm);
+                }
+                if (unknown.length) {
+                    errors.push(
+                        `Unknown product categor${
+                            unknown.length > 1 ? 'ies' : 'y'
+                        }: ${unknown.join(', ')} — add them to the Category master first`
+                    );
+                }
+                productCategoryIds = Array.from(new Set(ids));
             }
 
             // GSTIN is optional — company_name is the only required field.
@@ -631,6 +699,7 @@ export class VendorImportExportService {
                     payment_terms: get('payment_terms') || undefined,
                     incoterms: get('incoterms') || undefined,
                     category_ids: categoryIds,
+                    product_category_ids: productCategoryIds,
                     status,
                     _existingId: match.id,
                     _contact: contact,
