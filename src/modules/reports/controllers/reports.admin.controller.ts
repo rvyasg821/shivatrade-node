@@ -20,6 +20,7 @@ import {
 import { PurchaseTurnoverResponseDto } from '../dtos/response/purchase-turnover.response.dto';
 import { SalesTurnoverResponseDto } from '../dtos/response/sales-turnover.response.dto';
 import { SoInvoiceReconciliationResponseDto } from '../dtos/response/so-invoice-reconciliation.response.dto';
+import { StockTurnoverResponseDto } from '../dtos/response/stock-turnover.response.dto';
 
 /**
  * Read-only aggregation reports, company-scoped by the caller's JWT `companyId`
@@ -494,6 +495,75 @@ export class ReportsAdminController {
         res.setHeader(
             'Content-Disposition',
             `attachment; filename="so-invoice-reconciliation_${stamp(
+                query.date_from
+            )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Stock Turnover Ratio ─────────────────────────────────────────────
+    @Response('reports.stockTurnover')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'category_id', required: false })
+    @ApiQuery({ name: 'product_id', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'order_by', required: false })
+    @ApiQuery({ name: 'order_direction', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/stock-turnover')
+    async stockTurnover(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<StockTurnoverResponseDto>> {
+        const data = await this.reportsService.stockTurnover(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            category_id: query.category_id,
+            product_id: query.product_id,
+            search: query.search,
+            order_by: query.order_by as any,
+            order_direction: query.order_direction as any,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Excel export of the stock-turnover report (whole filtered set + TOTAL). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'category_id', required: false })
+    @ApiQuery({ name: 'product_id', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'order_by', required: false })
+    @ApiQuery({ name: 'order_direction', required: false })
+    @Get('/stock-turnover/export')
+    async stockTurnoverExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.stockTurnoverExcel(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            category_id: query.category_id,
+            product_id: query.product_id,
+            search: query.search,
+            order_by: query.order_by as any,
+            order_direction: query.order_direction as any,
+        });
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="stock-turnover_${stamp(
                 query.date_from
             )}_${stamp(query.date_to)}.xlsx"`
         );

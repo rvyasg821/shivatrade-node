@@ -6,5 +6,6 @@
     "gstBalanceBreakdown": "GST balance breakdown generated successfully.",
     "purchaseTurnover": "Purchase turnover report generated successfully.",
     "salesTurnover": "Sales turnover report generated successfully.",
-    "soInvoiceReconciliation": "Sales Order vs Invoice price reconciliation generated successfully."
+    "soInvoiceReconciliation": "Sales Order vs Invoice price reconciliation generated successfully.",
+    "stockTurnover": "Stock turnover ratio report generated successfully."
 }
