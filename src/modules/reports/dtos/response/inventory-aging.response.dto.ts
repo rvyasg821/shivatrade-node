@@ -1,13 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+/** One age bucket's qty + value (INR at weighted-avg vendor cost). */
+export class InventoryAgingBucketDto {
+    @ApiProperty() key: string;
+    @ApiProperty() label: string;
+    @ApiProperty() qty: number;
+    @ApiProperty() value: number;
+}
+
 /**
  * One product's inventory-aging figures, as of a snapshot date.
  *
- * The current on-hand qty is FIFO-attributed to its GRN receipt cohorts; any
- * unit whose receipt is older than `aging_days` counts as AGED (slow-moving).
- * Value = qty × the product's weighted-average vendor cost (INR). `undated_qty`
- * is opening / non-GRN stock with no receipt date — treated as oldest (always
- * aged), folded into aged_qty and surfaced separately.
+ * The current on-hand qty is FIFO-attributed to its GRN receipt cohorts and
+ * split into fixed age buckets — 0-30 / 31-60 / 61-90 / 91-120 / >120 days —
+ * each with qty + value (qty × weighted-average vendor cost, INR). `undated_qty`
+ * is opening / non-GRN stock with no receipt date — folded into the oldest
+ * (>120) bucket and surfaced separately.
  */
 export class InventoryAgingRowDto {
     @ApiProperty() product_id: string;
@@ -18,26 +26,19 @@ export class InventoryAgingRowDto {
     @ApiProperty() closing_qty: number;
     @ApiProperty() closing_value_inr: number;
     @ApiProperty() unit_cost: number;
-
-    @ApiProperty() aged_qty: number;
-    @ApiProperty() aged_value_inr: number;
-    @ApiProperty() aged_pct: number;
     @ApiProperty() undated_qty: number;
 
-    /** Age (days) of the oldest dated on-hand cohort. Null when only undated
-     *  stock remains (no receipt date to age from). */
-    @ApiProperty({ required: false, nullable: true })
-    oldest_days: number | null;
+    @ApiProperty({ type: [InventoryAgingBucketDto] })
+    buckets: InventoryAgingBucketDto[];
 }
 
 export class InventoryAgingTotalsDto {
     @ApiProperty() product_count: number;
     @ApiProperty() closing_qty: number;
     @ApiProperty() closing_value_inr: number;
-    @ApiProperty() aged_qty: number;
-    @ApiProperty() aged_value_inr: number;
-    @ApiProperty() aged_pct: number;
     @ApiProperty() undated_qty: number;
+    @ApiProperty({ type: [InventoryAgingBucketDto] })
+    buckets: InventoryAgingBucketDto[];
 }
 
 export class InventoryAgingPaginationDto {
@@ -48,7 +49,6 @@ export class InventoryAgingPaginationDto {
 
 export class InventoryAgingResponseDto {
     @ApiProperty() as_of_label: string;
-    @ApiProperty() aging_days: number;
     @ApiProperty({ type: [InventoryAgingRowDto] })
     rows: InventoryAgingRowDto[];
     @ApiProperty({ type: InventoryAgingTotalsDto })

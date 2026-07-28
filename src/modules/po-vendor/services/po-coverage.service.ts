@@ -245,7 +245,6 @@ export class PoCoverageService {
                 : null;
 
             const invoiced = invoicedByPoLine.get(k) || 0;
-            const invoiceable = Math.max(0, round4(a.dispatched - invoiced));
 
             // FREE stock that can cover this line's pending demand, capped by
             // the remaining shared free pool for this product.
@@ -255,6 +254,17 @@ export class PoCoverageService {
             const fromStock = round4(Math.min(Math.max(0, pending), avail));
             if (pid && fromStock > 0)
                 stockRemaining.set(pid, round4(avail - fromStock));
+
+            // Invoiceable = fulfilled qty not yet invoiced. Fulfilled = what the
+            // vendor dispatched PLUS what this line is covered from free stock
+            // (sell-from-stock). Without the `fromStock` term a line fully
+            // covered from inventory (dispatched = 0) read as 0 invoiceable, so
+            // the "Generate Invoice" button never appeared. Mirrors the invoice
+            // service's own ceiling (max(ordered, dispatched)) for stock sales.
+            const invoiceable = Math.max(
+                0,
+                round4(a.dispatched + fromStock - invoiced)
+            );
 
             // Net out the free stock that covers this line: what's still left
             // to procure (pending) and still short after pulling from stock.

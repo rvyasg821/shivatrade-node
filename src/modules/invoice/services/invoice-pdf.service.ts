@@ -11,6 +11,8 @@ import { CompanyRepository } from '@modules/company/repository/repositories/comp
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
+import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import {
     ENUM_INVOICE_GST_ROUTE,
     ENUM_SHIPPING_MODE,
@@ -71,7 +73,9 @@ export class InvoicePdfService {
         private readonly companyRepository: CompanyRepository,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly customerRepository: CustomerRepository,
-        private readonly customerAddressRepository: CustomerAddressRepository
+        private readonly customerAddressRepository: CustomerAddressRepository,
+        private readonly poRepository: PurchaseOrderRepository,
+        private readonly poLineRepository: PurchaseOrderLineRepository
     ) {}
 
     async render(
@@ -168,6 +172,63 @@ export class InvoicePdfService {
         const lines = await this.invoiceLineRepository.findByInvoiceId(
             invoiceId
         );
+
+        // Multi-SO reference numbers: an invoice can draw lines from several
+        // Sales Orders, each with its own manual `reference_no`. Resolve the
+        // distinct set (via each line's purchase_order_line_id → SO) and merge
+        // with the invoice's own reference_no (own first). All 3 PDFs print
+        // this joined list instead of the single field.
+        const refList: string[] = [];
+        const seenRef = new Set<string>();
+        const pushRef = (r?: string) => {
+            const v = (r || '').trim();
+            if (v && !seenRef.has(v)) {
+                seenRef.add(v);
+                refList.push(v);
+            }
+        };
+        pushRef(invoice.reference_no);
+        const poLineIds = Array.from(
+            new Set(
+                (lines as any[])
+                    .map((l) => l.purchase_order_line_id?.toString())
+                    .filter(Boolean)
+            )
+        );
+        if (poLineIds.length) {
+            try {
+                const poLines = await this.poLineRepository.findAll({
+                    _id: { $in: poLineIds },
+                } as any);
+                const poIds = Array.from(
+                    new Set(
+                        (poLines as any[])
+                            .map((pl) => pl.purchase_order_id?.toString())
+                            .filter(Boolean)
+                    )
+                );
+                if (poIds.length) {
+                    const pos = await this.poRepository.findAll({
+                        _id: { $in: poIds },
+                    } as any);
+                    // Preserve SO order by voucher for a stable, readable list.
+                    (pos as any[])
+                        .slice()
+                        .sort((a, b) =>
+                            String(a.voucher_no || '').localeCompare(
+                                String(b.voucher_no || '')
+                            )
+                        )
+                        .forEach((po) => pushRef(po.reference_no));
+                }
+            } catch {
+                /* non-fatal — fall back to the invoice's own reference_no */
+            }
+        }
+        // Attach onto the fetched (non-persisted) invoice object for the
+        // templates. `reference_nos` is the joined list; falls back to the
+        // single field when nothing resolves.
+        (invoice as any).reference_nos = refList.join(', ') || invoice.reference_no;
 
         const company: any =
             (await this.companyRepository.findOneById(companyId)) || {};
@@ -416,8 +477,9 @@ function referencesBlock(d: RenderData): string {
         [
             ['Quotation No.', quotationNo],
             ['Sales Order No.', poNo],
-            // Manual tracking reference carried from the Sales Order.
-            ['Reference No.', inv.reference_no],
+            // Manual tracking reference(s). For a multi-SO invoice this is the
+            // distinct list of every source SO's reference_no + the invoice's own.
+            ['Reference No.', inv.reference_nos || inv.reference_no],
             ['Shipping No.', inv.shipping_voucher_no],
         ] as Array<[string, any]>
     ).filter(([, v]) => !!v);
@@ -1067,9 +1129,9 @@ function buildPackingListHtml(d: RenderData): string {
             <td><span class="lbl">Date:</span> ${esc(docDate(inv.invoice_date))}</td>
         </tr>
         ${
-            inv.reference_no
+            inv.reference_nos || inv.reference_no
                 ? `<tr>
-            <td colspan="2"><span class="lbl">Reference No.:</span> ${esc(inv.reference_no)}</td>
+            <td colspan="2"><span class="lbl">Reference No.:</span> ${esc(inv.reference_nos || inv.reference_no)}</td>
         </tr>`
                 : ''
         }
