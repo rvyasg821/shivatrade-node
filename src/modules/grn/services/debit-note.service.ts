@@ -7,6 +7,7 @@ import {
 import { plainToInstance } from 'class-transformer';
 import { In } from 'typeorm';
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
+import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 
 import { GrnRepository } from '../repository/repositories/grn.repository';
 import { GrnLineRepository } from '../repository/repositories/grn-line.repository';
@@ -603,6 +604,7 @@ export class DebitNoteService {
                 : undefined,
             dn_date: r.dn_date,
             currency_code: r.currency_code,
+            exchange_rate: r.exchange_rate,
             total_amount: r.total_amount,
             status: r.status,
             line_count: lineCount.get(r._id.toString()) || 0,
@@ -745,6 +747,13 @@ export class DebitNoteService {
                 maximumFractionDigits: 2,
             });
         };
+        // Amounts are stored in INR; a foreign-currency Debit Note carries the
+        // POV's exchange_rate (foreign-per-₹1) + code, so render each amount in
+        // that currency with its symbol.
+        const dnRate = Number((dn as any).exchange_rate) || 1;
+        const dnSym = getCurrencySymbol(dn.currency_code || 'INR') || '₹';
+        const moneyCcy = (v: any): string =>
+            `${dnSym}${money((Number(v) || 0) * dnRate)}`;
         const rows = (dn.lines || [])
             .map(
                 (l, i) => `<tr>
@@ -757,8 +766,8 @@ export class DebitNoteService {
                 <td>${this.esc(l.part_no || '-')}</td>
                 <td>${this.esc(l.hsn_code || '-')}</td>
                 <td style="text-align:right">${this.esc(l.returned_qty || '0')} ${this.esc(l.unit || '')}</td>
-                <td style="text-align:right">${money(l.unit_price)}</td>
-                <td style="text-align:right">${money(l.line_total)}</td>
+                <td style="text-align:right">${moneyCcy(l.unit_price)}</td>
+                <td style="text-align:right">${moneyCcy(l.line_total)}</td>
                 <td>${this.esc(l.remarks || '')}</td>
             </tr>`
             )
@@ -791,7 +800,7 @@ export class DebitNoteService {
             <tbody>${rows}</tbody>
             <tfoot><tr>
               <td colspan="6" style="text-align:right">Total${cur}</td>
-              <td style="text-align:right">${money(dn.total_amount)}</td>
+              <td style="text-align:right">${moneyCcy(dn.total_amount)}</td>
               <td></td>
             </tr></tfoot>
           </table>

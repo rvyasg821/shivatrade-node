@@ -264,13 +264,20 @@ export class PoVendorPdfService {
             (s, e) => s + (Number(e.amount) || 0),
             0
         );
+        // GST is an Indian (INR) tax — it never applies to a POV priced in a
+        // foreign currency, so no CGST/SGST/IGST is printed there.
+        const gstApplies = ((pov as any).currency_code || 'INR') === 'INR';
         // Per-charge GST (operator-entered gst_pct on each charge). Charges are
         // now taxed by their own rate — not folded into the goods GST.
-        const chargeGstInrTotal = expensesSnapshot.reduce(
-            (s, e) =>
-                s + ((Number(e.amount) || 0) * (Number(e.gst_pct) || 0)) / 100,
-            0
-        );
+        const chargeGstInrTotal = gstApplies
+            ? expensesSnapshot.reduce(
+                  (s, e) =>
+                      s +
+                      ((Number(e.amount) || 0) * (Number(e.gst_pct) || 0)) /
+                          100,
+                  0
+              )
+            : 0;
 
         // GST on the goods lines (charges carry their own GST above).
         const productIds = Array.from(
@@ -305,6 +312,7 @@ export class PoVendorPdfService {
             { hsn: string; rate: number; taxable: number; gst: number }
         >();
         for (const l of pov.lines || []) {
+            if (!gstApplies) break; // foreign-currency POV → no GST buckets
             const pid = (l as any).product_id?.toString();
             const lineTotal = Number((l as any).line_total) || 0;
             const rate =
@@ -502,6 +510,10 @@ function buildPaymentVoucherHtml(
         }
     );
     const sym = pov.currency_symbol || pov.currency_code || '₹';
+    // Payment money is STORED in INR; multiply by the POV's exchange rate
+    // (foreign-per-₹1, 1 for INR) to render every amount in the POV currency.
+    const rate = Number(pov.exchange_rate) || 1;
+    const ccy = (v: any): string => ccyMoney(sym, (Number(v) || 0) * rate);
 
     const detailRows: Array<[string, string]> = [
         ['Vendor PO', esc(pov.voucher_no || '-')],
@@ -524,13 +536,15 @@ function buildPaymentVoucherHtml(
         ]);
     }
 
+    // Operator's payment note — always shown as a details row (dash when blank).
+    detailRows.push(['Notes', esc(payment.notes || '-')]);
+
     // TDS (#7): Gross (amount) → TDS → Net paid. Shown only when deducted.
     const hasTds = Number(payment.tds_amount || 0) > 0;
     const tdsBlock = hasTds
         ? `<div class="summary" style="margin-top:16px; width:60%; margin-left:auto;">
     <table>
-      <tr><td class="k">Gross Amount</td><td class="v">${ccyMoney(
-          sym,
+      <tr><td class="k">Gross Amount</td><td class="v">${ccy(
           payment.amount || 0
       )}</td></tr>
       <tr><td class="k">TDS${
@@ -541,7 +555,7 @@ function buildPaymentVoucherHtml(
                         : ''
                 })`
               : ''
-      }</td><td class="v">− ${ccyMoney(sym, payment.tds_amount || 0)}</td></tr>
+      }</td><td class="v">− ${ccy(payment.tds_amount || 0)}</td></tr>
     </table>
   </div>`
         : '';
@@ -558,16 +572,16 @@ function buildPaymentVoucherHtml(
     // spell out TDS → Net cash so the total reconciles with the Net Paid box.
     const summaryRows: Array<[string, string]> = povTdsTotal > 0
         ? [
-              ['Order Value (Payable)', ccyMoney(sym, pov.order_value || 0)],
-              ['Total Paid (Gross)', ccyMoney(sym, grossPaid)],
-              ['TDS Deducted', `− ${ccyMoney(sym, povTdsTotal)}`],
-              ['Net Cash Paid', ccyMoney(sym, netCashPaid)],
-              ['Balance Payable', ccyMoney(sym, pov.balance_payable || 0)],
+              ['Order Value (Payable)', ccy(pov.order_value || 0)],
+              ['Total Paid (Gross)', ccy(grossPaid)],
+              ['TDS Deducted', `− ${ccy(povTdsTotal)}`],
+              ['Net Cash Paid', ccy(netCashPaid)],
+              ['Balance Payable', ccy(pov.balance_payable || 0)],
           ]
         : [
-              ['Order Value (Payable)', ccyMoney(sym, pov.order_value || 0)],
-              ['Total Paid', ccyMoney(sym, pov.amount_paid || 0)],
-              ['Balance Payable', ccyMoney(sym, pov.balance_payable || 0)],
+              ['Order Value (Payable)', ccy(pov.order_value || 0)],
+              ['Total Paid', ccy(pov.amount_paid || 0)],
+              ['Balance Payable', ccy(pov.balance_payable || 0)],
           ];
 
     return `<!DOCTYPE html>
@@ -645,8 +659,7 @@ function buildPaymentVoucherHtml(
 
   <div class="amount-box">
     <span class="lbl">${hasTds ? 'Net Paid to Vendor' : 'Amount Paid'}</span>
-    <span class="val">${ccyMoney(
-        sym,
+    <span class="val">${ccy(
         hasTds ? payment.net_paid || 0 : payment.amount || 0
     )}</span>
   </div>
@@ -663,14 +676,6 @@ function buildPaymentVoucherHtml(
           .join('')}
     </table>
   </div>
-
-  ${
-      payment.notes
-          ? `<div class="section"><div class="label">Notes</div><div>${esc(
-                payment.notes
-            )}</div></div>`
-          : ''
-  }
 
   <table style="width:100%;border-collapse:collapse;margin-top:28px;">
     <tr>
@@ -830,10 +835,10 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="c">${esc(l.hsn_code || '-')}</td>
           <td class="c nowrap">${dueOn}</td>
           <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
-          <td class="num nowrap">${fmt(rateCcy)}</td>
+          <td class="num nowrap">${ccyMoney(sym, rateCcy)}</td>
           <td class="c">${esc(l.unit || '')}</td>
           <td class="c nowrap">${gstPct > 0 ? `${gstPct}%` : '-'}</td>
-          <td class="num nowrap"><b>${fmt(lineTotalCcy)}</b></td>
+          <td class="num nowrap"><b>${ccyMoney(sym, lineTotalCcy)}</b></td>
         </tr>`;
               })
               .join('')
@@ -848,7 +853,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
         </tr>`;
 
     const summaryRows =
-        sumRow('', fmt(subtotalCcy)) +
+        sumRow('', ccyMoney(sym, subtotalCcy)) +
         expensesSnapshot
             .map((e) => {
                 // Show the charge GROSS = taxable + its own GST (gst_pct).
@@ -860,17 +865,17 @@ function buildPovHtml(ctx: PovPdfContext): string {
                         ? `${e.name} (${Number(e.value) || 0}%)`
                         : e.name;
                 const label = gstPct > 0 ? `${base} (+${gstPct}% GST)` : base;
-                return sumRow(label, fmt(grossCcy));
+                return sumRow(label, ccyMoney(sym, grossCcy));
             })
             .join('') +
         (gstTotalCcy > 0
             ? interState
-                ? sumRow('Input IGST', fmt(gstTotalCcy))
-                : sumRow('Input CGST', fmt(cgstCcy)) +
-                  sumRow('Input SGST', fmt(sgstCcy))
+                ? sumRow('Input IGST', ccyMoney(sym, gstTotalCcy))
+                : sumRow('Input CGST', ccyMoney(sym, cgstCcy)) +
+                  sumRow('Input SGST', ccyMoney(sym, sgstCcy))
             : '') +
         (Math.abs(roundOffCcy) > 0.005
-            ? sumRow('Round Off', fmt(roundOffCcy))
+            ? sumRow('Round Off', ccyMoney(sym, roundOffCcy))
             : '');
 
     // Detailed GST table (Tally-style HSN/rate summary). Columns adapt to the
@@ -902,26 +907,29 @@ function buildPovHtml(ctx: PovPdfContext): string {
             const halfAmt = gstCcyRow / 2;
             const cells = interState
                 ? `<td class="num nowrap">${b.rate}%</td>
-                   <td class="num nowrap">${fmt(gstCcyRow)}</td>`
+                   <td class="num nowrap">${ccyMoney(sym, gstCcyRow)}</td>`
                 : `<td class="num nowrap">${halfRate}%</td>
-                   <td class="num nowrap">${fmt(halfAmt)}</td>
+                   <td class="num nowrap">${ccyMoney(sym, halfAmt)}</td>
                    <td class="num nowrap">${halfRate}%</td>
-                   <td class="num nowrap">${fmt(gstCcyRow - halfAmt)}</td>`;
+                   <td class="num nowrap">${ccyMoney(sym, gstCcyRow - halfAmt)}</td>`;
             return `<tr>
       <td class="c">${esc(b.hsn)}</td>
-      <td class="num nowrap">${fmt(taxableCcyRow)}</td>
+      <td class="num nowrap">${ccyMoney(sym, taxableCcyRow)}</td>
       ${cells}
-      <td class="num nowrap"><b>${fmt(gstCcyRow)}</b></td>
+      <td class="num nowrap"><b>${ccyMoney(sym, gstCcyRow)}</b></td>
     </tr>`;
         })
         .join('')}
     <tr>
       <td class="num"><b>Total</b></td>
-      <td class="num nowrap"><b>${fmt(gstBuckets.reduce((s, b) => s + b.taxable * rate, 0))}</b></td>
+      <td class="num nowrap"><b>${ccyMoney(
+          sym,
+          gstBuckets.reduce((s, b) => s + b.taxable * rate, 0)
+      )}</b></td>
       ${interState ? '<td></td>' : '<td></td><td></td>'}
       <td></td>
       ${interState ? '' : '<td></td>'}
-      <td class="num nowrap"><b>${fmt(gstTotalCcy)}</b></td>
+      <td class="num nowrap"><b>${ccyMoney(sym, gstTotalCcy)}</b></td>
     </tr>
   </tbody>
 </table>`
@@ -1031,6 +1039,17 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="meta">${meta('LR No.', pov.lr_no)}</td>
         </tr>
         <tr>
+          <td class="meta">${meta('Currency', pov.currency_code || 'INR')}</td>
+          <td class="meta">${meta(
+              'Exchange Rate',
+              rate !== 1
+                  ? `₹${(1 / rate).toLocaleString('en-IN', {
+                        maximumFractionDigits: 4,
+                    })} per 1 ${pov.currency_code}`
+                  : ''
+          )}</td>
+        </tr>
+        <tr>
           <td class="meta" colspan="2" style="height:96px;vertical-align:top">${meta('Terms of Delivery', deliveryTerms)}</td>
         </tr>
       </table>
@@ -1063,7 +1082,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
       <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
       <td></td><td></td><td></td>
-      <td class="num nowrap"><b>${fmt(grandTotalCcy)} ${esc(sym)}</b></td>
+      <td class="num nowrap"><b>${ccyMoney(sym, grandTotalCcy)}</b></td>
     </tr>
   </tbody>
 </table>

@@ -52,6 +52,7 @@ export class DebitNoteListResponseDto {
     @ApiProperty({ required: false }) vendor_name?: string;
     @ApiProperty({ required: false }) dn_date?: string;
     @ApiProperty({ required: false }) currency_code?: string;
+    @ApiProperty({ required: false }) exchange_rate?: string;
     @ApiProperty({ required: false }) total_amount?: string;
     @ApiProperty() status: string;
     @ApiProperty({ required: false }) line_count?: number;

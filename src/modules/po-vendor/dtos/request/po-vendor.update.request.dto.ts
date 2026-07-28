@@ -141,6 +141,19 @@ export class PoVendorUpdateRequestDto {
     @IsOptional()
     delivery_address_id?: string;
 
+    // ── Multi-currency (draft only; mirrors Quotation/SO) ────────────
+    /** Change the POV display currency while still a draft. Amounts stay
+     *  stored in INR; this + the rate only drive view / PDF rendering. */
+    @IsString()
+    @IsOptional()
+    @MaxLength(10)
+    currency_code?: string;
+
+    /** Foreign-per-₹1 rate for `currency_code`. Forced to 1 for home. */
+    @IsNumberString({}, { message: 'exchange_rate must be a numeric string' })
+    @IsOptional()
+    exchange_rate?: string;
+
     // ── Vendor terms printed on the POV PDF (free text, draft only) ──
     @IsString()
     @IsOptional()

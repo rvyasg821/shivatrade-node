@@ -140,6 +140,25 @@ export class PoVendorRecoverTermsDto {
 }
 
 /**
+ * Per-vendor display currency for that vendor's spawned POV. Amounts stay
+ * stored in INR; currency + rate only drive view/PDF rendering, mirroring
+ * Quotation/SO. Each vendor's POV can be in a different currency; omit to
+ * fall back to the source Sales Order's currency.
+ */
+export class PoVendorRecoverCurrencyDto {
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    currency_code?: string;
+
+    /** Foreign-per-₹1 rate for `currency_code`. Forced to 1 for home. */
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'exchange_rate must be a numeric string' })
+    @IsOptional()
+    exchange_rate?: string;
+}
+
+/**
  * Batch recover request — used by `POST /admin/po-vendor/recover/:poId`.
  * Groups assignments by vendor_id and spawns one POV per vendor in a
  * single logical operation.
@@ -170,6 +189,14 @@ export class PoVendorRecoverRequestDto {
     @IsOptional()
     @IsString()
     internal_notes?: string;
+
+    /** Per-vendor display currency + rate. Key = vendor_id (UUID). Each
+     *  spawned POV can be in its own currency; a vendor omitted here falls
+     *  back to the source Sales Order's currency. */
+    @ApiProperty({ required: false, type: Object })
+    @IsObject()
+    @IsOptional()
+    vendor_currencies?: Record<string, PoVendorRecoverCurrencyDto>;
 
     /** Optional per-vendor expense list applied to each spawned POV.
      *  Key = vendor_id (UUID), value = array of expense picks. */
