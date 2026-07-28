@@ -167,6 +167,42 @@ export class PoVendorService {
     // ─── Vendor expense snapshot builder ────────────────────────────────
 
     /**
+     * Resolve the POV's display currency + exchange rate (foreign-per-₹1).
+     * All POV money stays STORED in INR; this only decides how it renders in
+     * the view / PDF, mirroring Quotation/SO/Invoice. Priority:
+     *   1. an explicit request currency/rate,
+     *   2. a fallback (e.g. the source Sales Order's currency),
+     *   3. the company home currency (rate 1).
+     * The home currency always pins the rate to 1.
+     */
+    private async resolvePovCurrency(
+        companyId: string,
+        reqCode?: string,
+        reqRate?: string | number,
+        fallbackCode?: string,
+        fallbackRate?: string | number
+    ): Promise<{ currency_code: string; exchange_rate: string }> {
+        const homeCurrency = await this.currencyService
+            .getDefaultCurrency(companyId)
+            .catch(() => null);
+        const homeCode = homeCurrency?.code || 'INR';
+
+        const code =
+            (reqCode && String(reqCode).trim()) ||
+            (fallbackCode && String(fallbackCode).trim()) ||
+            homeCode;
+
+        if (code === homeCode) {
+            return { currency_code: code, exchange_rate: '1' };
+        }
+
+        const reqR = num(reqRate);
+        const fbR = num(fallbackRate);
+        const rate = reqR > 0 ? reqR : fbR > 0 ? fbR : 1;
+        return { currency_code: code, exchange_rate: String(rate) };
+    }
+
+    /**
      * Resolve a list of expense picks against the expense master and
      * return the snapshot rows (with code/name filled, amount computed
      * on subtotal). Validates:
@@ -523,13 +559,18 @@ export class PoVendorService {
             }
         }
 
-        // Snapshot the company's home currency. POV is always in home
-        // currency; storing it lets historical POVs render correctly
-        // even if the company later switches base currency.
-        const homeCurrency = await this.currencyService
-            .getDefaultCurrency(companyId)
-            .catch(() => null);
-        const currency_code = homeCurrency?.code || 'INR';
+        // Multi-currency: default to the source Sales Order's currency, but
+        // honour an explicit override on the request (a vendor may bill in a
+        // different currency than the customer's SO). Amounts stay stored in
+        // INR; exchange_rate (foreign-per-₹1) drives the view/PDF like a
+        // Quotation.
+        const { currency_code, exchange_rate } = await this.resolvePovCurrency(
+            companyId,
+            (data as any).currency_code,
+            (data as any).exchange_rate,
+            po.currency_code,
+            po.exchange_rate
+        );
 
         // Pre-compute the subtotal so percent-typed expenses snapshot
         // against the right base.
@@ -566,7 +607,7 @@ export class PoVendorService {
             payment_terms: (data as any).payment_terms || null,
             delivery_terms: (data as any).delivery_terms || null,
             currency_code,
-            exchange_rate: '1',
+            exchange_rate,
             status: ENUM_PO_VENDOR_STATUS.DRAFT,
             expenses_snapshot,
         } as any);
@@ -761,10 +802,14 @@ export class PoVendorService {
                     : undefined,
             }
         );
-        const homeCurrency = await this.currencyService
-            .getDefaultCurrency(companyId)
-            .catch(() => null);
-        const currency_code = homeCurrency?.code || 'INR';
+        // Multi-currency: honour the request's currency/rate (defaults to the
+        // company home currency). Amounts stay stored in INR; exchange_rate
+        // (foreign-per-₹1) drives the view/PDF like a Quotation.
+        const { currency_code, exchange_rate } = await this.resolvePovCurrency(
+            companyId,
+            (data as any).currency_code,
+            (data as any).exchange_rate
+        );
 
         let preSubtotal = 0;
         for (const ln of data.lines) {
@@ -792,7 +837,7 @@ export class PoVendorService {
             payment_terms: data.payment_terms || null,
             delivery_terms: data.delivery_terms || null,
             currency_code,
-            exchange_rate: '1',
+            exchange_rate,
             status: (ctx?.status as any) || ENUM_PO_VENDOR_STATUS.DRAFT,
             expenses_snapshot,
         } as any);
@@ -1332,6 +1377,14 @@ export class PoVendorService {
                     delivery_terms?: string;
                 }
             >;
+            /** Per-vendor display currency + rate. Key = vendor_id. */
+            vendor_currencies?: Record<
+                string,
+                {
+                    currency_code?: string;
+                    exchange_rate?: string;
+                }
+            >;
         },
         createdBy: string
     ): Promise<{ created: PoVendorDoc[]; all_from_stock?: boolean }> {
@@ -1559,6 +1612,12 @@ export class PoVendorService {
                     data.vendor_terms?.[vendorId]?.dispatched_through,
                 payment_terms: data.vendor_terms?.[vendorId]?.payment_terms,
                 delivery_terms: data.vendor_terms?.[vendorId]?.delivery_terms,
+                // Per-vendor display currency (createFromPo falls back to the
+                // source SO's currency when this vendor has none).
+                currency_code:
+                    data.vendor_currencies?.[vendorId]?.currency_code,
+                exchange_rate:
+                    data.vendor_currencies?.[vendorId]?.exchange_rate,
             };
             const row = await this.createFromPo(
                 companyId,
@@ -1694,6 +1753,10 @@ export class PoVendorService {
         const draftEditable = new Set([
             'delivery_address',
             'delivery_address_id',
+            // Display currency + rate — draft only. Amounts stay stored in INR;
+            // these just re-target how the POV renders (view / PDF).
+            'currency_code',
+            'exchange_rate',
             'lines',
             // GST rates for existing lines. Draft only: once dispatched the PDF
             // is with the vendor and the tax is frozen, same as the terms below.
@@ -1797,6 +1860,22 @@ export class PoVendorService {
             data as any;
         Object.assign(row, scalar);
         if (status) row.status = status;
+
+        // Normalise currency + rate when either changed: the home currency
+        // always pins exchange_rate to 1, and a foreign one keeps a positive
+        // rate. Amounts remain stored in INR either way.
+        if (
+            (scalar as any).currency_code !== undefined ||
+            (scalar as any).exchange_rate !== undefined
+        ) {
+            const resolved = await this.resolvePovCurrency(
+                companyId,
+                row.currency_code,
+                row.exchange_rate
+            );
+            row.currency_code = resolved.currency_code;
+            row.exchange_rate = resolved.exchange_rate;
+        }
 
         // Rebuild expenses_snapshot if the caller sent a new list.
         // Compute subtotal from existing POV lines so the % base is
@@ -2555,10 +2634,15 @@ export class PoVendorService {
                 taxByProduct.set(p._id.toString(), num(p.tax_pct));
         }
         const chargesPct = linesInr > 0 ? chargesInr / linesInr : 0;
+        // GST is an Indian (INR) tax — it does not apply to a POV priced in a
+        // foreign currency. Skip it entirely so the payable is goods + charges.
+        const gstApplies = (row.currency_code || 'INR') === 'INR';
         let gstInr = 0;
-        for (const l of lines) {
-            const taxPct = taxByProduct.get(l.product_id?.toString()) || 0;
-            gstInr += (num(l.line_total) * (1 + chargesPct) * taxPct) / 100;
+        if (gstApplies) {
+            for (const l of lines) {
+                const taxPct = taxByProduct.get(l.product_id?.toString()) || 0;
+                gstInr += (num(l.line_total) * (1 + chargesPct) * taxPct) / 100;
+            }
         }
         // POV is in home currency (exchange_rate = 1); round to a whole unit to
         // match the PDF grand total.
@@ -2917,24 +3001,32 @@ export class PoVendorService {
                 (s, e) => s + num(e.amount),
                 0
             );
+            // GST is an Indian (INR) tax — it never applies to a POV priced in
+            // a foreign currency, so it stays 0 there (goods + charges only).
+            const gstApplies = (r.currency_code || 'INR') === 'INR';
             let gstInr = 0;
-            for (const l of linesRaw) {
-                // Line's own tax_pct wins (standalone POVs set GST per line);
-                // fall back to the product master — same rule as the POV PDF.
-                const taxPct =
-                    num((l as any).tax_pct) ||
-                    num(
-                        (productMap.get(l.product_id?.toString()) as any)
-                            ?.tax_pct
-                    );
-                gstInr += (num(l.line_total) * taxPct) / 100; // goods GST
+            if (gstApplies) {
+                for (const l of linesRaw) {
+                    // Line's own tax_pct wins (standalone POVs set GST per line);
+                    // fall back to the product master — same rule as the POV PDF.
+                    const taxPct =
+                        num((l as any).tax_pct) ||
+                        num(
+                            (productMap.get(l.product_id?.toString()) as any)
+                                ?.tax_pct
+                        );
+                    gstInr += (num(l.line_total) * taxPct) / 100; // goods GST
+                }
             }
             // Per-charge GST (operator-entered gst_pct on each charge) — charges
-            // are taxed by their own rate, not folded into the goods GST.
-            const chargeGstInr = expensesSnap.reduce(
-                (s, e) => s + (num(e.amount) * num(e.gst_pct)) / 100,
-                0
-            );
+            // are taxed by their own rate, not folded into the goods GST. Also
+            // suppressed for a foreign-currency POV.
+            const chargeGstInr = gstApplies
+                ? expensesSnap.reduce(
+                      (s, e) => s + (num(e.amount) * num(e.gst_pct)) / 100,
+                      0
+                  )
+                : 0;
             const orderValue = Math.round(
                 linesInr + chargesInr + gstInr + chargeGstInr
             );

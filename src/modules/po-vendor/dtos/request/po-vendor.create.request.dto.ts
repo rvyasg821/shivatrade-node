@@ -134,6 +134,20 @@ export class PoVendorCreateRequestDto {
     @MaxLength(2000)
     internal_notes?: string;
 
+    // ── Multi-currency (mirrors Quotation/SO) ────────────────────────
+    /** POV display currency. Amounts stay stored in INR; this + the rate
+     *  only drive how the POV renders (view / PDF). Defaults to the source
+     *  Sales Order's currency; omit for the company home currency. */
+    @IsString()
+    @IsOptional()
+    @MaxLength(10)
+    currency_code?: string;
+
+    /** Foreign-per-₹1 rate for `currency_code`. Forced to 1 for home. */
+    @IsNumberString({}, { message: 'exchange_rate must be a numeric string' })
+    @IsOptional()
+    exchange_rate?: string;
+
     // ── Vendor terms printed on the POV PDF (free text) ──────────────
     @IsString()
     @IsOptional()
