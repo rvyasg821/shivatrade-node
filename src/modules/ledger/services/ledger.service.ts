@@ -426,8 +426,16 @@ export class LedgerService {
                         party_id: pov.vendor_id,
                         party_name: pov.vendor_name,
                         direction: 'debit',
-                        amount: String(pay.amount ?? '0'),
-                        currency_code: pay.currency_code || 'INR',
+                        // Vendor payments are STORED in INR; express in the POV's
+                        // currency (× exchange_rate) so the value matches the
+                        // currency_code symbol shown in the register.
+                        amount: String(
+                            round2(
+                                num(pay.amount) *
+                                    (Number(pov.exchange_rate) || 1)
+                            )
+                        ),
+                        currency_code: pov.currency_code || 'INR',
                         particulars: `Payment of ${pov.voucher_no || ''}`.trim(),
                         // Vendor PO this payment settles → deep-link target.
                         document_voucher_no: pov.voucher_no || undefined,

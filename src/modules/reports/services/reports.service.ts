@@ -41,6 +41,10 @@ import {
     SoInvoiceReconciliationResponseDto,
     SoInvoiceReconRowDto,
 } from '../dtos/response/so-invoice-reconciliation.response.dto';
+import {
+    StockTurnoverResponseDto,
+    StockTurnoverRowDto,
+} from '../dtos/response/stock-turnover.response.dto';
 
 export interface IProductProfitabilityQuery {
     date_from?: string;
@@ -48,6 +52,18 @@ export interface IProductProfitabilityQuery {
     category_id?: string;
     search?: string;
     order_by?: 'profit' | 'revenue' | 'cost' | 'qty' | 'margin';
+    order_direction?: 'asc' | 'desc';
+    page?: number;
+    perPage?: number;
+}
+
+export interface IStockTurnoverQuery {
+    date_from?: string;
+    date_to?: string;
+    category_id?: string;
+    product_id?: string;
+    search?: string;
+    order_by?: 'ratio' | 'dio' | 'cogs' | 'inventory' | 'sold' | 'name';
     order_direction?: 'asc' | 'desc';
     page?: number;
     perPage?: number;
@@ -2368,6 +2384,299 @@ export class ReportsService {
             [`SO vs Invoice — Price Reconciliation — ${result.period_label}`],
             [
                 'Row amounts are in each invoice’s currency (* = SO currency differed, converted at invoice rate). Totals are INR.',
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Stock Turnover Ratio ─────────────────────────────────────────────
+    /**
+     * How many times inventory is sold & replaced over the period, per product
+     * and overall. Everything is valued in INR at each product's WEIGHTED-AVERAGE
+     * vendor cost (Σ accepted GRN qty × POV unit_price ÷ Σ accepted qty), so the
+     * two sides of the ratio are consistent:
+     *
+     *   turnover_ratio = COGS ÷ average inventory value
+     *   COGS           = qty sold (issued invoices in range) × unit_cost
+     *   avg inventory  = ((opening on-hand + closing on-hand) ÷ 2) × unit_cost
+     *       opening on-hand = Σ stock_movements.qty before the start date
+     *       closing on-hand = Σ stock_movements.qty through the end date
+     *   dio_days       = period_days ÷ turnover_ratio   (days stock sits)
+     *
+     * Only products with sales OR held stock in the window are returned.
+     */
+    async stockTurnover(
+        companyId: string,
+        query: IStockTurnoverQuery
+    ): Promise<StockTurnoverResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+
+        // Inclusive day count for DIO.
+        const periodDays =
+            Math.max(
+                1,
+                Math.round(
+                    (new Date(`${to}T00:00:00`).getTime() -
+                        new Date(`${from}T00:00:00`).getTime()) /
+                        86400000
+                ) + 1
+            );
+
+        const params: any[] = [companyId, from, to];
+        const filters: string[] = [];
+        if (query.category_id) {
+            params.push(query.category_id);
+            filters.push(`AND p.category_id = $${params.length}`);
+        }
+        if (query.product_id) {
+            params.push(query.product_id);
+            filters.push(`AND p._id = $${params.length}`);
+        }
+        if (query.search && query.search.trim()) {
+            params.push(`%${query.search.trim()}%`);
+            filters.push(
+                `AND (p.name ILIKE $${params.length} OR p.code ILIKE $${params.length})`
+            );
+        }
+
+        const rowsRaw: any[] = await this.dataSource.query(
+            `SELECT
+                 p._id                              AS product_id,
+                 p.code                             AS product_code,
+                 p.name                             AS product_name,
+                 cat.name                           AS category_name,
+                 COALESCE(cost.cost_sum, 0)         AS cost_sum,
+                 COALESCE(cost.qty_sum, 0)          AS cost_qty_sum,
+                 COALESCE(sold.qty_sold, 0)         AS qty_sold,
+                 COALESCE(oh.opening, 0)            AS opening,
+                 COALESCE(oh.closing, 0)            AS closing
+             FROM products p
+             LEFT JOIN categories cat ON cat._id = p.category_id
+             LEFT JOIN (
+                 SELECT gl.product_id,
+                        SUM(gl.accepted_qty::numeric * povl.unit_price::numeric) AS cost_sum,
+                        SUM(gl.accepted_qty::numeric)                            AS qty_sum
+                 FROM grn_lines gl
+                 JOIN grns g
+                   ON g._id = gl.grn_id
+                  AND g.company_id = $1
+                  AND g.soft_delete = false
+                  AND g.status <> 'cancelled'
+                 JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+                 WHERE gl.accepted_qty::numeric > 0
+                 GROUP BY gl.product_id
+             ) cost ON cost.product_id = p._id
+             LEFT JOIN (
+                 SELECT il.product_id, SUM(il.qty::numeric) AS qty_sold
+                 FROM invoice_lines il
+                 JOIN invoices i
+                   ON i._id = il.invoice_id
+                  AND i.company_id = $1
+                  AND i.soft_delete = false
+                  AND i.status IN ('issued', 'partially_paid', 'paid')
+                  AND i.invoice_date >= $2
+                  AND i.invoice_date <= $3
+                 GROUP BY il.product_id
+             ) sold ON sold.product_id = p._id
+             LEFT JOIN (
+                 SELECT product_id,
+                        SUM(CASE WHEN "createdAt" < $2::date
+                                 THEN qty::numeric ELSE 0 END) AS opening,
+                        SUM(CASE WHEN "createdAt" < ($3::date + INTERVAL '1 day')
+                                 THEN qty::numeric ELSE 0 END) AS closing
+                 FROM stock_movements
+                 WHERE company_id = $1 AND deleted = false
+                 GROUP BY product_id
+             ) oh ON oh.product_id = p._id
+             WHERE p.company_id = $1 AND p.soft_delete = false
+             ${filters.join('\n             ')}`,
+            params
+        );
+
+        let rows: StockTurnoverRowDto[] = rowsRaw
+            .map((r) => {
+                const opening = r2(n(r.opening));
+                const closing = r2(n(r.closing));
+                const avgQty = r2((opening + closing) / 2);
+                const costQty = n(r.cost_qty_sum);
+                const unitCost = costQty > 0 ? r2(n(r.cost_sum) / costQty) : 0;
+                const qtySold = r2(n(r.qty_sold));
+                // Inventory can't be negative in value terms; clamp.
+                const avgInvValue = r2(Math.max(0, avgQty) * unitCost);
+                const cogs = r2(qtySold * unitCost);
+                const ratio =
+                    avgInvValue > 0 ? r2(cogs / avgInvValue) : null;
+                const dio =
+                    ratio && ratio > 0 ? r2(periodDays / ratio) : null;
+                return {
+                    product_id: r.product_id,
+                    product_code: r.product_code || undefined,
+                    product_name: r.product_name,
+                    category_name: r.category_name || undefined,
+                    opening_qty: opening,
+                    closing_qty: closing,
+                    avg_qty: avgQty,
+                    unit_cost: unitCost,
+                    avg_inventory_value_inr: avgInvValue,
+                    qty_sold: qtySold,
+                    cogs_inr: cogs,
+                    turnover_ratio: ratio,
+                    dio_days: dio,
+                } as StockTurnoverRowDto;
+            })
+            // Drop products with no sales and no stock in the window — they add
+            // only noise (every catalogue item would otherwise list at 0).
+            .filter(
+                (r) =>
+                    r.qty_sold !== 0 ||
+                    r.opening_qty !== 0 ||
+                    r.closing_qty !== 0
+            );
+
+        // Sort. `ratio`/`dio` push nulls to the end regardless of direction.
+        const dir = query.order_direction === 'asc' ? 1 : -1;
+        const orderBy = query.order_by || 'ratio';
+        const numOr = (v: number | null, fallback: number): number =>
+            v == null ? fallback : v;
+        rows.sort((a, b) => {
+            switch (orderBy) {
+                case 'name':
+                    return (
+                        (a.product_name || '').localeCompare(
+                            b.product_name || ''
+                        ) * dir
+                    );
+                case 'cogs':
+                    return (a.cogs_inr - b.cogs_inr) * dir;
+                case 'inventory':
+                    return (
+                        (a.avg_inventory_value_inr -
+                            b.avg_inventory_value_inr) *
+                        dir
+                    );
+                case 'sold':
+                    return (a.qty_sold - b.qty_sold) * dir;
+                case 'dio':
+                    // Nulls last.
+                    return (
+                        (numOr(a.dio_days, Number.POSITIVE_INFINITY) -
+                            numOr(b.dio_days, Number.POSITIVE_INFINITY)) *
+                        dir
+                    );
+                case 'ratio':
+                default:
+                    return (
+                        (numOr(a.turnover_ratio, -1) -
+                            numOr(b.turnover_ratio, -1)) *
+                        dir
+                    );
+            }
+        });
+
+        const totalCogs = r2(rows.reduce((s, r) => s + r.cogs_inr, 0));
+        const totalInv = r2(
+            rows.reduce((s, r) => s + r.avg_inventory_value_inr, 0)
+        );
+        const totalSold = r2(rows.reduce((s, r) => s + r.qty_sold, 0));
+        const overallRatio = totalInv > 0 ? r2(totalCogs / totalInv) : null;
+        const overallDio =
+            overallRatio && overallRatio > 0
+                ? r2(periodDays / overallRatio)
+                : null;
+
+        const perPage = Math.max(
+            1,
+            Math.min(100000, Number(query.perPage) || 25)
+        );
+        const page = Math.max(1, Number(query.page) || 1);
+        const start = (page - 1) * perPage;
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            period_days: periodDays,
+            rows: rows.slice(start, start + perPage),
+            totals: {
+                product_count: rows.length,
+                qty_sold: totalSold,
+                avg_inventory_value_inr: totalInv,
+                cogs_inr: totalCogs,
+                turnover_ratio: overallRatio,
+                dio_days: overallDio,
+            },
+            currency: 'INR',
+            pagination: {
+                total: rows.length,
+                perPage,
+                orderBy,
+            },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer, same column order + TOTAL row. */
+    async stockTurnoverExcel(
+        companyId: string,
+        query: IStockTurnoverQuery
+    ): Promise<Buffer> {
+        const result = await this.stockTurnover(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000,
+        });
+        const dash = (v: number | null): string | number =>
+            v == null ? '—' : v;
+        const header = [
+            'Product',
+            'Code',
+            'Category',
+            'Opening Qty',
+            'Closing Qty',
+            'Avg Qty',
+            'Unit Cost (INR)',
+            'Avg Inventory Value (INR)',
+            'Qty Sold',
+            'COGS (INR)',
+            'Turnover Ratio',
+            'DIO (days)',
+        ];
+        const body = result.rows.map((r) => [
+            r.product_name,
+            r.product_code || '',
+            r.category_name || '',
+            r.opening_qty,
+            r.closing_qty,
+            r.avg_qty,
+            r.unit_cost,
+            r.avg_inventory_value_inr,
+            r.qty_sold,
+            r.cogs_inr,
+            dash(r.turnover_ratio),
+            dash(r.dio_days),
+        ]);
+        const totalRow = [
+            'TOTAL',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            result.totals.avg_inventory_value_inr,
+            result.totals.qty_sold,
+            result.totals.cogs_inr,
+            dash(result.totals.turnover_ratio),
+            dash(result.totals.dio_days),
+        ];
+        const aoa: (string | number)[][] = [
+            [`Stock Turnover Ratio — ${result.period_label} (INR)`],
+            [
+                'Ratio = COGS ÷ avg inventory value, at weighted-avg vendor cost. DIO = days stock sits before it sells.',
             ],
             [],
             header,
