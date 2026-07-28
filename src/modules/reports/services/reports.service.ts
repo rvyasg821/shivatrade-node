@@ -45,6 +45,10 @@ import {
     StockTurnoverResponseDto,
     StockTurnoverRowDto,
 } from '../dtos/response/stock-turnover.response.dto';
+import {
+    InventoryHoldingDaysResponseDto,
+    InventoryHoldingDaysRowDto,
+} from '../dtos/response/inventory-holding-days.response.dto';
 
 export interface IProductProfitabilityQuery {
     date_from?: string;
@@ -64,6 +68,18 @@ export interface IStockTurnoverQuery {
     product_id?: string;
     search?: string;
     order_by?: 'ratio' | 'dio' | 'cogs' | 'inventory' | 'sold' | 'name';
+    order_direction?: 'asc' | 'desc';
+    page?: number;
+    perPage?: number;
+}
+
+export interface IInventoryHoldingDaysQuery {
+    date_from?: string;
+    date_to?: string;
+    category_id?: string;
+    product_id?: string;
+    search?: string;
+    order_by?: 'days' | 'sold' | 'name';
     order_direction?: 'asc' | 'desc';
     page?: number;
     perPage?: number;
@@ -140,6 +156,8 @@ const n = (v: any): number => {
     return Number.isFinite(x) ? x : 0;
 };
 const r2 = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
+const round4 = (v: number): number =>
+    Math.round((v + Number.EPSILON) * 10000) / 10000;
 const pad2 = (x: number): string => String(x).padStart(2, '0');
 const ddmmyyyy = (d: Date): string =>
     `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${d.getFullYear()}`;
@@ -2677,6 +2695,300 @@ export class ReportsService {
             [`Stock Turnover Ratio — ${result.period_label} (INR)`],
             [
                 'Ratio = COGS ÷ avg inventory value, at weighted-avg vendor cost. DIO = days stock sits before it sells.',
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Inventory Holding Days ───────────────────────────────────────────
+    /**
+     * Average number of days a unit was HELD IN STOCK before it sold. Anchored
+     * on issued invoices (a unit only counts once it has actually sold). FIFO
+     * cohort matching per product:
+     *
+     *   - Receipt cohorts = confirmed GRN accepted_qty at grn_date (oldest-first)
+     *   - Sale events      = issued invoice_line qty at invoice_date (oldest-first)
+     *   - Walk ALL sales up to `date_to` in order, consuming receipts FIFO so
+     *     pre-range sales correctly deplete early cohorts; each matched slice
+     *     whose SALE date is in [from, to] contributes (qty × holding_days) to
+     *     the average, where holding_days = max(0, sale_date − receipt_date).
+     *   - avg = Σ(qty × days) ÷ Σ qty (qty-weighted), per product and pooled.
+     *
+     * Sold qty with no receipt on record (opening stock) is reported as
+     * `unmatched_qty`, excluded from the average.
+     */
+    async inventoryHoldingDays(
+        companyId: string,
+        query: IInventoryHoldingDaysQuery
+    ): Promise<InventoryHoldingDaysResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+
+        // Which products to emit (metadata + filters).
+        const pParams: any[] = [companyId];
+        const pFilters: string[] = [];
+        if (query.category_id) {
+            pParams.push(query.category_id);
+            pFilters.push(`AND p.category_id = $${pParams.length}`);
+        }
+        if (query.product_id) {
+            pParams.push(query.product_id);
+            pFilters.push(`AND p._id = $${pParams.length}`);
+        }
+        if (query.search && query.search.trim()) {
+            pParams.push(`%${query.search.trim()}%`);
+            pFilters.push(
+                `AND (p.name ILIKE $${pParams.length} OR p.code ILIKE $${pParams.length})`
+            );
+        }
+        const prods: any[] = await this.dataSource.query(
+            `SELECT p._id       AS product_id,
+                    p.code      AS product_code,
+                    p.name      AS product_name,
+                    cat.name    AS category_name
+             FROM products p
+             LEFT JOIN categories cat ON cat._id = p.category_id
+             WHERE p.company_id = $1 AND p.soft_delete = false
+             ${pFilters.join('\n             ')}`,
+            pParams
+        );
+        const metaById = new Map<string, any>(
+            prods.map((r) => [r.product_id, r])
+        );
+
+        // Sales up to `to` (pre-range sales still deplete cohorts correctly).
+        const salesRaw: any[] = metaById.size
+            ? await this.dataSource.query(
+                  `SELECT il.product_id AS product_id,
+                          i.invoice_date AS d,
+                          SUM(il.qty::numeric) AS qty
+                   FROM invoice_lines il
+                   JOIN invoices i
+                     ON i._id = il.invoice_id
+                    AND i.company_id = $1
+                    AND i.soft_delete = false
+                    AND i.status IN ('issued', 'partially_paid', 'paid')
+                    AND i.invoice_date <= $2
+                   GROUP BY il.product_id, i.invoice_date`,
+                  [companyId, to]
+              )
+            : [];
+
+        // Receipts up to `to`.
+        const recvRaw: any[] = metaById.size
+            ? await this.dataSource.query(
+                  `SELECT gl.product_id AS product_id,
+                          g.grn_date AS d,
+                          SUM(gl.accepted_qty::numeric) AS qty
+                   FROM grn_lines gl
+                   JOIN grns g
+                     ON g._id = gl.grn_id
+                    AND g.company_id = $1
+                    AND g.soft_delete = false
+                    AND g.status = 'confirmed'
+                   WHERE gl.accepted_qty::numeric > 0
+                     AND g.grn_date <= $2
+                   GROUP BY gl.product_id, g.grn_date`,
+                  [companyId, to]
+              )
+            : [];
+
+        const isoOf = (x: any): string =>
+            !x ? '' : x instanceof Date ? isoDate(x) : String(x).slice(0, 10);
+        const dayDiff = (a: string, b: string): number =>
+            Math.round(
+                (new Date(`${b}T00:00:00`).getTime() -
+                    new Date(`${a}T00:00:00`).getTime()) /
+                    86400000
+            );
+
+        const salesByProduct = new Map<string, Array<{ d: string; qty: number }>>();
+        for (const s of salesRaw) {
+            const arr = salesByProduct.get(s.product_id) || [];
+            arr.push({ d: isoOf(s.d), qty: n(s.qty) });
+            salesByProduct.set(s.product_id, arr);
+        }
+        const recvByProduct = new Map<string, Array<{ d: string; qty: number }>>();
+        for (const r of recvRaw) {
+            const arr = recvByProduct.get(r.product_id) || [];
+            arr.push({ d: isoOf(r.d), qty: n(r.qty) });
+            recvByProduct.set(r.product_id, arr);
+        }
+
+        let rows: InventoryHoldingDaysRowDto[] = [];
+        for (const [pid, meta] of metaById.entries()) {
+            const sales = (salesByProduct.get(pid) || [])
+                .slice()
+                .sort((a, b) => (a.d < b.d ? -1 : 1));
+            const receipts = (recvByProduct.get(pid) || [])
+                .map((r) => ({ ...r }))
+                .sort((a, b) => (a.d < b.d ? -1 : 1));
+
+            let ri = 0;
+            let remaining = receipts[0]?.qty || 0;
+            let wSum = 0;
+            let qMatched = 0;
+            let unmatched = 0;
+            let minD: number | null = null;
+            let maxD: number | null = null;
+            let firstSale: string | undefined;
+            let lastSale: string | undefined;
+
+            for (const sale of sales) {
+                let need = sale.qty;
+                const inRange = sale.d >= from && sale.d <= to;
+                if (inRange) {
+                    if (!firstSale) firstSale = sale.d;
+                    lastSale = sale.d;
+                }
+                while (need > 1e-9 && ri < receipts.length) {
+                    if (remaining <= 1e-9) {
+                        ri += 1;
+                        remaining = receipts[ri]?.qty || 0;
+                        continue;
+                    }
+                    const take = Math.min(need, remaining);
+                    remaining = round4(remaining - take);
+                    need = round4(need - take);
+                    if (inRange) {
+                        const days = Math.max(0, dayDiff(receipts[ri].d, sale.d));
+                        wSum += take * days;
+                        qMatched = round4(qMatched + take);
+                        minD = minD == null ? days : Math.min(minD, days);
+                        maxD = maxD == null ? days : Math.max(maxD, days);
+                    }
+                }
+                // Sold beyond every receipt on record → no cohort to match.
+                if (need > 1e-9 && inRange) unmatched = round4(unmatched + need);
+            }
+
+            // Only products with a sale in the window are relevant.
+            if (qMatched <= 1e-9 && unmatched <= 1e-9) continue;
+            rows.push({
+                product_id: pid,
+                product_code: meta.product_code || undefined,
+                product_name: meta.product_name,
+                category_name: meta.category_name || undefined,
+                qty_sold_matched: r2(qMatched),
+                avg_holding_days: qMatched > 0 ? r2(wSum / qMatched) : 0,
+                min_holding_days: minD ?? 0,
+                max_holding_days: maxD ?? 0,
+                first_sale_date: firstSale,
+                last_sale_date: lastSale,
+                unmatched_qty: r2(unmatched),
+            });
+        }
+
+        const dir = query.order_direction === 'asc' ? 1 : -1;
+        const orderBy = query.order_by || 'days';
+        rows.sort((a, b) => {
+            switch (orderBy) {
+                case 'name':
+                    return (
+                        (a.product_name || '').localeCompare(
+                            b.product_name || ''
+                        ) * dir
+                    );
+                case 'sold':
+                    return (a.qty_sold_matched - b.qty_sold_matched) * dir;
+                case 'days':
+                default:
+                    return (a.avg_holding_days - b.avg_holding_days) * dir;
+            }
+        });
+
+        // Pooled average across every matched unit + total unmatched.
+        let totWSum = 0;
+        let totMatched = 0;
+        let totUnmatched = 0;
+        for (const r of rows) {
+            totWSum += r.avg_holding_days * r.qty_sold_matched;
+            totMatched = r2(totMatched + r.qty_sold_matched);
+            totUnmatched = r2(totUnmatched + r.unmatched_qty);
+        }
+
+        const perPage = Math.max(
+            1,
+            Math.min(100000, Number(query.perPage) || 25)
+        );
+        const page = Math.max(1, Number(query.page) || 1);
+        const start = (page - 1) * perPage;
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: rows.slice(start, start + perPage),
+            totals: {
+                product_count: rows.length,
+                qty_sold_matched: totMatched,
+                avg_holding_days: totMatched > 0 ? r2(totWSum / totMatched) : null,
+                unmatched_qty: totUnmatched,
+            },
+            pagination: {
+                total: rows.length,
+                perPage,
+                orderBy,
+            },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer, same column order + TOTAL row. */
+    async inventoryHoldingDaysExcel(
+        companyId: string,
+        query: IInventoryHoldingDaysQuery
+    ): Promise<Buffer> {
+        const result = await this.inventoryHoldingDays(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000,
+        });
+        const header = [
+            'Product',
+            'Code',
+            'Category',
+            'Qty Sold (matched)',
+            'Avg Holding Days',
+            'Min Days',
+            'Max Days',
+            'First Sale',
+            'Last Sale',
+            'Unmatched Qty',
+        ];
+        const body = result.rows.map((r) => [
+            r.product_name,
+            r.product_code || '',
+            r.category_name || '',
+            r.qty_sold_matched,
+            r.avg_holding_days,
+            r.min_holding_days,
+            r.max_holding_days,
+            r.first_sale_date ? isoToDdmmyyyy(r.first_sale_date) : '',
+            r.last_sale_date ? isoToDdmmyyyy(r.last_sale_date) : '',
+            r.unmatched_qty,
+        ]);
+        const totalRow = [
+            'TOTAL',
+            '',
+            '',
+            result.totals.qty_sold_matched,
+            result.totals.avg_holding_days == null
+                ? '—'
+                : result.totals.avg_holding_days,
+            '',
+            '',
+            '',
+            '',
+            result.totals.unmatched_qty,
+        ];
+        const aoa: (string | number)[][] = [
+            [`Inventory Holding Days — ${result.period_label}`],
+            [
+                'Avg days a unit was held (GRN receipt → sale) via FIFO matching, for units sold (invoice issued) in the period.',
             ],
             [],
             header,
