@@ -431,6 +431,21 @@ export class ProductAdminController {
         await this.productService.softDelete(product, userId);
     }
 
+    @Response('product.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.productService.deleteMany(ids, userId);
+        return { data };
+    }
+
     @Response('product.checkCode')
     @AuthJwtAccessProtected()
     @Post('/check-code')

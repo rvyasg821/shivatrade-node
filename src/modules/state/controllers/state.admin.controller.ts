@@ -21,7 +21,7 @@ import {
     sendExcel,
 } from '@common/import/master-import.helper';
 
-import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
+import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { UserProtected } from '@modules/user/decorators/user.decorator';
 import {
     Response,
@@ -203,6 +203,22 @@ export class StateAdminController {
         }
 
         await this.stateService.softDelete(row);
+    }
+
+    @Response('state.delete')
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.stateService.deleteMany(ids, userId);
+        return { data };
     }
 
     private parseStatus(status?: string): ENUM_STATE_STATUS | undefined {

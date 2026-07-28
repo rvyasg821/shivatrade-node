@@ -99,6 +99,32 @@ export class GrnService {
     }
 
     /**
+     * Bulk delete: loop the guarded single-delete per id, collecting which were
+     * deleted and which were skipped (with the guard's own reason). Never
+     * bypasses `deleteWithGuard`.
+     */
+    async deleteMany(
+        companyId: string,
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                await this.deleteWithGuard(companyId, id);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
+    /**
      * Emit a system tracking event onto a POV's timeline. Best-effort — a
      * failure here never breaks the GRN action that triggered it.
      */

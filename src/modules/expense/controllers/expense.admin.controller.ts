@@ -207,4 +207,19 @@ export class ExpenseAdminController {
         const expense = await this.expenseService.findOneById(expenseId);
         await this.expenseService.softDelete(expense, userId);
     }
+
+    @Response('expense.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.expenseService.deleteMany(ids, userId);
+        return { data };
+    }
 }

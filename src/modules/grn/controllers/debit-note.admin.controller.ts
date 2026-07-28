@@ -8,6 +8,7 @@ import {
     Param,
     Query,
     Res,
+    BadRequestException,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
@@ -161,6 +162,26 @@ export class DebitNoteAdminController {
     ): Promise<IResponse<{ deleted: boolean }>> {
         await this.debitNoteService.deleteWithGuard(companyId, id);
         return { data: { deleted: true } };
+    }
+
+    @Response('debitNote.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.debitNoteService.deleteMany(
+            companyId,
+            ids,
+            userId
+        );
+        return { data };
     }
 
     @AuthJwtAccessProtected()

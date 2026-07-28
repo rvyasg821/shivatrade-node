@@ -313,4 +313,19 @@ export class VendorAdminController {
         const vendor = await this.vendorService.findOneById(vendorId);
         await this.vendorService.softDelete(vendor, userId);
     }
+
+    @Response('vendor.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.vendorService.deleteMany(ids, userId);
+        return { data };
+    }
 }

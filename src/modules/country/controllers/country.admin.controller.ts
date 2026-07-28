@@ -36,7 +36,7 @@ import {
     IResponsePaging,
 } from '@common/response/interfaces/response.interface';
 
-import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
+import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { COUNTRY_DEFAULT_AVAILABLE_SEARCH } from '@modules/country/constants/country.list.constant';
 import { ENUM_COUNTRY_STATUS_CODE_ERROR } from '@modules/country/enums/country.status-code.enum';
 import {
@@ -388,5 +388,21 @@ export class CountryAdminController {
         await this.countryService.softDelete(country);
 
         return;
+    }
+
+    @Response('country.delete')
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.countryService.deleteMany(ids, userId);
+        return { data };
     }
 }

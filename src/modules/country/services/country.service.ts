@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { DatabaseHelperQueryContain } from '@common/database/decorators/database.decorator';
 import slugify from 'slugify';
@@ -25,11 +25,15 @@ import { ICountryService } from '@modules/country/interfaces/country.service.int
 import { CountryDoc, CountryEntity } from '@modules/country/repository/entities/country.entity';
 import { CountryRepository } from '@modules/country/repository/repositories/country.repository';
 import { ENUM_COUNTRY_STATUS } from '@modules/country/enums/country.enum';
+import { StateRepository } from '@modules/state/repository/repositories/state.repository';
+import { CityRepository } from '@modules/city/repository/repositories/city.repository';
 
 @Injectable()
 export class CountryService implements ICountryService {
     constructor(
         private readonly countryRepository: CountryRepository,
+        private readonly stateRepository: StateRepository,
+        private readonly cityRepository: CityRepository,
     ) { }
 
     async findAll(
@@ -178,13 +182,56 @@ export class CountryService implements ICountryService {
         return this.countryRepository.softDelete(repository, options);
     }
 
-    async deleteMany(
+    async deleteManyByQuery(
         find?: Record<string, any>,
         options?: IDatabaseDeleteManyOptions
     ): Promise<boolean> {
         await this.countryRepository.deleteMany(find, options);
 
         return true;
+    }
+
+    /**
+     * Bulk soft-delete by id. Applies the SAME guard the single-delete endpoint
+     * uses — a country that still has states or cities under it is skipped, not
+     * force-deleted, so the tree below is never orphaned. Returns the ids
+     * actually deleted and the ones skipped with a reason.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const country = await this.findOneById(id);
+                const countryId = String(country._id);
+                const [states, cities] = await Promise.all([
+                    this.stateRepository.countByCountry(countryId),
+                    this.cityRepository.countByCountry(countryId),
+                ]);
+
+                if (states > 0 || cities > 0) {
+                    const parts = [
+                        states > 0 ? `${states} state(s)` : null,
+                        cities > 0 ? `${cities} city/cities` : null,
+                    ].filter(Boolean);
+                    throw new BadRequestException(
+                        `Cannot delete '${country.name}' — ${parts.join(' and ')} belong to it. Delete them first.`
+                    );
+                }
+
+                await this.softDelete(country);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
     }
 
     async createMany(

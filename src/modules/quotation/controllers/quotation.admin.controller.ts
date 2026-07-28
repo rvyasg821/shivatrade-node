@@ -272,6 +272,21 @@ export class QuotationAdminController {
         return { data: null };
     }
 
+    @Response('quotation.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.quotationService.deleteMany(ids, userId);
+        return { data };
+    }
+
     /** Client-facing PDF (same sanitized projection as the preview). Streamed
      *  inline so the FE can open it as a blob in a new tab. */
     @AuthJwtAccessProtected()

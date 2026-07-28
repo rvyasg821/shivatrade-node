@@ -16,6 +16,7 @@ import {
 import { ENUM_STATE_STATUS } from '../enums/state.enum';
 import { CountryRepository } from '@modules/country/repository/repositories/country.repository';
 import { CountryDoc } from '@modules/country/repository/entities/country.entity';
+import { CityRepository } from '@modules/city/repository/repositories/city.repository';
 
 @Injectable()
 export class StateService {
@@ -23,7 +24,8 @@ export class StateService {
 
     constructor(
         private readonly stateRepository: StateRepository,
-        private readonly countryRepository: CountryRepository
+        private readonly countryRepository: CountryRepository,
+        private readonly cityRepository: CityRepository
     ) {}
 
     /**
@@ -117,6 +119,38 @@ export class StateService {
 
     async softDelete(row: StateDoc): Promise<StateDoc> {
         return this.stateRepository.softDelete(row);
+    }
+
+    /**
+     * Bulk soft-delete. Applies the SAME guard the single-delete endpoint uses —
+     * a state that still has cities under it is skipped, not force-deleted, so we
+     * never orphan the rows below. Returns the ids deleted and the ones skipped.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                const cities = await this.cityRepository.countByState(id);
+                if (cities > 0) {
+                    throw new BadRequestException(
+                        `Cannot delete '${row.name}' — ${cities} city/cities belong to it. Delete or re-assign them first.`
+                    );
+                }
+                await this.softDelete(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
     }
 
     async findForList(filters: {

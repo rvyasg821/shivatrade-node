@@ -252,4 +252,19 @@ export class CategoryAdminController {
         const category = await this.categoryService.findOneById(categoryId);
         await this.categoryService.softDelete(category, userId);
     }
+
+    @Response('category.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.categoryService.deleteMany(ids, userId);
+        return { data };
+    }
 }

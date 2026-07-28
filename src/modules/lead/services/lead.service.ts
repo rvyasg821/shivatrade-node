@@ -81,6 +81,32 @@ export class LeadService {
         this.logger.log(`Lead hard-deleted: ${lead._id}`);
     }
 
+    /**
+     * Bulk delete. Loops the SAME guarded single-delete so a lead with linked
+     * downstream documents (RFQ / Quotation) is skipped, not force-deleted.
+     * Returns the ids actually deleted and the ones skipped with a reason.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.deleteWithGuard(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     /** Company voucher prefix (explicit `voucher_prefix` or first 5 chars of name). */
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
         const company: any = await this.companyRepository.findOneById(companyId);

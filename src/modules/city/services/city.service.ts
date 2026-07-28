@@ -115,6 +115,32 @@ export class CityService {
         return this.cityRepository.softDelete(row);
     }
 
+    /**
+     * Bulk soft-delete. A city is the leaf of the geo tree, so there is no child
+     * guard — each row is fetched and soft-deleted the same way the single-delete
+     * endpoint does. Returns the ids actually deleted and the ones skipped.
+     */
+    async deleteMany(
+        ids: string[],
+        deletedBy?: string
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.softDelete(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     async findForList(filters: {
         q?: string;
         state_id?: string;
