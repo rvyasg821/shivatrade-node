@@ -920,10 +920,18 @@ export class VendorService {
             //     using a default dial code (+91 India) so the listing still
             //     prefixes the country code instead of showing bare digits.
             let cc: any = primary.country_code || null;
+            // country_code should be an object ({ code, dialCode }), but legacy /
+            // imported / form rows can hold a bare STRING (e.g. "IN" or "+91") or
+            // another primitive. Setting `.formatted` on a primitive throws in
+            // strict mode ("Cannot create property 'formatted' on string") — which
+            // is a 500 on every read of that vendor. Normalise to an object first.
+            if (cc && typeof cc !== 'object') {
+                cc = { dial_code: String(cc) };
+            }
             if (!cc && primary.phone) {
                 cc = { dial_code: '+91', phone: primary.phone };
             }
-            if (cc && !cc.formatted) {
+            if (cc && typeof cc === 'object' && !cc.formatted) {
                 const dial = cc.dial_code || cc.dialCode || '';
                 const digits = cc.phone || primary.phone || '';
                 if (dial || digits) {
