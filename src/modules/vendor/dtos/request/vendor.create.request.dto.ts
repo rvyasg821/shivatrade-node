@@ -171,6 +171,13 @@ export class VendorCreateRequestDto {
     @MaxLength(20)
     incoterms?: string;
 
+    // Preferred transaction currency (ISO code, e.g. "USD") — auto-selected on
+    // this vendor's Vendor POs. Optional; blank falls back to INR.
+    @IsString()
+    @IsOptional()
+    @MaxLength(10)
+    currency_code?: string;
+
     @IsEnum(ENUM_VENDOR_STATUS)
     @IsOptional()
     status?: ENUM_VENDOR_STATUS;

@@ -112,6 +112,9 @@ export class VendorGetResponseDto {
     @ApiProperty({ required: false, type: String })
     incoterms?: string;
 
+    @ApiProperty({ required: false, type: String })
+    currency_code?: string;
+
     @ApiProperty({ required: true, type: Boolean })
     is_active: boolean;
 
