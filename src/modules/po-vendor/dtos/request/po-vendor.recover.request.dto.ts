@@ -50,6 +50,17 @@ export class PoVendorRecoverAssignmentDto {
     ordered_qty?: string;
 
     /**
+     * Optional unit-price override (INR) for the spawned POV line. Sent when the
+     * operator edits the Rate column on the generate-POV screen — the client
+     * enters it in the vendor's currency and converts back to ₹. When omitted,
+     * the service keeps its price-list → PO-line fallback.
+     */
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'unit_price must be a numeric string' })
+    @IsOptional()
+    unit_price?: string;
+
+    /**
      * Optional HSN override for the spawned POV line. Omitted when the operator
      * did not touch it, so the existing fallback chain (SO line → product
      * master) still applies.
