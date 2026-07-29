@@ -210,6 +210,8 @@ export class LeadAdminController {
         @Query('status') status?: string,
         @Query('source') source?: string,
         @Query('assigned_to') assignedTo?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string,
         @Query('search') searchRaw?: string,
         @Query('created_by') createdBy?: string
     ): Promise<IResponse<LeadStatsResponseDto>> {
@@ -225,6 +227,8 @@ export class LeadAdminController {
                 status: statusValue,
                 source,
                 assigned_to: assignedTo,
+                date_from: dateFrom,
+                date_to: dateTo,
                 search: searchRaw,
             },
             creatorValue

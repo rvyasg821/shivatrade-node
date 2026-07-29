@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { utils, write } from 'xlsx';
+// SheetJS community + basic cell styles (fills/fonts/borders). Used ONLY by the
+// coloured costing "Export Report"; the round-trip exports stay on plain `xlsx`.
+import * as XLSXStyle from 'xlsx-js-style';
 
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
@@ -1482,7 +1485,7 @@ export class SalesDocImportService {
             'Grand Total (INR) = Total FOB (Value + Expenses) + Margin − Rebates';
 
         const aoa: any[][] = [banner, [], h1, h2, ...dataAoa, totalRow, [], noteRow];
-        const ws = utils.aoa_to_sheet(aoa);
+        const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
 
         // ── Merges: single-column headers span both header rows; each band
         //    spans its sub-columns on the top row; the banner/total/note labels
@@ -1525,9 +1528,153 @@ export class SalesDocImportService {
             return { wch: 13 };
         });
 
-        const workbook = utils.book_new();
-        utils.book_append_sheet(workbook, ws, 'Costing Report');
-        return write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+        // ── Cell styling (xlsx-js-style) — mirrors the on-screen worksheet. ──
+        const CLR = {
+            orange: 'E2761B',
+            orangeDark: 'C25E10',
+            gold: '8A7B3B',
+            slate: '3B4A63',
+            grey: '4A5568',
+            totalBar: '16233B',
+            white: 'FFFFFF',
+            zebra: 'F7F7FB',
+            grandBg: 'FDEBD8',
+            grandText: 'C25E10',
+            grandTextDark: 'F5A623',
+            benefit: '2E9E5B',
+            realize: '2F6FED',
+            margin: '3B6FE0',
+            logistics: 'C25E10',
+            ink: '20303F',
+            line: 'D9D9E3',
+            muted: '8A8AA0',
+            bannerBg: 'F3F2F7',
+        };
+        const inRange = (c: number, a: number, b: number) =>
+            b >= a && c >= a && c <= b;
+        const alignOf = (c: number): 'left' | 'center' | 'right' =>
+            c === 0 || c === 3 || c === 5
+                ? 'center'
+                : c === 1 || c === 2
+                  ? 'left'
+                  : 'right';
+        const headBg = (c: number): string => {
+            if (E > 0 && inRange(c, expStart, expEnd)) return CLR.orange;
+            if (c === totalFobIdx) return CLR.orangeDark;
+            if (R > 0 && inRange(c, rebStart, rebEnd)) return CLR.gold;
+            if (c === marginIdx) return CLR.slate;
+            if (c === grandIdx) return CLR.orangeDark;
+            if (isForeign && inRange(c, rateIdx, amtIdx)) return CLR.grey;
+            if (hasFreight && inRange(c, freightIdx, cnfRateIdx)) return CLR.grey;
+            return CLR.orange;
+        };
+        const dataColor = (c: number): string => {
+            if (E > 0 && inRange(c, expStart, expEnd)) return CLR.logistics;
+            if (R > 0 && inRange(c, rebStart, rebEnd)) return CLR.benefit;
+            if (c === marginIdx) return CLR.margin;
+            if (c === grandIdx) return CLR.grandText;
+            if (isForeign && inRange(c, rateIdx, amtIdx)) return CLR.realize;
+            if (hasFreight && inRange(c, freightIdx, cnfRateIdx)) return CLR.realize;
+            return CLR.ink;
+        };
+        const thin = (rgb: string) => ({ style: 'thin', color: { rgb } });
+        const boxAll = (rgb: string) => ({
+            top: thin(rgb),
+            bottom: thin(rgb),
+            left: thin(rgb),
+            right: thin(rgb),
+        });
+        const setStyle = (r: number, c: number, s: any) => {
+            const ref = XLSXStyle.utils.encode_cell({ r, c });
+            if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+            ws[ref].s = s;
+        };
+
+        // Header (both grouped rows).
+        for (const hr of [headerR1, headerR2])
+            for (let c = 0; c < width; c++)
+                setStyle(hr, c, {
+                    fill: { patternType: 'solid', fgColor: { rgb: headBg(c) } },
+                    font: { color: { rgb: CLR.white }, bold: true, sz: 11 },
+                    alignment: {
+                        horizontal: 'center',
+                        vertical: 'center',
+                        wrapText: true,
+                    },
+                    border: boxAll(CLR.orangeDark),
+                });
+
+        // Data rows (zebra + grand-total emphasis).
+        for (let ri = 0; ri < dataAoa.length; ri++)
+            for (let c = 0; c < width; c++)
+                setStyle(dataR + ri, c, {
+                    fill: {
+                        patternType: 'solid',
+                        fgColor: {
+                            rgb:
+                                c === grandIdx
+                                    ? CLR.grandBg
+                                    : ri % 2
+                                      ? CLR.zebra
+                                      : CLR.white,
+                        },
+                    },
+                    font: {
+                        color: { rgb: dataColor(c) },
+                        bold: c === grandIdx || c === totalFobIdx,
+                        sz: 11,
+                    },
+                    alignment: { horizontal: alignOf(c), vertical: 'center' },
+                    border: boxAll(CLR.line),
+                });
+
+        // Dark TOTAL bar.
+        for (let c = 0; c < width; c++)
+            setStyle(totalRowIdx, c, {
+                fill: { patternType: 'solid', fgColor: { rgb: CLR.totalBar } },
+                font: {
+                    color: {
+                        rgb: c === grandIdx ? CLR.grandTextDark : CLR.white,
+                    },
+                    bold: true,
+                    sz: 11,
+                },
+                alignment: {
+                    horizontal: c === 0 ? 'right' : alignOf(c),
+                    vertical: 'center',
+                },
+                border: boxAll(CLR.totalBar),
+            });
+
+        // Banner (exchange rate / freight strip).
+        for (let c = 0; c < width; c++)
+            setStyle(bannerR, c, {
+                fill: { patternType: 'solid', fgColor: { rgb: CLR.bannerBg } },
+                font: { color: { rgb: CLR.ink }, bold: true, sz: 11 },
+                alignment: { horizontal: 'left', vertical: 'center' },
+                border: boxAll(CLR.line),
+            });
+
+        // Formula note.
+        const noteRowIdx = totalRowIdx + 2;
+        for (let c = 0; c <= Math.min(width - 1, grandIdx); c++)
+            setStyle(noteRowIdx, c, {
+                font: { color: { rgb: CLR.muted }, italic: true, sz: 10 },
+                alignment: { horizontal: 'left', vertical: 'center' },
+            });
+
+        // Row heights for the header/banner bands.
+        ws['!rows'] = [];
+        ws['!rows'][bannerR] = { hpt: 20 };
+        ws['!rows'][headerR1] = { hpt: 22 };
+        ws['!rows'][headerR2] = { hpt: 18 };
+
+        const workbook = XLSXStyle.utils.book_new();
+        XLSXStyle.utils.book_append_sheet(workbook, ws, 'Costing Report');
+        return XLSXStyle.write(workbook, {
+            type: 'buffer',
+            bookType: 'xlsx',
+        }) as Buffer;
     }
 
     // ──────────────────────────────────────────────────────────────────
