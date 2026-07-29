@@ -349,11 +349,14 @@ export class InvoiceAdminController {
     @Get('/leaderboard')
     async leaderboard(
         @AuthJwtPayload('companyId') companyId: string,
-        @Query('limit') limit?: string
+        @Query('limit') limit?: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string
     ): Promise<IResponse<any>> {
         const data = await this.invoiceService.salesLeaderboard(
             companyId,
-            limit ? Number(limit) : 5
+            limit ? Number(limit) : 5,
+            { date_from: dateFrom, date_to: dateTo }
         );
         return { data };
     }

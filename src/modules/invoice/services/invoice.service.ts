@@ -2117,7 +2117,8 @@ export class InvoiceService {
     // invoices and convert to ₹ via the invoice's exchange_rate (foreign per ₹1).
     async salesLeaderboard(
         companyId: string,
-        limit = 5
+        limit = 5,
+        opts?: { date_from?: string; date_to?: string }
     ): Promise<{
         top_customers: Array<{
             customer_id: string;
@@ -2133,6 +2134,21 @@ export class InvoiceService {
         }>;
     }> {
         const lim = Math.max(1, Math.min(20, Number(limit) || 5));
+        // Optional period window (dashboard "This Month" / "Financial Year").
+        // Filters on invoice_date; params built dynamically so the LIMIT
+        // placeholder shifts correctly when the dates are present.
+        const params: any[] = [companyId];
+        let dateClause = '';
+        if (opts?.date_from) {
+            params.push(opts.date_from);
+            dateClause += ` AND i.invoice_date >= $${params.length}`;
+        }
+        if (opts?.date_to) {
+            params.push(opts.date_to);
+            dateClause += ` AND i.invoice_date <= $${params.length}`;
+        }
+        params.push(lim);
+        const limIdx = params.length;
         const customers = await this.dataSource.query(
             `SELECT i.customer_id AS customer_id,
                     COALESCE(c.company_name, '—') AS name,
@@ -2145,11 +2161,11 @@ export class InvoiceService {
              WHERE i.company_id = $1
                AND i.soft_delete = false
                AND i.status <> 'cancelled'
-               AND i.customer_id IS NOT NULL
+               AND i.customer_id IS NOT NULL${dateClause}
              GROUP BY i.customer_id, c.company_name
              ORDER BY amount_inr DESC
-             LIMIT $2`,
-            [companyId, lim]
+             LIMIT $${limIdx}`,
+            params
         );
         const products = await this.dataSource.query(
             `SELECT il.product_id AS product_id,
@@ -2164,11 +2180,11 @@ export class InvoiceService {
              WHERE i.company_id = $1
                AND i.soft_delete = false
                AND i.status <> 'cancelled'
-               AND il.product_id IS NOT NULL
+               AND il.product_id IS NOT NULL${dateClause}
              GROUP BY il.product_id, p.name
              ORDER BY amount_inr DESC
-             LIMIT $2`,
-            [companyId, lim]
+             LIMIT $${limIdx}`,
+            params
         );
         return {
             top_customers: (customers as any[]).map((r) => ({

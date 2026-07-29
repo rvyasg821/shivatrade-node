@@ -1202,6 +1202,8 @@ export class LeadService {
             status?: string | string[];
             source?: string;
             assigned_to?: string;
+            date_from?: string;
+            date_to?: string;
             search?: string;
         },
         // Ownership scope from CreatorScopeService: undefined = no filter,
@@ -1236,6 +1238,18 @@ export class LeadService {
             if (filters.assigned_to) {
                 qb.andWhere('entity.assigned_to = :at', {
                     at: filters.assigned_to,
+                });
+            }
+            // Dashboard period window — leads have no document date, so filter
+            // on creation day (cast timestamptz → date so `<= to` includes today).
+            if (filters.date_from) {
+                qb.andWhere('CAST(entity.createdAt AS date) >= :df', {
+                    df: filters.date_from,
+                });
+            }
+            if (filters.date_to) {
+                qb.andWhere('CAST(entity.createdAt AS date) <= :dt', {
+                    dt: filters.date_to,
                 });
             }
             CreatorScopeService.applyToQb(qb, creator);
