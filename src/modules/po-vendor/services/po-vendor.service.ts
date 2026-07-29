@@ -1344,6 +1344,9 @@ export class PoVendorService {
             .map((v: any) => ({
                 vendor_id: v._id.toString(),
                 vendor_name: v.company_name,
+                // Preferred currency — the Generate-POV modal auto-selects it
+                // for this vendor's spawned POV (blank → INR).
+                currency_code: v.currency_code || undefined,
             }))
             .sort((a, b) => a.vendor_name.localeCompare(b.vendor_name));
 

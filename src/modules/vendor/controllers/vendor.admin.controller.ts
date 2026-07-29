@@ -246,6 +246,7 @@ export class VendorAdminController {
                 _id: string;
                 company_name: string;
                 vendor_code?: string;
+                currency_code?: string;
                 category_ids: string[];
             }[]
         >
@@ -276,6 +277,7 @@ export class VendorAdminController {
                 _id: v._id.toString(),
                 company_name: v.company_name,
                 vendor_code: v.vendor_code,
+                currency_code: v.currency_code,
                 category_ids: byVendor.get(v._id.toString()) || [],
             })),
         };

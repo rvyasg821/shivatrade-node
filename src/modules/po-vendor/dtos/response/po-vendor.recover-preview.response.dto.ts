@@ -68,6 +68,9 @@ export class PoVendorRecoverPreviewVendorDto {
 
     @ApiProperty({ required: true, type: String })
     vendor_name: string;
+
+    @ApiProperty({ required: false, type: String })
+    currency_code?: string;
 }
 
 export class PoVendorRecoverPreviewResponseDto {

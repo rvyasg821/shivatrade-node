@@ -50,6 +50,11 @@ export class VendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 20, nullable: true })
     incoterms?: string;
 
+    // Preferred transaction currency (ISO code, e.g. "USD"). Auto-selected on a
+    // Vendor PO for this vendor; blank → the POV falls back to INR.
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    currency_code?: string;
+
     // Addresses are stored in `vendor_addresses` join table.
 
     @Index()
