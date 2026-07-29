@@ -98,7 +98,9 @@ export class ProductAdminController {
     }
 
     @ApiConsumes('multipart/form-data')
-    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    // 25 MB — a 10k+ row product upload with long description / specification
+    // text can exceed the old 5 MB cap (esp. as CSV, which isn't zipped).
+    @FileUploadSingle({ field: 'file', fileSize: 25 * 1024 * 1024 })
     @AuthJwtAccessProtected()
     @Post('/import')
     @ApiOperation({

@@ -265,6 +265,59 @@ export class CompanySettingsService {
     }
 
     /**
+     * Batch variant of `generateProductCode` — returns `count` sequential codes
+     * in ONE settings read/write instead of one per product. Used by the bulk
+     * product import so a 6000-row upload doesn't do 6000 code queries. Same
+     * prefix / max-seq / collision logic; the next-seq counter is advanced by
+     * the full batch so subsequent creates never reuse a code.
+     */
+    async generateProductCodes(
+        companyId: string,
+        existingCodes: string[] = [],
+        count = 0
+    ): Promise<string[]> {
+        if (count <= 0) return [];
+        const settings = await this.getCompanyDefaults(companyId);
+        const prefix = (
+            (settings.product_code_prefix as string) || 'PRD'
+        ).toUpperCase();
+        let seq = (settings.product_code_next_seq as number) || 1;
+
+        const used = new Set<string>();
+        let maxSeq = 0;
+        const re = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+        for (const c of existingCodes) {
+            if (!c) continue;
+            const trimmed = c.trim();
+            used.add(trimmed.toUpperCase());
+            const m = trimmed.match(re);
+            if (m) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxSeq) maxSeq = n;
+            }
+        }
+        if (maxSeq >= seq) seq = maxSeq + 1;
+
+        const codes: string[] = [];
+        for (let i = 0; i < count; i++) {
+            let code = `${prefix}-${String(seq).padStart(4, '0')}`;
+            while (used.has(code.toUpperCase())) {
+                seq += 1;
+                code = `${prefix}-${String(seq).padStart(4, '0')}`;
+            }
+            used.add(code.toUpperCase());
+            codes.push(code);
+            seq += 1;
+        }
+
+        await this.settingsRepository.update(settings, {
+            product_code_next_seq: seq,
+        } as any);
+
+        return codes;
+    }
+
+    /**
      * Generate the next vendor code (always auto), e.g. VND-0001. Same robust
      * logic as `generateProductCode`.
      */
@@ -304,6 +357,58 @@ export class CompanySettingsService {
         } as any);
 
         return code;
+    }
+
+    /**
+     * Batch variant of `generateVendorCode` — returns `count` sequential codes
+     * in ONE settings read/write. Used by the bulk vendor import so a large
+     * upload doesn't do a full-table code scan per row (mirrors
+     * `generateProductCodes`).
+     */
+    async generateVendorCodes(
+        companyId: string,
+        existingCodes: string[] = [],
+        count = 0
+    ): Promise<string[]> {
+        if (count <= 0) return [];
+        const settings = await this.getCompanyDefaults(companyId);
+        const prefix = (
+            (settings.vendor_code_prefix as string) || 'VND'
+        ).toUpperCase();
+        let seq = (settings.vendor_code_next_seq as number) || 1;
+
+        const used = new Set<string>();
+        let maxSeq = 0;
+        const re = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+        for (const c of existingCodes) {
+            if (!c) continue;
+            const trimmed = c.trim();
+            used.add(trimmed.toUpperCase());
+            const m = trimmed.match(re);
+            if (m) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxSeq) maxSeq = n;
+            }
+        }
+        if (maxSeq >= seq) seq = maxSeq + 1;
+
+        const codes: string[] = [];
+        for (let i = 0; i < count; i++) {
+            let code = `${prefix}-${String(seq).padStart(4, '0')}`;
+            while (used.has(code.toUpperCase())) {
+                seq += 1;
+                code = `${prefix}-${String(seq).padStart(4, '0')}`;
+            }
+            used.add(code.toUpperCase());
+            codes.push(code);
+            seq += 1;
+        }
+
+        await this.settingsRepository.update(settings, {
+            vendor_code_next_seq: seq,
+        } as any);
+
+        return codes;
     }
 
     /**
