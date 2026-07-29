@@ -1366,6 +1366,7 @@ export class PoVendorService {
                 tax_pct?: string;
                 hsn_code?: string;
                 ordered_qty?: string;
+                unit_price?: string;
             }>;
             delivery_address_id?: string;
             delivery_address?: string;
@@ -1434,6 +1435,9 @@ export class PoVendorService {
         // When set, it replaces the computed pending − stock qty for that line
         // and may exceed pending (over-procurement) — see the toProcure loop.
         const qtyOverrideByLine = new Map<string, number>();
+        // Per-line unit-price override (INR) — operator edited the Rate column.
+        // When set, it wins over the price-list / PO-line rate for that line.
+        const priceOverrideByLine = new Map<string, string>();
         for (const a of data.assignments) {
             if (!a.purchase_order_line_id || !a.vendor_id) {
                 throw new BadRequestException(
@@ -1459,6 +1463,12 @@ export class PoVendorService {
                 hsnOverrideByLine.set(
                     a.purchase_order_line_id,
                     String(a.hsn_code).trim()
+                );
+            }
+            if (a.unit_price != null && String(a.unit_price) !== '') {
+                priceOverrideByLine.set(
+                    a.purchase_order_line_id,
+                    String(a.unit_price)
                 );
             }
             const arr = byVendor.get(a.vendor_id) || [];
@@ -1585,9 +1595,14 @@ export class PoVendorService {
                         // Fully in stock → no POV line for it.
                         if (toProcure <= 1e-6) return null;
                         const pl = poLineById.get(lid);
+                        const priceOverride = priceOverrideByLine.get(lid);
                         let unitPrice = String(pl?.unit_price || '0');
                         const productId = pl?.product_id?.toString();
-                        if (productId) {
+                        // Operator-typed Rate wins; otherwise fall back to the
+                        // vendor's current price-list rate, then the PO line.
+                        if (priceOverride != null && priceOverride !== '') {
+                            unitPrice = priceOverride;
+                        } else if (productId) {
                             let priceRow: any = null;
                             try {
                                 priceRow =
