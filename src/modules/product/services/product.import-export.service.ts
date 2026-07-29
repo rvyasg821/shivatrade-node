@@ -7,6 +7,7 @@ import { CategoryRepository } from '@modules/category/repository/repositories/ca
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import {
     ENUM_PRODUCT_STATUS,
 } from '../enums/product.enum';
@@ -146,6 +147,7 @@ export class ProductImportExportService {
         private readonly currencyRepository: CurrencyRepository,
         private readonly rebateRepository: RebateRepository,
         private readonly expenseRepository: ExpenseRepository,
+        private readonly companySettingsService: CompanySettingsService,
     ) {}
 
     /**
@@ -599,7 +601,22 @@ export class ProductImportExportService {
         return { summary, rows };
     }
 
-    /** Persist the validated rows. One bad row never aborts the batch. */
+    /**
+     * Persist the validated rows in BATCHES. One bad row never aborts the batch.
+     *
+     * Rewritten for bulk performance. The old path called
+     * productService.create/update once per row, and each create() re-queried
+     * categories, currencies, UOM and name/code existence AND scanned the whole
+     * product table to compute the next code — O(n²) work that timed out on a
+     * ~6600-row upload. Rows arrive already fully validated by parseAndValidate
+     * (category / currency / UOM resolved, new-vs-update decided), so here we:
+     *   1. load existing products ONCE (for update targets + code seeding),
+     *   2. generate ALL new codes in a single settings read/write,
+     *   3. bulk-insert new rows in chunks (createMany),
+     *   4. chunk-save updates (undefined = untouched, null = cleared — the same
+     *      semantics productService.update relies on).
+     * Rebates / expenses are never imported, so no link work is needed.
+     */
     async importProducts(
         rows: ProductImportRow[],
         companyId: string,
@@ -613,59 +630,123 @@ export class ProductImportExportService {
         let updated = 0;
         const errors: { row: number; message: string }[] = [];
 
-        for (const row of rows) {
-            if (row.status === 'error') continue;
+        const CHUNK = 500;
+        const chunk = <T>(arr: T[]): T[][] => {
+            const out: T[][] = [];
+            for (let i = 0; i < arr.length; i += CHUNK)
+                out.push(arr.slice(i, i + CHUNK));
+            return out;
+        };
 
-            try {
-                const d = row.data;
-                // Code is omitted → auto-generated on create, preserved on
-                // update. Rebates / expenses are not imported, so they're left
-                // untouched on existing products.
-                const payload: any = {
-                    name: d.name,
-                    category_id: d.category_id,
-                    status: d.status,
-                    is_active: d.is_active,
-                    description: d.description,
-                    specifications: d.specifications,
-                    packaging_details: d.packaging_details,
-                    quality_parameters: d.quality_parameters,
-                    hsn_code: d.hsn_code,
-                    tax_pct: d.tax_pct,
-                    unit_of_measure: d.unit_of_measure,
-                    selling_price: d.selling_price,
-                    margin_pct: d.margin_pct,
-                    currency_id: d.currency_id,
-                    part_no: d.part_no,
-                    pack_size: d.pack_size,
-                    net_weight_per_unit: d.net_weight_per_unit,
-                    gross_weight_per_unit: d.gross_weight_per_unit,
-                    country_of_origin: d.country_of_origin,
-                };
+        // Validated row → flat scalar payload (shared by insert + update).
+        const toPayload = (d: ProductImportRow['data']): any => ({
+            name: d.name,
+            category_id: d.category_id,
+            status: d.status,
+            is_active: d.is_active,
+            description: d.description,
+            specifications: d.specifications,
+            packaging_details: d.packaging_details,
+            quality_parameters: d.quality_parameters,
+            hsn_code: d.hsn_code,
+            tax_pct: d.tax_pct,
+            unit_of_measure: d.unit_of_measure,
+            selling_price: d.selling_price,
+            margin_pct: d.margin_pct,
+            currency_id: d.currency_id,
+            part_no: d.part_no,
+            pack_size: d.pack_size,
+            net_weight_per_unit: d.net_weight_per_unit,
+            gross_weight_per_unit: d.gross_weight_per_unit,
+            country_of_origin: d.country_of_origin,
+        });
 
-                if (row.status === 'valid_update' && row.existingId) {
-                    const existing = await this.productService.findOneById(
-                        row.existingId,
+        const importable = rows.filter((r) => r.status !== 'error');
+        const newRows = importable.filter((r) => !r.existingId);
+        const updateRows = importable.filter((r) => !!r.existingId);
+
+        // Existing products, loaded ONCE — update targets + next-code seed.
+        const existing = await this.productRepository.findByCompanyId(companyId);
+        const existingById = new Map<string, any>(
+            existing.map((p) => [p._id.toString(), p]),
+        );
+        const existingCodes = existing
+            .map((p) => p.code)
+            .filter(Boolean) as string[];
+
+        // ── New rows: one code batch, then bulk insert in chunks. ──
+        if (newRows.length) {
+            const codes = await this.companySettingsService.generateProductCodes(
+                companyId,
+                existingCodes,
+                newRows.length,
+            );
+            const inserts = newRows.map((row, i) => ({
+                row,
+                data: {
+                    ...toPayload(row.data),
+                    name: (row.data.name || '').trim(),
+                    code: codes[i],
+                    company_id: companyId,
+                    created_by: userId,
+                },
+            }));
+            for (const group of chunk(inserts)) {
+                try {
+                    await this.productRepository.createMany(
+                        group.map((g) => g.data),
                     );
-                    await this.productService.update(existing, payload);
-                    updated++;
-                } else {
-                    await this.productService.create(
-                        companyId,
-                        payload,
-                        userId,
-                    );
-                    created++;
+                    created += group.length;
+                } catch (bulkErr: any) {
+                    // A constraint hiccup shouldn't drop the whole chunk — retry
+                    // the group row-by-row so only the offending row(s) fail.
+                    for (const g of group) {
+                        try {
+                            await this.productRepository.create(g.data);
+                            created++;
+                        } catch (err: any) {
+                            this.logger.error(
+                                `Import row ${g.row.rowNum} failed: ${err?.message}`,
+                            );
+                            errors.push({
+                                row: g.row.rowNum,
+                                message: err?.message || 'Import failed',
+                            });
+                        }
+                    }
                 }
-            } catch (err: any) {
-                this.logger.error(
-                    `Import row ${row.rowNum} failed: ${err?.message}`,
-                );
-                errors.push({
-                    row: row.rowNum,
-                    message: err?.message || 'Import failed',
-                });
             }
+        }
+
+        // ── Update rows: assign scalars onto the loaded entity, chunk-save. ──
+        for (const group of chunk(updateRows)) {
+            await Promise.all(
+                group.map(async (row) => {
+                    const entity = existingById.get(row.existingId as string);
+                    if (!entity) {
+                        errors.push({
+                            row: row.rowNum,
+                            message: 'Product no longer exists',
+                        });
+                        return;
+                    }
+                    try {
+                        Object.assign(entity, toPayload(row.data), {
+                            name: (row.data.name || '').trim(),
+                        });
+                        await this.productRepository.save(entity);
+                        updated++;
+                    } catch (err: any) {
+                        this.logger.error(
+                            `Import row ${row.rowNum} failed: ${err?.message}`,
+                        );
+                        errors.push({
+                            row: row.rowNum,
+                            message: err?.message || 'Import failed',
+                        });
+                    }
+                }),
+            );
         }
 
         return { created, updated, errors };

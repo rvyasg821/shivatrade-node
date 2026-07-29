@@ -79,7 +79,9 @@ export class CustomerAdminController {
     }
 
     @ApiConsumes('multipart/form-data')
-    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    // 25 MB — large customer uploads with long address text can exceed the old
+    // 5 MB cap, esp. as CSV. Matches the product import cap.
+    @FileUploadSingle({ field: 'file', fileSize: 25 * 1024 * 1024 })
     @AuthJwtAccessProtected()
     @Post('/import')
     @ApiOperation({

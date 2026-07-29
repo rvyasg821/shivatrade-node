@@ -14,6 +14,7 @@ import { VendorCategoryRepository } from '../repository/repositories/vendor-cate
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
 import { VendorCategoryMasterRepository } from '@modules/vendor-category/repository/repositories/vendor-category.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import {
     ENUM_VENDOR_ADDRESS_TYPE,
     ENUM_VENDOR_STATUS,
@@ -203,7 +204,8 @@ export class VendorImportExportService {
         private readonly vendorCategoryRepository: VendorCategoryRepository,
         private readonly currencyRepository: CurrencyRepository,
         private readonly categoryRepository: VendorCategoryMasterRepository,
-        private readonly productCategoryRepository: CategoryRepository
+        private readonly productCategoryRepository: CategoryRepository,
+        private readonly companySettingsService: CompanySettingsService
     ) {}
 
     // ── Sample ──────────────────────────────────────────────────────────
@@ -937,6 +939,34 @@ export class VendorImportExportService {
         let created = 0;
         let updated = 0;
         const errors: { row: number; message: string }[] = [];
+
+        // ── Pre-assign vendor codes in ONE batch. ──
+        // vendorService.create() otherwise scans the whole vendor table per row
+        // to auto-generate a code (O(n²) → import timeout on big uploads). By
+        // handing each new row a code up-front, create() takes the cheap
+        // "supplied code" branch (a single existence check) instead. Rows that
+        // already carry a code, and update rows, are untouched.
+        const autoCodeRows = preview.vendors.filter(
+            (v) =>
+                v.status !== 'error' &&
+                !v.data._existingId &&
+                !String(v.data.vendor_code || '').trim()
+        );
+        if (autoCodeRows.length) {
+            const existingVendors =
+                (await this.vendorRepository.findByCompanyId(companyId)) as any[];
+            const existingCodes = existingVendors
+                .map((v) => v.vendor_code)
+                .filter(Boolean) as string[];
+            const codes = await this.companySettingsService.generateVendorCodes(
+                companyId,
+                existingCodes,
+                autoCodeRows.length
+            );
+            autoCodeRows.forEach((v, i) => {
+                v.data.vendor_code = codes[i];
+            });
+        }
 
         const okAddresses = preview.addresses.filter(
             (r) => r.status !== 'error'
