@@ -224,9 +224,10 @@ export class VendorImportExportService {
                         'https://acmesteel.example.com',
                         '30 days',
                         'FOB',
-                        // Comma-separated names from the Vendor Category master.
-                        // They must already exist — import never creates one.
-                        'Chemicals, BEARINGS',
+                        // A single name from the Vendor Category master (a vendor
+                        // has exactly one). It must already exist — import never
+                        // creates one.
+                        'Chemicals',
                         // Comma-separated names from the (product) Category
                         // master. Must already exist — import never creates one.
                         'Steel, Fasteners',
@@ -444,7 +445,8 @@ export class VendorImportExportService {
                 v.website || '',
                 v.payment_terms || '',
                 v.incoterms || '',
-                (categoriesByVendor.get(vid) || []).join(', '),
+                // One vendor category per vendor — export the first only.
+                (categoriesByVendor.get(vid) || [])[0] || '',
                 (productCategoriesByVendor.get(vid) || []).join(', '),
                 v.status || ENUM_VENDOR_STATUS.ACTIVE,
                 mainContact?.name || '',
@@ -580,29 +582,36 @@ export class VendorImportExportService {
             if (match.error) errors.push(match.error);
             const isNew = !match.id;
 
-            // Categories: comma-separated NAMES. Blank = leave alone, because
-            // `category_ids` is a replace list on the service.
+            // Vendor category: a single NAME. A vendor has exactly ONE vendor
+            // category. Blank = leave alone, because `category_ids` is a replace
+            // list on the service.
             const categoriesRaw = get('categories');
             let categoryIds: string[] | undefined;
             if (categoriesRaw) {
-                const unknown: string[] = [];
-                const ids: string[] = [];
-                for (const nm of categoriesRaw
+                const names = categoriesRaw
                     .split(',')
                     .map((s) => s.trim())
-                    .filter(Boolean)) {
-                    const id = categoryIdByName.get(nm.toLowerCase());
-                    if (id) ids.push(id);
-                    else unknown.push(nm);
-                }
-                if (unknown.length) {
+                    .filter(Boolean);
+                const uniqueNames = Array.from(
+                    new Set(names.map((n) => n.toLowerCase()))
+                );
+                if (uniqueNames.length > 1) {
                     errors.push(
-                        `Unknown categor${
-                            unknown.length > 1 ? 'ies' : 'y'
-                        }: ${unknown.join(', ')} — add them to the Vendor Category master first`
+                        `Only one vendor category is allowed per vendor (got: ${names.join(
+                            ', '
+                        )})`
                     );
+                    categoryIds = [];
+                } else {
+                    const nm = names[0];
+                    const id = categoryIdByName.get(nm.toLowerCase());
+                    if (!id) {
+                        errors.push(
+                            `Unknown category: ${nm} — add it to the Vendor Category master first`
+                        );
+                    }
+                    categoryIds = id ? [id] : [];
                 }
-                categoryIds = Array.from(new Set(ids));
             }
 
             // Product categories: comma-separated NAMES resolved against the
