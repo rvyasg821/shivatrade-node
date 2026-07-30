@@ -12,15 +12,18 @@ export class CustomerContactEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     company_id: string;
 
-    @Column({ type: 'varchar', length: 150, nullable: false })
-    name: string;
+    // Contacts are optional — only company_name is required on a customer. A
+    // contact may carry just a name, or even be a bare row, so name/email are
+    // nullable (login is provisioned only when an email is present).
+    @Column({ type: 'varchar', length: 150, nullable: true })
+    name?: string;
 
     @Column({ type: 'varchar', length: 100, nullable: true })
     designation?: string;
 
     @Index()
-    @Column({ type: 'varchar', length: 200, nullable: false })
-    email: string;
+    @Column({ type: 'varchar', length: 200, nullable: true })
+    email?: string;
 
     @Column({ type: 'varchar', length: 50, nullable: true })
     phone?: string;
