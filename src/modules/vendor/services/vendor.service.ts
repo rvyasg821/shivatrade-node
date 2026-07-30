@@ -978,13 +978,20 @@ export class VendorService {
             plainToInstance(VendorAddressResponseDto, a)
         );
 
+        // Legacy / imported bank rows may carry a null currency_id — guard the
+        // `.toString()` so the whole response mapping doesn't 500 on bad data.
         const currencyIds = Array.from(
-            new Set(bankAccounts.map((b) => b.currency_id.toString()))
+            new Set(
+                bankAccounts
+                    .map((b) => b.currency_id?.toString())
+                    .filter((id): id is string => !!id)
+            )
         );
         const currencyCodeMap = await this.buildCurrencyCodeMap(currencyIds);
         dto.bank_accounts = bankAccounts.map((b) => {
             const r = plainToInstance(VendorBankAccountResponseDto, b);
-            r.currency_code = currencyCodeMap[b.currency_id.toString()];
+            const cid = b.currency_id?.toString();
+            r.currency_code = cid ? currencyCodeMap[cid] : undefined;
             return r;
         });
         return dto;
@@ -1026,7 +1033,11 @@ export class VendorService {
             ]);
 
         const allCurrencyIds = Array.from(
-            new Set(allBankAccounts.map((b) => b.currency_id.toString()))
+            new Set(
+                allBankAccounts
+                    .map((b) => b.currency_id?.toString())
+                    .filter((id): id is string => !!id)
+            )
         );
         const currencyCodeMap = await this.buildCurrencyCodeMap(allCurrencyIds);
 
@@ -1090,7 +1101,8 @@ export class VendorService {
             );
             dto.bank_accounts = (banksByVendor[vid] || []).map((b) => {
                 const r = plainToInstance(VendorBankAccountResponseDto, b);
-                r.currency_code = currencyCodeMap[b.currency_id.toString()];
+                const cid = b.currency_id?.toString();
+                r.currency_code = cid ? currencyCodeMap[cid] : undefined;
                 return r;
             });
             return dto;
