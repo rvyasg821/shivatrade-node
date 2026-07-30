@@ -198,8 +198,14 @@ export class SalesDocImportService {
         const productByCode = new Map<string, any>();
         for (const p of products) productByCode.set(lc(p.code), p);
         const vendorByCode = new Map<string, any>();
-        for (const v of vendors)
+        const vendorCurrencyById = new Map<string, string>();
+        for (const v of vendors) {
             if (v.vendor_code) vendorByCode.set(lc(v.vendor_code), v);
+            vendorCurrencyById.set(
+                v._id.toString(),
+                (v.currency_code || 'INR').toUpperCase()
+            );
+        }
         const rebateByCode = new Map<string, any>();
         for (const r of rebateMasters) rebateByCode.set(lc(r.code), r);
         const expenseByCode = new Map<string, any>();
@@ -727,6 +733,29 @@ export class SalesDocImportService {
             }
 
             out.push({ rowNum, status, errors, warnings, data: line });
+        }
+
+        // ── One-currency-per-document rule ──────────────────────────────
+        // Every vendor on a quotation/SO/invoice must share ONE currency. If the
+        // sheet resolves vendors of more than one currency, fail the whole
+        // import with a clear message on every row.
+        const docCurrencies = new Set<string>();
+        for (const r of out) {
+            const vid = (r as any).data?.vendor_id;
+            if (vid)
+                docCurrencies.add(
+                    vendorCurrencyById.get(vid.toString()) || 'INR'
+                );
+        }
+        if (docCurrencies.size > 1) {
+            const list = Array.from(docCurrencies).sort().join(', ');
+            for (const r of out) {
+                r.status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.ERROR;
+                r.errors = [
+                    ...(r.errors || []),
+                    `All vendors on one document must use the same currency — this sheet mixes ${list}. Keep every vendor in one currency.`,
+                ];
+            }
         }
 
         const summary = {

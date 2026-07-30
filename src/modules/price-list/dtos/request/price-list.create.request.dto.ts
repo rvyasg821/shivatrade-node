@@ -19,9 +19,11 @@ export class PriceListCreateRequestDto {
     @IsNotEmpty()
     product_id: string;
 
+    // The price list carries NO currency of its own — it always follows the
+    // vendor's currency (resolved server-side). Accepted but ignored if sent.
+    @IsOptional()
     @IsUUID()
-    @IsNotEmpty()
-    currency_id: string;
+    currency_id?: string;
 
     @IsString()
     @IsNotEmpty()

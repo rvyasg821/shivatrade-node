@@ -55,6 +55,19 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     unit_price: string;
 
+    /** Multi-currency: the currency `unit_price` (the vendor cost) is in — the
+     *  line's SOURCE currency (the vendor's currency). Defaults to INR for
+     *  legacy/domestic lines. (Multi-currency plan §6.5 / §8.) */
+    @Column({ type: 'varchar', length: 10, nullable: true, default: 'INR' })
+    source_currency_code?: string;
+
+    /** Frozen conversion rate SOURCE→DOCUMENT currency for this line: doc units
+     *  per 1 source unit, so `cost_doc = unit_price × cost_exchange_rate`. 1 when
+     *  the source currency equals the document currency. Looked up from the
+     *  currency master at save; never re-derived. (D-7 = convert cost first.) */
+    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true, default: 1 })
+    cost_exchange_rate?: string;
+
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
     discount_pct?: string;
 

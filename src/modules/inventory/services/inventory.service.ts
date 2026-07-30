@@ -245,8 +245,11 @@ export class InventoryService {
                 p.unit_of_measure  AS uom,
                 c.name             AS category_name,
                 ${this.ON_HAND_EXPR}::float8 AS on_hand,
-                -- Weighted-average received unit price (₹/unit).
-                (COALESCE(SUM(pvl.received_qty * pvl.unit_price), 0)
+                -- Weighted-average received unit price (₹/unit). POV lines are
+                -- stored NATIVE (vendor currency); pv.exchange_rate is INR per 1
+                -- unit of that currency (1 for INR), so multiply to value in ₹
+                -- at the PO's frozen rate (multi-currency plan D-6).
+                (COALESCE(SUM(pvl.received_qty * pvl.unit_price * COALESCE(pv.exchange_rate, 1)), 0)
                     / NULLIF(SUM(pvl.received_qty), 0))::float8 AS avg_rate,
                 -- Opening: net ledger balance BEFORE the From date (0 if no From,
                 -- since "createdAt" < NULL is never true).
@@ -422,7 +425,8 @@ export class InventoryService {
                        p.company_id                  AS company_id,
                        pv.vendor_id                  AS vendor_id,
                        COALESCE(pvl.received_qty, 0) AS rq,
-                       COALESCE(pvl.unit_price, 0)   AS up
+                       -- Native unit price × INR-per-unit rate = ₹ value (D-6).
+                       COALESCE(pvl.unit_price, 0) * COALESCE(pv.exchange_rate, 1) AS up
                 ${this.FROM_JOINS}
                 WHERE ${whereSql}
              ),

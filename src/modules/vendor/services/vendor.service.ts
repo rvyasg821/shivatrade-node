@@ -304,6 +304,10 @@ export class VendorService {
 
         const vendor = await this.vendorRepository.create({
             ...vendorFields,
+            // Currency is optional on input — default to the home currency (INR)
+            // when not supplied, so every vendor always carries a currency.
+            currency_code:
+                (vendorFields as any).currency_code?.trim?.() || 'INR',
             vendor_code: vendorCode,
             company_name: name,
             company_id: companyId,

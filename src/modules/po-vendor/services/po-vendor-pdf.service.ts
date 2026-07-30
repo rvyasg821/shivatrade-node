@@ -510,10 +510,9 @@ function buildPaymentVoucherHtml(
         }
     );
     const sym = pov.currency_symbol || pov.currency_code || '₹';
-    // Payment money is STORED in INR; multiply by the POV's exchange rate
-    // (foreign-per-₹1, 1 for INR) to render every amount in the POV currency.
-    const rate = Number(pov.exchange_rate) || 1;
-    const ccy = (v: any): string => ccyMoney(sym, (Number(v) || 0) * rate);
+    // NATIVE model (plan §6.3): the payment amount is recorded in the POV's own
+    // currency and stored as-entered, so it prints as-is — no conversion.
+    const ccy = (v: any): string => ccyMoney(sym, Number(v) || 0);
 
     const detailRows: Array<[string, string]> = [
         ['Vendor PO', esc(pov.voucher_no || '-')],
@@ -780,10 +779,12 @@ function buildPovHtml(ctx: PovPdfContext): string {
     const lines = pov.lines || [];
 
     const sym = pov.currency_symbol || pov.currency_code || '₹';
-    const rate = Number(pov.exchange_rate) || 1;
+    // NATIVE model (plan §6.3): POV line amounts are already stored in the POV's
+    // own currency, so the document prints them as-is — no conversion. (pov
+    // .exchange_rate is now INR-per-unit, used only for INR stock/books valuation.)
+    const rate = 1;
 
-    // Money chain (INR internal → customer currency via rate). Matches the
-    // dispatch-advice totals: Subtotal + Charges = Taxable; + CGST/SGST; round.
+    // Money chain: Subtotal + Charges = Taxable; + CGST/SGST; round.
     const subtotalCcy = inrTotal * rate;
     const chargesCcy = chargesInrTotal * rate; // charges taxable value
     const chargeGstCcy = chargeGstInrTotal * rate; // GST on charges (per gst_pct)

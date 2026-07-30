@@ -193,13 +193,19 @@ export class PoVendorService {
     // ─── Vendor expense snapshot builder ────────────────────────────────
 
     /**
-     * Resolve the POV's display currency + exchange rate (foreign-per-₹1).
-     * All POV money stays STORED in INR; this only decides how it renders in
-     * the view / PDF, mirroring Quotation/SO/Invoice. Priority:
-     *   1. an explicit request currency/rate,
-     *   2. a fallback (e.g. the source Sales Order's currency),
-     *   3. the company home currency (rate 1).
-     * The home currency always pins the rate to 1.
+     * Resolve the POV's currency + its INR conversion rate.
+     *
+     * NATIVE model (multi-currency plan §6.3, D-4): POV money is STORED in the
+     * vendor's own currency (`currency_code`). `exchange_rate` here means
+     * **INR per 1 unit of that currency** — i.e. `native_amount × exchange_rate
+     * = INR` — frozen on the POV from the currency master's (PO-currency → home)
+     * rate. It powers the INR stock valuation (D-6, PO's frozen rate) and any
+     * INR books roll-up; it is NOT used to render the document (native prints
+     * as-is). The home currency always pins the rate to 1.
+     *
+     * Priority for the currency: explicit request → fallback (e.g. source SO) →
+     * home. An explicit positive `reqRate` (operator override) wins over the
+     * master lookup; otherwise the master's current (code → home) rate is frozen.
      */
     private async resolvePovCurrency(
         companyId: string,
@@ -222,9 +228,31 @@ export class PoVendorService {
             return { currency_code: code, exchange_rate: '1' };
         }
 
+        // Operator override (already in INR-per-foreign) wins; else freeze the
+        // (code → home) rate from the master. Fallback rate is treated as a
+        // pre-computed INR-per-foreign value from the caller (e.g. source SO).
         const reqR = num(reqRate);
         const fbR = num(fallbackRate);
-        const rate = reqR > 0 ? reqR : fbR > 0 ? fbR : 1;
+        let rate = reqR > 0 ? reqR : fbR > 0 ? fbR : 0;
+        if (rate <= 0) {
+            try {
+                const fromCur = await this.currencyService.getCurrencyByCode(
+                    companyId,
+                    code
+                );
+                if (fromCur) {
+                    const row = await this.currencyService.getCurrentRate(
+                        companyId,
+                        fromCur._id.toString(),
+                        homeCode
+                    );
+                    if (row?.rate && num(row.rate) > 0) rate = num(row.rate);
+                }
+            } catch {
+                // Master lookup failed — fall through to the 1 default below.
+            }
+        }
+        if (rate <= 0) rate = 1;
         return { currency_code: code, exchange_rate: String(rate) };
     }
 
@@ -1150,6 +1178,10 @@ export class PoVendorService {
                     vendor_id: string;
                     vendor_name: string;
                     unit_price: string;
+                    currency_code?: string;
+                    // native × (currency→INR) rate — for a fair cheapest compare.
+                    unit_price_inr?: string | null;
+                    inr_rate_available?: boolean;
                 }>;
                 suggested_vendor_id?: string;
             }
@@ -1202,6 +1234,45 @@ export class PoVendorService {
             vendorMap.set(v._id.toString(), v);
         }
 
+        // Resolve each price row's currency → INR rate (the rate on that
+        // currency's own page; INR = 1) so the "cheapest" is compared in one
+        // currency, not by raw number. Rows whose currency has no →INR rate get
+        // a null rate and are ranked last. One lookup per distinct currency id.
+        const home = await this.currencyService
+            .getDefaultCurrency(companyId)
+            .catch(() => null);
+        const homeCode = (home?.code || 'INR').toUpperCase();
+        const rateByCurrencyId = new Map<string, number | null>();
+        const codeByCurrencyId = new Map<string, string>();
+        for (const r of activeRows) {
+            const cid = r.currency_id?.toString();
+            if (!cid || rateByCurrencyId.has(cid)) continue;
+            let code = '';
+            try {
+                const c: any = await this.currencyService.findOneById(cid);
+                code = (c?.code || '').toUpperCase();
+            } catch {
+                code = '';
+            }
+            codeByCurrencyId.set(cid, code);
+            if (!code || code === homeCode) {
+                rateByCurrencyId.set(cid, 1);
+                continue;
+            }
+            let rate: number | null = null;
+            try {
+                const rr = await this.currencyService.getCurrentRate(
+                    companyId,
+                    cid,
+                    homeCode
+                );
+                if (rr?.rate && Number(rr.rate) > 0) rate = Number(rr.rate);
+            } catch {
+                rate = null;
+            }
+            rateByCurrencyId.set(cid, rate);
+        }
+
         for (const l of poLines) {
             const pid = l.product_id?.toString();
             const candidates = Array.from(
@@ -1209,19 +1280,38 @@ export class PoVendorService {
             )
                 .map((r: any) => {
                     const v: any = vendorMap.get(r.vendor_id?.toString());
+                    const cid = r.currency_id?.toString();
+                    const rate = cid ? rateByCurrencyId.get(cid) : null;
+                    const native = Number(r.unit_price) || 0;
                     return {
                         vendor_id: r.vendor_id?.toString(),
                         vendor_name: v?.company_name || v?.name || '',
                         unit_price: String(r.unit_price || '0'),
+                        currency_code: cid
+                            ? codeByCurrencyId.get(cid) || undefined
+                            : undefined,
+                        unit_price_inr:
+                            rate != null ? (native * rate).toFixed(2) : null,
+                        inr_rate_available: rate != null,
                     };
                 })
                 .filter(c => !!c.vendor_id)
-                .sort(
-                    (a, b) => Number(a.unit_price) - Number(b.unit_price)
-                );
+                // Convertible rows first (cheapest ₹ ascending); unconvertible last.
+                .sort((a, b) => {
+                    const aa = a.inr_rate_available ? 0 : 1;
+                    const bb = b.inr_rate_available ? 0 : 1;
+                    if (aa !== bb) return aa - bb;
+                    return (
+                        Number(a.unit_price_inr || 0) -
+                        Number(b.unit_price_inr || 0)
+                    );
+                });
+            // Suggest the cheapest CONVERTIBLE vendor; fall back to the first.
+            const suggested =
+                candidates.find(c => c.inr_rate_available) || candidates[0];
             out.set(l._id.toString(), {
                 candidate_vendors: candidates,
-                suggested_vendor_id: candidates[0]?.vendor_id || undefined,
+                suggested_vendor_id: suggested?.vendor_id || undefined,
             });
         }
         return out;

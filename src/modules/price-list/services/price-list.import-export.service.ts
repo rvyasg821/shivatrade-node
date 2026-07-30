@@ -21,7 +21,7 @@ const EXCEL_HEADERS = [
     // Display-only — shows which product each code is. Import resolves the row
     // by product_code and ignores this column.
     'product_name',
-    'currency_code',
+    // No currency column — a price row always uses the VENDOR's currency.
     'unit_price',
     'lead_time_days',
     'effective_date',
@@ -33,7 +33,6 @@ const SAMPLE_ROWS = [
         vendor_code: 'VEN-001',
         product_code: 'PRD-001',
         product_name: 'Sample Product 1',
-        currency_code: 'INR',
         unit_price: '1250.00',
         lead_time_days: '15',
         effective_date: '14/05/26',
@@ -43,7 +42,6 @@ const SAMPLE_ROWS = [
         vendor_code: 'VEN-002',
         product_code: 'PRD-002',
         product_name: 'Sample Product 2',
-        currency_code: '',
         unit_price: '480',
         lead_time_days: '30',
         effective_date: '',
@@ -208,9 +206,6 @@ export class PriceListImportExportService {
                     : '',
                 product_name: r.product_id
                     ? productNameById.get(r.product_id.toString()) || ''
-                    : '',
-                currency_code: r.currency_id
-                    ? currencyCodeById.get(r.currency_id.toString()) || ''
                     : '',
                 unit_price: r.unit_price ?? '',
                 lead_time_days: r.lead_time_days ?? '',
@@ -382,7 +377,6 @@ export class PriceListImportExportService {
             };
 
             const productCode = get('product_code');
-            const currencyCodeRaw = get('currency_code');
 
             // ── Vendor — required relationship; either taken from page
             // context (vendor detail import) or resolved from the row's
@@ -440,29 +434,12 @@ export class PriceListImportExportService {
             // and vendor-scoped imports accept any (vendor, product) pair
             // that exists for this company.
 
-            // ── Currency — blank or unknown falls back to the default ──
-            let currencyId: string | undefined;
-            let currencyCode = currencyCodeRaw;
-            if (currencyCodeRaw) {
-                currencyId = currencyIdByCode.get(
-                    currencyCodeRaw.toLowerCase(),
-                );
-                if (!currencyId && defaultCurrency) {
-                    warnings.push(
-                        `Currency "${currencyCodeRaw}" not found — used company default "${defaultCurrency.code}"`,
-                    );
-                    currencyId = defaultCurrency._id.toString();
-                    currencyCode = defaultCurrency.code;
-                }
-            } else if (defaultCurrency) {
-                currencyId = defaultCurrency._id.toString();
-                currencyCode = defaultCurrency.code;
-            }
-            if (!currencyId) {
-                errors.push(
-                    'Currency could not be resolved and your company has no default currency',
-                );
-            }
+            // Currency ALWAYS follows the vendor — resolved server-side on save.
+            // Here we only surface the vendor's currency for the preview.
+            const currencyCode = vendorId
+                ? vendors.find((v) => v._id.toString() === vendorId)
+                      ?.currency_code || 'INR'
+                : '';
 
             // ── Unit price (required — skip whole row if missing/invalid) ──
             let unitPrice: string | undefined;
@@ -564,8 +541,8 @@ export class PriceListImportExportService {
                         ? productNameById.get(productId) || ''
                         : '',
                     product_id: productId,
+                    // Display only — the real currency is the vendor's, set on save.
                     currency_code: currencyCode,
-                    currency_id: currencyId,
                     unit_price: unitPrice,
                     lead_time_days: leadTimeDays,
                     effective_date: effectiveDate,
@@ -612,7 +589,7 @@ export class PriceListImportExportService {
                 const payload: any = {
                     vendor_id: d.vendor_id,
                     product_id: d.product_id,
-                    currency_id: d.currency_id,
+                    // currency omitted — price-list.service derives it from vendor.
                     unit_price: d.unit_price,
                     lead_time_days: d.lead_time_days,
                     effective_date: d.effective_date,

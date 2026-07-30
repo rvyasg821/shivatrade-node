@@ -218,6 +218,34 @@ export class CurrencyService {
     }
 
     /**
+     * Conversion rate FROM → TO as "TO units per 1 FROM unit", so
+     * `amount_to = amount_from × rate`. Returns 1 when from == to (no
+     * conversion). Looks up the master by the exact (from → to) pair; when no
+     * rate is configured it returns 1 (pass-through, non-crashing) — the
+     * operator is expected to maintain the pair in the currency master.
+     * (Multi-currency plan §7 — the per-line source→document conversion.)
+     */
+    async getPairRate(
+        companyId: string,
+        fromCode?: string,
+        toCode?: string
+    ): Promise<number> {
+        const from = (fromCode || 'INR').trim().toUpperCase();
+        const to = (toCode || 'INR').trim().toUpperCase();
+        if (!from || !to || from === to) return 1;
+        const fromCur = await this.getCurrencyByCode(companyId, from);
+        if (fromCur) {
+            const row = await this.getCurrentRate(
+                companyId,
+                fromCur._id.toString(),
+                to
+            );
+            if (row?.rate && Number(row.rate) > 0) return Number(row.rate);
+        }
+        return 1;
+    }
+
+    /**
      * Returns the company's default currency row (the one flagged is_default).
      * Used as the implicit FROM side of every exchange-rate row + as the
      * fallback option (rate=1) for sales-doc currency pickers.
@@ -232,11 +260,32 @@ export class CurrencyService {
     }
 
     /**
+     * Resolve a managed currency by its code (case-insensitive) for a company.
+     * Used as the FROM side of a pair-aware rate lookup (source→target), so the
+     * rate no longer has to originate from the default (INR) currency.
+     */
+    async getCurrencyByCode(
+        companyId: string,
+        code: string
+    ): Promise<CurrencyDoc | null> {
+        if (!code) return null;
+        const rows = await this.currencyRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            code: code.trim().toUpperCase(),
+        } as any);
+        return rows[0] || null;
+    }
+
+    /**
      * Latest rate per to_currency_code from default-currency for this company,
      * augmented with the default currency itself (rate='1').
      * Powers the Lead/Quotation/PFI/PO currency picker.
      */
-    async getExchangeRateOptions(companyId: string): Promise<
+    async getExchangeRateOptions(
+        companyId: string,
+        fromCode?: string
+    ): Promise<
         Array<{
             code: string;
             name?: string;
@@ -246,12 +295,16 @@ export class CurrencyService {
             is_default?: boolean;
         }>
     > {
-        const def = await this.getDefaultCurrency(companyId);
-        if (!def) return [];
+        // FROM side: an explicit source currency when given (pair-aware), else
+        // the company default (INR) for back-compat. (Multi-currency plan §6.1.)
+        const from = fromCode
+            ? await this.getCurrencyByCode(companyId, fromCode)
+            : await this.getDefaultCurrency(companyId);
+        if (!from) return [];
 
         const rates = await this.rateRepository.findLatestRatePerCode(
             companyId,
-            def._id.toString()
+            from._id.toString()
         );
 
         // Export-deal picker: only foreign target currencies (USD/EUR/GBP/AED…),

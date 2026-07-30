@@ -77,6 +77,17 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     unit_price: string;
 
+    /** Multi-currency: the currency `unit_price` (the vendor cost) is in — the
+     *  line's SOURCE currency, carried from the source SO/Quotation line.
+     *  Defaults to INR for legacy/domestic lines. */
+    @Column({ type: 'varchar', length: 10, nullable: true, default: 'INR' })
+    source_currency_code?: string;
+
+    /** Frozen SOURCE→DOCUMENT rate: doc units per 1 source unit, so
+     *  `cost_doc = unit_price × cost_exchange_rate`. 1 when source == document. */
+    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true, default: 1 })
+    cost_exchange_rate?: string;
+
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: false, default: 0 })
     discount_pct: string;
 

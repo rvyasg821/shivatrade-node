@@ -55,6 +55,11 @@ export class PoVendorRecoverPreviewLineDto {
         vendor_id: string;
         vendor_name: string;
         unit_price: string;
+        currency_code?: string;
+        // native unit_price converted to INR for a fair cheapest comparison
+        // (null when that currency has no →INR rate).
+        unit_price_inr?: string | null;
+        inr_rate_available?: boolean;
     }>;
 
     /** Pre-selected vendor: the line's current vendor, else cheapest candidate. */

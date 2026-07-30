@@ -58,10 +58,20 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 30, nullable: true })
     unit?: string;
 
-    /** INR; pre-filled from
+    /** The VENDOR cost, in `source_currency_code`; pre-filled from
      *  `vendorPriceList.findCurrentPrice(companyId, vendorId, productId)`. */
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     unit_price: string;
+
+    /** Multi-currency: the currency `unit_price` (the vendor cost) is in — the
+     *  line's SOURCE currency. Defaults to INR for legacy/domestic lines. */
+    @Column({ type: 'varchar', length: 10, nullable: true, default: 'INR' })
+    source_currency_code?: string;
+
+    /** Frozen SOURCE→DOCUMENT rate: doc units per 1 source unit, so
+     *  `cost_doc = unit_price × cost_exchange_rate`. 1 when source == document. */
+    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true, default: 1 })
+    cost_exchange_rate?: string;
 
     @Column({
         type: 'numeric',

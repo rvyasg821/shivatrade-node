@@ -22,6 +22,7 @@ import { CustomerRepository } from '@modules/customer/repository/repositories/cu
 import { CustomerAddressRepository } from '@modules/customer/repository/repositories/customer-address.repository';
 import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { CurrencyService } from '@modules/currency/services/currency.service';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { LeadService } from '@modules/lead/services/lead.service';
 import { LeadActivityService } from '@modules/lead/services/lead-activity.service';
@@ -69,6 +70,7 @@ export class QuotationService {
         private readonly customerAddressRepository: CustomerAddressRepository,
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly currencyRepository: CurrencyRepository,
+        private readonly currencyService: CurrencyService,
         private readonly leadRepository: LeadRepository,
         private readonly leadService: LeadService,
         private readonly leadActivityService: LeadActivityService,
@@ -320,7 +322,8 @@ export class QuotationService {
             header._id.toString(),
             data.lines,
             data.margin_pct || '0',
-            voucher_no
+            voucher_no,
+            header.currency_code
         );
 
         await this.recompute(header._id.toString(), companyId);
@@ -440,7 +443,8 @@ export class QuotationService {
                 row._id.toString(),
                 lines,
                 (data.margin_pct ?? row.margin_pct) || '0',
-                row.voucher_no
+                row.voucher_no,
+                row.currency_code
             );
         }
 
@@ -547,10 +551,44 @@ export class QuotationService {
         // Quotation voucher — fallback for an empty per-line buyer-ref
         // (customer_reference). Fills only when the line has no ref so a
         // user-entered value is never clobbered. (TKT-0, §7a)
-        voucherNo?: string
+        voucherNo?: string,
+        // The document (customer) currency — the target each line's cost is
+        // converted TO. (Multi-currency plan §6.5.)
+        docCurrencyCode: string = 'INR'
     ): Promise<void> {
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
         if (!lines?.length) return;
+
+        // Multi-currency: each line's cost is in its VENDOR's currency (source).
+        // Resolve the vendor currency per line and freeze the source→document
+        // rate (doc units per 1 source unit) so recompute converts the cost.
+        const docCur = (docCurrencyCode || 'INR').toUpperCase();
+        const vendorIds = Array.from(
+            new Set((lines || []).map((l) => l.vendor_id).filter(Boolean))
+        );
+        const vendorCurrencyById = new Map<string, string>();
+        if (vendorIds.length) {
+            const vendors = await this.vendorRepository.findAll({
+                _id: { $in: vendorIds },
+            } as any);
+            for (const v of vendors as any[]) {
+                vendorCurrencyById.set(
+                    v._id.toString(),
+                    (v.currency_code || 'INR').toUpperCase()
+                );
+            }
+        }
+        const rateCache = new Map<string, number>();
+        const rateForSource = async (src: string): Promise<number> => {
+            if (rateCache.has(src)) return rateCache.get(src)!;
+            const r = await this.currencyService.getPairRate(
+                companyId,
+                src,
+                docCur
+            );
+            rateCache.set(src, r);
+            return r;
+        };
 
         // The line's rebate/expense snapshots are the source of truth - they
         // arrive pre-filled from the product master on the FE but are then
@@ -561,6 +599,15 @@ export class QuotationService {
         for (const l of lines) {
             seq += 1;
             const pid = l.product_id;
+            // Source currency = explicit line value, else the vendor's currency,
+            // else INR. Freeze the source→document rate for recompute (D-7).
+            const sourceCode = (
+                l.source_currency_code ||
+                (l.vendor_id && vendorCurrencyById.get(l.vendor_id)) ||
+                'INR'
+            ).toUpperCase();
+            const costRate =
+                sourceCode === docCur ? 1 : await rateForSource(sourceCode);
             await this.quotationLineRepository.create({
                 company_id: companyId,
                 quotation_id: quotationId,
@@ -578,6 +625,9 @@ export class QuotationService {
                 qty: l.qty || '0',
                 unit: l.unit || null,
                 unit_price: l.unit_price || '0',
+                // Source (vendor) currency + frozen source→document rate.
+                source_currency_code: sourceCode,
+                cost_exchange_rate: String(costRate),
                 discount_pct: l.discount_pct || '0',
                 tax_pct: l.tax_pct || '0',
                 cgst: '0',
@@ -618,19 +668,18 @@ export class QuotationService {
     // ─── Costing engine ─────────────────────────────────────────────────
 
     /**
-     * Recomputes per-line tax snapshots and header totals according to the
-     * costing formula:
-     *   subtotal       = Σ taxable per line  (qty × unit_price − discount)
-     *   expenses_total = Σ expense.amount
-     *   rebates_total  = Σ rebate.amount
-     *   net_pre_margin = subtotal + expenses − rebates
-     *   margin_amount  = net_pre_margin × (margin_pct / 100)
-     *   tax_total      = Σ per-line tax (from tax engine; usually 0 for export)
-     *   grand_total    = (net_pre_margin + margin_amount + tax_total) × exchange_rate
+     * Recomputes per-line snapshots and header totals. Multi-currency model
+     * (D-7 = A): each line's vendor cost is converted from its SOURCE currency
+     * to the DOCUMENT currency FIRST, then the sell price is built in the
+     * document currency — so every figure below is already in the doc currency:
+     *   cost_doc       = unit_price × cost_exchange_rate   (source→doc, per line)
+     *   taxable        = qty × cost_doc − discount
+     *   +expenses  −rebates(on FOB)  +margin  (GST = 0, export/LUT)
+     *   grand_total    = Σ line_total          (NO header × exchange_rate)
      *
-     * For ShivaTrades exports, tax_pct is 0 on every line (LUT) so tax_total is 0.
-     * The grand_total is in the customer's currency (currency_id), where
-     * exchange_rate is "1 INR = X customer-currency-units".
+     * The header `exchange_rate` (doc-per-₹1) is kept only for the INR roll-up
+     * used by reports/dashboard (INR = grand_total ÷ exchange_rate). A domestic
+     * (INR) line has cost_exchange_rate = 1, so nothing changes for it.
      */
     private async recompute(
         quotationId: string,
@@ -656,11 +705,18 @@ export class QuotationService {
         let line_margin_total = 0;
 
         for (const ln of lines) {
+            // Multi-currency (D-7 = A): convert the vendor COST from its source
+            // currency to the DOCUMENT currency FIRST, then build the sell price
+            // (expenses/rebates/margin) entirely in the document currency. For a
+            // domestic (INR) line cost_exchange_rate = 1, so this is a no-op.
+            const costDoc =
+                num(ln.unit_price) * (num((ln as any).cost_exchange_rate) || 1);
+
             // Use the engine only for the intra/inter split; recompute the
             // tax amount ourselves on Net Total per spec (p.24).
             const split = computeLineTax({
                 qty: num(ln.qty),
-                unit_price: num(ln.unit_price),
+                unit_price: costDoc,
                 discount_pct: num(ln.discount_pct),
                 tax_pct: 0,
                 customer_state: customerState,
@@ -719,21 +775,19 @@ export class QuotationService {
         // Margin is per-line (sum of line.margin_amount above).
         const margin_amount = line_margin_total;
 
-        const er = num(header.exchange_rate) || 1;
-        // Home-currency (INR) grand total, rounded to whole rupees. The
-        // round_off line carries the ± adjustment; the customer (foreign)
-        // total derives from the ROUNDED home total so the doc reconciles.
-        // Quotation grand total excludes GST — per-line tax_pct is
-        // captured for reference only, not added to the doc total.
+        // Every line is already built in the DOCUMENT currency (each line's
+        // cost was converted source→doc first), so the grand total is simply the
+        // sum — NO header-level × exchange_rate. `exchange_rate` (doc-per-₹1) is
+        // retained on the header only for the INR roll-up used by reports
+        // (INR = grand_total ÷ exchange_rate). Quotation total excludes GST.
         tax_total = 0;
-        const grand_inr_raw =
+        const grand_doc_raw =
             subtotal +
             product_expenses_total -
             product_rebates_total +
             margin_amount;
-        const grand_inr = Math.round(grand_inr_raw);
-        const round_off = round2(grand_inr - grand_inr_raw);
-        const grand_total = grand_inr * er;
+        const grand_total = Math.round(grand_doc_raw);
+        const round_off = round2(grand_total - grand_doc_raw);
 
         header.subtotal = String(round2(subtotal));
         // Header expense/rebate columns retained on the entity (DB) but no
@@ -748,12 +802,11 @@ export class QuotationService {
         );
         header.margin_amount = String(round2(margin_amount));
         header.tax_total = String(round2(tax_total));
+        // round_off is now in the DOCUMENT currency (the whole build-up is).
         (header as any).round_off = String(round_off);
-        // Round the customer-currency grand total to a whole number so the
-        // figure the customer sees/pays is clean (e.g. $80, not $80.44). The
-        // rounded total carries forward to the Sales Order + Invoice. The ₹
-        // round_off above stays as the home-currency (INR) adjustment.
-        header.grand_total = String(Math.round(grand_total));
+        // Grand total in the document (customer) currency — already a whole
+        // number, carried forward to the Sales Order + Invoice.
+        header.grand_total = String(grand_total);
 
         await this.quotationRepository.save(header);
     }
@@ -1032,7 +1085,6 @@ export class QuotationService {
      */
     async mapPublic(row: QuotationDoc): Promise<QuotationPublicResponseDto> {
         const full = await this.mapGet(row);
-        const er = num(full.exchange_rate) || 1;
 
         // ── Billed From (seller) ──
         let company_name: string | undefined;
@@ -1187,22 +1239,22 @@ export class QuotationService {
                 : full.customer_contact_phone) ||
             undefined;
 
-        // ── Lines (per spec p.24 costing formula) ─────────────────────────
-        //   Net Total (INR) = (Price + Expenses − Rebates) + Margin
-        //   Net (cust)      = Net Total × Exchange Rate
-        //   GST (cust)      = Net (cust) × tax_pct / 100   ← applied AFTER FX
-        //   Line Total      = Net (cust) + GST (cust)
+        // ── Lines ─────────────────────────────────────────────────────────
+        // Multi-currency: line figures are ALREADY in the document currency
+        // (recompute converted each cost source→doc first), so NO FX here.
+        //   Net Total = (Price + Expenses − Rebates) + Margin   (doc currency)
+        //   Line Total = Net Total   (GST excluded on Quotation)
         let subtotal = 0;
         let gst_total = 0;
         let grand_total_calc = 0;
         const lines = (full.lines || []).map((l) => {
             const qty = num(l.qty);
-            const netInr =
+            const netDoc =
                 num(l.taxable) +
                 num(l.product_expenses_amount) -
                 num(l.product_rebates_amount) +
                 num(l.margin_amount);
-            const netCust = round2(netInr * er);
+            const netCust = round2(netDoc);
             // GST is NOT applied to Quotation totals — per-line tax_pct
             // is captured for reference only.
             const gstCust = 0;

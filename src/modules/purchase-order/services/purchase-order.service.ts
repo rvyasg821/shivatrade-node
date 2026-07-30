@@ -20,6 +20,7 @@ import { ENUM_PURCHASE_ORDER_STATUS } from '../enums/purchase-order.enum';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
+import { CurrencyService } from '@modules/currency/services/currency.service';
 import { VendorAddressRepository } from '@modules/vendor/repository/repositories/vendor-address.repository';
 import { VendorContactRepository } from '@modules/vendor/repository/repositories/vendor-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
@@ -72,6 +73,7 @@ export class PurchaseOrderService {
         private readonly poRepository: PurchaseOrderRepository,
         private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly vendorRepository: VendorRepository,
+        private readonly currencyService: CurrencyService,
         private readonly vendorAddressRepository: VendorAddressRepository,
         private readonly vendorContactRepository: VendorContactRepository,
         private readonly productRepository: ProductRepository,
@@ -353,7 +355,12 @@ export class PurchaseOrderService {
             status: ctx?.status || data.status || ENUM_PURCHASE_ORDER_STATUS.DRAFT,
         } as any);
 
-        await this.replaceLines(companyId, header._id.toString(), data.lines);
+        await this.replaceLines(
+            companyId,
+            header._id.toString(),
+            data.lines,
+            header.currency_code
+        );
         await this.recompute(header._id.toString(), companyId);
 
         this.logger.log(`PO created: ${header._id} (${voucher_no})`);
@@ -413,7 +420,12 @@ export class PurchaseOrderService {
         await this.poRepository.save(row);
 
         if (Array.isArray(lines)) {
-            await this.replaceLines(companyId, row._id.toString(), lines);
+            await this.replaceLines(
+                companyId,
+                row._id.toString(),
+                lines,
+                row.currency_code
+            );
         }
 
         await this.recompute(row._id.toString(), companyId);
@@ -496,7 +508,10 @@ export class PurchaseOrderService {
     private async replaceLines(
         companyId: string,
         poId: string,
-        lines?: any[]
+        lines?: any[],
+        // The document (customer) currency — the target each line's cost is
+        // converted TO. (Multi-currency plan §6.5.)
+        docCurrencyCode: string = 'INR'
     ): Promise<void> {
         const existing = await this.poLineRepository.findAll({
             purchase_order_id: poId,
@@ -580,9 +595,52 @@ export class PurchaseOrderService {
 
         if (!resolvedLines.length) return;
 
+        // Multi-currency: each line's cost is in its VENDOR's currency (source).
+        // Carry source_currency_code + the frozen source→document rate from the
+        // incoming line (SO generated from a Quotation already has them); when
+        // missing, derive the source from the vendor and freeze the rate.
+        const docCur = (docCurrencyCode || 'INR').toUpperCase();
+        const vendorIds = Array.from(
+            new Set(resolvedLines.map((l) => l.vendor_id).filter(Boolean))
+        );
+        const vendorCurrencyById = new Map<string, string>();
+        if (vendorIds.length) {
+            const vendors = await this.vendorRepository.findAll({
+                _id: { $in: vendorIds },
+            } as any);
+            for (const v of vendors as any[]) {
+                vendorCurrencyById.set(
+                    v._id.toString(),
+                    (v.currency_code || 'INR').toUpperCase()
+                );
+            }
+        }
+        const rateCache = new Map<string, number>();
+        const rateForSource = async (src: string): Promise<number> => {
+            if (rateCache.has(src)) return rateCache.get(src)!;
+            const r = await this.currencyService.getPairRate(
+                companyId,
+                src,
+                docCur
+            );
+            rateCache.set(src, r);
+            return r;
+        };
+
         let seq = 0;
         for (const l of resolvedLines) {
             seq += 1;
+            const sourceCode = (
+                l.source_currency_code ||
+                (l.vendor_id && vendorCurrencyById.get(l.vendor_id)) ||
+                'INR'
+            ).toUpperCase();
+            const costRate =
+                l.cost_exchange_rate != null && l.cost_exchange_rate !== ''
+                    ? String(l.cost_exchange_rate)
+                    : sourceCode === docCur
+                      ? '1'
+                      : String(await rateForSource(sourceCode));
             const payload: any = {
                 company_id: companyId,
                 purchase_order_id: poId,
@@ -598,6 +656,9 @@ export class PurchaseOrderService {
                 qty: l.qty || '0',
                 unit: l.unit || null,
                 unit_price: l.unit_price || '0',
+                // Source (vendor) currency + frozen source→document rate.
+                source_currency_code: sourceCode,
+                cost_exchange_rate: costRate,
                 discount_pct: l.discount_pct || '0',
                 tax_pct: l.tax_pct || '0',
                 // Costing snapshot (frozen from the source quotation line).
@@ -643,10 +704,13 @@ export class PurchaseOrderService {
      *     line_net       = taxable + line_expenses − line_rebates + line_margin
      *     line_tax       = line_net × tax_pct/100               (split CGST/SGST or IGST)
      *     line_total     = line_net + line_tax                  (stored on line)
+     *   Multi-currency (D-7 = A): each line's cost is converted source→document
+     *   currency FIRST (unit_price × cost_exchange_rate), so every figure above
+     *   is already in the document currency.
      *   Header:
-     *     grand_inr      = round(Σ taxable + Σ expenses − Σ rebates + Σ margin + Σ tax)
-     *     round_off      = grand_inr − raw
-     *     grand_total    = grand_inr × exchange_rate            (stored in customer ccy)
+     *     grand_total    = Σ line_total  (document currency; NO × exchange_rate)
+     *     round_off      = round(grand_total) − raw
+     *   (header exchange_rate kept only for the INR reporting roll-up.)
      *
      * The snapshots (product_rebates / product_expenses / margin_pct) are not
      * stored on PO lines — they live on the originating PFI / Quotation line
@@ -734,10 +798,17 @@ export class PurchaseOrderService {
                     ? num((ln as any).margin_pct)
                     : num(src?.margin_pct);
 
+            // Multi-currency (D-7 = A): convert the vendor COST from its source
+            // currency to the DOCUMENT currency FIRST, then build the sell price
+            // in the document currency. cost_exchange_rate = 1 for a domestic
+            // (same-currency) line, so this is a no-op there.
+            const costDoc =
+                num(ln.unit_price) * (num((ln as any).cost_exchange_rate) || 1);
+
             // Use engine only for the intra/inter split; recompute tax on Net.
             const split = computeLineTax({
                 qty: num(ln.qty),
-                unit_price: num(ln.unit_price),
+                unit_price: costDoc,
                 discount_pct: num(ln.discount_pct),
                 tax_pct: 0,
                 customer_state: vendorState,
@@ -803,32 +874,31 @@ export class PurchaseOrderService {
             line_margin_total += lineMarginAmt;
         }
 
-        const er = num(header.exchange_rate) || 1;
-        // PO grand total excludes GST — per-line tax_pct is captured
-        // for reference only, not added to the doc total.
+        // Every line is already built in the DOCUMENT currency (each line's cost
+        // was converted source→doc first), so the grand total is simply the sum
+        // — NO header × exchange_rate. `exchange_rate` (doc-per-₹1) is retained
+        // only for the INR roll-up used by reports. PO total excludes GST.
         tax_total = 0;
         cgst_total = 0;
         sgst_total = 0;
         igst_total = 0;
-        const grand_inr_raw =
+        const grand_doc_raw =
             subtotal +
             product_expenses_total -
             product_rebates_total +
             line_margin_total;
-        const grand_inr = Math.round(grand_inr_raw);
-        const round_off = round2(grand_inr - grand_inr_raw);
-        const grand_total = grand_inr * er;
+        const grand_total = Math.round(grand_doc_raw);
+        const round_off = round2(grand_total - grand_doc_raw);
 
         header.subtotal = String(round2(subtotal));
         header.cgst_total = '0';
         header.sgst_total = '0';
         header.igst_total = '0';
         header.tax_total = '0';
+        // round_off is now in the DOCUMENT currency (the whole build-up is).
         header.round_off = String(round_off);
-        // Round the customer-currency grand total to a whole number so the
-        // Sales Order carries the same clean figure as the quotation (e.g.
-        // $80, not $80.44). The ₹ round_off stays as the INR adjustment.
-        header.grand_total = String(Math.round(grand_total));
+        // Grand total in the document (customer) currency — already whole.
+        header.grand_total = String(grand_total);
 
         await this.poRepository.save(header);
     }

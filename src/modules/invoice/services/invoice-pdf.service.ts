@@ -683,15 +683,17 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
     // For LUT route IGST is 0% — we drop the two columns entirely.
     const showIgst = !isLut;
     const er = Number(inv.exchange_rate || 0);
-    // Line values are stored in INR; show them in the document currency.
-    const erMul = er > 0 ? er : 1;
+    // Multi-currency: line values are ALREADY in the document currency (each
+    // cost was converted source→doc in recompute), so they print as-is —
+    // erMul = 1. `er` (doc-per-₹1) is used only for the INR IGST + the rate line.
+    const erMul = 1;
     let totalIgstInr = 0;
     const lineIgstInr = (l: any): number => {
         const rate = Number(l.igst_rate_pct || 0);
         if (!showIgst || rate <= 0) return 0;
-        // taxable_amount is already in INR — it IS the assessable value, so
-        // IGST = taxable_amount × rate. (No /er; that inflated it ~1/rate×.)
-        const taxableInr = Number(l.taxable_amount || 0);
+        // taxable_amount is in the DOCUMENT currency → ÷ er for the INR
+        // assessable value; IGST (INR) = assessable_inr × rate.
+        const taxableInr = Number(l.taxable_amount || 0) / (er > 0 ? er : 1);
         return taxableInr * (rate / 100);
     };
     const linesHtml = (d.lines || [])
@@ -704,6 +706,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
                 <td class="center">${esc(l.hsn_code)}</td>
                 <td class="center">${esc(l.part_no)}</td>
                 <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
+                <td style="white-space:nowrap;">${esc(l.customer_reference)}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${sym}${fmt(num(l.qty) > 0 ? (num(l.line_total) * erMul) / num(l.qty) : num(l.unit_price) * erMul, 2)}</td>
                 <td class="right strong">${sym}${fmt(num(l.line_total) * erMul, 2)}</td>
@@ -761,7 +764,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         <tr>
             <td style="width:33%;"><span class="lbl">Incoterm</span><br/>${esc(inv.incoterm)}</td>
             <td style="width:33%;"><span class="lbl">Buyer's PO #</span><br/>${esc(inv.customer_po_no)}</td>
-            <td><span class="lbl">Exchange Rate</span><br/>${sym}1 = ₹${fmt(1 / erMul, 2)}</td>
+            <td><span class="lbl">Exchange Rate</span><br/>${sym}1 = ₹${fmt(er > 0 ? 1 / er : 1, 2)}</td>
         </tr>
     </table>
 
@@ -771,26 +774,27 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <th style="width:64px;">HSN CODE</th>
             <th style="width:70px;">PART NO</th>
             <th>DESCRIPTION OF GOODS</th>
+            <th style="width:150px; white-space:nowrap;">REQUIREMENT #</th>
             <th style="width:74px;">QTY</th>
             <th style="width:86px;">PRICE / UNIT</th>
             <th style="width:100px;">AMOUNT</th>
         </tr>
         ${linesHtml}
         <tr>
-            <td colspan="6" class="right lbl">Subtotal</td>
+            <td colspan="7" class="right lbl">Subtotal</td>
             <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
         </tr>
-        ${num(inv.discount_total) > 0 ? `<tr><td colspan="6" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        ${num(inv.discount_total) > 0 ? `<tr><td colspan="7" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="6" class="right lbl">FOB Value</td>
+            <td colspan="7" class="right lbl">FOB Value</td>
             <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
         </tr>
-        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
-        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
-        ${num(inv.other_charges) > 0 ? `<tr><td colspan="6" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
-        ${showIgst ? `<tr><td colspan="6" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
+        ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
+        ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
+        ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${showIgst ? `<tr><td colspan="7" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
         <tr>
-            <td colspan="6" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
+            <td colspan="7" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
         </tr>
     </table>
@@ -856,9 +860,10 @@ function buildExportInvoiceHtml(d: RenderData): string {
         ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
         : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
     const sym = esc(inv.currency_symbol || getCurrencySymbol(inv.currency_code) || '');
-    // Line values are stored in INR; show them in the document currency.
+    // Multi-currency: line values are ALREADY in the document currency (each
+    // cost was converted source→doc in recompute), so they print as-is (erMul=1).
     const er = Number(inv.exchange_rate || 0);
-    const erMul = er > 0 ? er : 1;
+    const erMul = 1;
 
     const linesHtml = (d.lines || [])
         .map(
