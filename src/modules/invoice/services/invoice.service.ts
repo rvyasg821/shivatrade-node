@@ -1071,7 +1071,12 @@ export class InvoiceService {
         let subtotal = 0;
         for (const l of lines) {
             const qty = num(l.qty);
-            const price = num(l.unit_price);
+            // Multi-currency (D-7 = A): convert the vendor COST from its source
+            // currency to the DOCUMENT currency FIRST, then build the sell price
+            // in the document currency. cost_exchange_rate = 1 for a domestic /
+            // same-currency line, so this is a no-op there.
+            const price =
+                num(l.unit_price) * (num((l as any).cost_exchange_rate) || 1);
             const discount = num(l.discount_pct);
             const taxable = qty * price * (1 - discount / 100);
 
@@ -1098,15 +1103,13 @@ export class InvoiceService {
             subtotal += lineNet;
         }
 
-        // Line items are stored in INR; charges/totals fields are typed in
-        // the document (customer) currency. Convert the INR subtotal to the
-        // document currency FIRST, then apply the doc-currency charges — this
-        // matches the detail "costing breakdown" card and keeps every header
-        // total in a single currency (the customer's). The old code subtracted
-        // doc-currency charges from an INR subtotal, producing a mixed value.
-        // exchange_rate convention: document-per-INR (doc = INR × rate).
+        // Multi-currency: each line's cost was converted source→document
+        // currency FIRST (per line), so `subtotal` is ALREADY in the document
+        // currency — NO header × exchange_rate. Charges (freight/insurance/…)
+        // are also in the document currency. `exchange_rate` (doc-per-₹1) is now
+        // used only to derive the INR equivalent (grand_total_inr) for GSTR-1.
         const er = num(row.exchange_rate) || 1;
-        const subtotal_doc = round2(subtotal * er);
+        const subtotal_doc = round2(subtotal);
         const discount_total = num(row.discount_total);
         const fob_value = round2(subtotal_doc - discount_total);
         const freight = num(row.freight_charges);
@@ -1401,23 +1404,25 @@ export class InvoiceService {
 
     /**
      * Buckets invoice lines by `igst_rate_pct`. For each bucket:
-     *   assessable_value_inr = Σ taxable_amount        (line values are INR)
+     *   assessable_value_inr = Σ (taxable_amount ÷ exchange_rate)
      *   igst_amount_inr      = assessable_value_inr × rate
      *
-     * Line `taxable_amount` is stored in INR, so it IS the assessable value —
-     * no exchange-rate conversion (a prior version divided by the rate and
-     * inflated the IGST ~1/rate×).
+     * Multi-currency: `taxable_amount` is now in the DOCUMENT currency (each
+     * cost was converted source→doc in recompute), so it is divided by the
+     * exchange_rate (doc-per-₹1) to get the INR assessable value for GSTR-1.
+     * For an INR invoice exchange_rate = 1, so this is a no-op.
      *
      * Returns the array + the total IGST refund (sum of buckets).
      */
     private buildIgstRefundBuckets(
         lines: InvoiceLineDoc[],
-        _exchangeRate: number
+        exchangeRate: number
     ): { buckets: any[]; totalRefund: number } {
+        const er = exchangeRate > 0 ? exchangeRate : 1;
         const grouped = new Map<string, number>(); // rate_pct → INR assessable
         for (const l of lines) {
             const rate = num(l.igst_rate_pct);
-            const taxableInr = num(l.taxable_amount);
+            const taxableInr = num(l.taxable_amount) / er;
             grouped.set(String(rate), (grouped.get(String(rate)) || 0) + taxableInr);
         }
         const buckets: any[] = [];
@@ -1577,6 +1582,16 @@ export class InvoiceService {
                 uqc_code: l.uqc_code,
                 qty: l.qty,
                 unit_price: l.unit_price,
+                // Multi-currency: carry the line's source (vendor) currency +
+                // frozen source→document rate from the SO line (or the payload).
+                source_currency_code:
+                    (l as any).source_currency_code ||
+                    (cost as any)?.source_currency_code ||
+                    'INR',
+                cost_exchange_rate:
+                    (l as any).cost_exchange_rate ??
+                    (cost as any)?.cost_exchange_rate ??
+                    '1',
                 discount_pct: l.discount_pct || '0',
                 margin_pct: marginPct || '0',
                 tax_pct: l.tax_pct || '0',
@@ -1780,6 +1795,12 @@ export class InvoiceService {
                 customer_reference: l.customer_reference,
                 unit: l.unit,
                 unit_price: l.unit_price,
+                // Multi-currency: carry the SO line's source currency + frozen
+                // source→document rate so the invoice prefills them.
+                source_currency_code:
+                    (l as any).source_currency_code || 'INR',
+                cost_exchange_rate:
+                    (l as any).cost_exchange_rate ?? '1',
                 tax_pct: l.tax_pct,
                 product_rebates_snapshot: l.product_rebates_snapshot || [],
                 product_expenses_snapshot: l.product_expenses_snapshot || [],

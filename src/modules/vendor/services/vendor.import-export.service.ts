@@ -54,6 +54,9 @@ const VENDOR_HEADERS = [
     'website',
     'payment_terms',
     'incoterms',
+    // The VENDOR's own pricing currency (USD/EUR/INR…). Distinct from the bank
+    // account `currency` below. Blank → defaults to the home currency (INR).
+    'vendor_currency',
     'categories',
     'product_categories',
     'status',
@@ -66,12 +69,13 @@ const VENDOR_HEADERS = [
     // +91 (India). The flag shown in the UI is derived from this dial code.
     'contact_phone_code',
     'contact_designation',
-    // Main bank account.
+    // Main bank account. `bank_currency` is the CURRENCY OF THE BANK ACCOUNT
+    // (distinct from the vendor's `vendor_currency` above).
     'bank_name',
     'account_number',
     'ifsc',
     'swift_code',
-    'currency',
+    'bank_currency',
 ];
 
 // Headers for the downloadable SAMPLE template. Same as VENDOR_HEADERS but
@@ -224,6 +228,9 @@ export class VendorImportExportService {
                         'https://acmesteel.example.com',
                         '30 days',
                         'FOB',
+                        // Vendor's own pricing currency (must exist in the
+                        // Currency master). Blank → defaults to INR.
+                        'USD',
                         // A single name from the Vendor Category master (a vendor
                         // has exactly one). It must already exist — import never
                         // creates one.
@@ -250,6 +257,8 @@ export class VendorImportExportService {
                         '',
                         'Advance',
                         'CIF',
+                        // vendor_currency — blank here shows the INR default.
+                        '',
                         '',
                         '',
                         'active',
@@ -445,6 +454,8 @@ export class VendorImportExportService {
                 v.website || '',
                 v.payment_terms || '',
                 v.incoterms || '',
+                // Vendor's own pricing currency (defaults to INR).
+                v.currency_code || 'INR',
                 // One vendor category per vendor — export the first only.
                 (categoriesByVendor.get(vid) || [])[0] || '',
                 (productCategoriesByVendor.get(vid) || []).join(', '),
@@ -676,10 +687,16 @@ export class VendorImportExportService {
                 if (!accountNumber) {
                     errors.push('account_number is required when a bank name is given');
                 }
-                const currencyCode = get('currency').toUpperCase();
+                // `bank_currency` is the new header; fall back to the old
+                // `currency` header so pre-existing import files still work.
+                const currencyCode = (
+                    get('bank_currency') || get('currency')
+                ).toUpperCase();
                 let currencyId: string | undefined;
                 if (!currencyCode) {
-                    errors.push('currency is required for a bank account (e.g. INR)');
+                    errors.push(
+                        'bank_currency is required for a bank account (e.g. INR)'
+                    );
                 } else {
                     const cur = currencyByCode.get(currencyCode);
                     if (!cur) {
@@ -699,6 +716,23 @@ export class VendorImportExportService {
                 };
             }
 
+            // Vendor's own pricing currency. Validate against the master; a
+            // blank stays undefined → NEW vendors default to INR (create), and
+            // EXISTING vendors keep their current currency (undefined = no change).
+            const vendorCurrencyRaw = (get('vendor_currency') || '')
+                .trim()
+                .toUpperCase();
+            let vendorCurrencyCode: string | undefined;
+            if (vendorCurrencyRaw) {
+                if (currencyByCode.get(vendorCurrencyRaw)) {
+                    vendorCurrencyCode = vendorCurrencyRaw;
+                } else {
+                    errors.push(
+                        `Vendor currency '${vendorCurrencyRaw}' is not in the Currency master`
+                    );
+                }
+            }
+
             const row: VendorSheetRow<any> = {
                 rowNum: i + 2,
                 data: {
@@ -709,6 +743,7 @@ export class VendorImportExportService {
                     website: get('website') || undefined,
                     payment_terms: get('payment_terms') || undefined,
                     incoterms: get('incoterms') || undefined,
+                    currency_code: vendorCurrencyCode,
                     category_ids: categoryIds,
                     product_category_ids: productCategoryIds,
                     status,

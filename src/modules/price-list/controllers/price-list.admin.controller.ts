@@ -329,12 +329,11 @@ export class PriceListAdminController {
             const key = r.vendor_id?.toString();
             if (key && !byVendor.has(key)) byVendor.set(key, r);
         }
-        const mapped = await this.priceListService.mapList(
+        // Cheapest first — compared in the home currency (INR) so a foreign
+        // price (e.g. $37 = ₹3,071) is ranked fairly against ₹ prices, not by
+        // raw number. Rows whose currency has no →INR rate are ranked last.
+        const result = await this.priceListService.mapListWithInrCompare(
             Array.from(byVendor.values())
-        );
-        // Sort: cheapest unit_price first.
-        const result = mapped.sort(
-            (a, b) => Number(a.unit_price || 0) - Number(b.unit_price || 0)
         );
         return { data: result };
     }

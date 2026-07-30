@@ -110,15 +110,19 @@ export class CurrencyAdminController {
     }
 
     /**
-     * Returns the latest exchange rate for default-currency → `to` (code).
-     * If `to` matches the company's default currency code, returns rate '1'.
+     * Returns the latest exchange rate for a currency PAIR: `from` → `to`.
+     * `from` is optional and defaults to the company's default currency (INR)
+     * for back-compat with callers that predate multi-currency. When `from`
+     * equals `to`, returns rate '1' (same currency → no conversion).
+     * (Multi-currency plan §6.1 — pair-aware lookup.)
      */
     @Response('currency.currentRate')
     @AuthJwtAccessProtected()
     @Get('/exchange-rate/current')
     async currentExchangeRate(
         @AuthJwtPayload('companyId') companyId: string,
-        @Query('to') toCurrencyCode: string
+        @Query('to') toCurrencyCode: string,
+        @Query('from') fromCurrencyCode?: string
     ): Promise<
         IResponse<{
             from_currency_code?: string;
@@ -130,12 +134,18 @@ export class CurrencyAdminController {
     > {
         if (!toCurrencyCode) return { data: null };
         const toCode = toCurrencyCode.toUpperCase();
-        const def = await this.currencyService.getDefaultCurrency(companyId);
-        if (!def) return { data: null };
-        if (def.code === toCode) {
+        // FROM side: an explicit source currency when given, else the default.
+        const from = fromCurrencyCode
+            ? await this.currencyService.getCurrencyByCode(
+                  companyId,
+                  fromCurrencyCode
+              )
+            : await this.currencyService.getDefaultCurrency(companyId);
+        if (!from) return { data: null };
+        if (from.code === toCode) {
             return {
                 data: {
-                    from_currency_code: def.code,
+                    from_currency_code: from.code,
                     to_currency_code: toCode,
                     rate: '1',
                     same: true,
@@ -144,13 +154,13 @@ export class CurrencyAdminController {
         }
         const row = await this.currencyService.getCurrentRate(
             companyId,
-            def._id.toString(),
+            from._id.toString(),
             toCode
         );
         if (!row) return { data: null };
         return {
             data: {
-                from_currency_code: def.code,
+                from_currency_code: from.code,
                 to_currency_code: row.to_currency_code,
                 rate: row.rate,
                 effective_date: row.effective_date,
@@ -166,7 +176,8 @@ export class CurrencyAdminController {
     @AuthJwtAccessProtected()
     @Get('/exchange-rate/options')
     async exchangeRateOptions(
-        @AuthJwtPayload('companyId') companyId: string
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('from') fromCurrencyCode?: string
     ): Promise<
         IResponse<
             Array<{
@@ -179,7 +190,10 @@ export class CurrencyAdminController {
             }>
         >
     > {
-        const data = await this.currencyService.getExchangeRateOptions(companyId);
+        const data = await this.currencyService.getExchangeRateOptions(
+            companyId,
+            fromCurrencyCode
+        );
         return { data };
     }
 

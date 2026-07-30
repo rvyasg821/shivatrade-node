@@ -18,6 +18,11 @@ export class PriceListGetResponseDto {
     @ApiProperty({ type: String, required: false }) currency_symbol?: string;
 
     @ApiProperty({ type: String }) unit_price: string;
+    // Native unit_price converted to the home currency (INR) at the vendor
+    // currency's (→INR) rate — for a fair cross-currency "cheapest" comparison.
+    // Null when that currency has no →INR rate configured.
+    @ApiProperty({ type: String, required: false }) unit_price_inr?: string | null;
+    @ApiProperty({ type: Boolean, required: false }) inr_rate_available?: boolean;
     @ApiProperty({ type: Number, required: false }) moq?: number;
     @ApiProperty({ type: String, required: false }) discount_pct?: string;
     @ApiProperty({ type: String, required: false }) margin_pct?: string;

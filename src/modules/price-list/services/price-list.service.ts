@@ -13,6 +13,7 @@ import { PriceListGetResponseDto } from '../dtos/response/price-list.get.respons
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CurrencyRepository } from '@modules/currency/repository/repositories/currency.repository';
+import { CurrencyService } from '@modules/currency/services/currency.service';
 import { ENUM_PRICE_LIST_SOURCE } from '../enums/price-list.enum';
 
 @Injectable()
@@ -23,7 +24,8 @@ export class PriceListService {
         private readonly priceListRepository: PriceListRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly productRepository: ProductRepository,
-        private readonly currencyRepository: CurrencyRepository
+        private readonly currencyRepository: CurrencyRepository,
+        private readonly currencyService: CurrencyService
     ) {}
 
     private async assertReferences(
@@ -54,20 +56,72 @@ export class PriceListService {
         if (!currency) throw new BadRequestException('Currency not found');
     }
 
+    /**
+     * The price row's currency ALWAYS follows the vendor's own currency — the
+     * price list no longer carries an independent currency. Resolves the
+     * vendor's `currency_code` to a currency-master id, falling back to the
+     * company default (INR) when the vendor has none.
+     */
+    private async resolveVendorCurrencyId(
+        companyId: string,
+        vendorId: string
+    ): Promise<string> {
+        const vendor: any = await this.vendorRepository.findOne({
+            _id: vendorId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!vendor) throw new BadRequestException('Vendor not found');
+
+        const code = vendor.currency_code
+            ? String(vendor.currency_code).toUpperCase()
+            : '';
+        if (code) {
+            const cur: any = await this.currencyRepository.findOne({
+                company_id: companyId,
+                code,
+                soft_delete: false,
+            } as any);
+            if (cur) return cur._id.toString();
+        }
+        const def: any =
+            (await this.currencyRepository.findOne({
+                company_id: companyId,
+                is_default: true,
+                soft_delete: false,
+            } as any)) ||
+            (await this.currencyRepository.findOne({
+                company_id: companyId,
+                code: 'INR',
+                soft_delete: false,
+            } as any));
+        if (!def)
+            throw new BadRequestException('No currency configured for this company');
+        return def._id.toString();
+    }
+
     async create(
         companyId: string,
         data: PriceListCreateRequestDto,
         createdBy: string
     ): Promise<PriceListDoc> {
+        // Currency always follows the vendor — any incoming currency_id is
+        // ignored so the price list can't drift from the vendor's currency.
+        const currencyId = await this.resolveVendorCurrencyId(
+            companyId,
+            data.vendor_id
+        );
         await this.assertReferences(
             companyId,
             data.vendor_id,
             data.product_id,
-            data.currency_id
+            currencyId
         );
 
+        const { currency_id: _ignoredCurrency, ...rest } = data as any;
         const row = await this.priceListRepository.create({
-            ...data,
+            ...rest,
+            currency_id: currencyId,
             company_id: companyId,
             created_by: createdBy,
         } as any);
@@ -119,23 +173,11 @@ export class PriceListService {
         if (!data.vendor_id || !data.product_id) {
             return null; // can't form a valid price-list row
         }
-        // Most products carry no explicit currency — fall back to the company's
-        // default (base) currency so the row can still be written.
-        let currencyId = data.currency_id;
-        if (!currencyId) {
-            const def: any =
-                (await this.currencyRepository.findOne({
-                    company_id: companyId,
-                    is_default: true,
-                    soft_delete: false,
-                } as any)) ||
-                (await this.currencyRepository.findOne({
-                    company_id: companyId,
-                    code: 'INR',
-                    soft_delete: false,
-                } as any));
-            currencyId = def?._id?.toString();
-        }
+        // Currency always follows the vendor (price list carries none of its own).
+        const currencyId = await this.resolveVendorCurrencyId(
+            companyId,
+            data.vendor_id
+        );
         if (!currencyId) return null; // no currency to attach
         const today = new Date().toISOString().slice(0, 10);
         const unit_price = String(data.unit_price);
@@ -189,16 +231,23 @@ export class PriceListService {
     ): Promise<PriceListDoc> {
         const companyId = row.company_id.toString();
 
-        if (data.vendor_id || data.product_id || data.currency_id) {
+        // Currency follows the vendor — never taken from the request.
+        const { currency_id: _ignoredCurrency, ...rest } = data as any;
+        Object.assign(row, rest);
+        row.currency_id = await this.resolveVendorCurrencyId(
+            companyId,
+            row.vendor_id.toString()
+        );
+
+        if (data.vendor_id || data.product_id) {
             await this.assertReferences(
                 companyId,
-                data.vendor_id || row.vendor_id.toString(),
-                data.product_id || row.product_id.toString(),
-                data.currency_id || row.currency_id.toString()
+                row.vendor_id.toString(),
+                row.product_id.toString(),
+                row.currency_id.toString()
             );
         }
 
-        Object.assign(row, data);
         const updated = await this.priceListRepository.save(row);
 
         this.logger.log(`Price list entry updated: ${row._id}`);
@@ -302,6 +351,74 @@ export class PriceListService {
 
     async mapGet(row: PriceListDoc): Promise<PriceListGetResponseDto> {
         const [mapped] = await this.mapList([row]);
+        return mapped;
+    }
+
+    /**
+     * Map rows AND normalise every native price to the home currency (INR) for a
+     * fair cross-currency "cheapest" comparison. Each row's INR value =
+     * native × (its currency → INR) rate from the master (the rate on that
+     * currency's own page, e.g. USD→INR = 83). Home-currency rows use rate 1.
+     * Rows whose currency has NO →INR rate get `unit_price_inr = null` +
+     * `inr_rate_available = false` and are sorted LAST (can't be compared).
+     * Otherwise sorted by INR value ascending, so the true cheapest is first.
+     */
+    async mapListWithInrCompare(
+        rows: PriceListDoc[]
+    ): Promise<PriceListGetResponseDto[]> {
+        const mapped = await this.mapList(rows);
+        if (!mapped.length) return mapped;
+
+        const companyId = rows[0].company_id.toString();
+        const home = await this.currencyService
+            .getDefaultCurrency(companyId)
+            .catch(() => null);
+        const homeCode = (home?.code || 'INR').toUpperCase();
+
+        // One rate lookup per distinct currency id (not per row).
+        const rateByCurrencyId = new Map<string, number | null>();
+        for (let i = 0; i < mapped.length; i++) {
+            const currencyId = rows[i].currency_id?.toString();
+            if (!currencyId || rateByCurrencyId.has(currencyId)) continue;
+            const code = (mapped[i].currency_code || '').toUpperCase();
+            if (!code || code === homeCode) {
+                rateByCurrencyId.set(currencyId, 1);
+                continue;
+            }
+            let rate: number | null = null;
+            try {
+                const row = await this.currencyService.getCurrentRate(
+                    companyId,
+                    currencyId,
+                    homeCode
+                );
+                if (row?.rate && Number(row.rate) > 0) rate = Number(row.rate);
+            } catch {
+                rate = null;
+            }
+            rateByCurrencyId.set(currencyId, rate);
+        }
+
+        for (let i = 0; i < mapped.length; i++) {
+            const currencyId = rows[i].currency_id?.toString();
+            const rate = currencyId ? rateByCurrencyId.get(currencyId) : null;
+            const native = Number(mapped[i].unit_price) || 0;
+            if (rate != null) {
+                mapped[i].unit_price_inr = (native * rate).toFixed(2);
+                mapped[i].inr_rate_available = true;
+            } else {
+                mapped[i].unit_price_inr = null;
+                mapped[i].inr_rate_available = false;
+            }
+        }
+
+        // Convertible rows first (cheapest-in-INR ascending); unconvertible last.
+        mapped.sort((a, b) => {
+            const aa = a.inr_rate_available ? 0 : 1;
+            const bb = b.inr_rate_available ? 0 : 1;
+            if (aa !== bb) return aa - bb;
+            return Number(a.unit_price_inr || 0) - Number(b.unit_price_inr || 0);
+        });
         return mapped;
     }
 }

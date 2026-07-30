@@ -295,7 +295,9 @@ export class PoPdfService {
         // decimals to match the printed Grand Total exactly (which prints the
         // unrounded value, e.g. "9.44 $"). Rounding to a whole number here used
         // to drop the fractional part ("Nine Dollars Only" for 9.44).
-        const rate = Number(po.exchange_rate) || 1;
+        // Native model: line_total is already in the document currency, so the
+        // total prints as-is (no × exchange_rate).
+        const rate = 1;
         const amountInWords = numberToIndianWords(
             Math.round(linesInrTotal * rate * 100) / 100,
             po.currency_code || 'INR'
@@ -391,7 +393,9 @@ function buildPoHtml(ctx: PoPdfContext): string {
     const lines = po.lines || [];
 
     const sym = po.currency_symbol || po.currency_code || '₹';
-    const rate = Number(po.exchange_rate) || 1;
+    // Native model: line amounts are already in the document currency (each cost
+    // was converted source→doc in recompute) — print as-is, no × exchange_rate.
+    const rate = 1;
     // Sum of line amounts (customer currency). No round-off is applied — the
     // Grand Total prints the exact computed value.
     const rawGrandTotalCcy = inrTotal * rate;

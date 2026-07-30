@@ -15,6 +15,7 @@ import { QuotationModule } from '@modules/quotation/quotation.module';
 import { LeadRepositoryModule } from '@modules/lead/repository/lead.repository.module';
 import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
+import { CurrencyModule } from '@modules/currency/currency.module';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
 import { RebateModule } from '@modules/rebate/rebate.module';
 import { ExpenseModule } from '@modules/expense/expense.module';
@@ -37,6 +38,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         LeadRepositoryModule,
         PfiModule,
         PriceListModule,
+        CurrencyModule,
         PoVendorModule,
         RebateModule,
         ExpenseModule,
