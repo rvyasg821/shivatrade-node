@@ -951,12 +951,16 @@ export class VendorService {
         const links = await this.vendorCategoryRepository.findByVendorId(
             vendor._id.toString()
         );
+        // Legacy links (created before the product-category split) can carry a
+        // null category_id — guard `.toString()` so mapping never 500s.
         const vendorCatIds = links
             .filter((l) => l.category_type !== 'product')
-            .map((l) => l.category_id.toString());
+            .map((l) => l.category_id?.toString())
+            .filter((id): id is string => !!id);
         const productCatIds = links
             .filter((l) => l.category_type === 'product')
-            .map((l) => l.category_id.toString());
+            .map((l) => l.category_id?.toString())
+            .filter((id): id is string => !!id);
         const [catMap, productCatMap] = await Promise.all([
             this.buildCategoryNameMap(vendorCatIds),
             this.buildProductCategoryNameMap(productCatIds),
@@ -1045,14 +1049,16 @@ export class VendorService {
             new Set(
                 allLinks
                     .filter((l) => l.category_type !== 'product')
-                    .map((l) => l.category_id.toString())
+                    .map((l) => l.category_id?.toString())
+                    .filter((id): id is string => !!id)
             )
         );
         const allProductCategoryIds = Array.from(
             new Set(
                 allLinks
                     .filter((l) => l.category_type === 'product')
-                    .map((l) => l.category_id.toString())
+                    .map((l) => l.category_id?.toString())
+                    .filter((id): id is string => !!id)
             )
         );
         const [catMap, productCatMap] = await Promise.all([
@@ -1087,13 +1093,13 @@ export class VendorService {
             const vLinks = linksByVendor[vid] || [];
             dto.categories = vLinks
                 .filter((l) => l.category_type !== 'product')
-                .map((l) => l.category_id.toString())
-                .filter((cid) => catMap[cid])
+                .map((l) => l.category_id?.toString())
+                .filter((cid): cid is string => !!cid && !!catMap[cid])
                 .map((cid) => ({ _id: cid, name: catMap[cid] }));
             dto.product_categories = vLinks
                 .filter((l) => l.category_type === 'product')
-                .map((l) => l.category_id.toString())
-                .filter((cid) => productCatMap[cid])
+                .map((l) => l.category_id?.toString())
+                .filter((cid): cid is string => !!cid && !!productCatMap[cid])
                 .map((cid) => ({ _id: cid, name: productCatMap[cid] }));
             this.hydrateWithContacts(dto, contactsByVendor[vid] || []);
             dto.addresses = (addressesByVendor[vid] || []).map((a) =>
