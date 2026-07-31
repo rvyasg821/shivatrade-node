@@ -1984,7 +1984,10 @@ export class PurchaseOrderService {
             const product: any = productMap.get(l.product_id?.toString());
             return {
                 product_id: l.product_id?.toString(),
-                // Vendor is assigned later, at POV generation.
+                // Carry the vendor CHOSEN on the quotation's costing worksheet so
+                // the SO owns it (edit form + Generate-POV both read the SAME
+                // vendor). It can still be reassigned per line at POV generation.
+                vendor_id: l.vendor_id?.toString() || null,
                 source_quotation_line_id: l._id.toString(),
                 description: l.description || product?.description || '',
                 customer_reference: l.customer_reference || undefined,
@@ -1995,6 +1998,14 @@ export class PurchaseOrderService {
                 qty: String(l.qty || '0'),
                 unit: l.unit || product?.unit_of_measure || '',
                 unit_price: String(l.unit_price || '0'),
+                // Multi-currency: carry the frozen source currency + rate so the
+                // SO recompute keeps the native→doc conversion (no re-derive).
+                source_currency_code:
+                    (l as any).source_currency_code || undefined,
+                cost_exchange_rate:
+                    (l as any).cost_exchange_rate != null
+                        ? String((l as any).cost_exchange_rate)
+                        : undefined,
                 discount_pct: String(l.discount_pct ?? '0'),
                 tax_pct: String(l.tax_pct ?? product?.tax_pct ?? '0'),
                 // Costing snapshot frozen from the quotation line so the sales

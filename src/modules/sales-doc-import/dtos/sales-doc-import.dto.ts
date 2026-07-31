@@ -94,6 +94,11 @@ export interface ResolvedLine {
     qty: number;
     unit?: string;
     unit_price: number;
+    // Multi-currency: the vendor/source currency of `unit_price` (native). The
+    // frozen source→doc rate (cost_exchange_rate) is set by the worksheet once
+    // the doc currency is known; here we carry the source currency so the FE
+    // needn't re-derive it from the vendor.
+    source_currency_code?: string;
     discount_pct: number;
     tax_pct: number;
     margin_pct: number;
@@ -165,6 +170,10 @@ export class SalesDocExportLineDto {
     @IsOptional() qty?: number | string;
     @IsOptional() @IsString() unit?: string;
     @IsOptional() unit_price?: number | string;
+    // Multi-currency: unit_price is NATIVE to the vendor's currency; this frozen
+    // source→document rate converts it into the doc currency (1 when same).
+    @IsOptional() @IsString() source_currency_code?: string;
+    @IsOptional() cost_exchange_rate?: number | string;
     @IsOptional() discount_pct?: number | string;
     @IsOptional() tax_pct?: number | string;
     @IsOptional() margin_pct?: number | string;
