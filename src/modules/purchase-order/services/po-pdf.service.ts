@@ -256,8 +256,11 @@ export class PoPdfService {
         // Grand total in INR: sum of line totals (they are stored in INR);
         // grand_total on the entity is in customer currency, so derive an
         // INR figure for the vendor-facing PDF.
+        // Grand total = Σ per-line DOC-currency selling total, RECOMPUTED from
+        // the native fields (not the possibly-stale stored line_total) so it
+        // matches the on-screen detail / costing card.
         const linesInrTotal = (po.lines || []).reduce(
-            (s, l) => s + (Number((l as any).line_total) || 0),
+            (s, l) => s + lineSellDoc(l).amount,
             0
         );
 
@@ -388,6 +391,42 @@ interface PoPdfContext {
 
 // ─── helpers (shared Tally primitives live in tally-pdf.util) ───────────
 
+// Recompute a line's DOCUMENT-currency selling total from the NATIVE source
+// fields (unit_price × cost_exchange_rate + expenses + margin − rebates),
+// mirroring the SO recompute engine + the on-screen costing. Used instead of
+// the stored `line_total` so the PDF stays correct even for an SO whose stored
+// totals are stale (e.g. generated before the multi-currency recompute).
+function lineSellDoc(l: any): { amount: number; rate: number } {
+    const r2 = (n: number) =>
+        Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
+    const qty = Number(l.qty) || 0;
+    const costDoc =
+        (Number(l.unit_price) || 0) * (Number(l.cost_exchange_rate) || 1);
+    const disc = Number(l.discount_pct) || 0;
+    const gross = qty * costDoc;
+    const taxable = r2(gross - (gross * disc) / 100);
+    let expenses = 0;
+    for (const e of l.product_expenses_snapshot || [])
+        expenses +=
+            String(e?.type).toLowerCase() === 'percent'
+                ? (taxable * (Number(e?.value) || 0)) / 100
+                : Number(e?.value) || 0;
+    expenses = r2(expenses);
+    const fobBase = taxable + expenses;
+    let rebates = 0;
+    for (const r of l.product_rebates_snapshot || [])
+        rebates +=
+            String(r?.type).toLowerCase() === 'fixed'
+                ? Number(r?.pct) || 0
+                : (fobBase * (Number(r?.pct) || 0)) / 100;
+    rebates = r2(rebates);
+    const marginBase = taxable + expenses - rebates;
+    const margin = r2((marginBase * (Number(l.margin_pct) || 0)) / 100);
+    const amount = r2(taxable + expenses - rebates + margin);
+    const rate = qty > 0 ? amount / qty : costDoc;
+    return { amount, rate };
+}
+
 function buildPoHtml(ctx: PoPdfContext): string {
     const { po, company, customer, bank, amountInWords, inrTotal } = ctx;
     const lines = po.lines || [];
@@ -431,11 +470,11 @@ function buildPoHtml(ctx: PoPdfContext): string {
         ? lines
               .map((l, i) => {
                   const qty = Number(l.qty) || 0;
-                  const lineTotalCcy = (Number(l.line_total) || 0) * rate;
-                  const rateCcy =
-                      qty > 0
-                          ? lineTotalCcy / qty
-                          : (Number(l.unit_price) || 0) * rate;
+                  // Recompute from native fields so a stale stored line_total
+                  // can't print the wrong amount (matches the detail page).
+                  const sell = lineSellDoc(l);
+                  const lineTotalCcy = sell.amount;
+                  const rateCcy = sell.rate;
                   const disc = Number(l.discount_pct) || 0;
                   return `
         <tr>

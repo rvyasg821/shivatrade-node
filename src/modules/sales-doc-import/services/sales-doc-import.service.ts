@@ -108,7 +108,11 @@ function splitFreightByQty(
 // shivatrade-react/src/views/_shared/sales-doc/_helpers.js
 function computeLineCosting(l: SalesDocExportLineDto) {
     const qty = num(l.qty);
-    const price = num(l.unit_price);
+    // Multi-currency: convert the NATIVE vendor price into the DOCUMENT currency
+    // FIRST (× frozen source→doc rate; 1 for a same-currency / domestic line),
+    // then build expenses/rebates/margin in the doc currency — mirrors the FE
+    // _helpers.js computeLineCosting so exported totals match the costing card.
+    const price = num(l.unit_price) * (num(l.cost_exchange_rate) || 1);
     const disc = num(l.discount_pct);
     const r2 = (n: number) =>
         Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
@@ -299,6 +303,15 @@ export class SalesDocImportService {
                 // alias and are therefore ignored on import.
                 freight: ['freight'],
             };
+            // The export labels the native-price column `rate(<currency>)`
+            // (e.g. rate(USD)); accept ANY `rate(...)` header for unit_price so a
+            // round-trip of a foreign sheet resolves the price. Matches the
+            // legacy `rate(inr)` too.
+            const rateKey = Object.keys(raw).find((k) =>
+                /^rate\s*\(.*\)$/i.test(k.trim()),
+            );
+            if (rateKey)
+                COL_ALIASES.unit_price = [...COL_ALIASES.unit_price, rateKey];
             const get = (col: string): string => {
                 const cands = COL_ALIASES[col] || [col];
                 for (const c of cands) {
@@ -662,6 +675,11 @@ export class SalesDocImportService {
                 qty: qty || 0,
                 unit,
                 unit_price: unitPrice,
+                // Source currency = the vendor's currency (pricelist follows the
+                // vendor). The worksheet freezes cost_exchange_rate from this.
+                source_currency_code: vendorId
+                    ? vendorCurrencyById.get(vendorId.toString()) || 'INR'
+                    : 'INR',
                 discount_pct: discountPct,
                 tax_pct: taxPct,
                 margin_pct: marginPct,
@@ -935,6 +953,15 @@ export class SalesDocImportService {
         const includeComputed = opts.includeComputed;
         const rate = num(opts.exchangeRate) || 1;
         const cur = (opts.currencyCode || '').trim();
+        // The Rate column holds each vendor's NATIVE price (source currency).
+        // One-currency-per-document → all lines share one source currency, so
+        // label the column with it (was a misleading fixed "inr").
+        const srcCur = (
+            exportLines.find((l) => l.source_currency_code)
+                ?.source_currency_code ||
+            cur ||
+            'INR'
+        ).toUpperCase();
         // exchange_rate is stored foreign-per-₹1; foreign docs carry a non-1 rate.
         const isForeign =
             !!cur && cur.toUpperCase() !== 'INR' && rate > 0 && rate !== 1;
@@ -1040,7 +1067,7 @@ export class SalesDocImportService {
             'partno',
             'hsncode',
             'qty',
-            'rate(inr)',
+            `rate(${srcCur})`,
             'disc(%)',
         ];
         if (includeComputed) headerRow.push('price/disc', 'value');
@@ -1084,9 +1111,12 @@ export class SalesDocImportService {
             ];
             // GST excluded — quotations & SOs carry no tax in these totals.
             const c = computeLineCosting(l);
+            // Price in the DOCUMENT currency (native × frozen source→doc rate),
+            // so the computed columns match the on-screen worksheet.
+            const priceDoc = num(l.unit_price) * (num(l.cost_exchange_rate) || 1);
             if (includeComputed) {
                 const priceDisc = r2(
-                    num(l.unit_price) * (1 - num(l.discount_pct) / 100),
+                    priceDoc * (1 - num(l.discount_pct) / 100),
                 );
                 row.push(priceDisc, c.taxable);
             }
@@ -1099,8 +1129,9 @@ export class SalesDocImportService {
             const grand = r2(
                 c.taxable - c.rebate_total + c.expense_total + c.margin_amt,
             );
-            // FOB amount in the DOCUMENT currency (INR docs: grand as-is).
-            const amtDoc = isForeign ? r2(grand * rate) : grand;
+            // `grand` is ALREADY in the document currency (each line was
+            // converted per-line in computeLineCosting) — no header × rate.
+            const amtDoc = grand;
             const qty = num(l.qty);
             if (includeComputed) {
                 row.push(grand);
@@ -1150,8 +1181,13 @@ export class SalesDocImportService {
                 },
                 { taxable: 0, expense: 0, rebate: 0, margin: 0, grand: 0 },
             );
+            // `t.*` are already in the DOCUMENT currency. The primary column is
+            // the doc currency; INR is the back-converted reference (rate is
+            // doc-per-₹1, so INR = doc ÷ rate). For an INR doc rate = 1.
+            const toInr = (v: number) => (isForeign ? r2(v / rate) : r2(v));
+            const docLabel = isForeign ? `Amount (${cur})` : 'Amount (INR)';
             const rows: any[] = [
-                ['Metric', 'Amount (INR)'],
+                ['Metric', docLabel],
                 ['Value (Taxable)', r2(t.taxable)],
                 ['Expenses', r2(t.expense)],
                 ['Rebates', r2(t.rebate)],
@@ -1159,26 +1195,21 @@ export class SalesDocImportService {
                 ['Grand Total', r2(t.grand)],
             ];
             if (isForeign) {
-                rows[0].push(`Amount (${cur})`);
-                rows[1].push(r2(t.taxable * rate));
-                rows[2].push(r2(t.expense * rate));
-                rows[3].push(r2(t.rebate * rate));
-                rows[4].push(r2(t.margin * rate));
-                rows[5].push(r2(t.grand * rate));
+                rows[0].push('Amount (INR)');
+                rows[1].push(toInr(t.taxable));
+                rows[2].push(toInr(t.expense));
+                rows[3].push(toInr(t.rebate));
+                rows[4].push(toInr(t.margin));
+                rows[5].push(toInr(t.grand));
             }
-            // Freight is entered in the DOCUMENT currency; the INR column is
-            // the back-converted figure (rate is foreign-per-₹1). CNF Total =
-            // FOB grand total + freight, matching the worksheet footer.
+            // Freight is entered in the DOCUMENT currency. CNF Total = FOB grand
+            // total + freight, in the doc currency, matching the worksheet.
             if (freightTotal > 0) {
-                const freightInr = isForeign
-                    ? r2(freightTotal / rate)
-                    : r2(freightTotal);
-                const grandDoc = isForeign ? r2(t.grand * rate) : r2(t.grand);
-                rows.push(['Freight', freightInr]);
-                rows.push(['CNF Total', r2(t.grand + freightInr)]);
+                rows.push(['Freight', r2(freightTotal)]);
+                rows.push(['CNF Total', r2(t.grand + freightTotal)]);
                 if (isForeign) {
-                    rows[6].push(r2(freightTotal));
-                    rows[7].push(r2(grandDoc + freightTotal));
+                    rows[6].push(toInr(freightTotal));
+                    rows[7].push(toInr(t.grand + freightTotal));
                 }
             }
             utils.book_append_sheet(
@@ -1234,16 +1265,22 @@ export class SalesDocImportService {
             : [];
         // Money formatters — the report is text/presentation, so amounts carry
         // their currency symbol exactly like the on-screen worksheet.
-        const inr = (n: number) =>
-            `₹${Number(r2(n)).toLocaleString('en-IN', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-            })}`;
         const fx = (n: number, dp: number) =>
             `${docSym}${Number(n).toLocaleString('en-US', {
                 minimumFractionDigits: dp,
                 maximumFractionDigits: dp,
             })}`;
+        // Multi-currency: the whole build-up (value/expenses/rebates/margin/
+        // grand) is now in the DOCUMENT currency, so this formatter renders the
+        // doc symbol ($ …) for a foreign doc and ₹ for an INR doc. (Name kept
+        // for the many call sites below; it is a doc-currency formatter now.)
+        const inr = (n: number) =>
+            isForeign
+                ? fx(n, 2)
+                : `₹${Number(r2(n)).toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                  })}`;
         // Freight / CNF are in the DOCUMENT currency (₹ for INR docs, else the
         // foreign symbol) — same as the worksheet's Freight / CNF columns.
         const docMoney = (n: number) => (isForeign ? fx(n, 2) : inr(n));
@@ -1349,12 +1386,14 @@ export class SalesDocImportService {
         h1[6] = 'Rate';
         h1[7] = 'Disc';
         h1[8] = 'Price after Disc';
-        h1[9] = 'Value (INR)';
+        // Build-up columns are in the DOCUMENT currency now (each line converted
+        // per-line), so the header names the doc currency, not a fixed ₹.
+        h1[9] = `Value (${docCur})`;
         if (E > 0) h1[expStart] = 'Logistics FOB Cost Elements';
-        h1[totalFobIdx] = 'Total FOB (INR)';
+        h1[totalFobIdx] = `Total FOB (${docCur})`;
         if (R > 0) h1[rebStart] = 'Government Benefits';
         h1[marginIdx] = 'Margin';
-        h1[grandIdx] = 'Grand Total (INR)';
+        h1[grandIdx] = `Grand Total (${docCur})`;
         if (isForeign) h1[rateIdx] = `${docCur} Realization`;
         if (hasFreight) {
             h1[freightIdx] = `Freight (${docCur})`;
@@ -1385,7 +1424,11 @@ export class SalesDocImportService {
         };
         const dataAoa = exportLines.map((l, i) => {
             const qty = num(l.qty);
-            const price = num(l.unit_price);
+            // Native vendor price → DOCUMENT currency (× frozen source→doc rate;
+            // 1 for same-currency / domestic). The whole build-up below is then
+            // in the doc currency — no header × rate at the end.
+            const price =
+                num(l.unit_price) * (num(l.cost_exchange_rate) || 1);
             const disc = num(l.discount_pct);
             const gross = qty * price;
             const taxable = r2(gross - (gross * disc) / 100);
@@ -1418,7 +1461,8 @@ export class SalesDocImportService {
             const afterReb = r2(totalFob - rebatesAmt);
             const marginAmt = r2((afterReb * num(l.margin_pct)) / 100);
             const grand = r2(afterReb + marginAmt);
-            const amtDoc = isForeign ? r2(grand * rate) : grand;
+            // `grand` is ALREADY in the document currency — no header × rate.
+            const amtDoc = grand;
             const rateDoc = qty ? r2(amtDoc / qty) : 0;
             // CNF (Cost + Freight) = realization amount + this line's freight
             // share, both in document currency — mirrors the worksheet.
@@ -1510,8 +1554,7 @@ export class SalesDocImportService {
         banner[8] = r2(freightTotal);
 
         const noteRow: any[] = new Array(width).fill('');
-        noteRow[0] =
-            'Grand Total (INR) = Total FOB (Value + Expenses) + Margin − Rebates';
+        noteRow[0] = `Grand Total (${docCur}) = Total FOB (Value + Expenses) + Margin − Rebates`;
 
         const aoa: any[][] = [banner, [], h1, h2, ...dataAoa, totalRow, [], noteRow];
         const ws = XLSXStyle.utils.aoa_to_sheet(aoa);

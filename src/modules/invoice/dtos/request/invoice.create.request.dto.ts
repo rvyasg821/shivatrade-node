@@ -93,6 +93,16 @@ export class InvoiceLineDto {
     @IsNotEmpty()
     unit_price: string;
 
+    /** Multi-currency: native currency of unit_price (vendor/source) + frozen
+     *  source→document rate (cost_doc = unit_price × cost_exchange_rate). */
+    @IsString()
+    @IsOptional()
+    source_currency_code?: string;
+
+    @IsNumberString()
+    @IsOptional()
+    cost_exchange_rate?: string;
+
     @IsNumberString()
     @IsOptional()
     discount_pct?: string;
