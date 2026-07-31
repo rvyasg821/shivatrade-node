@@ -948,6 +948,9 @@ export class LeadService {
                 qty: numOr(l.qty, '0'),
                 unit: l.unit || null,
                 unit_price: numOr(l.unit_price, '0'),
+                source_currency_code:
+                    (l as any).source_currency_code || 'INR',
+                cost_exchange_rate: numOr((l as any).cost_exchange_rate, '1'),
                 discount_pct: numOr(l.discount_pct, '0'),
                 tax_pct: numOr(l.tax_pct, '0'),
                 margin_pct: numOr(l.margin_pct, '0'),

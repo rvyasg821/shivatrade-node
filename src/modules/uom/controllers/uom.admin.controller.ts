@@ -216,6 +216,21 @@ export class UomAdminController {
         await this.uomService.softDelete(row);
     }
 
+    @Response('uom.delete')
+    @UserProtected()
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.uomService.deleteMany(ids);
+        return { data };
+    }
+
     private parseStatus(status?: string): ENUM_UOM_STATUS | undefined {
         if (!status) return undefined;
         const value = status.toUpperCase();

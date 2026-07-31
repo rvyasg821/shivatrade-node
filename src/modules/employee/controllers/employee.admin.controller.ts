@@ -976,6 +976,42 @@ export class EmployeeAdminController {
     }
 
     /**
+     * Bulk soft-delete employees. Loops the SAME per-row logic as the single
+     * delete (suffix email/employee_code to free unique constraints, mark
+     * inactive, soft-delete) so one bad row is skipped, not aborting the batch.
+     */
+    @Response('employee.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: 'Bulk soft delete employees' })
+    async deleteMany(
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const user = await this.userService.findOneById(id);
+                const suffix = `_deleted_${Date.now()}`;
+                if (user.email) user.email = `${user.email}${suffix}`;
+                if ((user as any).employee_code)
+                    (user as any).employee_code = `${(user as any).employee_code}${suffix}`;
+                (user as any).is_active = false;
+                await this.userService.softDelete(user);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { data: { deleted, skipped } };
+    }
+
+    /**
      * Check if email exists in users or shared_users tables
      */
     @Response('employee.checkEmail')

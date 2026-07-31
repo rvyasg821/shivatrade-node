@@ -47,6 +47,7 @@ export class InventoryAdminController {
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
         @Query('min_qty') minQty?: string,
+        @Query('currency_code') currencyCode?: string,
         @Query('in_stock_only') inStockOnly?: string,
         @Query('orderBy') orderBy?: string,
         @Query('orderDirection') orderDirection?: string
@@ -62,6 +63,7 @@ export class InventoryAdminController {
             date_to: dateTo || undefined,
             min_qty:
                 minQty != null && minQty !== '' ? Number(minQty) : undefined,
+            currency_code: currencyCode?.trim() || undefined,
             in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
             limit: _limit,
             offset: _offset,
@@ -87,6 +89,7 @@ export class InventoryAdminController {
     @ApiQuery({ name: 'location_id', required: false })
     @ApiQuery({ name: 'date_from', required: false })
     @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'currency_code', required: false })
     @ApiQuery({ name: 'in_stock_only', required: false })
     @Get('/export')
     async export(
@@ -101,6 +104,7 @@ export class InventoryAdminController {
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
         @Query('min_qty') minQty?: string,
+        @Query('currency_code') currencyCode?: string,
         @Query('in_stock_only') inStockOnly?: string,
         @Query('orderBy') orderBy?: string,
         @Query('orderDirection') orderDirection?: string
@@ -116,6 +120,7 @@ export class InventoryAdminController {
             date_to: dateTo || undefined,
             min_qty:
                 minQty != null && minQty !== '' ? Number(minQty) : undefined,
+            currency_code: currencyCode?.trim() || undefined,
             in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
             orderBy,
             orderDirection,
@@ -209,6 +214,7 @@ export class InventoryAdminController {
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
         @Query('min_qty') minQty?: string,
+        @Query('currency_code') currencyCode?: string,
         @Query('in_stock_only') inStockOnly?: string
     ): Promise<IResponse<InventoryStatsResponseDto>> {
         const data = await this.inventoryService.stats(companyId, {
@@ -222,6 +228,7 @@ export class InventoryAdminController {
             date_to: dateTo || undefined,
             min_qty:
                 minQty != null && minQty !== '' ? Number(minQty) : undefined,
+            currency_code: currencyCode?.trim() || undefined,
             in_stock_only: inStockOnly === 'true' || inStockOnly === '1',
         });
         return { data };

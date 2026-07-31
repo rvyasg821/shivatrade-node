@@ -9,6 +9,8 @@ export class LeadLineResponseDto {
     @ApiProperty({ required: false, type: String }) qty?: string;
     @ApiProperty({ required: false, type: String }) unit?: string;
     @ApiProperty({ required: false, type: String }) unit_price?: string;
+    @ApiProperty({ required: false, type: String }) source_currency_code?: string;
+    @ApiProperty({ required: false, type: String }) cost_exchange_rate?: string;
     @ApiProperty({ required: false, type: String }) discount_pct?: string;
     @ApiProperty({ required: false, type: String }) tax_pct?: string;
     @ApiProperty({ required: false, type: String }) cgst?: string;

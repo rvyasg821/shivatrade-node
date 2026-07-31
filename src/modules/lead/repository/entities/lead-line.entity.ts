@@ -42,9 +42,21 @@ export class LeadLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 30, nullable: true })
     unit?: string;
 
-    /** Indicative price — auto-filled from the cheapest current price-list vendor. */
+    /** Indicative price — auto-filled from the cheapest current price-list
+     *  vendor, stored NATIVE in that vendor's currency (multi-currency). */
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     unit_price: string;
+
+    /** The native currency of `unit_price` (the vendor/source currency). Mirrors
+     *  quotation_line so the lead → quotation carry keeps the source currency. */
+    @Column({ type: 'varchar', length: 10, nullable: true, default: 'INR' })
+    source_currency_code?: string;
+
+    /** Frozen source→lead-currency rate (cost_native × rate = cost in the lead
+     *  currency). 1 when source == lead currency. Display/indicative at lead
+     *  stage; the quotation re-derives it in the costing worksheet. */
+    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true, default: 1 })
+    cost_exchange_rate?: string;
 
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
     discount_pct?: string;

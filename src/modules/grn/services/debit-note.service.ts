@@ -773,13 +773,11 @@ export class DebitNoteService {
                 maximumFractionDigits: 2,
             });
         };
-        // Amounts are stored in INR; a foreign-currency Debit Note carries the
-        // POV's exchange_rate (foreign-per-₹1) + code, so render each amount in
-        // that currency with its symbol.
-        const dnRate = Number((dn as any).exchange_rate) || 1;
+        // Amounts are stored NATIVE in the POV's own currency (the return is
+        // settled in that currency), so render each amount AS-IS with the POV
+        // currency symbol — no INR conversion.
         const dnSym = getCurrencySymbol(dn.currency_code || 'INR') || '₹';
-        const moneyCcy = (v: any): string =>
-            `${dnSym}${money((Number(v) || 0) * dnRate)}`;
+        const moneyCcy = (v: any): string => `${dnSym}${money(v)}`;
         const rows = (dn.lines || [])
             .map(
                 (l, i) => `<tr>
@@ -791,7 +789,7 @@ export class DebitNoteService {
                 }</td>
                 <td>${this.esc(l.part_no || '-')}</td>
                 <td>${this.esc(l.hsn_code || '-')}</td>
-                <td style="text-align:right">${this.esc(l.returned_qty || '0')} ${this.esc(l.unit || '')}</td>
+                <td style="text-align:right">${money(l.returned_qty)} ${this.esc(l.unit || '')}</td>
                 <td style="text-align:right">${moneyCcy(l.unit_price)}</td>
                 <td style="text-align:right">${moneyCcy(l.line_total)}</td>
                 <td>${this.esc(l.remarks || '')}</td>

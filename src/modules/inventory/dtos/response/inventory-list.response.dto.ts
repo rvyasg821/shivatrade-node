@@ -22,13 +22,21 @@ export class InventoryListResponseDto {
     @ApiProperty({ nullable: true })
     uom: string | null;
 
-    // Live ledger on-hand for this product (single pool: GRN-in − invoice-out).
-    // The real "Qty in Stock" — reads 0 once the product is fully sold.
+    // The purchase currency this stock row is valued in (multi-currency
+    // inventory). A product bought in two currencies yields two rows, one per
+    // currency. All money fields below (avg_rate, closing_value) are NATIVE to
+    // this currency — never converted to ₹.
+    @ApiProperty()
+    currency_code: string;
+
+    // FIFO on-hand qty for this (product, currency) — the surviving receipt
+    // layers of this currency after outward movements. The real "Qty in Stock"
+    // for this currency slice; reads 0 once that slice is fully sold.
     @ApiProperty()
     on_hand: string;
 
-    // Weighted-average received unit price (₹/unit) across this product's POV
-    // lines — same cost basis as the Stock Value card.
+    // Weighted-average surviving unit price in THIS currency (native/unit) —
+    // closing_value ÷ closing_qty. Not converted to ₹.
     @ApiProperty()
     avg_rate: string;
 

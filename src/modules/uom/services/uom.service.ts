@@ -154,6 +154,39 @@ export class UomService {
         } as any);
     }
 
+    /**
+     * Bulk soft-delete. Replays the SAME in-use guard the single delete uses,
+     * so a unit still held by products is skipped (with a reason), not deleted.
+     * Returns the ids actually deleted and the ones skipped.
+     */
+    async deleteMany(
+        ids: string[]
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                const inUse = await this.countInUse(row.code);
+                if (inUse > 0) {
+                    skipped.push({
+                        id,
+                        reason: `In use by ${inUse} product(s)`,
+                    });
+                    continue;
+                }
+                await this.softDelete(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     async findForList(filters: {
         q?: string;
         status?: ENUM_UOM_STATUS;

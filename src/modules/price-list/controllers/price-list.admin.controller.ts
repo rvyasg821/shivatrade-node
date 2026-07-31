@@ -549,4 +549,18 @@ export class PriceListAdminController {
         const row = await this.priceListService.findOneById(id);
         await this.priceListService.hardDelete(row);
     }
+
+    @Response('priceList.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.priceListService.deleteMany(ids);
+        return { data };
+    }
 }
