@@ -259,6 +259,31 @@ export class PriceListService {
         this.logger.log(`Price list entry deleted: ${row._id}`);
     }
 
+    /**
+     * Bulk delete. Loops the SAME guarded single-delete path so a missing/
+     * un-deletable row is skipped, not aborting the whole batch. Returns the
+     * ids actually deleted and the ones skipped with a reason.
+     */
+    async deleteMany(
+        ids: string[]
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                const row = await this.findOneById(id);
+                await this.hardDelete(row);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     async getCurrentPrice(
         companyId: string,
         vendorId: string,

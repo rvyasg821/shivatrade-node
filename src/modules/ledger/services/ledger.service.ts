@@ -227,7 +227,7 @@ export class LedgerService {
         return { ...ledger, summary };
     }
 
-    // ── Vendor ledger (always INR) ──
+    // ── Vendor ledger (native — in the vendor's own currency) ──
     async vendorLedger(
         companyId: string,
         vendorId: string,
@@ -335,7 +335,7 @@ export class LedgerService {
             'vendor',
             vendorId,
             vendor.company_name,
-            'INR',
+            vendor.currency_code || 'INR',
             rows,
             from,
             to,
@@ -426,15 +426,11 @@ export class LedgerService {
                         party_id: pov.vendor_id,
                         party_name: pov.vendor_name,
                         direction: 'debit',
-                        // Vendor payments are STORED in INR; express in the POV's
-                        // currency (× exchange_rate) so the value matches the
-                        // currency_code symbol shown in the register.
-                        amount: String(
-                            round2(
-                                num(pay.amount) *
-                                    (Number(pov.exchange_rate) || 1)
-                            )
-                        ),
+                        // Vendor payments are stored NATIVE in the POV's own
+                        // currency (the GROSS that settles the vendor), so use
+                        // the amount AS-IS — no INR conversion. It already
+                        // matches the currency_code symbol shown in the register.
+                        amount: String(round2(num(pay.amount))),
                         currency_code: pov.currency_code || 'INR',
                         particulars: `Payment of ${pov.voucher_no || ''}`.trim(),
                         // Vendor PO this payment settles → deep-link target.

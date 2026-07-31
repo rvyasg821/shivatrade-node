@@ -26,6 +26,9 @@ export interface InventoryListFilters {
     date_from?: string;
     date_to?: string;
     min_qty?: number;
+    // Multi-currency inventory: filter to stock purchased in one currency.
+    // Empty/undefined = "All" (every currency, stacked in the UI).
+    currency_code?: string;
     // Only products whose live ledger on-hand is > 0 (hides fully sold-out
     // receipt lines). Single-pool on-hand, matching the coverage view.
     in_stock_only?: boolean;
@@ -190,138 +193,247 @@ export class InventoryService {
         return { whereSql: where.join(' AND '), params };
     }
 
+    // ─── Per-currency FIFO valuation (multi-currency inventory) ──────────
+    //
+    // Stock is valued NATIVE, grouped by the currency it was PURCHASED in — no
+    // conversion to ₹ (that reverses the old D-6 INR-at-PO-rate model). A
+    // product bought from both a USD vendor and an INR vendor shows as two rows:
+    // one under USD, one under INR. FIFO decides which currency slice survives
+    // as goods are sold: outward movements consume the OLDEST receipt layers
+    // first, so the newest (surviving) layers determine the on-hand split.
+    //
+    // Layers = POV lines with received_qty (each tagged with its POV currency +
+    // native unit price, dated by the POV arrival date) — the same row source
+    // the register used before multi-currency, so received stock always shows.
+    // Outward = real OUT ledger rows (sales invoices / manual, GRN reversals
+    // excluded), consumed oldest-first. Opening & closing are the FIFO remainder
+    // at the period's start/end; inward is the layer qty received in the window;
+    // outward = opening + inward − closing (identity, per currency).
+    private readonly FIFO_CTES = `
+        layers AS (
+            -- Receipt layers come from the POV lines themselves (received_qty),
+            -- NOT the GRN ledger: received stock exists on the POV even when it
+            -- wasn't posted to the ledger via a confirmed GRN, so the register
+            -- must show it (matches the pre-multi-currency row source). Each
+            -- layer carries its POV currency + native unit price, dated by the
+            -- POV's arrival date for FIFO ordering.
+            SELECT pvl.product_id,
+                   pv.vendor_id                           AS vendor_id,
+                   COALESCE(pv.currency_code, 'INR')      AS ccy,
+                   COALESCE(pvl.received_qty, 0)::numeric AS in_qty,
+                   COALESCE(pvl.unit_price, 0)::numeric   AS unit_price,
+                   COALESCE(pv.actual_arrival_date, pv."updatedAt")::timestamptz AS mv_at,
+                   pvl._id                                AS mv_id
+            FROM po_vendor_lines pvl
+            JOIN po_vendors pv        ON pv._id = pvl.po_vendor_id
+            LEFT JOIN purchase_orders po ON po._id = pv.purchase_order_id
+            WHERE pv.company_id = $1 AND pv.soft_delete = false
+              AND pv.status <> 'cancelled'
+              AND COALESCE(pvl.received_qty, 0) > 0
+              {{LAYER_FILTERS}}
+        ),
+        outmv AS (
+            -- Outward = real issues (sales invoices, manual out). GRN rows are
+            -- EXCLUDED: a GRN reversal posts a negative 'grn' row, but layers
+            -- above already come from POV received_qty, so counting a reversal
+            -- as outward would double-reduce the stock.
+            SELECT sm.product_id, sm.qty::numeric AS qty, sm."createdAt" AS mv_at
+            FROM stock_movements sm
+            WHERE sm.company_id = $1 AND sm.deleted = false AND sm.qty < 0
+              AND sm.source_type <> 'grn'
+              {{OUT_FILTERS}}
+        ),
+        cutoffs AS (
+            SELECT 'opening'::text AS lbl,
+                   COALESCE($__FROM__::timestamptz, '-infinity'::timestamptz) AS ts
+            UNION ALL
+            SELECT 'closing',
+                   COALESCE(($__TO__::date + 1)::timestamptz, 'infinity'::timestamptz)
+        ),
+        ranked AS (
+            SELECT l.product_id, l.ccy, l.unit_price, l.in_qty, c.lbl,
+                   SUM(l.in_qty) OVER (
+                       PARTITION BY l.product_id, c.lbl
+                       ORDER BY l.mv_at, l.mv_id
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                   ) AS cum_in
+            FROM layers l JOIN cutoffs c ON l.mv_at < c.ts
+        ),
+        out_at AS (
+            SELECT o.product_id, c.lbl, SUM(-o.qty) AS out_qty
+            FROM outmv o JOIN cutoffs c ON o.mv_at < c.ts
+            GROUP BY o.product_id, c.lbl
+        ),
+        remaining AS (
+            SELECT r.product_id, r.ccy, r.lbl, r.unit_price,
+                   GREATEST(0, LEAST(r.in_qty, r.cum_in - COALESCE(oa.out_qty, 0))) AS rem_qty
+            FROM ranked r
+            LEFT JOIN out_at oa ON oa.product_id = r.product_id AND oa.lbl = r.lbl
+        ),
+        agg AS (
+            SELECT product_id, ccy, lbl,
+                   SUM(rem_qty)             AS qty,
+                   SUM(rem_qty * unit_price) AS val
+            FROM remaining GROUP BY product_id, ccy, lbl
+        ),
+        inward AS (
+            SELECT l.product_id, l.ccy, SUM(l.in_qty) AS qty
+            FROM layers l
+            WHERE l.mv_at >= COALESCE($__FROM__::timestamptz, '-infinity'::timestamptz)
+              AND l.mv_at <  COALESCE(($__TO__::date + 1)::timestamptz, 'infinity'::timestamptz)
+            GROUP BY l.product_id, l.ccy
+        ),
+        combined AS (
+            SELECT
+                COALESCE(cl.product_id, op.product_id, iw.product_id) AS product_id,
+                COALESCE(cl.ccy, op.ccy, iw.ccy)                      AS ccy,
+                COALESCE(op.qty, 0)  AS opening_qty,
+                COALESCE(iw.qty, 0)  AS inward_qty,
+                COALESCE(cl.qty, 0)  AS closing_qty,
+                COALESCE(cl.val, 0)  AS closing_value,
+                CASE WHEN COALESCE(cl.qty, 0) > 0
+                     THEN COALESCE(cl.val, 0) / cl.qty ELSE 0 END AS avg_rate
+            FROM       (SELECT * FROM agg WHERE lbl = 'closing') cl
+            FULL JOIN  (SELECT * FROM agg WHERE lbl = 'opening') op
+                       ON op.product_id = cl.product_id AND op.ccy = cl.ccy
+            FULL JOIN  inward iw
+                       ON iw.product_id = COALESCE(cl.product_id, op.product_id)
+                      AND iw.ccy        = COALESCE(cl.ccy, op.ccy)
+        )`;
+
     /**
-     * Paginated stock register. A POV line qualifies when its parent POV is
-     * non-cancelled and it has QC-accepted qty from confirmed GRNs (> 0) —
-     * so partial receipts on still-open POVs are included. Filters compose —
-     * only the WHERE clauses with values are appended.
+     * Builds the resolved FIFO CTE block + positional params + the product-level
+     * WHERE fragment, shared by list / stats / export so all three describe the
+     * exact same filtered, per-currency set. `params[0]` is always companyId;
+     * callers append their own params (limit/offset) starting at params.length+1.
+     */
+    private buildFifo(
+        companyId: string,
+        filters: InventoryStatsFilters
+    ): { ctes: string; params: any[]; prodWhere: string } {
+        const p: any[] = [companyId];
+        const layerFilters: string[] = [];
+        const outFilters: string[] = [];
+
+        // Location applies to BOTH the receipt layers and the outward pool so
+        // FIFO consumes within the same warehouse (one param, reused). Layers
+        // (POV) use the deliver-to snapshot; the ledger (outmv) uses its own
+        // location_id.
+        if (filters.location_id) {
+            p.push(filters.location_id);
+            layerFilters.push(
+                `AND COALESCE(pv.delivery_address_id, po.delivery_address_id) = $${p.length}`
+            );
+            outFilters.push(`AND sm.location_id = $${p.length}`);
+        }
+        // Vendor narrows which receipt layers count (outward stays whole-pool).
+        if (filters.vendor_id) {
+            p.push(filters.vendor_id);
+            layerFilters.push(`AND pv.vendor_id = $${p.length}`);
+        }
+        p.push(filters.date_from ?? null);
+        const fromIdx = p.length;
+        p.push(filters.date_to ?? null);
+        const toIdx = p.length;
+
+        const prodFilters: string[] = [];
+        if (filters.search) {
+            p.push(`%${filters.search}%`);
+            prodFilters.push(
+                `AND (p.code ILIKE $${p.length} OR p.name ILIKE $${p.length})`
+            );
+        }
+        if (filters.category_id) {
+            p.push(filters.category_id);
+            prodFilters.push(`AND p.category_id = $${p.length}`);
+        }
+        if (filters.currency_code) {
+            p.push(filters.currency_code);
+            prodFilters.push(`AND cb.ccy = $${p.length}`);
+        }
+        if (filters.in_stock_only) prodFilters.push(`AND cb.closing_qty > 0`);
+
+        const ctes = this.FIFO_CTES.replace(
+            /\{\{LAYER_FILTERS\}\}/g,
+            layerFilters.join(' ')
+        )
+            .replace(/\{\{OUT_FILTERS\}\}/g, outFilters.join(' '))
+            .replace(/\$__FROM__/g, `$${fromIdx}`)
+            .replace(/\$__TO__/g, `$${toIdx}`);
+
+        return { ctes, params: p, prodWhere: prodFilters.join(' ') };
+    }
+
+    /**
+     * Paginated stock register — one row per (PRODUCT × purchase-currency).
+     * Native, FIFO-valued (see FIFO_CTES). Filters compose. Returns the page
+     * plus the full row count (via COUNT(*) OVER()).
      */
     async list(
         companyId: string,
         filters: InventoryListFilters
     ): Promise<{ rows: InventoryListResponseDto[]; total: number }> {
-        const { whereSql, params } = this.buildWhere(companyId, filters);
-
-        // One row per PRODUCT (not per receipt line). The same product procured
-        // on several POVs would otherwise repeat — each showing the same
-        // single-pool on-hand. Which POV/GRN it came from lives in the
-        // per-product movement drawer, so we collapse to a clean stock view.
-        const groupFrom = `${this.FROM_JOINS}
-             WHERE ${whereSql}
-             GROUP BY p._id, p.code, p.name, p.unit_of_measure, p.company_id, c.name`;
-
-        const countRows = await this.dataSource.query(
-            `SELECT COUNT(*)::int AS total FROM (SELECT p._id ${groupFrom}) t`,
-            params
+        const { ctes, params: p, prodWhere } = this.buildFifo(
+            companyId,
+            filters
         );
-        const total = countRows?.[0]?.total || 0;
 
         const ORDER: Record<string, string> = {
-            arrival_date: 'arrival_date',
-            product_name: 'product_name',
-            product_code: 'product_code',
-            on_hand: 'on_hand',
+            product_name: 'p.name',
+            product_code: 'p.code',
+            on_hand: 'cb.closing_qty',
+            closing_qty: 'cb.closing_qty',
         };
-        const orderCol = ORDER[filters.orderBy] || 'arrival_date';
+        const orderCol = ORDER[filters.orderBy] || 'p.name';
         const orderDir =
-            (filters.orderDirection || 'DESC').toUpperCase() === 'ASC'
-                ? 'ASC'
-                : 'DESC';
+            (filters.orderDirection || 'ASC').toUpperCase() === 'DESC'
+                ? 'DESC'
+                : 'ASC';
 
-        // Stock-summary period params: Received From/To become the window for
-        // opening / inward / outward / closing, applied to the ledger's
-        // movement date (sm."createdAt"). Appended as their own params so the
-        // per-product subqueries can reference them regardless of which list
-        // filters buildWhere added.
-        const dfromIdx = params.length + 1;
-        const dtoIdx = params.length + 2;
-        const limitIdx = params.length + 3;
-        const offsetIdx = params.length + 4;
+        const limitIdx = p.length + 1;
+        const offsetIdx = p.length + 2;
         const rows = await this.dataSource.query(
-            `SELECT
-                p._id              AS product_id,
-                p.code             AS product_code,
-                p.name             AS product_name,
-                p.unit_of_measure  AS uom,
-                c.name             AS category_name,
-                ${this.ON_HAND_EXPR}::float8 AS on_hand,
-                -- Weighted-average received unit price (₹/unit). POV lines are
-                -- stored NATIVE (vendor currency); pv.exchange_rate is INR per 1
-                -- unit of that currency (1 for INR), so multiply to value in ₹
-                -- at the PO's frozen rate (multi-currency plan D-6).
-                (COALESCE(SUM(pvl.received_qty * pvl.unit_price * COALESCE(pv.exchange_rate, 1)), 0)
-                    / NULLIF(SUM(pvl.received_qty), 0))::float8 AS avg_rate,
-                -- Opening: net ledger balance BEFORE the From date (0 if no From,
-                -- since "createdAt" < NULL is never true).
-                COALESCE((
-                    SELECT SUM(sm.qty) FROM stock_movements sm
-                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
-                      AND sm.deleted = false
-                      AND sm."createdAt" < $${dfromIdx}::timestamptz
-                ), 0)::float8 AS opening_qty,
-                -- Inward: IN movements within the period.
-                COALESCE((
-                    SELECT SUM(sm.qty) FROM stock_movements sm
-                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
-                      AND sm.deleted = false AND sm.qty > 0
-                      AND ($${dfromIdx}::timestamptz IS NULL OR sm."createdAt" >= $${dfromIdx}::timestamptz)
-                      AND ($${dtoIdx}::date IS NULL OR sm."createdAt" < ($${dtoIdx}::date + 1))
-                ), 0)::float8 AS inward_qty,
-                -- Outward: OUT movements within the period (returned positive).
-                COALESCE((
-                    SELECT SUM(-sm.qty) FROM stock_movements sm
-                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
-                      AND sm.deleted = false AND sm.qty < 0
-                      AND ($${dfromIdx}::timestamptz IS NULL OR sm."createdAt" >= $${dfromIdx}::timestamptz)
-                      AND ($${dtoIdx}::date IS NULL OR sm."createdAt" < ($${dtoIdx}::date + 1))
-                ), 0)::float8 AS outward_qty,
-                -- Closing: net ledger balance up to the To date (= current on-hand
-                -- when no To). Closing = Opening + Inward − Outward by construction.
-                COALESCE((
-                    SELECT SUM(sm.qty) FROM stock_movements sm
-                    WHERE sm.company_id = p.company_id AND sm.product_id = p._id
-                      AND sm.deleted = false
-                      AND ($${dtoIdx}::date IS NULL OR sm."createdAt" < ($${dtoIdx}::date + 1))
-                ), 0)::float8 AS closing_qty,
-                MAX(COALESCE(pv.actual_arrival_date, pv."updatedAt")) AS arrival_date
-             ${groupFrom}
-             ORDER BY ${orderCol} ${orderDir}, p.code ASC
+            `WITH ${ctes}
+             SELECT
+                cb.product_id                     AS product_id,
+                p.code                            AS product_code,
+                p.name                            AS product_name,
+                p.unit_of_measure                 AS uom,
+                cat.name                          AS category_name,
+                cb.ccy                            AS currency_code,
+                cb.closing_qty::float8            AS on_hand,
+                cb.avg_rate::float8               AS avg_rate,
+                cb.opening_qty::float8            AS opening_qty,
+                cb.inward_qty::float8             AS inward_qty,
+                (cb.opening_qty + cb.inward_qty - cb.closing_qty)::float8 AS outward_qty,
+                cb.closing_qty::float8            AS closing_qty,
+                cb.closing_value::float8          AS closing_value,
+                NULL                              AS arrival_date,
+                COUNT(*) OVER()::int              AS total_count
+             FROM combined cb
+             JOIN products p   ON p._id = cb.product_id
+             LEFT JOIN categories cat ON cat._id = p.category_id
+             WHERE (cb.closing_qty <> 0 OR cb.inward_qty <> 0 OR cb.opening_qty <> 0)
+               ${prodWhere}
+             ORDER BY ${orderCol} ${orderDir}, p.code ASC, cb.ccy ASC
              LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-            [
-                ...params,
-                filters.date_from ?? null,
-                filters.date_to ?? null,
-                filters.limit,
-                filters.offset,
-            ]
+            [...p, filters.limit, filters.offset]
         );
 
-        return { rows: this.withClosingValue(rows), total };
-    }
-
-    /**
-     * Derive `closing_value = closing_qty × avg_rate` in JS rather than SQL —
-     * `avg_rate` is an aggregate alias in the same SELECT, so referencing it
-     * there would mean repeating the whole weighted-average expression.
-     */
-    private withClosingValue(rows: any[]): InventoryListResponseDto[] {
-        for (const r of rows || []) {
-            const qty = Number(r.closing_qty) || 0;
-            const rate = Number(r.avg_rate) || 0;
-            r.closing_value =
-                Math.round((qty * rate + Number.EPSILON) * 100) / 100;
-        }
-        return rows as InventoryListResponseDto[];
+        const total = rows?.[0]?.total_count ?? 0;
+        for (const r of rows) delete r.total_count;
+        return { rows: rows as InventoryListResponseDto[], total };
     }
 
     /**
      * Closing-Inventory Excel (client #5) — the on-screen register for the
      * SAME filtered set, un-paginated, for period-end reconciliation.
      *
-     * Quantities are deliberately NOT totalled: products carry different UOMs
-     * (KG vs Nos), so a quantity total would be meaningless — the same reason
-     * the Sales Turnover report refuses to sum across currencies. Only the
-     * money column and a product count are totalled.
+     * Multi-currency: rows are grouped into a section PER purchase currency,
+     * each valued natively with its OWN closing-value total. Currencies are
+     * NEVER summed into a grand total (the plan's "can't sum currencies" rule,
+     * same as the Sales Turnover report). Quantities are never totalled either
+     * (mixed UOMs).
      */
     async exportExcel(
         companyId: string,
@@ -344,56 +456,69 @@ export class InventoryService {
             [`Closing Inventory — as at ${asAt}`],
             [`Movement period: ${period}`],
             [
-                'Closing Value = Closing Qty x Avg Rate. Quantities are not totalled (mixed units of measure).',
+                'Stock is grouped by purchase currency and valued natively. Currencies are not summed; quantities are not totalled (mixed units of measure).',
             ],
             [],
-            [
-                'Product Code',
-                'Product',
-                'Category',
-                'UOM',
-                'Opening',
-                'Inward',
-                'Outward',
-                'Closing',
-                'Avg Rate (INR)',
-                'Closing Value (INR)',
-                'Qty in Stock (today)',
-            ],
         ];
 
-        let totalClosingValue = 0;
+        const HEADER = [
+            'Product Code',
+            'Product',
+            'Category',
+            'UOM',
+            'Opening',
+            'Inward',
+            'Outward',
+            'Closing',
+            'Avg Rate',
+            'Closing Value',
+            'Currency',
+        ];
+
+        // Group rows by currency, preserving list order within each section.
+        const byCcy = new Map<string, any[]>();
         for (const r of rows as any[]) {
-            totalClosingValue += Number(r.closing_value) || 0;
-            aoa.push([
-                r.product_code || '',
-                r.product_name || '',
-                r.category_name || '',
-                r.uom || '',
-                Number(r.opening_qty) || 0,
-                Number(r.inward_qty) || 0,
-                Number(r.outward_qty) || 0,
-                Number(r.closing_qty) || 0,
-                Number(r.avg_rate) || 0,
-                Number(r.closing_value) || 0,
-                Number(r.on_hand) || 0,
-            ]);
+            const ccy = r.currency_code || 'INR';
+            if (!byCcy.has(ccy)) byCcy.set(ccy, []);
+            byCcy.get(ccy).push(r);
         }
 
-        aoa.push([]);
-        aoa.push([
-            `Products: ${rows.length}`,
-            '',
-            '',
-            '',
-            '',
-            '',
-            '',
-            '',
-            'Total Closing Value',
-            Math.round((totalClosingValue + Number.EPSILON) * 100) / 100,
-            '',
-        ]);
+        for (const ccy of Array.from(byCcy.keys()).sort()) {
+            const section = byCcy.get(ccy);
+            aoa.push([`Currency: ${ccy}`]);
+            aoa.push(HEADER);
+            let sectionValue = 0;
+            for (const r of section) {
+                sectionValue += Number(r.closing_value) || 0;
+                aoa.push([
+                    r.product_code || '',
+                    r.product_name || '',
+                    r.category_name || '',
+                    r.uom || '',
+                    Number(r.opening_qty) || 0,
+                    Number(r.inward_qty) || 0,
+                    Number(r.outward_qty) || 0,
+                    Number(r.closing_qty) || 0,
+                    Number(r.avg_rate) || 0,
+                    Number(r.closing_value) || 0,
+                    ccy,
+                ]);
+            }
+            aoa.push([
+                `Products: ${section.length}`,
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                `Total (${ccy})`,
+                Math.round((sectionValue + Number.EPSILON) * 100) / 100,
+                ccy,
+            ]);
+            aoa.push([]);
+        }
 
         return this.fileService.writeExcelFromArray(aoa as any);
     }
@@ -416,54 +541,49 @@ export class InventoryService {
         companyId: string,
         filters: InventoryStatsFilters
     ): Promise<InventoryStatsResponseDto> {
-        const { whereSql, params } = this.buildWhere(companyId, filters);
+        const { ctes, params, prodWhere } = this.buildFifo(companyId, {
+            ...filters,
+            // KPI value is current on-hand worth → only currencies with stock.
+            in_stock_only: true,
+        });
 
+        // Per-currency valuation from the same FIFO combined set the list uses.
         const rows = await this.dataSource.query(
-            `WITH filtered AS (
-                SELECT pvl._id                       AS line_id,
-                       p._id                         AS product_id,
-                       p.company_id                  AS company_id,
-                       pv.vendor_id                  AS vendor_id,
-                       COALESCE(pvl.received_qty, 0) AS rq,
-                       -- Native unit price × INR-per-unit rate = ₹ value (D-6).
-                       COALESCE(pvl.unit_price, 0) * COALESCE(pv.exchange_rate, 1) AS up
-                ${this.FROM_JOINS}
-                WHERE ${whereSql}
-             ),
-             per_product AS (
-                SELECT f.product_id,
-                       f.company_id,
-                       SUM(f.rq)          AS received_qty_total,
-                       SUM(f.rq * f.up)   AS received_value_total
-                FROM filtered f
-                GROUP BY f.product_id, f.company_id
-             )
-             SELECT
-                COALESCE(SUM(
-                    CASE WHEN pp.received_qty_total > 0 THEN
-                        GREATEST(COALESCE((
-                            SELECT SUM(sm.qty)
-                            FROM stock_movements sm
-                            WHERE sm.company_id = pp.company_id
-                              AND sm.product_id = pp.product_id
-                              AND sm.deleted = false
-                        ), 0), 0)
-                        * (pp.received_value_total / pp.received_qty_total)
-                    ELSE 0 END
-                ), 0)                                         AS stock_value,
-                (SELECT COUNT(*)::int FROM filtered)          AS line_count,
-                (SELECT COUNT(DISTINCT product_id)::int FROM filtered) AS product_count,
-                (SELECT COUNT(DISTINCT vendor_id)::int FROM filtered)  AS vendor_count
-             FROM per_product pp`,
+            `WITH ${ctes}
+             SELECT cb.ccy                              AS currency_code,
+                    COALESCE(SUM(cb.closing_value), 0)::float8 AS stock_value,
+                    COUNT(DISTINCT cb.product_id)::int  AS product_count
+             FROM combined cb
+             JOIN products p ON p._id = cb.product_id
+             WHERE cb.closing_qty > 0 ${prodWhere}
+             GROUP BY cb.ccy
+             ORDER BY cb.ccy ASC`,
             params
         );
 
-        const r = rows?.[0] || {};
-        return {
+        const byCurrency = (rows || []).map((r: any) => ({
+            currency_code: r.currency_code,
             stock_value: String(r.stock_value ?? '0'),
-            line_count: r.line_count ?? 0,
             product_count: r.product_count ?? 0,
-            vendor_count: r.vendor_count ?? 0,
+        }));
+
+        // Distinct products (any currency) + distinct vendors currently supplying
+        // stock — computed over the same filtered layer set.
+        const counts = await this.dataSource.query(
+            `WITH ${ctes}
+             SELECT
+                (SELECT COUNT(DISTINCT cb.product_id)::int
+                   FROM combined cb JOIN products p ON p._id = cb.product_id
+                   WHERE cb.closing_qty > 0 ${prodWhere})            AS product_count,
+                (SELECT COUNT(DISTINCT l.vendor_id)::int FROM layers l) AS vendor_count
+             `,
+            params
+        );
+
+        return {
+            by_currency: byCurrency,
+            product_count: counts?.[0]?.product_count ?? 0,
+            vendor_count: counts?.[0]?.vendor_count ?? 0,
         };
     }
 

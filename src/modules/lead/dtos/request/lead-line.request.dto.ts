@@ -32,6 +32,14 @@ export class LeadLineRequestDto {
     @IsOptional()
     unit_price?: string;
 
+    // Native currency of unit_price (vendor/source currency) + frozen
+    // source→lead-currency rate. Multi-currency: carried to the quotation.
+    @IsString() @IsOptional() @MaxLength(10) source_currency_code?: string;
+
+    @IsNumberString({}, { message: 'cost_exchange_rate must be a numeric string' })
+    @IsOptional()
+    cost_exchange_rate?: string;
+
     @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
     @IsOptional()
     discount_pct?: string;
