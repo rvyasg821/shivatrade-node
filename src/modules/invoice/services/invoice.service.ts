@@ -910,6 +910,27 @@ export class InvoiceService {
             new Date(data.payment_date)
         );
 
+        // Received-into bank — validate it belongs to this company and freeze a
+        // name snapshot so the receipt still shows it if the bank is edited.
+        let bankAccountId: string | undefined;
+        let bankName: string | undefined;
+        if (data.company_bank_account_id) {
+            const bank: any = await this.companyBankAccountRepository.findOneById(
+                data.company_bank_account_id
+            );
+            if (
+                !bank ||
+                bank.soft_delete ||
+                bank.company_id?.toString() !== row.company_id.toString()
+            ) {
+                throw new BadRequestException(
+                    'Selected bank account was not found.'
+                );
+            }
+            bankAccountId = bank._id.toString();
+            bankName = bank.bank_name || undefined;
+        }
+
         const payment = await this.invoicePaymentRepository.create({
             invoice_id: row._id.toString(),
             company_id: row.company_id.toString(),
@@ -920,6 +941,8 @@ export class InvoiceService {
             reference: data.reference,
             notes: data.notes,
             receipt_voucher_no: receiptVoucherNo,
+            company_bank_account_id: bankAccountId,
+            bank_name: bankName,
             created_by: userId,
         } as any);
 

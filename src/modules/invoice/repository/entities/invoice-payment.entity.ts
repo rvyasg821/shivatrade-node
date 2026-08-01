@@ -45,6 +45,14 @@ export class InvoicePaymentEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: true })
     receipt_voucher_no?: string;
 
+    /** Company bank account the money was RECEIVED into (+ a name snapshot so
+     *  it survives if the bank is later edited/removed). */
+    @Column({ type: 'uuid', nullable: true })
+    company_bank_account_id?: string;
+
+    @Column({ type: 'varchar', length: 200, nullable: true })
+    bank_name?: string;
+
     @Column({ type: 'uuid', nullable: true })
     created_by?: string;
 

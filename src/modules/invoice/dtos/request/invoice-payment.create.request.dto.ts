@@ -24,6 +24,12 @@ export class InvoicePaymentCreateRequestDto {
     @MaxLength(30)
     method?: string;
 
+    /** Company bank account this receipt was received into. */
+    @ApiProperty({ required: false, type: String })
+    @IsOptional()
+    @IsString()
+    company_bank_account_id?: string;
+
     @ApiProperty({ required: false, type: String })
     @IsOptional()
     @IsString()
