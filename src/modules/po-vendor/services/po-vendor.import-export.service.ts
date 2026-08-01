@@ -72,6 +72,7 @@ interface VpoLine {
     product_id: string;
     ordered_qty: string;
     unit_price: string;
+    discount_pct?: string;
     part_no?: string;
     hsn_code?: string;
     unit?: string;
@@ -147,6 +148,7 @@ export class PoVendorImportExportService {
             uom: 'KG',
             qty: '100',
             rate: '9000',
+            discount_pct: '0',
             gst_pct: '18',
         };
         const charge: Record<string, any> = {
@@ -280,6 +282,7 @@ export class PoVendorImportExportService {
                 product_id: product._id.toString(),
                 ordered_qty: qty,
                 unit_price: rate,
+                discount_pct: get(raw, 'discount_pct') || undefined,
                 part_no: get(raw, 'part_no') || undefined,
                 hsn_code: get(raw, 'hsn') || undefined,
                 unit: get(raw, 'uom') || undefined,
@@ -508,6 +511,7 @@ export class PoVendorImportExportService {
                             product_id: l.product_id,
                             ordered_qty: l.ordered_qty,
                             unit_price: l.unit_price,
+                            discount_pct: l.discount_pct,
                             part_no: l.part_no,
                             hsn_code: l.hsn_code,
                             unit: l.unit,

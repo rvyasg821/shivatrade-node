@@ -76,6 +76,17 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     ordered_qty: string;
 
+    /** Per-line vendor discount %, applied before GST:
+     *  line_total = ordered_qty × unit_price × (1 − discount_pct/100). */
+    @Column({
+        type: 'numeric',
+        precision: 5,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
+    discount_pct?: string;
+
     /** Set on Dispatch action; capped at `ordered_qty`. */
     @Column({
         type: 'numeric',

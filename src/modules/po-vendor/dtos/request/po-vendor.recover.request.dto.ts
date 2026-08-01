@@ -60,6 +60,12 @@ export class PoVendorRecoverAssignmentDto {
     @IsOptional()
     unit_price?: string;
 
+    /** Optional per-line vendor discount % (applied before GST). Default 0. */
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
+    @IsOptional()
+    discount_pct?: string;
+
     /**
      * Optional HSN override for the spawned POV line. Omitted when the operator
      * did not touch it, so the existing fallback chain (SO line → product

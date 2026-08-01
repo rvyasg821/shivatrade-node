@@ -37,6 +37,7 @@ export class PoVendorLineResponseDto {
     @ApiProperty({ required: false, type: String }) unit?: string;
     @ApiProperty({ required: true, type: String }) tax_pct: string;
     @ApiProperty({ required: true, type: String }) unit_price: string;
+    @ApiProperty({ required: false, type: String }) discount_pct?: string;
     @ApiProperty({ required: true, type: String }) ordered_qty: string;
     @ApiProperty({ required: true, type: String }) dispatched_qty: string;
     @ApiProperty({ required: true, type: String }) received_qty: string;
