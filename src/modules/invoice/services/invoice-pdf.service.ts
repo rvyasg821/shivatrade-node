@@ -780,15 +780,15 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <th style="width:100px;">AMOUNT</th>
         </tr>
         ${linesHtml}
-        <tr>
+        ${num(inv.discount_total) > 0 ? `<tr>
             <td colspan="7" class="right lbl">Subtotal</td>
             <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
         </tr>
-        ${num(inv.discount_total) > 0 ? `<tr><td colspan="7" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
-        <tr>
+        <tr><td colspan="7" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        ${(num(inv.freight_charges) > 0 || num(inv.insurance_charges) > 0 || num(inv.other_charges) > 0) ? `<tr>
             <td colspan="7" class="right lbl">FOB Value</td>
             <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
-        </tr>
+        </tr>` : ''}
         ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
         ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
         ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
@@ -926,15 +926,15 @@ function buildExportInvoiceHtml(d: RenderData): string {
             <th style="width:100px;">AMOUNT</th>
         </tr>
         ${linesHtml}
-        <tr>
+        ${num(inv.discount_total) > 0 ? `<tr>
             <td colspan="7" class="right lbl">Subtotal</td>
             <td class="right strong">${sym}${fmt(inv.subtotal, 2)}</td>
         </tr>
-        ${num(inv.discount_total) > 0 ? `<tr><td colspan="7" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
-        <tr>
+        <tr><td colspan="7" class="right lbl">Discount</td><td class="right">− ${sym}${fmt(inv.discount_total, 2)}</td></tr>` : ''}
+        ${(num(inv.freight_charges) > 0 || num(inv.insurance_charges) > 0 || num(inv.other_charges) > 0) ? `<tr>
             <td colspan="7" class="right lbl">FOB Value</td>
             <td class="right strong">${sym}${fmt(inv.fob_value, 2)}</td>
-        </tr>
+        </tr>` : ''}
         ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
         ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
         ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
