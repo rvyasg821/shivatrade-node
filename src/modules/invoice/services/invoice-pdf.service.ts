@@ -1065,6 +1065,7 @@ function buildReceiptHtml(
         <tr>
             <td style="width:25%;"><span class="lbl">Mode</span><br/>${esc(methodLabel || '—')}</td>
             <td style="width:35%;"><span class="lbl">Reference</span><br/>${esc(payment.reference || '—')}</td>
+            <td style="width:25%;"><span class="lbl">Received in Bank</span><br/>${esc(payment.bank_name || '—')}</td>
             <td><span class="lbl">Currency</span><br/>${esc(inv.currency_code || '')}</td>
         </tr>
     </table>
