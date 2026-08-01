@@ -115,6 +115,15 @@ export class VendorGetResponseDto {
     @ApiProperty({ required: false, type: String })
     currency_code?: string;
 
+    @ApiProperty({ required: false, type: String })
+    opening_balance?: string;
+
+    @ApiProperty({ required: false, type: String })
+    opening_balance_type?: string;
+
+    @ApiProperty({ required: false, type: String })
+    opening_balance_date?: string;
+
     @ApiProperty({ required: true, type: Boolean })
     is_active: boolean;
 

@@ -55,6 +55,18 @@ export class VendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: true })
     currency_code?: string;
 
+    // Migration opening balance (in the vendor's currency). Carried over from a
+    // previous system so the ledger's outstanding starts correct. `type` picks
+    // which column it posts to — a vendor we already owe = 'credit'.
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
+    opening_balance?: string;
+
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    opening_balance_type?: string; // 'debit' | 'credit'
+
+    @Column({ type: 'date', nullable: true })
+    opening_balance_date?: string;
+
     // Addresses are stored in `vendor_addresses` join table.
 
     @Index()

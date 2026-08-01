@@ -92,6 +92,11 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
     })
     tax_pct: string;
 
+    /** CNF: per-line freight OVERRIDE (document currency). Non-null = manual;
+     *  null = the line takes its qty-share of the header freight_total. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
+    freight?: string;
+
     @Column({
         type: 'numeric',
         precision: 18,

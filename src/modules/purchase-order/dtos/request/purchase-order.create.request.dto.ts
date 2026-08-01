@@ -85,6 +85,10 @@ export class PurchaseOrderLineCreateDto {
     @IsOptional()
     tax_pct?: string;
 
+    /** Per-line freight override (CNF). Empty/omitted = qty auto-split. */
+    @IsOptional()
+    freight?: string;
+
     // Costing worksheet inputs — the per-line margin and the expense/rebate
     // heads. These were previously absent from the DTO, so the global
     // whitelist stripped them and the SO recompute always saw margin_pct = 0

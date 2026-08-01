@@ -208,10 +208,28 @@ export class LedgerService {
         const totalPaid = round2(
             rows.reduce((s, r) => s + num(r.cr) - num(r.dr), 0)
         );
+        // Migration opening balance. For a customer, a DEBIT opening = they
+        // already owe us → adds to outstanding; a CREDIT opening = we hold their
+        // advance → reduces it.
+        const openingAmt = num(customer.opening_balance);
+        const opening =
+            openingAmt > 0
+                ? {
+                      amount: openingAmt,
+                      type: customer.opening_balance_type || 'debit',
+                      date: customer.opening_balance_date,
+                  }
+                : undefined;
+        const openingOut = opening
+            ? opening.type === 'debit'
+                ? openingAmt
+                : -openingAmt
+            : 0;
         const summary = {
             total_billed: totalBilled,
             total_paid: totalPaid,
-            outstanding: round2(totalBilled - totalPaid),
+            opening_balance: round2(openingOut),
+            outstanding: round2(totalBilled - totalPaid + openingOut),
         };
 
         const ledger = this.assemble(
@@ -222,7 +240,8 @@ export class LedgerService {
             rows,
             from,
             to,
-            /* debitPositive */ false
+            /* debitPositive */ false,
+            opening
         );
         return { ...ledger, summary };
     }
@@ -325,10 +344,28 @@ export class LedgerService {
         const totalPaid = round2(
             rows.reduce((s, r) => s + num(r.dr) - num(r.cr), 0)
         );
+        // Migration opening balance. For a vendor, a CREDIT opening = we already
+        // owe them → adds to outstanding; a DEBIT opening = we hold an advance
+        // with them → reduces it.
+        const openingAmt = num(vendor.opening_balance);
+        const opening =
+            openingAmt > 0
+                ? {
+                      amount: openingAmt,
+                      type: vendor.opening_balance_type || 'credit',
+                      date: vendor.opening_balance_date,
+                  }
+                : undefined;
+        const openingOut = opening
+            ? opening.type === 'credit'
+                ? openingAmt
+                : -openingAmt
+            : 0;
         const summary = {
             total_billed: totalBilled,
             total_paid: totalPaid,
-            outstanding: round2(totalBilled - totalPaid),
+            opening_balance: round2(openingOut),
+            outstanding: round2(totalBilled - totalPaid + openingOut),
         };
 
         const ledger = this.assemble(
@@ -339,7 +376,8 @@ export class LedgerService {
             rows,
             from,
             to,
-            /* debitPositive */ true
+            /* debitPositive */ true,
+            opening
         );
         return { ...ledger, summary };
     }
@@ -552,7 +590,8 @@ export class LedgerService {
         raw: RawRow[],
         from: string | undefined,
         to: string | undefined,
-        debitPositive: boolean
+        debitPositive: boolean,
+        opening?: { amount: number; type: string; date?: string }
     ): LedgerResponseDto {
         // Normalise every row date to 'YYYY-MM-DD' up front so filter, sort and
         // display all agree (fixes PO timestamps sorting above older rows).
@@ -573,13 +612,33 @@ export class LedgerService {
         let bal = 0;
         let totalDr = 0;
         let totalCr = 0;
-        const rows: LedgerRowDto[] = inRange.map((r) => {
+        const rows: LedgerRowDto[] = [];
+        // Migration opening balance — always the FIRST row and NOT date-filtered
+        // (it is the carried-forward balance at migration). Seeds the running
+        // balance + totals so everything below flows from it.
+        if (opening && opening.amount > 0) {
+            const dr = opening.type === 'debit' ? round2(opening.amount) : 0;
+            const cr = opening.type === 'credit' ? round2(opening.amount) : 0;
+            totalDr = round2(totalDr + dr);
+            totalCr = round2(totalCr + cr);
+            bal = round2(debitPositive ? dr - cr : cr - dr);
+            rows.push({
+                date: opening.date ? toIso(opening.date) : '',
+                type: 'opening',
+                particulars: 'Opening Balance',
+                voucher_no: null,
+                dr,
+                cr,
+                balance: bal,
+            });
+        }
+        for (const r of inRange) {
             const dr = round2(r.dr);
             const cr = round2(r.cr);
             totalDr = round2(totalDr + dr);
             totalCr = round2(totalCr + cr);
             bal = round2(bal + (debitPositive ? dr - cr : cr - dr));
-            return {
+            rows.push({
                 date: r.date,
                 type: r.type,
                 particulars: r.particulars,
@@ -587,8 +646,8 @@ export class LedgerService {
                 dr,
                 cr,
                 balance: bal,
-            };
-        });
+            });
+        }
 
         return {
             party_type: partyType,

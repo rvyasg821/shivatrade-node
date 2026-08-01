@@ -178,6 +178,19 @@ export class VendorCreateRequestDto {
     @MaxLength(10)
     currency_code?: string;
 
+    /** Migration opening balance (vendor currency); 'credit' = we already owe. */
+    @IsOptional()
+    opening_balance?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(10)
+    opening_balance_type?: string;
+
+    @IsString()
+    @IsOptional()
+    opening_balance_date?: string;
+
     @IsEnum(ENUM_VENDOR_STATUS)
     @IsOptional()
     status?: ENUM_VENDOR_STATUS;

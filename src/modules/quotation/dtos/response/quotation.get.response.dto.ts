@@ -22,6 +22,8 @@ export class QuotationLineResponseDto {
     /** Doc units per 1 source unit; cost_doc = unit_price × cost_exchange_rate. */
     cost_exchange_rate?: string;
     discount_pct?: string;
+    /** Per-line freight override (CNF); '' = auto qty-split. */
+    freight?: string;
     tax_pct?: string;
     cgst?: string;
     sgst?: string;

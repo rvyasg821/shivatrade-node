@@ -21,6 +21,7 @@ export class PurchaseOrderLineResponseDto {
     @ApiProperty({ required: false, type: String }) source_currency_code?: string;
     @ApiProperty({ required: false, type: String }) cost_exchange_rate?: string;
     @ApiProperty({ required: false, type: String }) discount_pct?: string;
+    @ApiProperty({ required: false, type: String }) freight?: string;
     @ApiProperty({ required: true, type: String }) tax_pct: string;
     @ApiProperty({ required: true, type: String }) cgst: string;
     @ApiProperty({ required: true, type: String }) sgst: string;
