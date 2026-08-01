@@ -661,6 +661,12 @@ export class PurchaseOrderService {
                 cost_exchange_rate: costRate,
                 discount_pct: l.discount_pct || '0',
                 tax_pct: l.tax_pct || '0',
+                // Per-line freight override; '' → null (auto qty-split).
+                freight:
+                    (l as any).freight != null &&
+                    String((l as any).freight).trim() !== ''
+                        ? String((l as any).freight)
+                        : null,
                 // Costing snapshot (frozen from the source quotation line).
                 margin_pct: l.margin_pct ?? '0',
                 margin_amount: l.margin_amount ?? '0',
@@ -1776,6 +1782,12 @@ export class PurchaseOrderService {
             qty: String(r.sourceLine.qty || '0'),
             unit: r.sourceLine.unit || r.product?.unit_of_measure || '',
             unit_price: String(r.sourceLine.unit_price || '0'),
+            // Carry the per-line freight override from the quotation line.
+            freight:
+                (r.sourceLine as any).freight != null &&
+                String((r.sourceLine as any).freight).trim() !== ''
+                    ? String((r.sourceLine as any).freight)
+                    : undefined,
             discount_pct: String(r.sourceLine.discount_pct ?? '0'),
             tax_pct: String(
                 r.sourceLine.tax_pct ?? r.product?.tax_pct ?? '0'
@@ -2396,6 +2408,7 @@ export class PurchaseOrderService {
                                     ? String(src.cost_exchange_rate)
                                     : '1',
                             discount_pct: l.discount_pct,
+                            freight: (l as any).freight ?? '',
                             tax_pct: l.tax_pct,
                             cgst: l.cgst,
                             sgst: l.sgst,

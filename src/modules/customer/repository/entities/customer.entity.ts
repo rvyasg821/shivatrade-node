@@ -48,6 +48,18 @@ export class CustomerEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: true })
     currency?: string;
 
+    // Migration opening balance (in the customer's currency). Carried over from
+    // a previous system so the ledger's outstanding starts correct. `type` picks
+    // the column — a customer who already owes us = 'debit'.
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
+    opening_balance?: string;
+
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    opening_balance_type?: string; // 'debit' | 'credit'
+
+    @Column({ type: 'date', nullable: true })
+    opening_balance_date?: string;
+
     @Index()
     @Column({ type: 'boolean', default: true })
     is_active: boolean;

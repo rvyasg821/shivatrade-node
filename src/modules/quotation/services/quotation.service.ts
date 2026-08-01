@@ -630,6 +630,12 @@ export class QuotationService {
                 cost_exchange_rate: String(costRate),
                 discount_pct: l.discount_pct || '0',
                 tax_pct: l.tax_pct || '0',
+                // Per-line freight override; '' → null (auto qty-split).
+                freight:
+                    (l as any).freight != null &&
+                    String((l as any).freight).trim() !== ''
+                        ? String((l as any).freight)
+                        : null,
                 cgst: '0',
                 sgst: '0',
                 igst: '0',
@@ -1052,6 +1058,7 @@ export class QuotationService {
                             source_currency_code: (l as any).source_currency_code,
                             cost_exchange_rate: (l as any).cost_exchange_rate,
                             discount_pct: l.discount_pct,
+                            freight: (l as any).freight ?? '',
                             tax_pct: l.tax_pct,
                             cgst: l.cgst,
                             sgst: l.sgst,

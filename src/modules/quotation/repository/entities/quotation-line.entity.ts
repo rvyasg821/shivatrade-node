@@ -74,6 +74,11 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true, default: 0 })
     tax_pct?: string;
 
+    /** CNF: per-line freight OVERRIDE (document currency). Non-null = manual;
+     *  null/'' = the line takes its qty-share of the header freight_total. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true })
+    freight?: string;
+
     /** Per-line tax allocation snapshots — populated by tax engine. */
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: true, default: 0 })
     cgst?: string;

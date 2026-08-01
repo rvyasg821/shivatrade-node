@@ -96,6 +96,11 @@ export class CustomerCreateRequestDto {
     /** Default currency (ISO code) for this customer. */
     @IsString() @IsOptional() @MaxLength(10) currency?: string;
 
+    /** Migration opening balance; 'debit' = the customer already owes us. */
+    @IsOptional() opening_balance?: string;
+    @IsString() @IsOptional() @MaxLength(10) opening_balance_type?: string;
+    @IsString() @IsOptional() opening_balance_date?: string;
+
     @IsEnum(ENUM_CUSTOMER_STATUS) @IsOptional() status?: ENUM_CUSTOMER_STATUS;
 
     @IsBoolean() @IsOptional() is_active?: boolean;

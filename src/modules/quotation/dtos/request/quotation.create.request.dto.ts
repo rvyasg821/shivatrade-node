@@ -69,6 +69,10 @@ export class QuotationLineCreateDto {
     @IsOptional()
     tax_pct?: string;
 
+    /** Per-line freight override (CNF). Empty/omitted = qty auto-split. */
+    @IsOptional()
+    freight?: string;
+
     @IsNumberString({}, { message: 'margin_pct must be a numeric string' })
     @IsOptional()
     margin_pct?: string;
