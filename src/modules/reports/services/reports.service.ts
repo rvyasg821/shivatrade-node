@@ -3473,6 +3473,147 @@ export class ReportsService {
         ];
         return this.fileService.writeExcelFromArray(aoa);
     }
+
+    /**
+     * Drill-down behind ONE product's closing inventory in the aging report:
+     * the PURCHASES (confirmed GRN receipts, qty + INR rate) and the SALES
+     * (issued invoice lines, qty + INR selling rate) that net to the CLOSING
+     * stock. Closing qty comes from the stock ledger (matches the report);
+     * closing value = closing qty × weighted-average purchase cost (the same
+     * basis the aging report values stock at). All money is INR.
+     */
+    async inventoryAgingBreakdown(
+        companyId: string,
+        productId: string,
+        asOf?: string
+    ): Promise<any> {
+        const cutoff = asOf || isoDate(new Date());
+
+        // Purchases — confirmed GRN receipts up to the snapshot, native cost
+        // converted to INR at the POV's frozen rate.
+        const purchasesRaw = await this.dataSource.query(
+            `SELECT g._id::text                        AS grn_id,
+                    g.voucher_no                       AS grn_voucher_no,
+                    TO_CHAR(g.grn_date, 'DD-MM-YYYY')  AS date,
+                    pov._id::text                      AS pov_id,
+                    pov.voucher_no                     AS pov_voucher_no,
+                    COALESCE(v.company_name, '—')      AS vendor_name,
+                    gl.accepted_qty::float8            AS qty,
+                    (povl.unit_price::float8
+                        * COALESCE(NULLIF(pov.exchange_rate::float8, 0), 1))
+                                                       AS rate_inr
+             FROM grn_lines gl
+             JOIN grns g
+               ON g._id = gl.grn_id
+              AND g.company_id = $1
+              AND g.soft_delete = false
+              AND g.status = 'confirmed'
+             JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+             JOIN po_vendors pov ON pov._id = povl.po_vendor_id
+             LEFT JOIN vendors v ON v._id = pov.vendor_id
+             WHERE gl.product_id = $2
+               AND gl.accepted_qty::numeric > 0
+               AND g.grn_date <= $3
+             ORDER BY g.grn_date ASC, g.voucher_no ASC`,
+            [companyId, productId, cutoff]
+        );
+        const purchases = purchasesRaw.map((r: any) => {
+            const qty = r2(n(r.qty));
+            const rate = r2(n(r.rate_inr));
+            return {
+                date: r.date,
+                grn_id: r.grn_id,
+                grn_voucher_no: r.grn_voucher_no,
+                pov_id: r.pov_id,
+                pov_voucher_no: r.pov_voucher_no,
+                vendor_name: r.vendor_name,
+                qty,
+                rate_inr: rate,
+                value_inr: r2(qty * rate),
+            };
+        });
+
+        // Sales — issued invoice lines up to the snapshot, selling value in INR
+        // (taxable_amount ÷ the invoice's frozen doc-per-₹1 rate).
+        const salesRaw = await this.dataSource.query(
+            `SELECT i._id::text                          AS invoice_id,
+                    i.voucher_no                          AS invoice_voucher_no,
+                    TO_CHAR(i.invoice_date, 'DD-MM-YYYY')  AS date,
+                    COALESCE(c.company_name,
+                             i.customer_snapshot->>'company_name', '—')
+                                                          AS customer_name,
+                    il.qty::float8                        AS qty,
+                    (il.taxable_amount::float8
+                        / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))
+                                                          AS value_inr
+             FROM invoice_lines il
+             JOIN invoices i
+               ON i._id = il.invoice_id
+              AND i.company_id = $1
+              AND i.soft_delete = false
+              AND i.status NOT IN ('draft', 'cancelled')
+             LEFT JOIN customers c ON c._id = i.customer_id
+             WHERE il.product_id = $2
+               AND i.invoice_date <= $3
+             ORDER BY i.invoice_date ASC, i.voucher_no ASC`,
+            [companyId, productId, cutoff]
+        );
+        const sales = salesRaw.map((r: any) => {
+            const qty = r2(n(r.qty));
+            const value = r2(n(r.value_inr));
+            return {
+                date: r.date,
+                invoice_id: r.invoice_id,
+                invoice_voucher_no: r.invoice_voucher_no,
+                customer_name: r.customer_name,
+                qty,
+                rate_inr: qty > 0 ? r2(value / qty) : 0,
+                value_inr: value,
+            };
+        });
+
+        // Closing on-hand from the stock ledger (matches the aging report).
+        const ohRaw = await this.dataSource.query(
+            `SELECT COALESCE(SUM(CASE
+                        WHEN "createdAt" < ($2::date + INTERVAL '1 day')
+                        THEN qty::numeric ELSE 0 END), 0)::float8 AS closing
+             FROM stock_movements
+             WHERE company_id = $1 AND deleted = false AND product_id = $3`,
+            [companyId, cutoff, productId]
+        );
+        const closingQty = r2(n(ohRaw?.[0]?.closing));
+
+        const purchasedQty = r2(purchases.reduce((s, p) => s + p.qty, 0));
+        const purchasedValue = r2(
+            purchases.reduce((s, p) => s + p.value_inr, 0)
+        );
+        const soldQty = r2(sales.reduce((s, x) => s + x.qty, 0));
+        const soldValue = r2(sales.reduce((s, x) => s + x.value_inr, 0));
+        const avgCost = purchasedQty > 0 ? purchasedValue / purchasedQty : 0;
+        const closingValue = r2(Math.max(0, closingQty) * avgCost);
+
+        const ph = await this.dataSource.query(
+            `SELECT p.code AS product_code, p.name AS product_name
+             FROM products p WHERE p._id = $1`,
+            [productId]
+        );
+
+        return {
+            product: ph?.[0] || null,
+            as_of: cutoff,
+            purchases,
+            sales,
+            summary: {
+                purchased_qty: purchasedQty,
+                purchased_value_inr: purchasedValue,
+                sold_qty: soldQty,
+                sold_value_inr: soldValue,
+                avg_cost_inr: r2(avgCost),
+                closing_qty: closingQty,
+                closing_value_inr: closingValue,
+            },
+        };
+    }
 }
 
 // ── date helpers (module-local) ──────────────────────────────────────────

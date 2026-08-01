@@ -822,10 +822,11 @@ function buildPovHtml(ctx: PovPdfContext): string {
               .map((l, i) => {
                   const qty = Number(l.ordered_qty) || 0;
                   const lineTotalCcy = (Number(l.line_total) || 0) * rate;
-                  const rateCcy =
-                      qty > 0
-                          ? lineTotalCcy / qty
-                          : (Number(l.unit_price) || 0) * rate;
+                  // Rate is the GROSS unit price (before discount); the Disc %
+                  // column then reduces it to the (discounted) Amount, which
+                  // equals line_total. So Rate × Qty − Disc % = Amount reads.
+                  const rateCcy = (Number(l.unit_price) || 0) * rate;
+                  const discPct = Number(l.discount_pct) || 0;
                   const dueOn = docDate(pov.expected_arrival_date);
                   const gstPct = Number(l.tax_pct) || 0;
                   return `
@@ -838,37 +839,45 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
           <td class="num nowrap">${ccyMoney(sym, rateCcy)}</td>
           <td class="c">${esc(l.unit || '')}</td>
+          <td class="c nowrap">${discPct > 0 ? `${discPct}%` : '-'}</td>
           <td class="c nowrap">${gstPct > 0 ? `${gstPct}%` : '-'}</td>
           <td class="num nowrap"><b>${ccyMoney(sym, lineTotalCcy)}</b></td>
         </tr>`;
               })
               .join('')
-        : `<tr><td colspan="10" class="c muted" style="padding:16px">No line items.</td></tr>`;
+        : `<tr><td colspan="11" class="c muted" style="padding:16px">No line items.</td></tr>`;
 
     // Tax summary rows (Tally-style, in the Amount column).
     const sumRow = (label: string, value: string): string => `
         <tr>
           <td></td>
-          <td class="num ital" colspan="8">${label ? `<b>${esc(label)}</b>` : ''}</td>
+          <td class="num ital" colspan="9">${label ? `<b>${esc(label)}</b>` : ''}</td>
           <td class="num nowrap"><b>${value}</b></td>
         </tr>`;
 
+    // Each expense at its BASE (without its own GST); the charges' GST is
+    // summed into a single "Expense GST" row below it, so the expense value and
+    // the tax on it read separately (matches the on-screen POV form).
+    const expenseGstCcy = expensesSnapshot.reduce(
+        (s, e) =>
+            s + (Number(e.amount) || 0) * ((Number(e.gst_pct) || 0) / 100),
+        0
+    ) * rate;
     const summaryRows =
         sumRow('', ccyMoney(sym, subtotalCcy)) +
         expensesSnapshot
             .map((e) => {
-                // Show the charge GROSS = taxable + its own GST (gst_pct).
-                const gstPct = Number(e.gst_pct) || 0;
-                const grossCcy =
-                    (Number(e.amount) || 0) * (1 + gstPct / 100) * rate;
-                const base =
+                const label =
                     e.type === 'percent'
                         ? `${e.name} (${Number(e.value) || 0}%)`
                         : e.name;
-                const label = gstPct > 0 ? `${base} (+${gstPct}% GST)` : base;
-                return sumRow(label, ccyMoney(sym, grossCcy));
+                const baseCcy = (Number(e.amount) || 0) * rate;
+                return sumRow(label, ccyMoney(sym, baseCcy));
             })
             .join('') +
+        (expenseGstCcy > 0.005
+            ? sumRow('Expense GST', ccyMoney(sym, expenseGstCcy))
+            : '') +
         (gstTotalCcy > 0
             ? interState
                 ? sumRow('Input IGST', ccyMoney(sym, gstTotalCcy))
@@ -1069,20 +1078,21 @@ function buildPovHtml(ctx: PovPdfContext): string {
       <th style="width:74px">Quantity</th>
       <th style="width:60px">Rate</th>
       <th style="width:26px">per</th>
+      <th class="num" style="width:40px">Disc %</th>
       <th style="width:42px">${interState ? 'IGST %' : 'GST %'}</th>
       <th style="width:80px">Amount</th>
     </tr>
   </thead>
   <tbody>
     ${linesRows}
-    <tr class="items-fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="items-fill"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     ${summaryRows}
     <tr>
       <td></td>
       <td class="num"><b>Total</b></td>
       <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
-      <td></td><td></td><td></td>
+      <td></td><td></td><td></td><td></td>
       <td class="num nowrap"><b>${ccyMoney(sym, grandTotalCcy)}</b></td>
     </tr>
   </tbody>

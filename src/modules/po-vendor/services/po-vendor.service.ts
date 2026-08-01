@@ -647,7 +647,10 @@ export class PoVendorService {
                 (ln as any).unit_price != null && (ln as any).unit_price !== ''
                     ? String((ln as any).unit_price)
                     : String(poLine.unit_price || '0');
-            preSubtotal += ordered * num(unitPriceStr);
+            // Per-line vendor discount reduces the taxable base (GST/expenses
+            // apply on the net-of-discount amount).
+            const disc = num((ln as any).discount_pct);
+            preSubtotal += ordered * num(unitPriceStr) * (1 - disc / 100);
         }
         const expenses_snapshot = await this.buildExpensesSnapshot(
             companyId,
@@ -716,9 +719,16 @@ export class PoVendorService {
                         : String(poLine.tax_pct || '0'),
                 unit_price: unitPriceStr,
                 ordered_qty: String(ordered),
+                discount_pct: String(num((ln as any).discount_pct)),
                 dispatched_qty: '0',
                 received_qty: '0',
-                line_total: String(round2(ordered * unitPrice)),
+                line_total: String(
+                    round2(
+                        ordered *
+                            unitPrice *
+                            (1 - num((ln as any).discount_pct) / 100)
+                    )
+                ),
                 seq: ln.seq != null ? Number(ln.seq) : seq,
             } as any);
         }
@@ -878,7 +888,9 @@ export class PoVendorService {
 
         let preSubtotal = 0;
         for (const ln of data.lines) {
-            preSubtotal += num(ln.ordered_qty) * num(ln.unit_price);
+            const disc = num((ln as any).discount_pct);
+            preSubtotal +=
+                num(ln.ordered_qty) * num(ln.unit_price) * (1 - disc / 100);
         }
         const expenses_snapshot = await this.buildExpensesSnapshot(
             companyId,
@@ -926,9 +938,16 @@ export class PoVendorService {
                 tax_pct: String(ln.tax_pct ?? prod?.tax_pct ?? '0'),
                 unit_price: String(ln.unit_price),
                 ordered_qty: String(ordered),
+                discount_pct: String(num((ln as any).discount_pct)),
                 dispatched_qty: '0',
                 received_qty: '0',
-                line_total: String(round2(ordered * unitPrice)),
+                line_total: String(
+                    round2(
+                        ordered *
+                            unitPrice *
+                            (1 - num((ln as any).discount_pct) / 100)
+                    )
+                ),
                 seq: ln.seq != null ? Number(ln.seq) : seq,
             } as any);
         }
@@ -1132,9 +1151,13 @@ export class PoVendorService {
                 tax_pct: String(line.tax_pct ?? '0'),
                 unit_price: String(line.unit_price ?? '0'),
                 ordered_qty: String(qty),
+                // Carry the source line's discount onto the balance POV.
+                discount_pct: String(num(line.discount_pct)),
                 dispatched_qty: '0',
                 received_qty: '0',
-                line_total: String(round2(qty * unitPrice)),
+                line_total: String(
+                    round2(qty * unitPrice * (1 - num(line.discount_pct) / 100))
+                ),
                 seq,
             } as any);
         }
@@ -1293,16 +1316,31 @@ export class PoVendorService {
                     const v: any = vendorMap.get(r.vendor_id?.toString());
                     const cid = r.currency_id?.toString();
                     const rate = cid ? rateByCurrencyId.get(cid) : null;
-                    const native = Number(r.unit_price) || 0;
+                    // For the SO line's OWN vendor, the rate the order was costed
+                    // at (l.unit_price, shown on the costing worksheet) is the
+                    // source of truth — the price list may have drifted since.
+                    // Other vendors keep their current price-list rate so the
+                    // re-assign comparison stays meaningful.
+                    const isCurrentVendor =
+                        l.vendor_id &&
+                        r.vendor_id?.toString() === l.vendor_id.toString();
+                    const nativePrice =
+                        isCurrentVendor &&
+                        l.unit_price != null &&
+                        l.unit_price !== ''
+                            ? Number(l.unit_price) || 0
+                            : Number(r.unit_price) || 0;
                     return {
                         vendor_id: r.vendor_id?.toString(),
                         vendor_name: v?.company_name || v?.name || '',
-                        unit_price: String(r.unit_price || '0'),
+                        unit_price: String(nativePrice),
                         currency_code: cid
                             ? codeByCurrencyId.get(cid) || undefined
                             : undefined,
                         unit_price_inr:
-                            rate != null ? (native * rate).toFixed(2) : null,
+                            rate != null
+                                ? (nativePrice * rate).toFixed(2)
+                                : null,
                         inr_rate_available: rate != null,
                     };
                 })
@@ -2080,8 +2118,12 @@ export class PoVendorService {
                 (povLines as any[]).map(l => [l._id.toString(), l])
             );
 
+            // Discount is a pricing concept — it rides the same rules as the
+            // rate (editable until a GRN costs the goods into stock).
             const wantsPrice = lineEdits.some(
-                p => p.unit_price != null && p.unit_price !== ''
+                p =>
+                    (p.unit_price != null && p.unit_price !== '') ||
+                    (p.discount_pct != null && p.discount_pct !== '')
             );
             const wantsTax = lineEdits.some(
                 p => p.tax_pct != null && p.tax_pct !== ''
@@ -2160,14 +2202,36 @@ export class PoVendorService {
                     }
                     if (price !== num(line.unit_price)) priceChanges += 1;
                     line.unit_price = String(price);
-                    // line_total is qty × price with NO tax in it — the PDF
-                    // derives GST from tax_pct at render time.
+                    // line_total is qty × price − discount, with NO tax in it —
+                    // the PDF derives GST from tax_pct at render time.
                     line.line_total = String(
-                        round2(num(line.ordered_qty) * price)
+                        round2(
+                            num(line.ordered_qty) *
+                                price *
+                                (1 - num(line.discount_pct) / 100)
+                        )
+                    );
+                }
+                // Discount % — same rules as the rate (guarded via wantsPrice).
+                if (patch.discount_pct != null && patch.discount_pct !== '') {
+                    const disc = num(patch.discount_pct);
+                    if (disc < 0 || disc > 100) {
+                        throw new BadRequestException(
+                            `discount_pct must be between 0 and 100 (line ${patch._id}).`
+                        );
+                    }
+                    if (disc !== num(line.discount_pct)) priceChanges += 1;
+                    line.discount_pct = String(disc);
+                    line.line_total = String(
+                        round2(
+                            num(line.ordered_qty) *
+                                num(line.unit_price) *
+                                (1 - disc / 100)
+                        )
                     );
                 }
                 // Quantity — draft only (guarded above). Runs AFTER the price
-                // block so line_total reflects the final qty × final price.
+                // block so line_total reflects the final qty × price − discount.
                 if (patch.ordered_qty != null && patch.ordered_qty !== '') {
                     const q = num(patch.ordered_qty);
                     if (q <= 0) {
@@ -2185,7 +2249,13 @@ export class PoVendorService {
                     }
                     if (q !== num(line.ordered_qty)) qtyChanges += 1;
                     line.ordered_qty = String(q);
-                    line.line_total = String(round2(q * num(line.unit_price)));
+                    line.line_total = String(
+                        round2(
+                            q *
+                                num(line.unit_price) *
+                                (1 - num(line.discount_pct) / 100)
+                        )
+                    );
                 }
                 // Descriptive fields: `!= null` is the test, so an empty string
                 // clears the field. Stored as null rather than '' to match how
@@ -2365,9 +2435,16 @@ export class PoVendorService {
                         : String(poLine.tax_pct || '0'),
                 unit_price: String(unitPrice),
                 ordered_qty: String(ordered),
+                discount_pct: String(num((ln as any).discount_pct)),
                 dispatched_qty: '0',
                 received_qty: '0',
-                line_total: String(round2(ordered * unitPrice)),
+                line_total: String(
+                    round2(
+                        ordered *
+                            unitPrice *
+                            (1 - num((ln as any).discount_pct) / 100)
+                    )
+                ),
                 seq,
             } as any);
         }
@@ -3119,6 +3196,7 @@ export class PoVendorService {
                     unit: l.unit || undefined,
                     tax_pct: String(l.tax_pct ?? '0'),
                     unit_price: String(l.unit_price ?? '0'),
+                    discount_pct: String(l.discount_pct ?? '0'),
                     ordered_qty: String(ordered),
                     dispatched_qty: String(dispatched),
                     received_qty: String(received),

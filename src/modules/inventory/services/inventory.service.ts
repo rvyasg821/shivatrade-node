@@ -832,8 +832,17 @@ export class InventoryService {
                 sm.source_id        AS source_id,
                 sm.source_voucher_no AS source_voucher_no,
                 sm.notes            AS notes,
-                sm."createdAt"      AS created_at
+                sm."createdAt"      AS created_at,
+                -- For a GRN receipt, surface the Vendor PO it was received
+                -- against + that POV's vendor, so the ledger shows where the
+                -- stock came from (GRN → VPO → vendor).
+                g.po_vendor_id::text    AS pov_id,
+                g.po_vendor_voucher_no  AS pov_voucher_no,
+                v.company_name          AS vendor_name
              FROM stock_movements sm
+             LEFT JOIN grns g
+                 ON sm.source_type = 'grn' AND g._id = sm.source_id
+             LEFT JOIN vendors v ON v._id = g.vendor_id
              WHERE sm.company_id = $1 AND sm.deleted = false
                AND sm.product_id = $2 ${locClause}
              ORDER BY sm."createdAt" ASC, sm._id ASC`,

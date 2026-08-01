@@ -61,6 +61,11 @@ export class PoVendorStandaloneLineDto {
     @IsNotEmpty()
     unit_price: string;
 
+    /** Optional per-line vendor discount % (applied before GST). Default 0. */
+    @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
+    @IsOptional()
+    discount_pct?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(2000)

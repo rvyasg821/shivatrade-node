@@ -63,6 +63,11 @@ export class PoVendorLineCreateDto {
     @IsOptional()
     unit_price?: string;
 
+    /** Optional per-line vendor discount % (applied before GST). Default 0. */
+    @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
+    @IsOptional()
+    discount_pct?: string;
+
     /**
      * Optional HSN override for this POV line. Omitted when the operator did
      * not touch it, so the PO line → product master fallback still applies.

@@ -673,6 +673,24 @@ export class ReportsAdminController {
         return { data };
     }
 
+    /** Drill-down behind one product's closing inventory: purchases + sales. */
+    @Response('reports.inventoryAging')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'product_id', required: true })
+    @ApiQuery({ name: 'as_of', required: false })
+    @Get('/inventory-aging/breakdown')
+    async inventoryAgingBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<any>> {
+        const data = await this.reportsService.inventoryAgingBreakdown(
+            companyId,
+            query.product_id,
+            query.as_of
+        );
+        return { data };
+    }
+
     /** Excel export of the inventory-aging report (whole set + TOTAL). */
     @AuthJwtAccessProtected()
     @ApiQuery({ name: 'as_of', required: false })

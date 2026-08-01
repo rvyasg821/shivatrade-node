@@ -35,6 +35,11 @@ export class PoVendorLineUpdateDto {
     @IsOptional()
     ordered_qty?: string;
 
+    /** Per-line vendor discount % (applied before GST). Default 0. */
+    @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
+    @IsOptional()
+    discount_pct?: string;
+
     /**
      * GST rate for this line. DRAFT ONLY — the service refuses it at any other
      * status, because once the POV is dispatched the PDF is with the vendor and
@@ -81,6 +86,14 @@ export class PoVendorLineTaxUpdateDto {
     @IsNumberString({}, { message: 'unit_price must be a numeric string' })
     @IsOptional()
     unit_price?: string;
+
+    /**
+     * Per-line vendor discount %. Editable under the same rule as the rate
+     * (draft, and dispatched-until-GRN). Re-derives line_total + vendor charges.
+     */
+    @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
+    @IsOptional()
+    discount_pct?: string;
 
     /**
      * Ordered quantity for the line. DRAFT only — once the PO is with the vendor
