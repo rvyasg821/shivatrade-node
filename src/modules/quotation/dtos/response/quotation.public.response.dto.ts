@@ -74,6 +74,8 @@ export class QuotationPublicResponseDto {
 
     /** Sum of line amounts, customer currency, excluding GST. */
     subtotal?: string;
+    /** CNF/CFR shipment freight, customer currency (part of grand_total). */
+    freight_total?: string;
     /** Sum of line GST, customer currency. */
     gst_total?: string;
     /** Final payable, customer currency. */

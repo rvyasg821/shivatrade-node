@@ -882,11 +882,17 @@ export class PurchaseOrderService {
         cgst_total = 0;
         sgst_total = 0;
         igst_total = 0;
+        // CNF/CFR: the shipment freight carried from the quotation is part of the
+        // price the customer pays, so it is added into the grand total (matching
+        // the Invoice, which stores grand_total = FOB + freight). Header-level;
+        // NOT split into lines here.
+        const freight_total = num((header as any).freight_total);
         const grand_doc_raw =
             subtotal +
             product_expenses_total -
             product_rebates_total +
-            line_margin_total;
+            line_margin_total +
+            freight_total;
         const grand_total = Math.round(grand_doc_raw);
         const round_off = round2(grand_total - grand_doc_raw);
 
@@ -2373,6 +2379,22 @@ export class PurchaseOrderService {
                             qty: l.qty,
                             unit: l.unit || prod?.unit_of_measure,
                             unit_price: l.unit_price,
+                            // Multi-currency: the per-line source→document rate
+                            // (doc units per 1 source unit) so the FE recompute
+                            // prices lines as unit_price × this rate. Prefer the
+                            // line's own value; fall back to the source line for
+                            // legacy SOs, else 1 (domestic). Omitting it made the
+                            // detail/listing show the un-converted native price.
+                            source_currency_code:
+                                (l as any).source_currency_code ||
+                                src?.source_currency_code,
+                            cost_exchange_rate:
+                                (l as any).cost_exchange_rate != null &&
+                                (l as any).cost_exchange_rate !== ''
+                                    ? String((l as any).cost_exchange_rate)
+                                    : src?.cost_exchange_rate != null
+                                    ? String(src.cost_exchange_rate)
+                                    : '1',
                             discount_pct: l.discount_pct,
                             tax_pct: l.tax_pct,
                             cgst: l.cgst,

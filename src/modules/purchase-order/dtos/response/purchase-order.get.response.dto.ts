@@ -18,6 +18,8 @@ export class PurchaseOrderLineResponseDto {
     @ApiProperty({ required: true, type: String }) qty: string;
     @ApiProperty({ required: false, type: String }) unit?: string;
     @ApiProperty({ required: true, type: String }) unit_price: string;
+    @ApiProperty({ required: false, type: String }) source_currency_code?: string;
+    @ApiProperty({ required: false, type: String }) cost_exchange_rate?: string;
     @ApiProperty({ required: false, type: String }) discount_pct?: string;
     @ApiProperty({ required: true, type: String }) tax_pct: string;
     @ApiProperty({ required: true, type: String }) cgst: string;

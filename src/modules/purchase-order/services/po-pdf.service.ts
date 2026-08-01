@@ -259,10 +259,14 @@ export class PoPdfService {
         // Grand total = Σ per-line DOC-currency selling total, RECOMPUTED from
         // the native fields (not the possibly-stale stored line_total) so it
         // matches the on-screen detail / costing card.
-        const linesInrTotal = (po.lines || []).reduce(
+        const linesFobTotal = (po.lines || []).reduce(
             (s, l) => s + lineSellDoc(l).amount,
             0
         );
+        // CNF/CFR: the shipment freight carried onto the SO is part of the
+        // customer-facing total (matches the header grand_total = FOB + freight).
+        const freightTotal = Number((po as any).freight_total) || 0;
+        const linesInrTotal = linesFobTotal + freightTotal;
 
         // ── Bank details — the company bank account (PI-linked, else default) ──
         let bank: BankBlock | null = null;
@@ -337,6 +341,8 @@ export class PoPdfService {
             bank,
             amountInWords,
             inrTotal: linesInrTotal,
+            fobTotal: linesFobTotal,
+            freightTotal,
         };
     }
 }
@@ -387,6 +393,8 @@ interface PoPdfContext {
     bank: BankBlock | null;
     amountInWords: string;
     inrTotal: number;
+    fobTotal: number;
+    freightTotal: number;
 }
 
 // ─── helpers (shared Tally primitives live in tally-pdf.util) ───────────
@@ -428,15 +436,18 @@ function lineSellDoc(l: any): { amount: number; rate: number } {
 }
 
 function buildPoHtml(ctx: PoPdfContext): string {
-    const { po, company, customer, bank, amountInWords, inrTotal } = ctx;
+    const { po, company, customer, bank, amountInWords, inrTotal, fobTotal, freightTotal } = ctx;
     const lines = po.lines || [];
 
     const sym = po.currency_symbol || po.currency_code || '₹';
     // Native model: line amounts are already in the document currency (each cost
     // was converted source→doc in recompute) — print as-is, no × exchange_rate.
     const rate = 1;
-    // Sum of line amounts (customer currency). No round-off is applied — the
-    // Grand Total prints the exact computed value.
+    // The "Total" row is the sum of the Amount column (line items = FOB); the
+    // CNF/CFR shipment freight is then added to reach the Grand Total. inrTotal
+    // already = FOB + freight.
+    const rawFobCcy = fobTotal * rate;
+    const freightCcy = freightTotal * rate;
     const rawGrandTotalCcy = inrTotal * rate;
     const grandTotalCcy = rawGrandTotalCcy;
 
@@ -626,8 +637,18 @@ function buildPoHtml(ctx: PoPdfContext): string {
       <td></td><td></td><td></td>
       <td class="num nowrap"><b>${fmt(totalQty)} ${esc(totalUnit)}</b></td>
       <td></td><td></td><td></td>
-      <td class="num nowrap"><b>${fmt4(rawGrandTotalCcy)} ${esc(sym)}</b></td>
+      <td class="num nowrap"><b>${fmt4(rawFobCcy)} ${esc(sym)}</b></td>
     </tr>
+    ${
+        freightTotal > 0
+            ? `<tr>
+      <td></td>
+      <td class="num">Freight</td>
+      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+      <td class="num nowrap">${fmt4(freightCcy)} ${esc(sym)}</td>
+    </tr>`
+            : ''
+    }
     <tr>
       <td></td>
       <td class="num"><b>Grand Total</b></td>
