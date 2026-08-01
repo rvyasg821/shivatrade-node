@@ -26,6 +26,7 @@ import {
 import {
     PurchaseTurnoverResponseDto,
     PurchaseTurnoverRowDto,
+    PurchaseCurrencyGroupDto,
 } from '../dtos/response/purchase-turnover.response.dto';
 import {
     ProductProfitabilityResponseDto,
@@ -124,6 +125,8 @@ export interface IPurchaseTurnoverQuery {
     date_from?: string;
     date_to?: string;
     vendor_id?: string;
+    /** Narrow to one currency section. */
+    currency?: string;
     /** unpaid | partially_paid | paid | overpaid — derived, filtered post-mapList. */
     payment_status?: string;
     order_by?: 'value' | 'paid' | 'outstanding' | 'count';
@@ -339,10 +342,19 @@ export class ReportsService {
                     p.category_id                                        AS category_id,
                     cat.name                                             AS category_name,
                     COALESCE(SUM(il.qty), 0)::float8                     AS qty_sold,
-                    COALESCE(SUM(il.taxable_amount), 0)::float8          AS revenue_inr,
+                    -- Multi-currency: il.taxable_amount is in the invoice's
+                    -- DOCUMENT (customer) currency, so divide by the frozen
+                    -- exchange_rate (doc-per-₹1) to get true INR before summing
+                    -- across invoices of different currencies. Domestic INR
+                    -- invoices have exchange_rate = 1, so this is a no-op there.
                     COALESCE(SUM(
                         il.taxable_amount
-                        / NULLIF(1 + COALESCE(il.margin_pct, 0) / 100.0, 0)
+                        / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1)
+                    ), 0)::float8                                        AS revenue_inr,
+                    COALESCE(SUM(
+                        (il.taxable_amount
+                            / NULLIF(1 + COALESCE(il.margin_pct, 0) / 100.0, 0))
+                        / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1)
                     ), 0)::float8                                        AS cost_inr
              FROM invoice_lines il
              JOIN invoices i
@@ -460,18 +472,27 @@ export class ReportsService {
         const search = query.search?.trim() ? query.search.trim() : null;
         const gstRoute = query.gst_route?.trim() ? query.gst_route.trim() : null;
 
-        // Line `taxable_amount` is already INR base (invoice.service.ts
-        // `recompute()`) — sum it directly, no exchange-rate conversion.
+        // Multi-currency: line `taxable_amount` is in the invoice's DOCUMENT
+        // (customer) currency (invoice.service.ts `recompute()` — the cost is
+        // converted source→doc, margin built in doc currency). GSTR-1 Table 12
+        // is a statutory INR return, so convert each line to INR by dividing by
+        // the invoice's frozen exchange_rate (doc-per-₹1) before summing across
+        // currencies. Domestic INR invoices have exchange_rate = 1 (no-op).
         const raw: any[] = await this.dataSource.query(
             `SELECT il.hsn_code                                     AS hsn_code,
                     MAX(il.product_name)                            AS description,
                     il.uqc_code                                     AS uqc_code,
                     COALESCE(il.igst_rate_pct, 0)::float8           AS rate,
                     COALESCE(SUM(il.qty), 0)::float8                AS total_qty,
-                    COALESCE(SUM(il.taxable_amount), 0)::float8     AS taxable_value_inr,
+                    COALESCE(SUM(
+                        il.taxable_amount
+                        / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1)
+                    ), 0)::float8                                   AS taxable_value_inr,
                     COALESCE(SUM(
                         CASE WHEN i.gst_route = 'igst_paid'
-                             THEN il.taxable_amount * COALESCE(il.igst_rate_pct, 0) / 100.0
+                             THEN (il.taxable_amount
+                                   / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))
+                                  * COALESCE(il.igst_rate_pct, 0) / 100.0
                              ELSE 0 END
                     ), 0)::float8                                   AS igst_inr,
                     COUNT(*) FILTER (
@@ -644,9 +665,15 @@ export class ReportsService {
                     il.uqc_code                                     AS uqc_code,
                     COALESCE(il.igst_rate_pct, 0)::float8           AS rate,
                     COALESCE(il.qty, 0)::float8                     AS qty,
-                    COALESCE(il.taxable_amount, 0)::float8          AS taxable_value_inr,
+                    -- Multi-currency: convert doc-currency line value → INR by
+                    -- the invoice's frozen rate, so the drawer foots to the
+                    -- (INR-converted) summary row it opened from.
+                    (COALESCE(il.taxable_amount, 0)
+                        / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))::float8
+                                                                    AS taxable_value_inr,
                     CASE WHEN i.gst_route = 'igst_paid'
-                         THEN COALESCE(il.taxable_amount, 0)
+                         THEN (COALESCE(il.taxable_amount, 0)
+                               / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))
                               * COALESCE(il.igst_rate_pct, 0) / 100.0
                          ELSE 0 END::float8                         AS igst_inr
              FROM invoice_lines il
@@ -999,15 +1026,22 @@ export class ReportsService {
         // ── Output: notional IGST by month (same gate as hsnSummary) ──
         const outRaw: any[] = await this.dataSource.query(
             `SELECT to_char(i.invoice_date, 'YYYY-MM')                AS month,
+                    -- Multi-currency: il.taxable_amount is in the invoice's
+                    -- document currency; divide by the frozen exchange_rate
+                    -- (doc-per-₹1) for the statutory INR figure. Domestic INR
+                    -- invoices have rate = 1 (no-op).
                     COALESCE(SUM(
                         CASE WHEN i.gst_route = 'igst_paid'
-                             THEN il.taxable_amount * COALESCE(il.igst_rate_pct, 0) / 100.0
+                             THEN (il.taxable_amount
+                                   / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))
+                                  * COALESCE(il.igst_rate_pct, 0) / 100.0
                              ELSE 0 END
                     ), 0)::float8                                     AS output_igst_inr,
                     -- The taxable sales value that IGST was computed on.
                     COALESCE(SUM(
                         CASE WHEN i.gst_route = 'igst_paid'
                              THEN il.taxable_amount
+                                  / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1)
                              ELSE 0 END
                     ), 0)::float8                                     AS output_taxable_inr
              FROM invoice_lines il
@@ -1109,12 +1143,19 @@ export class ReportsService {
             );
 
             for (const pov of povs as any[]) {
+                // GST is an Indian DOMESTIC tax. An overseas-vendor POV (import)
+                // is native to a foreign currency and carries NO POV-level Indian
+                // GST/ITC — import IGST is paid separately at customs on a Bill
+                // of Entry, not modelled here. So a foreign-currency POV must not
+                // leak its native value into the INR purchase-taxable base (it
+                // would add e.g. €745 as ₹745). Skip it entirely.
+                if (((pov as any).currency_code || 'INR') !== 'INR') continue;
                 const gst = r2(n((pov as any).gst_inr));
                 const row = rowFor(monthByPov.get(pov._id) || monthOf(from));
                 // The purchase amount the GST was charged on: goods + vendor
                 // charges, excluding the tax itself. Accumulated BEFORE the
-                // `gst <= 0` skip, so a zero-rated purchase still shows its
-                // value — otherwise the base would silently under-report.
+                // `gst <= 0` skip, so a zero-rated domestic purchase still shows
+                // its value — otherwise the base would silently under-report.
                 row.input_taxable_inr = r2(
                     row.input_taxable_inr +
                         (n((pov as any).order_value) - gst)
@@ -1337,6 +1378,10 @@ export class ReportsService {
             }
 
             for (const pov of povs as any[]) {
+                // Domestic (INR) POVs only — a foreign-currency POV (import)
+                // carries no Indian GST/ITC, so it is excluded from the ITC
+                // breakdown (mirrors the aggregate in gstBalance()).
+                if (((pov as any).currency_code || 'INR') !== 'INR') continue;
                 const gst = r2(n((pov as any).gst_inr));
                 const vendor = vendorById.get(String(pov.vendor_id));
                 const addr =
@@ -1391,10 +1436,17 @@ export class ReportsService {
                     TO_CHAR(i.invoice_date, 'YYYY-MM-DD')              AS invoice_date,
                     i.gst_route                                        AS gst_route,
                     COALESCE(c.company_name, '—')                      AS customer_name,
-                    COALESCE(SUM(il.taxable_amount), 0)::float8        AS taxable_inr,
+                    -- Multi-currency: doc-currency line value → INR via the
+                    -- invoice's frozen rate (doc-per-₹1); domestic = rate 1.
+                    COALESCE(SUM(
+                        il.taxable_amount
+                        / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1)
+                    ), 0)::float8                                      AS taxable_inr,
                     COALESCE(SUM(
                         CASE WHEN i.gst_route = 'igst_paid'
-                             THEN il.taxable_amount * COALESCE(il.igst_rate_pct, 0) / 100.0
+                             THEN (il.taxable_amount
+                                   / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))
+                                  * COALESCE(il.igst_rate_pct, 0) / 100.0
                              ELSE 0 END
                     ), 0)::float8                                      AS igst_inr
              FROM invoice_lines il
@@ -1972,24 +2024,62 @@ export class ReportsService {
             ? povs.filter((p) => p.payment_status === query.payment_status)
             : povs;
 
-        const bucket = new Map<string, PurchaseTurnoverRowDto>();
-        const rowFor = (key: string, label: string): PurchaseTurnoverRowDto => {
-            if (!bucket.has(key)) {
-                bucket.set(key, {
-                    key,
-                    label,
-                    pov_count: 0,
-                    taxable_inr: 0,
-                    gst_inr: 0,
-                    order_value_inr: 0,
-                    paid_inr: 0,
-                    outstanding_inr: 0,
+        // Every currency present in range — the dropdown source. Computed
+        // before the currency narrow so the dropdown stays stable.
+        const availableCurrencies = Array.from(
+            new Set(scoped.map((p) => p.currency_code || 'INR'))
+        ).sort(currencyRank);
+
+        // Per-currency sections. Within each, bucket by month or vendor. A POV
+        // is native to its own currency (D-6: purchases are per-currency
+        // native, the POV→INR rate was retired), so USD/EUR/INR never share a
+        // subtotal.
+        const groupMap = new Map<string, PurchaseCurrencyGroupDto>();
+        const rowMapByCurrency = new Map<
+            string,
+            Map<string, PurchaseTurnoverRowDto>
+        >();
+        const emptyRow = (key: string, label: string): PurchaseTurnoverRowDto => ({
+            key,
+            label,
+            pov_count: 0,
+            taxable: 0,
+            gst: 0,
+            order_value: 0,
+            paid: 0,
+            outstanding: 0,
+        });
+        const rowFor = (
+            currency: string,
+            symbol: string | null,
+            key: string,
+            label: string
+        ): PurchaseTurnoverRowDto => {
+            if (!groupMap.has(currency)) {
+                groupMap.set(currency, {
+                    currency,
+                    currency_symbol: symbol,
+                    rows: [],
+                    totals: {
+                        pov_count: 0,
+                        taxable: 0,
+                        gst: 0,
+                        order_value: 0,
+                        paid: 0,
+                        outstanding: 0,
+                    },
                 });
+                rowMapByCurrency.set(currency, new Map());
             }
-            return bucket.get(key)!;
+            const rm = rowMapByCurrency.get(currency)!;
+            if (!rm.has(key)) rm.set(key, emptyRow(key, label));
+            return rm.get(key)!;
         };
 
         for (const pov of scoped) {
+            const currency = pov.currency_code || 'INR';
+            // The currency filter narrows which section(s) to show.
+            if (query.currency && currency !== query.currency) continue;
             const key =
                 groupBy === 'vendor'
                     ? String(pov.vendor_id || '—')
@@ -1999,81 +2089,95 @@ export class ReportsService {
                 groupBy === 'vendor'
                     ? pov.vendor_name || '—'
                     : monthLabel(key);
-            const row = rowFor(key, label);
+            const row = rowFor(
+                currency,
+                pov.currency_symbol || null,
+                key,
+                label
+            );
             row.pov_count += 1;
-            row.order_value_inr = r2(row.order_value_inr + n(pov.order_value));
-            row.gst_inr = r2(row.gst_inr + n(pov.gst_inr));
+            row.order_value = r2(row.order_value + n(pov.order_value));
+            row.gst = r2(row.gst + n(pov.gst_inr));
             // GROSS — net_paid (after TDS) is the bank outflow, but gross is
             // what settles the vendor, so Outstanding must use it (plan §12.4).
-            row.paid_inr = r2(row.paid_inr + n(pov.amount_paid));
+            row.paid = r2(row.paid + n(pov.amount_paid));
         }
 
         // Month mode: emit every month in the range so a quiet month reads 0.00
-        // rather than vanishing. Vendor mode: never invent rows.
-        let rows: PurchaseTurnoverRowDto[];
+        // rather than vanishing (within currencies that HAVE data).
+        const monthKeys: string[] = [];
         if (groupBy === 'month') {
-            rows = [];
             const cur = new Date(`${from.slice(0, 7)}-01T00:00:00`);
             const end = new Date(`${to.slice(0, 7)}-01T00:00:00`);
             while (cur <= end) {
-                const key = `${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}`;
-                rows.push(rowFor(key, monthLabel(key)));
+                monthKeys.push(
+                    `${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}`
+                );
                 cur.setMonth(cur.getMonth() + 1);
             }
-            rows.sort((a, b) => (a.key < b.key ? -1 : 1));
-        } else {
-            rows = Array.from(bucket.values());
-            const orderBy = query.order_by || 'value';
-            const dir = query.order_direction === 'asc' ? 1 : -1;
-            const keyOf = (x: PurchaseTurnoverRowDto): number =>
-                orderBy === 'paid'
-                    ? x.paid_inr
-                    : orderBy === 'outstanding'
-                      ? x.outstanding_inr
-                      : orderBy === 'count'
-                        ? x.pov_count
-                        : x.order_value_inr;
-            rows.sort((a, b) => (keyOf(a) - keyOf(b)) * dir);
         }
 
-        const totals = {
-            pov_count: 0,
-            taxable_inr: 0,
-            gst_inr: 0,
-            order_value_inr: 0,
-            paid_inr: 0,
-            outstanding_inr: 0,
-        };
-        for (const row of rows) {
-            row.taxable_inr = r2(row.order_value_inr - row.gst_inr);
-            row.outstanding_inr = r2(row.order_value_inr - row.paid_inr);
-            totals.pov_count += row.pov_count;
-            totals.taxable_inr = r2(totals.taxable_inr + row.taxable_inr);
-            totals.gst_inr = r2(totals.gst_inr + row.gst_inr);
-            totals.order_value_inr = r2(
-                totals.order_value_inr + row.order_value_inr
-            );
-            totals.paid_inr = r2(totals.paid_inr + row.paid_inr);
-            totals.outstanding_inr = r2(
-                totals.outstanding_inr + row.outstanding_inr
-            );
-        }
+        const groups = Array.from(groupMap.values())
+            .sort((a, b) => currencyRank(a.currency, b.currency))
+            .map((g) => {
+                const rm = rowMapByCurrency.get(g.currency)!;
+                let rows: PurchaseTurnoverRowDto[];
+                if (groupBy === 'month') {
+                    rows = monthKeys.map(
+                        (key) => rm.get(key) || emptyRow(key, monthLabel(key))
+                    );
+                } else {
+                    rows = Array.from(rm.values());
+                    const orderBy = query.order_by || 'value';
+                    const dir = query.order_direction === 'asc' ? 1 : -1;
+                    const keyOf = (x: PurchaseTurnoverRowDto): number =>
+                        orderBy === 'paid'
+                            ? x.paid
+                            : orderBy === 'outstanding'
+                              ? x.outstanding
+                              : orderBy === 'count'
+                                ? x.pov_count
+                                : x.order_value;
+                    rows.sort((a, b) => (keyOf(a) - keyOf(b)) * dir);
+                }
+                const totals = {
+                    pov_count: 0,
+                    taxable: 0,
+                    gst: 0,
+                    order_value: 0,
+                    paid: 0,
+                    outstanding: 0,
+                };
+                for (const row of rows) {
+                    row.taxable = r2(row.order_value - row.gst);
+                    row.outstanding = r2(row.order_value - row.paid);
+                    totals.pov_count += row.pov_count;
+                    totals.taxable = r2(totals.taxable + row.taxable);
+                    totals.gst = r2(totals.gst + row.gst);
+                    totals.order_value = r2(
+                        totals.order_value + row.order_value
+                    );
+                    totals.paid = r2(totals.paid + row.paid);
+                    totals.outstanding = r2(
+                        totals.outstanding + row.outstanding
+                    );
+                }
+                g.rows = rows;
+                g.totals = totals;
+                return g;
+            });
 
-        const perPage = Math.max(1, Math.min(100000, Number(query.perPage) || 25));
-        const page = Math.max(1, Number(query.page) || 1);
-        const start = (page - 1) * perPage;
+        const overallPovCount = groups.reduce(
+            (s, g) => s + g.totals.pov_count,
+            0
+        );
 
         return {
             period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
             group_by: groupBy,
-            rows: rows.slice(start, start + perPage),
-            totals,
-            currency: 'INR',
-            pagination: {
-                total: rows.length,
-                perPage,
-                orderBy: groupBy === 'month' ? 'month' : query.order_by || 'value',
-            },
+            groups,
+            available_currencies: availableCurrencies,
+            overall_pov_count: overallPovCount,
         };
     }
 
@@ -2082,49 +2186,60 @@ export class ReportsService {
         companyId: string,
         query: IPurchaseTurnoverQuery
     ): Promise<Buffer> {
-        const result = await this.purchaseTurnover(companyId, {
-            ...query,
-            page: 1,
-            perPage: 100000, // one page = the whole set for export
-        });
+        const result = await this.purchaseTurnover(companyId, query);
+        const firstCol = result.group_by === 'vendor' ? 'Vendor' : 'Month';
         const header = [
-            result.group_by === 'vendor' ? 'Vendor' : 'Month',
+            firstCol,
             'POVs',
-            'Taxable (INR)',
-            'GST (INR)',
-            'Order Value (INR)',
-            'Paid (INR)',
-            'Outstanding (INR)',
+            'Taxable',
+            'GST',
+            'Order Value',
+            'Paid',
+            'Outstanding',
         ];
-        const body = result.rows.map((r) => [
-            r.label,
-            r.pov_count,
-            r.taxable_inr,
-            r.gst_inr,
-            r.order_value_inr,
-            r.paid_inr,
-            r.outstanding_inr,
-        ]);
-        const totalRow = [
-            'TOTAL',
-            result.totals.pov_count,
-            result.totals.taxable_inr,
-            result.totals.gst_inr,
-            result.totals.order_value_inr,
-            result.totals.paid_inr,
-            result.totals.outstanding_inr,
-        ];
+
+        // One sheet, a currency-header row before each section's rows + its
+        // TOTAL — there is deliberately NO cross-currency total cell (a POV is
+        // native to its own currency; USD + EUR can't be added).
         const aoa: (string | number)[][] = [
             [
-                `Purchase Turnover (VPO) — by ${result.group_by} — ${result.period_label} (INR)`,
+                `Purchase Turnover (VPO) — by ${result.group_by} — ${result.period_label}`,
             ],
-            ['Dispatched + closed POVs. Paid is gross (before TDS).'],
+            [
+                `Dispatched + closed POVs. Paid is gross (before TDS). POVs: ${result.overall_pov_count}. Amounts are native per currency.`,
+            ],
             [],
-            header,
-            ...body,
-            [],
-            totalRow,
         ];
+
+        for (const g of result.groups) {
+            const label = g.currency_symbol
+                ? `${g.currency} (${g.currency_symbol})`
+                : g.currency;
+            aoa.push([label]); // currency section header
+            aoa.push(header);
+            for (const r of g.rows) {
+                aoa.push([
+                    r.label,
+                    r.pov_count,
+                    r.taxable,
+                    r.gst,
+                    r.order_value,
+                    r.paid,
+                    r.outstanding,
+                ]);
+            }
+            aoa.push([
+                'TOTAL',
+                g.totals.pov_count,
+                g.totals.taxable,
+                g.totals.gst,
+                g.totals.order_value,
+                g.totals.paid,
+                g.totals.outstanding,
+            ]);
+            aoa.push([]); // blank line between currency sections
+        }
+
         return this.fileService.writeExcelFromArray(aoa);
     }
 
@@ -2133,13 +2248,14 @@ export class ReportsService {
      * Per invoiced line, compares the FINAL CUSTOMER SELLING price on the
      * source Sales Order line against the actual invoiced price. Selling value
      * is defined identically on both sides so the comparison is fair:
-     *   invoice line = invoice_line.taxable_amount                        (INR)
-     *   SO line      = pol.taxable + expenses − rebates + margin          (INR)
-     * Per-unit rate = value ÷ qty, expressed in the invoice's currency
-     * (× exchange_rate). When the SO and invoice share a currency the SO uses
-     * its OWN rate, so a rate change shows up as a difference (FX included). A
-     * mismatched-currency SO is converted at the invoice rate and flagged.
-     * Totals are kept in INR so they stay summable across currencies.
+     *   invoice line = invoice_line.taxable_amount              (invoice cur, native)
+     *   SO line      = pol.taxable + expenses − rebates + margin (SO cur, native)
+     * Multi-currency (native): each value is in its OWN document currency now.
+     * Per-unit rate is expressed in the INVOICE currency — same currency →
+     * the SO's native rate compares directly; different currency → the SO rate
+     * is crossed SO→INR→invoice (÷ so_fx, × inv_fx) and the row is flagged.
+     * Totals are converted to INR (÷ each doc's frozen rate) so they stay
+     * summable across currencies.
      */
     async soInvoiceReconciliation(
         companyId: string,
@@ -2248,24 +2364,27 @@ export class ReportsService {
         const rows: SoInvoiceReconRowDto[] = narrowed.map((r) => {
             const invQty = n(r.inv_qty);
             const soQty = n(r.so_qty);
-            const invValueInr = n(r.inv_value_inr);
-            const soValueInrFull = n(r.so_value_inr);
+            // Multi-currency: taxable_amount (invoice) and the SO value are each
+            // stored in their OWN document currency now (not INR). inv_fx/so_fx
+            // are doc-per-₹1, so ÷fx = INR and ×fx = that doc currency.
+            const invValueDoc = n(r.inv_value_inr); // invoice-currency value
+            const soValueSoCur = n(r.so_value_inr); // SO-currency value
 
-            // Per-unit selling value (INR) on each side.
-            const soRateInr = soQty > 0 ? soValueInrFull / soQty : null;
-            const invRateInr = invQty > 0 ? invValueInr / invQty : null;
-
-            // Express in the invoice currency. Same currency → SO keeps its own
-            // FX (rate change becomes a visible difference). Different currency
-            // → convert the SO at the invoice's rate and flag it.
             const invFx = n(r.inv_fx) || 1;
             const soFx = n(r.so_fx) || 1;
             const mismatch =
                 String(r.so_currency) !== String(r.inv_currency);
-            const soFxUsed = mismatch ? invFx : soFx;
 
-            const invRate = invRateInr != null ? r2(invRateInr * invFx) : null;
-            const soRate = soRateInr != null ? r2(soRateInr * soFxUsed) : null;
+            // Per-unit rates, both in the INVOICE currency. The invoice side is
+            // already in it (native). Same currency → the SO's native rate is
+            // directly comparable (no FX). Different currency → cross the SO
+            // rate SO→INR→invoice (÷soFx = INR, ×invFx = invoice cur).
+            const invRate = invQty > 0 ? r2(invValueDoc / invQty) : null;
+            const soRateSoCur = soQty > 0 ? soValueSoCur / soQty : null;
+            const soRate =
+                soRateSoCur != null
+                    ? r2(mismatch ? (soRateSoCur / soFx) * invFx : soRateSoCur)
+                    : null;
             const rateDiff =
                 invRate != null && soRate != null
                     ? r2(invRate - soRate)
@@ -2277,10 +2396,14 @@ export class ReportsService {
                     ? r2((rateDiff / soRate) * 100)
                     : null;
 
-            // INR totals base: the SO's expected value for the INVOICED qty
-            // (like-for-like), and the actual invoiced value.
+            // INR totals base (÷fx to INR, so USD+EUR rows stay summable): the
+            // SO's expected value for the INVOICED qty (like-for-like) and the
+            // actual invoiced value, each at its own frozen rate.
+            const invValueInr = invFx > 0 ? invValueDoc / invFx : invValueDoc;
             const soValueForInvInr =
-                soRateInr != null ? r2(soRateInr * invQty) : null;
+                soRateSoCur != null && soFx > 0
+                    ? r2((soRateSoCur * invQty) / soFx)
+                    : null;
             const varianceInr =
                 soValueForInvInr != null
                     ? r2(invValueInr - soValueForInvInr)
@@ -2431,8 +2554,10 @@ export class ReportsService {
     /**
      * How many times inventory is sold & replaced over the period, per product
      * and overall. Everything is valued in INR at each product's WEIGHTED-AVERAGE
-     * vendor cost (Σ accepted GRN qty × POV unit_price ÷ Σ accepted qty), so the
-     * two sides of the ratio are consistent:
+     * vendor cost (Σ accepted GRN qty × POV unit_price × POV rate→INR ÷ Σ accepted
+     * qty) — multi-currency POVs are converted to INR at their own frozen rate so
+     * the value is a single basis. The per-product ratio/DIO are currency-free
+     * anyway (unit cost cancels). The two sides of the ratio stay consistent:
      *
      *   turnover_ratio = COGS ÷ average inventory value
      *   COGS           = qty sold (issued invoices in range) × unit_cost
@@ -2493,8 +2618,15 @@ export class ReportsService {
              FROM products p
              LEFT JOIN categories cat ON cat._id = p.category_id
              LEFT JOIN (
+                 -- Multi-currency: a POV is priced in the vendor's own currency,
+                 -- so convert each receipt to INR at the POV's frozen rate
+                 -- (exchange_rate = INR per 1 unit of the PO currency; 1 for a
+                 -- domestic INR POV) — otherwise USD + EUR + INR costs would be
+                 -- summed into one meaningless "value". This analytical ratio
+                 -- report needs a single basis to aggregate across products.
                  SELECT gl.product_id,
-                        SUM(gl.accepted_qty::numeric * povl.unit_price::numeric) AS cost_sum,
+                        SUM(gl.accepted_qty::numeric * povl.unit_price::numeric
+                            * COALESCE(NULLIF(pov.exchange_rate::numeric, 0), 1)) AS cost_sum,
                         SUM(gl.accepted_qty::numeric)                            AS qty_sum
                  FROM grn_lines gl
                  JOIN grns g
@@ -2503,6 +2635,7 @@ export class ReportsService {
                   AND g.soft_delete = false
                   AND g.status <> 'cancelled'
                  JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+                 JOIN po_vendors pov ON pov._id = povl.po_vendor_id
                  WHERE gl.accepted_qty::numeric > 0
                  GROUP BY gl.product_id
              ) cost ON cost.product_id = p._id
@@ -3020,7 +3153,8 @@ export class ReportsService {
      * FIFO-attributed to its GRN receipt cohorts (oldest left first, so what
      * remains is the newest receipts); any remaining unit whose receipt is
      * ≥ `aging_days` old counts as AGED (slow-moving). Value = qty × the
-     * product's weighted-average vendor cost (INR).
+     * product's weighted-average vendor cost, each receipt converted to INR at
+     * its POV's frozen rate (so multi-currency sourcing values on one basis).
      *
      * Reconciliation: the FIFO leftover is trimmed/topped-up to the true
      * `stock_movements` on-hand. A shortfall (opening / non-GRN inflow with no
@@ -3074,8 +3208,13 @@ export class ReportsService {
              FROM products p
              LEFT JOIN categories cat ON cat._id = p.category_id
              LEFT JOIN (
+                 -- Multi-currency: convert each receipt to INR at the POV's
+                 -- frozen rate (INR per 1 unit of the PO currency; 1 for a
+                 -- domestic INR POV) so a product sourced in USD/EUR isn't
+                 -- valued in mixed currencies. Aged-stock value needs one basis.
                  SELECT gl.product_id,
-                        SUM(gl.accepted_qty::numeric * povl.unit_price::numeric) AS cost_sum,
+                        SUM(gl.accepted_qty::numeric * povl.unit_price::numeric
+                            * COALESCE(NULLIF(pov.exchange_rate::numeric, 0), 1)) AS cost_sum,
                         SUM(gl.accepted_qty::numeric)                            AS qty_sum
                  FROM grn_lines gl
                  JOIN grns g
@@ -3084,6 +3223,7 @@ export class ReportsService {
                   AND g.soft_delete = false
                   AND g.status = 'confirmed'
                  JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+                 JOIN po_vendors pov ON pov._id = povl.po_vendor_id
                  WHERE gl.accepted_qty::numeric > 0
                  GROUP BY gl.product_id
              ) cost ON cost.product_id = p._id

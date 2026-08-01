@@ -613,17 +613,28 @@ export class PoVendorService {
             }
         }
 
-        // Multi-currency: default to the source Sales Order's currency, but
-        // honour an explicit override on the request (a vendor may bill in a
-        // different currency than the customer's SO). Amounts stay stored in
-        // INR; exchange_rate (foreign-per-₹1) drives the view/PDF like a
-        // Quotation.
+        // Multi-currency: a POV is priced in the VENDOR's own currency (you buy
+        // from the vendor at their rate), NOT the customer's SO currency. So the
+        // fallback is the vendor's currency; only when the vendor has none do we
+        // fall back to the SO currency, then home. An explicit request currency
+        // (operator override) still wins. Amounts stay stored native; the frozen
+        // exchange_rate (foreign-per-₹1) drives the INR stock/books roll-up.
+        const vendorRow: any = await this.vendorRepository
+            .findOneById(vendorId)
+            .catch(() => null);
+        const vendorCurrency =
+            vendorRow?.currency_code && String(vendorRow.currency_code).trim()
+                ? String(vendorRow.currency_code).trim()
+                : undefined;
         const { currency_code, exchange_rate } = await this.resolvePovCurrency(
             companyId,
             (data as any).currency_code,
             (data as any).exchange_rate,
-            po.currency_code,
-            po.exchange_rate
+            vendorCurrency || po.currency_code,
+            // Only carry the SO's frozen rate when we're actually inheriting the
+            // SO currency; for the vendor's own currency let the master freeze
+            // the correct (vendor-currency → home) rate.
+            vendorCurrency ? undefined : po.exchange_rate
         );
 
         // Pre-compute the subtotal so percent-typed expenses snapshot

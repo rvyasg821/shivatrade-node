@@ -781,11 +781,17 @@ export class QuotationService {
         // retained on the header only for the INR roll-up used by reports
         // (INR = grand_total ÷ exchange_rate). Quotation total excludes GST.
         tax_total = 0;
+        // CNF/CFR: the shipment freight is part of the price the customer pays,
+        // so it is added into the grand total (matching the Invoice, which stores
+        // grand_total = FOB + freight). Freight is a header-level figure entered
+        // once for the whole shipment; it is NOT split into lines here.
+        const freight_total = num((header as any).freight_total);
         const grand_doc_raw =
             subtotal +
             product_expenses_total -
             product_rebates_total +
-            margin_amount;
+            margin_amount +
+            freight_total;
         const grand_total = Math.round(grand_doc_raw);
         const round_off = round2(grand_total - grand_doc_raw);
 
@@ -1038,6 +1044,13 @@ export class QuotationService {
                             qty: l.qty,
                             unit: l.unit,
                             unit_price: l.unit_price,
+                            // Multi-currency: the per-line source→document rate
+                            // (doc units per 1 source unit). Needed so the FE
+                            // recompute prices lines as unit_price × this rate
+                            // — omitting it made the detail/listing default to 1
+                            // and show the un-converted native price.
+                            source_currency_code: (l as any).source_currency_code,
+                            cost_exchange_rate: (l as any).cost_exchange_rate,
                             discount_pct: l.discount_pct,
                             tax_pct: l.tax_pct,
                             cgst: l.cgst,
@@ -1278,6 +1291,10 @@ export class QuotationService {
             };
         });
 
+        // CNF/CFR shipment freight — part of the customer-facing total.
+        const freight_total = num((full as any).freight_total);
+        grand_total_calc += freight_total;
+
         const today = new Date().toISOString().slice(0, 10);
         return {
             voucher_no: full.voucher_no,
@@ -1312,6 +1329,7 @@ export class QuotationService {
             notes_to_client: full.notes_to_client,
             lines,
             subtotal: String(round2(subtotal)),
+            freight_total: String(round2(freight_total)),
             gst_total: String(round2(gst_total)),
             // Whole-number customer-currency total (matches the persisted,
             // rounded header grand_total shown across the doc chain).
@@ -1557,6 +1575,7 @@ export class QuotationService {
   table.items tbody tr:last-child td { border-bottom: 1px solid #e5e7eb; }
   table.items th.num, table.items td.num { text-align: right; }
   .totals { width: 280px; margin-left: auto; margin-top: 14px; margin-bottom: 4px; }
+  .totals .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; color: #4b5563; }
   .totals .row-grand { display: flex; justify-content: space-between; padding: 10px 0 4px; border-top: 2px solid #1f2937; font-weight: 700; font-size: 12px; color: #1f2937; }
   .section { margin-top: 14px; }
   .section .body { font-size: 10px; color: #4b5563; line-height: 1.55; white-space: pre-line; }
@@ -1602,6 +1621,12 @@ export class QuotationService {
   </table>
 
   <div class="totals">
+    ${
+        num(q.freight_total) > 0
+            ? `<div class="row"><span>Subtotal</span><span>${money(q.subtotal)}</span></div>
+    <div class="row"><span>Freight</span><span>${money(q.freight_total)}</span></div>`
+            : ''
+    }
     <div class="row-grand"><span>Grand Total</span><span>${money(q.grand_total)}</span></div>
   </div>
 

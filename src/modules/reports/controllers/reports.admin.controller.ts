@@ -363,6 +363,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'date_from', required: false })
     @ApiQuery({ name: 'date_to', required: false })
     @ApiQuery({ name: 'vendor_id', required: false })
+    @ApiQuery({ name: 'currency', required: false, description: 'narrow to one currency' })
     @ApiQuery({
         name: 'payment_status',
         required: false,
@@ -374,8 +375,6 @@ export class ReportsAdminController {
         description: 'value | paid | outstanding | count (vendor mode)',
     })
     @ApiQuery({ name: 'order_direction', required: false, description: 'asc | desc' })
-    @ApiQuery({ name: 'page', required: false })
-    @ApiQuery({ name: 'perPage', required: false })
     @Get('/purchase-turnover')
     async purchaseTurnover(
         @AuthJwtPayload('companyId') companyId: string,
@@ -386,11 +385,10 @@ export class ReportsAdminController {
             date_from: query.date_from,
             date_to: query.date_to,
             vendor_id: query.vendor_id,
+            currency: query.currency,
             payment_status: query.payment_status,
             order_by: query.order_by as any,
             order_direction: query.order_direction as any,
-            page: Number(query.page) || 1,
-            perPage: Number(query.perPage) || 25,
         });
         return { data };
     }
@@ -401,6 +399,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'date_from', required: false })
     @ApiQuery({ name: 'date_to', required: false })
     @ApiQuery({ name: 'vendor_id', required: false })
+    @ApiQuery({ name: 'currency', required: false })
     @ApiQuery({ name: 'payment_status', required: false })
     @Get('/purchase-turnover/export')
     async purchaseTurnoverExport(
@@ -415,6 +414,7 @@ export class ReportsAdminController {
                 date_from: query.date_from,
                 date_to: query.date_to,
                 vendor_id: query.vendor_id,
+                currency: query.currency,
                 payment_status: query.payment_status,
                 order_by: query.order_by as any,
                 order_direction: query.order_direction as any,

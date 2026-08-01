@@ -17,6 +17,10 @@ export class QuotationLineResponseDto {
     qty?: string;
     unit?: string;
     unit_price?: string;
+    /** Vendor (source) currency of the native unit_price. */
+    source_currency_code?: string;
+    /** Doc units per 1 source unit; cost_doc = unit_price × cost_exchange_rate. */
+    cost_exchange_rate?: string;
     discount_pct?: string;
     tax_pct?: string;
     cgst?: string;
