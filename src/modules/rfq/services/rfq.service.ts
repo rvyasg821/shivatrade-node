@@ -33,6 +33,7 @@ import { ENUM_LEAD_ACTIVITY_TYPE } from '@modules/lead/enums/lead-activity.enum'
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { PriceListService } from '@modules/price-list/services/price-list.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
@@ -59,7 +60,8 @@ export class RfqService {
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
         private readonly leadActivityService: LeadActivityService,
-        private readonly dependencyCheckService: DependencyCheckService
+        private readonly dependencyCheckService: DependencyCheckService,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     /**
@@ -124,6 +126,14 @@ export class RfqService {
                 'Lead has no requirement items to source.'
             );
         }
+
+        // FY closure: block posting an RFQ into a closed period (checks the
+        // resolved date, which falls back to today when none is supplied).
+        await this.companySettings.assertPostingDateOpen(
+            companyId,
+            dto.rfq_date || new Date().toISOString().slice(0, 10),
+            'RFQ'
+        );
 
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucher_no = await this.voucherService.getNext(
@@ -420,6 +430,14 @@ export class RfqService {
         dto: RfqUpdateDto
     ): Promise<RfqDoc> {
         const rfq: any = await this.getOrThrow(companyId, rfqId);
+        // FY closure: block back-dating an RFQ onto a closed date.
+        if (dto.rfq_date !== undefined && dto.rfq_date !== rfq.rfq_date) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                dto.rfq_date,
+                'RFQ'
+            );
+        }
         if (dto.notes !== undefined) rfq.notes = dto.notes;
         if (dto.rfq_date !== undefined) rfq.rfq_date = dto.rfq_date;
         if (dto.status !== undefined) rfq.status = dto.status;

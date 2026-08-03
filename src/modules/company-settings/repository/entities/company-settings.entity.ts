@@ -151,6 +151,13 @@ export class CompanySettingsEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     footer_extra: string;
 
+    // ── Financial Year Closure ──
+    // Books are closed up to & including this date (YYYY-MM-DD). Any accounting
+    // or document entry dated on or before this is rejected on create/edit.
+    // NULL = no closure, nothing is locked.
+    @Column({ type: 'date', nullable: true, default: null })
+    books_closed_upto: string | null;
+
     // ── Compliance Settings ──
     @Column({ type: 'jsonb', nullable: true, default: null })
     compliance_config: {

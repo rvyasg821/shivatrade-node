@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { CompanySettingsRepository } from '../repository/repositories/company-settings.repository';
 import { CompanySettingsEntity } from '../repository/entities/company-settings.entity';
 import { HelperEncryptionService } from '@common/helper/services/helper.encryption.service';
@@ -85,6 +85,12 @@ export class CompanySettingsService {
     async update(companyId: string, data: Partial<CompanySettingsEntity>, locationId?: string): Promise<CompanySettingsEntity> {
         const encrypted = this.encryptSensitiveFields(data as any);
 
+        // A cleared closure date arrives as '' — store NULL so the `date`
+        // column is valid and the lock reads as "no closure".
+        if ('books_closed_upto' in encrypted && !encrypted.books_closed_upto) {
+            encrypted.books_closed_upto = null;
+        }
+
         if (!locationId) {
             const defaults = await this.getCompanyDefaults(companyId);
             return this.settingsRepository.update(defaults, encrypted) as Promise<CompanySettingsEntity>;
@@ -165,11 +171,56 @@ export class CompanySettingsService {
             footer_address: s.footer_address,
             footer_contact: s.footer_contact,
             footer_extra: s.footer_extra,
+            // Financial Year Closure
+            books_closed_upto: s.books_closed_upto || null,
             // Compliance
             compliance_config: s.compliance_config || null,
             // Meta
             is_inherited: !!(s as any).is_inherited,
         };
+    }
+
+    // ─── Financial Year Closure ───────────────────────────────────────────
+
+    /** dd-Mmm-yyyy for a YYYY-MM-DD string (for user-facing messages). */
+    private static formatDate(ymd: string): string {
+        const [y, m, d] = ymd.split('-');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const mi = parseInt(m, 10) - 1;
+        if (!y || isNaN(mi) || mi < 0 || mi > 11 || !d) return ymd;
+        return `${d}-${months[mi]}-${y}`;
+    }
+
+    /**
+     * Financial-year closure guard. Throws if `date` falls on or before the
+     * company's `books_closed_upto` cutoff (i.e. inside a closed period).
+     * `date` is a YYYY-MM-DD string or Date; a null/empty date is ignored
+     * (nothing to validate), and no cutoff configured = never blocks. Read-only:
+     * reads the company-wide settings row directly and never writes.
+     * @param docLabel human label for the message, e.g. 'invoice', 'receipt'.
+     */
+    async assertPostingDateOpen(
+        companyId: string,
+        date?: string | Date | null,
+        docLabel = 'entry'
+    ): Promise<void> {
+        if (!date) return;
+        const settings = await this.settingsRepository.findOne({
+            company_id: companyId,
+            location_id: null as any,
+        });
+        const cutoff = (settings as any)?.books_closed_upto;
+        if (!cutoff) return;
+
+        const d = (typeof date === 'string' ? date : new Date(date).toISOString()).slice(0, 10);
+        const c = (typeof cutoff === 'string' ? cutoff : new Date(cutoff).toISOString()).slice(0, 10);
+        // YYYY-MM-DD compares correctly as a plain string.
+        if (d <= c) {
+            throw new BadRequestException(
+                `Financial year is closed up to ${CompanySettingsService.formatDate(c)}. ` +
+                    `Cannot post or edit this ${docLabel} dated ${CompanySettingsService.formatDate(d)} — it falls in a closed period.`
+            );
+        }
     }
 
     /**

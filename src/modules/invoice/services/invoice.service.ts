@@ -56,6 +56,7 @@ import { StockLedgerService } from '@modules/inventory/services/stock-ledger.ser
 import { ENUM_STOCK_MOVEMENT_TYPE } from '@modules/inventory/enums/stock-movement.enum';
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
 import { sumAdjustmentEffect } from '@modules/adjustment-note/helpers/adjustment-balance.helper';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -121,6 +122,7 @@ export class InvoiceService {
         private readonly invoicePaymentRepository: InvoicePaymentRepository,
         private readonly adjustmentNoteRepository: AdjustmentNoteRepository,
         private readonly stockLedger: StockLedgerService,
+        private readonly companySettings: CompanySettingsService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
@@ -256,6 +258,13 @@ export class InvoiceService {
         // imported qty is authoritative. Live create (no ctx) always runs it.
         if (!silent) {
             await this.assertQtyGuardForLines(data.lines);
+            // FY closure: block posting into a closed period. Bulk import
+            // (silent) is a historical data-migration path and is exempt.
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                data.invoice_date,
+                'invoice'
+            );
         }
 
         // Resolve source SOs (POs) + enforce the single-source invariant
@@ -461,6 +470,15 @@ export class InvoiceService {
     ): Promise<InvoiceDoc> {
         if (row.status === ENUM_INVOICE_STATUS.CANCELLED) {
             throw new BadRequestException('Cancelled invoice cannot be updated.');
+        }
+
+        // FY closure: block editing an invoice already in a closed period, and
+        // block moving one onto a closed date.
+        const cid = row.company_id.toString();
+        await this.companySettings.assertPostingDateOpen(cid, row.invoice_date, 'invoice');
+        const newInvDate = (data as any).invoice_date || row.invoice_date;
+        if (newInvDate !== row.invoice_date) {
+            await this.companySettings.assertPostingDateOpen(cid, newInvDate, 'invoice');
         }
 
         if (row.status === ENUM_INVOICE_STATUS.DRAFT) {
@@ -876,6 +894,12 @@ export class InvoiceService {
         if (amount <= 0) {
             throw new BadRequestException('Payment amount must be > 0.');
         }
+        // FY closure: block recording a receipt dated in a closed period.
+        await this.companySettings.assertPostingDateOpen(
+            row.company_id.toString(),
+            data.payment_date,
+            'receipt'
+        );
         const priorPaid = await this.invoicePaymentRepository.sumActiveByInvoiceId(
             row._id.toString()
         );

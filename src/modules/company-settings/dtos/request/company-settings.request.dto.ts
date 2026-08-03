@@ -1,4 +1,4 @@
-import { IsOptional, IsBoolean, IsNumber, IsString, Min, Max, IsIn } from 'class-validator';
+import { IsOptional, IsBoolean, IsNumber, IsString, Min, Max, IsIn, IsDateString, ValidateIf } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CompanySettingsRequestDto {
@@ -232,4 +232,12 @@ export class CompanySettingsRequestDto {
     @IsOptional()
     @IsString()
     footer_extra?: string;
+
+    // ── Financial Year Closure ──
+    // 'YYYY-MM-DD' closes the books up to & incl. that date; null/'' clears it.
+    @ApiPropertyOptional({ type: String, example: '2026-03-31', nullable: true })
+    @IsOptional()
+    @ValidateIf((o) => o.books_closed_upto !== null && o.books_closed_upto !== '')
+    @IsDateString()
+    books_closed_upto?: string | null;
 }

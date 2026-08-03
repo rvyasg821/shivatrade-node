@@ -35,6 +35,7 @@ import { ProductRepository } from '@modules/product/repository/repositories/prod
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { CompanyService } from '@modules/company/services/company.service';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
@@ -86,7 +87,8 @@ export class PoVendorService {
         private readonly voucherService: VoucherService,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
         private readonly stockLedger: StockLedgerService,
-        private readonly dependencyCheckService: DependencyCheckService
+        private readonly dependencyCheckService: DependencyCheckService,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     /**
@@ -762,6 +764,17 @@ export class PoVendorService {
         const silent = !!ctx?.silent;
         const vendorId = data.vendor_id;
         if (!vendorId) throw new BadRequestException('vendor_id is required.');
+
+        // FY closure: block posting a vendor PO dated in a closed period. The
+        // header's accounting date is dispatch_date (optional); only checked
+        // when supplied. Bulk import (silent) is exempt.
+        if (!silent && (data as any).dispatch_date) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                (data as any).dispatch_date,
+                'vendor PO'
+            );
+        }
 
         // ── Resolve delivery address (no PO to inherit from) ───────────
         let delivery_address = '';
@@ -2481,6 +2494,13 @@ export class PoVendorService {
             );
         }
 
+        // FY closure: block dispatching a vendor PO onto a closed date.
+        await this.companySettings.assertPostingDateOpen(
+            row.company_id.toString(),
+            data.dispatch_date,
+            'vendor PO dispatch'
+        );
+
         const lines = await this.povLineRepository.findAll({
             po_vendor_id: row._id.toString(),
         } as any);
@@ -2604,6 +2624,13 @@ export class PoVendorService {
                 `Only dispatched POVs can have their dispatch edited (current status: ${row.status}).`
             );
         }
+
+        // FY closure: block moving a dispatch onto a closed date.
+        await this.companySettings.assertPostingDateOpen(
+            row.company_id.toString(),
+            data.dispatch_date,
+            'vendor PO dispatch'
+        );
 
         const lines = await this.povLineRepository.findAll({
             po_vendor_id: row._id.toString(),
@@ -2894,6 +2921,12 @@ export class PoVendorService {
         if (amount <= 0) {
             throw new BadRequestException('Payment amount must be > 0.');
         }
+        // FY closure: block recording a vendor payment in a closed period.
+        await this.companySettings.assertPostingDateOpen(
+            row.company_id.toString(),
+            data.payment_date,
+            'vendor payment'
+        );
 
         // ── TDS (Gross → TDS → Net) ──
         // `amount` is GROSS (settles the vendor in full). Prefer the UI's
