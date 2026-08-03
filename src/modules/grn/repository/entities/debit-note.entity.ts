@@ -38,6 +38,10 @@ export class DebitNoteEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: true })
     po_vendor_voucher_no?: string;
 
+    /** Snapshot of the POV's vendor invoice number (via the GRN). */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    po_vendor_invoice_number?: string;
+
     @Column({ type: 'uuid', nullable: true })
     purchase_order_id?: string;
 

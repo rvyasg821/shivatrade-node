@@ -241,6 +241,13 @@ export class PoVendorUpdateRequestDto {
     @IsUUID('all', { each: true })
     linked_sales_order_ids?: string[];
 
+    /** Vendor invoice number. Required on the edit form (client-enforced);
+     *  optional here so other partial updates need not resend it. */
+    @IsString()
+    @IsOptional()
+    @MaxLength(120)
+    invoice_number?: string;
+
     /** Replace the vendor-charges list. When provided, fully overrides
      *  the existing snapshot — the service resolves master fields and
      *  recomputes amounts. Editable only while POV is in `draft`. */

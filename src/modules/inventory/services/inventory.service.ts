@@ -251,7 +251,10 @@ export class InventoryService {
                    COALESCE(($__TO__::date + 1)::timestamptz, 'infinity'::timestamptz)
         ),
         ranked AS (
-            SELECT l.product_id, l.ccy, l.unit_price, l.in_qty, c.lbl,
+            -- FIFO cum_in stays partitioned by (product, lbl) so consumption is
+            -- oldest-first across ALL vendors; {{V_RANKED}} only carries the
+            -- vendor tag through for the export's per-vendor grain.
+            SELECT l.product_id, l.ccy, l.unit_price, l.in_qty, c.lbl{{V_RANKED}},
                    SUM(l.in_qty) OVER (
                        PARTITION BY l.product_id, c.lbl
                        ORDER BY l.mv_at, l.mv_id
@@ -265,28 +268,28 @@ export class InventoryService {
             GROUP BY o.product_id, c.lbl
         ),
         remaining AS (
-            SELECT r.product_id, r.ccy, r.lbl, r.unit_price,
+            SELECT r.product_id, r.ccy, r.lbl, r.unit_price{{V_REM}},
                    GREATEST(0, LEAST(r.in_qty, r.cum_in - COALESCE(oa.out_qty, 0))) AS rem_qty
             FROM ranked r
             LEFT JOIN out_at oa ON oa.product_id = r.product_id AND oa.lbl = r.lbl
         ),
         agg AS (
-            SELECT product_id, ccy, lbl,
+            SELECT product_id, ccy, lbl{{V_AGG}},
                    SUM(rem_qty)             AS qty,
                    SUM(rem_qty * unit_price) AS val
-            FROM remaining GROUP BY product_id, ccy, lbl
+            FROM remaining GROUP BY product_id, ccy, lbl{{V_AGG}}
         ),
         inward AS (
-            SELECT l.product_id, l.ccy, SUM(l.in_qty) AS qty
+            SELECT l.product_id, l.ccy{{V_INW}}, SUM(l.in_qty) AS qty
             FROM layers l
             WHERE l.mv_at >= COALESCE($__FROM__::timestamptz, '-infinity'::timestamptz)
               AND l.mv_at <  COALESCE(($__TO__::date + 1)::timestamptz, 'infinity'::timestamptz)
-            GROUP BY l.product_id, l.ccy
+            GROUP BY l.product_id, l.ccy{{V_INW}}
         ),
         combined AS (
             SELECT
                 COALESCE(cl.product_id, op.product_id, iw.product_id) AS product_id,
-                COALESCE(cl.ccy, op.ccy, iw.ccy)                      AS ccy,
+                COALESCE(cl.ccy, op.ccy, iw.ccy)                      AS ccy{{V_COMB}},
                 COALESCE(op.qty, 0)  AS opening_qty,
                 COALESCE(iw.qty, 0)  AS inward_qty,
                 COALESCE(cl.qty, 0)  AS closing_qty,
@@ -295,10 +298,10 @@ export class InventoryService {
                      THEN COALESCE(cl.val, 0) / cl.qty ELSE 0 END AS avg_rate
             FROM       (SELECT * FROM agg WHERE lbl = 'closing') cl
             FULL JOIN  (SELECT * FROM agg WHERE lbl = 'opening') op
-                       ON op.product_id = cl.product_id AND op.ccy = cl.ccy
+                       ON op.product_id = cl.product_id AND op.ccy = cl.ccy{{V_COMB_OP}}
             FULL JOIN  inward iw
                        ON iw.product_id = COALESCE(cl.product_id, op.product_id)
-                      AND iw.ccy        = COALESCE(cl.ccy, op.ccy)
+                      AND iw.ccy        = COALESCE(cl.ccy, op.ccy){{V_COMB_IW}}
         )`;
 
     /**
@@ -309,7 +312,8 @@ export class InventoryService {
      */
     private buildFifo(
         companyId: string,
-        filters: InventoryStatsFilters
+        filters: InventoryStatsFilters,
+        perVendor = false
     ): { ctes: string; params: any[]; prodWhere: string } {
         const p: any[] = [companyId];
         const layerFilters: string[] = [];
@@ -353,13 +357,31 @@ export class InventoryService {
         }
         if (filters.in_stock_only) prodFilters.push(`AND cb.closing_qty > 0`);
 
+        // Per-vendor grain (export only): carry vendor_id through the FIFO CTEs
+        // so surviving stock + its purchase cost split per vendor. Empty when
+        // off, so list()/stats() produce the exact same per-product SQL.
+        const v = (frag: string) => (perVendor ? frag : '');
+
         const ctes = this.FIFO_CTES.replace(
             /\{\{LAYER_FILTERS\}\}/g,
             layerFilters.join(' ')
         )
             .replace(/\{\{OUT_FILTERS\}\}/g, outFilters.join(' '))
             .replace(/\$__FROM__/g, `$${fromIdx}`)
-            .replace(/\$__TO__/g, `$${toIdx}`);
+            .replace(/\$__TO__/g, `$${toIdx}`)
+            .replace(/\{\{V_RANKED\}\}/g, v(', l.vendor_id'))
+            .replace(/\{\{V_REM\}\}/g, v(', r.vendor_id'))
+            .replace(/\{\{V_AGG\}\}/g, v(', vendor_id'))
+            .replace(/\{\{V_INW\}\}/g, v(', l.vendor_id'))
+            .replace(
+                /\{\{V_COMB\}\}/g,
+                v(', COALESCE(cl.vendor_id, op.vendor_id, iw.vendor_id) AS vendor_id')
+            )
+            .replace(/\{\{V_COMB_OP\}\}/g, v(' AND op.vendor_id = cl.vendor_id'))
+            .replace(
+                /\{\{V_COMB_IW\}\}/g,
+                v(' AND iw.vendor_id = COALESCE(cl.vendor_id, op.vendor_id)')
+            );
 
         return { ctes, params: p, prodWhere: prodFilters.join(' ') };
     }
@@ -439,13 +461,54 @@ export class InventoryService {
         companyId: string,
         filters: Omit<InventoryListFilters, 'limit' | 'offset'>
     ): Promise<Buffer> {
-        const { rows } = await this.list(companyId, {
-            ...filters,
-            // Un-paginated: an export that silently stopped at page 1 would be
-            // worse than no export for reconciliation.
-            limit: 100000,
-            offset: 0,
-        });
+        // Per-vendor grain (product × currency × vendor): each row shows the
+        // stock still on hand from that vendor and the price it was purchased at
+        // (avg_rate = FIFO cost of that vendor's surviving layers). Own query,
+        // NOT list() — the on-screen list stays one-row-per-product.
+        const { ctes, params, prodWhere } = this.buildFifo(
+            companyId,
+            filters as any,
+            true
+        );
+        const rows = await this.dataSource.query(
+            `WITH ${ctes}
+             SELECT
+                p.code                            AS product_code,
+                p.name                            AS product_name,
+                p.part_no                         AS part_no,
+                p.hsn_code                        AS hsn_code,
+                cat.name                          AS category_name,
+                p.unit_of_measure                 AS uom,
+                v.company_name                    AS vendor_name,
+                v.vendor_code                     AS vendor_code,
+                cb.ccy                            AS currency_code,
+                cb.opening_qty::float8            AS opening_qty,
+                cb.inward_qty::float8             AS inward_qty,
+                (cb.opening_qty + cb.inward_qty - cb.closing_qty)::float8 AS outward_qty,
+                cb.closing_qty::float8            AS closing_qty,
+                -- Price the stock was purchased at: the FIFO cost of the on-hand
+                -- layers when there's closing stock (so rate × closing reconciles
+                -- to Closing Value); otherwise the avg price of that vendor's
+                -- received layers, so a fully-consumed line still shows its rate.
+                COALESCE(NULLIF(cb.avg_rate, 0), pr.purchase_rate, 0)::float8 AS purchase_rate,
+                cb.closing_value::float8          AS closing_value
+             FROM combined cb
+             JOIN products p          ON p._id = cb.product_id
+             LEFT JOIN categories cat ON cat._id = p.category_id
+             LEFT JOIN vendors v      ON v._id = cb.vendor_id
+             LEFT JOIN (
+                SELECT product_id, ccy, vendor_id,
+                       SUM(in_qty * unit_price) / NULLIF(SUM(in_qty), 0) AS purchase_rate
+                FROM layers
+                GROUP BY product_id, ccy, vendor_id
+             ) pr ON pr.product_id = cb.product_id
+                 AND pr.ccy = cb.ccy
+                 AND pr.vendor_id = cb.vendor_id
+             WHERE (cb.closing_qty <> 0 OR cb.inward_qty <> 0 OR cb.opening_qty <> 0)
+               ${prodWhere}
+             ORDER BY p.name ASC, p.code ASC, cb.ccy ASC, v.company_name ASC`,
+            params
+        );
 
         const asAt = filters.date_to ? isoToDdmmyyyy(filters.date_to) : 'today';
         const period = filters.date_from
@@ -456,7 +519,7 @@ export class InventoryService {
             [`Closing Inventory — as at ${asAt}`],
             [`Movement period: ${period}`],
             [
-                'Stock is grouped by purchase currency and valued natively. Currencies are not summed; quantities are not totalled (mixed units of measure).',
+                'One row per product per vendor per purchase currency. Purchase Rate is the price the on-hand stock was bought at (FIFO cost). Currencies are not summed; quantities are not totalled (mixed units of measure).',
             ],
             [],
         ];
@@ -464,18 +527,22 @@ export class InventoryService {
         const HEADER = [
             'Product Code',
             'Product',
+            'Part No',
+            'HSN Code',
             'Category',
             'UOM',
+            'Vendor Name',
+            'Vendor Code',
             'Opening',
             'Inward',
             'Outward',
             'Closing',
-            'Avg Rate',
+            'Purchase Rate',
             'Closing Value',
             'Currency',
         ];
 
-        // Group rows by currency, preserving list order within each section.
+        // Group rows by currency, preserving query order within each section.
         const byCcy = new Map<string, any[]>();
         for (const r of rows as any[]) {
             const ccy = r.currency_code || 'INR';
@@ -493,19 +560,27 @@ export class InventoryService {
                 aoa.push([
                     r.product_code || '',
                     r.product_name || '',
+                    r.part_no || '',
+                    r.hsn_code || '',
                     r.category_name || '',
                     r.uom || '',
+                    r.vendor_name || '',
+                    r.vendor_code || '',
                     Number(r.opening_qty) || 0,
                     Number(r.inward_qty) || 0,
                     Number(r.outward_qty) || 0,
                     Number(r.closing_qty) || 0,
-                    Number(r.avg_rate) || 0,
+                    Number(r.purchase_rate) || 0,
                     Number(r.closing_value) || 0,
                     ccy,
                 ]);
             }
             aoa.push([
-                `Products: ${section.length}`,
+                `Rows: ${section.length}`,
+                '',
+                '',
+                '',
+                '',
                 '',
                 '',
                 '',

@@ -30,6 +30,7 @@ export class GrnGetResponseDto {
     @ApiProperty({ required: false }) voucher_no?: string;
     @ApiProperty({ required: false }) po_vendor_id?: string;
     @ApiProperty({ required: false }) po_vendor_voucher_no?: string;
+    @ApiProperty({ required: false }) po_vendor_invoice_number?: string;
     @ApiProperty({ required: false }) purchase_order_id?: string;
     @ApiProperty({ required: false }) purchase_order_voucher_no?: string;
     @ApiProperty({ required: false }) customer_po_number?: string;

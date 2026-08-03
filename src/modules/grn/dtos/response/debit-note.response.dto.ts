@@ -27,6 +27,7 @@ export class DebitNoteGetResponseDto {
     @ApiProperty({ required: false }) grn_voucher_no?: string;
     @ApiProperty({ required: false }) po_vendor_id?: string;
     @ApiProperty({ required: false }) po_vendor_voucher_no?: string;
+    @ApiProperty({ required: false }) po_vendor_invoice_number?: string;
     @ApiProperty({ required: false }) purchase_order_id?: string;
     @ApiProperty({ required: false }) purchase_order_voucher_no?: string;
     @ApiProperty({ required: false }) vendor_id?: string;
@@ -48,6 +49,7 @@ export class DebitNoteListResponseDto {
     @ApiProperty({ required: false }) voucher_no?: string;
     @ApiProperty({ required: false }) grn_voucher_no?: string;
     @ApiProperty({ required: false }) po_vendor_voucher_no?: string;
+    @ApiProperty({ required: false }) po_vendor_invoice_number?: string;
     @ApiProperty({ required: false }) vendor_id?: string;
     @ApiProperty({ required: false }) vendor_name?: string;
     @ApiProperty({ required: false }) dn_date?: string;

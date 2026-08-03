@@ -30,6 +30,10 @@ export class GrnEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: true })
     po_vendor_voucher_no?: string;
 
+    /** Snapshot of the source POV's vendor invoice number. */
+    @Column({ type: 'varchar', length: 120, nullable: true })
+    po_vendor_invoice_number?: string;
+
     // ── Reference chain snapshot (read from POV → PO) ──
     @Index()
     @Column({ type: 'uuid', nullable: true })

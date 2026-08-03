@@ -123,6 +123,28 @@ export class PoVendorRecoverAdvanceDto {
     @IsOptional()
     amount?: string;
 
+    /** Company bank account the advance was paid from. */
+    @ApiProperty({ required: false, type: String })
+    @IsUUID()
+    @IsOptional()
+    company_bank_account_id?: string;
+
+    /** TDS on the advance (Gross → TDS → Net). Optional; omit for no TDS. */
+    @ApiProperty({ required: false, type: String })
+    @IsString()
+    @IsOptional()
+    tds_section?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'tds_rate_pct must be a numeric string' })
+    @IsOptional()
+    tds_rate_pct?: string;
+
+    @ApiProperty({ required: false, type: String })
+    @IsNumberString({}, { message: 'tds_amount must be a numeric string' })
+    @IsOptional()
+    tds_amount?: string;
+
     @ApiProperty({ required: false, type: String })
     @IsString()
     @IsOptional()
@@ -140,6 +162,12 @@ export class PoVendorRecoverAdvanceDto {
  * the vendor's, not the parent Sales Order's (those are the customer's).
  */
 export class PoVendorRecoverTermsDto {
+    /** Vendor's invoice number — required; stamped on the spawned POV header. */
+    @ApiProperty({ required: true, type: String })
+    @IsString()
+    @IsNotEmpty()
+    invoice_number: string;
+
     @ApiProperty({ required: false, type: String })
     @IsString()
     @IsOptional()
