@@ -160,6 +160,14 @@ export class PoVendorStandaloneCreateRequestDto {
     @MaxLength(1000)
     delivery_terms?: string;
 
+    /** Optional: link this standalone POV to one or more Sales Orders (their
+     *  `_id`s) for traceability. Server validates each belongs to the company
+     *  and snapshots its voucher_no onto the POV header. */
+    @IsArray()
+    @IsOptional()
+    @IsUUID('all', { each: true })
+    linked_sales_order_ids?: string[];
+
     @IsArray()
     @ArrayMinSize(1, { message: 'At least one line is required.' })
     @ValidateNested({ each: true })

@@ -233,6 +233,14 @@ export class PoVendorUpdateRequestDto {
     @MaxLength(2000)
     internal_notes?: string;
 
+    /** Replace the Sales-Order traceability links (standalone POV). Server
+     *  re-validates each SO and re-snapshots its voucher_no. A pure reference
+     *  field, so editable at any status. */
+    @IsArray()
+    @IsOptional()
+    @IsUUID('all', { each: true })
+    linked_sales_order_ids?: string[];
+
     /** Replace the vendor-charges list. When provided, fully overrides
      *  the existing snapshot — the service resolves master fields and
      *  recomputes amounts. Editable only while POV is in `draft`. */

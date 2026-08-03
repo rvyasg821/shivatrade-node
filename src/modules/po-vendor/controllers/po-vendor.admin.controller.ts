@@ -1,3 +1,4 @@
+import { Raw } from 'typeorm';
 import {
     Controller,
     Get,
@@ -318,7 +319,6 @@ export class PoVendorAdminController {
         @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<PoVendorGetResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
-        if (purchaseOrderId) find.purchase_order_id = purchaseOrderId;
         if (vendorId) find.vendor_id = vendorId;
         if (status) find.status = status;
         if (dateFrom && dateTo) {
@@ -335,6 +335,27 @@ export class PoVendorAdminController {
                 { lr_no: { $regex: _search, $options: 'i' } },
                 { eway_bill_no: { $regex: _search, $options: 'i' } },
             ];
+        }
+
+        // Sales-Order filter (the SO detail "Vendor POs" tab): return POVs that
+        // either COVER this SO (purchase_order_id) OR soft-link it for
+        // traceability (linked_sales_orders jsonb array contains its id).
+        if (purchaseOrderId) {
+            if (find.$or) {
+                // A text search already claimed $or; fall back to the direct
+                // coverage match (search + the PO tab never combine in practice).
+                find.purchase_order_id = purchaseOrderId;
+            } else {
+                find.$or = [
+                    { purchase_order_id: purchaseOrderId },
+                    {
+                        linked_sales_orders: Raw(
+                            alias => `${alias} @> :linkedSo::jsonb`,
+                            { linkedSo: JSON.stringify([{ id: purchaseOrderId }]) }
+                        ),
+                    },
+                ];
+            }
         }
 
         // Ownership scope (Created-By filter) — enforced backend-side.
