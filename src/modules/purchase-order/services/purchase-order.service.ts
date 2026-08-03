@@ -30,6 +30,7 @@ import { CustomerAddressRepository } from '@modules/customer/repository/reposito
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { QuotationRepository } from '@modules/quotation/repository/repositories/quotation.repository';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
@@ -95,7 +96,8 @@ export class PurchaseOrderService {
         private readonly povService: PoVendorService,
         private readonly voucherService: VoucherService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource,
-        private readonly dependencyCheckService: DependencyCheckService
+        private readonly dependencyCheckService: DependencyCheckService,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     /**
@@ -275,6 +277,16 @@ export class PurchaseOrderService {
             );
         }
 
+        // FY closure: block posting a sales order into a closed period. Bulk
+        // import (silent) is a historical data-migration path and is exempt.
+        if (!ctx?.silent) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                data.po_date,
+                'sales order'
+            );
+        }
+
         const refsOut = await this.assertReferences(
             companyId,
             data.vendor_id,
@@ -381,6 +393,15 @@ export class PurchaseOrderService {
         data: PurchaseOrderUpdateRequestDto
     ): Promise<PurchaseOrderDoc> {
         const companyId = row.company_id.toString();
+
+        // FY closure: block back-dating a sales order onto a closed date.
+        if ((data as any).po_date && (data as any).po_date !== row.po_date) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                (data as any).po_date,
+                'sales order'
+            );
+        }
 
         // Edit lock - only DRAFT is fully editable. Setting status=DRAFT in
         // the payload lifts the lock for this update (revert-and-edit).

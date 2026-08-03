@@ -7,6 +7,7 @@ import {
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyService } from '@modules/company/services/company.service';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { AdjustmentNoteRepository } from '../repository/repositories/adjustment-note.repository';
@@ -71,7 +72,8 @@ export class AdjustmentNoteService {
         private readonly invoiceRepository: InvoiceRepository,
         private readonly invoiceService: InvoiceService,
         private readonly povRepository: PoVendorRepository,
-        private readonly povService: PoVendorService
+        private readonly povService: PoVendorService,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     // ── "Apply to document" dropdown ────────────────────────────────────
@@ -248,6 +250,12 @@ export class AdjustmentNoteService {
         if (Number(dto.amount) <= 0) {
             throw new BadRequestException('Amount must be greater than 0.');
         }
+        // FY closure: block posting an adjustment note into a closed period.
+        await this.companySettings.assertPostingDateOpen(
+            companyId,
+            dto.note_date,
+            'adjustment note'
+        );
 
         // Resolve the party, snapshot its name, and pin the currency:
         //   customer → the customer's trading currency (USD/Dinar/…)

@@ -33,6 +33,7 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
@@ -72,7 +73,8 @@ export class GrnService {
         private readonly pdfService: PdfService,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
         private readonly stockLedger: StockLedgerService,
-        private readonly dependencyCheckService: DependencyCheckService
+        private readonly dependencyCheckService: DependencyCheckService,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     /**
@@ -243,6 +245,18 @@ export class GrnService {
             prefix
         );
 
+        // Resolve the effective GRN date, then enforce FY closure on it (not
+        // just the raw DTO, since it can fall back to the POV date / today).
+        const grnDate =
+            dto.grn_date ||
+            pov.actual_arrival_date ||
+            new Date().toISOString().slice(0, 10);
+        await this.companySettings.assertPostingDateOpen(
+            companyId,
+            grnDate,
+            'GRN'
+        );
+
         const grn = await this.grnRepository.create({
             company_id: companyId,
             created_by: createdBy,
@@ -253,10 +267,7 @@ export class GrnService {
             purchase_order_voucher_no: po?.voucher_no || null,
             customer_po_number: po?.customer_po_number || null,
             vendor_id: pov.vendor_id || null,
-            grn_date:
-                dto.grn_date ||
-                pov.actual_arrival_date ||
-                new Date().toISOString().slice(0, 10),
+            grn_date: grnDate,
             notes: dto.notes || null,
             status: ENUM_GRN_STATUS.DRAFT,
         } as any);
@@ -301,6 +312,13 @@ export class GrnService {
         const grn: any = await this.getOrThrow(companyId, grnId);
         const prevStatus = grn.status;
         const povId = grn.po_vendor_id?.toString();
+
+        // FY closure: block editing a GRN in a closed period, or moving one
+        // onto a closed date.
+        await this.companySettings.assertPostingDateOpen(companyId, grn.grn_date, 'GRN');
+        if (dto.grn_date !== undefined && dto.grn_date !== grn.grn_date) {
+            await this.companySettings.assertPostingDateOpen(companyId, dto.grn_date, 'GRN');
+        }
 
         if (dto.grn_date !== undefined) grn.grn_date = dto.grn_date;
         if (dto.notes !== undefined) grn.notes = dto.notes;

@@ -49,6 +49,7 @@ import {
     loadCompanyLogoDataUri,
 } from '@common/pdf/pdf-letterhead.util';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { ImportContext } from '@common/import/import-context.interface';
 import { computeLineTax } from '@common/tax/utils/tax-engine';
@@ -88,7 +89,8 @@ export class QuotationService {
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
         private readonly companySettingsRepository: CompanySettingsRepository,
-        private readonly dependencyCheckService: DependencyCheckService
+        private readonly dependencyCheckService: DependencyCheckService,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     /**
@@ -207,6 +209,15 @@ export class QuotationService {
         createdBy: string,
         ctx?: ImportContext
     ): Promise<QuotationDoc> {
+        // FY closure: block posting a quotation into a closed period. Bulk
+        // import (silent) is a historical data-migration path and is exempt.
+        if (!ctx?.silent) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                data.quotation_date,
+                'quotation'
+            );
+        }
         // Auto-resolve customer when only a lead is provided. Lead carries
         // company_name, contact, address - enough to materialise a Customer
         // record so the Quotation can reference it. Idempotent: if the lead
@@ -389,6 +400,18 @@ export class QuotationService {
         data: QuotationUpdateRequestDto
     ): Promise<QuotationDoc> {
         const companyId = row.company_id.toString();
+
+        // FY closure: block back-dating a quotation onto a closed date.
+        if (
+            (data as any).quotation_date &&
+            (data as any).quotation_date !== row.quotation_date
+        ) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                (data as any).quotation_date,
+                'quotation'
+            );
+        }
 
         // ── Status lock ───────────────────────────────────────────────
         // Only DRAFT is fully editable. Other statuses accept ONLY a

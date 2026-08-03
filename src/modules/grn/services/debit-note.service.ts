@@ -31,6 +31,7 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
+import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
@@ -79,7 +80,8 @@ export class DebitNoteService {
         private readonly companySettingsRepository: CompanySettingsRepository,
         private readonly voucherService: VoucherService,
         private readonly pdfService: PdfService,
-        private readonly trackingEventRepository: PoVendorTrackingEventRepository
+        private readonly trackingEventRepository: PoVendorTrackingEventRepository,
+        private readonly companySettings: CompanySettingsService
     ) {}
 
     /**
@@ -278,6 +280,18 @@ export class DebitNoteService {
             });
         }
 
+        // Resolve the effective debit-note date, then enforce FY closure on it
+        // (not just the raw DTO, since it falls back to the GRN date / today).
+        const dnDate =
+            dto.dn_date ||
+            grn.grn_date ||
+            new Date().toISOString().slice(0, 10);
+        await this.companySettings.assertPostingDateOpen(
+            companyId,
+            dnDate,
+            'debit note'
+        );
+
         const dn = await this.debitNoteRepository.create({
             company_id: companyId,
             created_by: createdBy,
@@ -289,10 +303,7 @@ export class DebitNoteService {
             purchase_order_id: grn.purchase_order_id || null,
             purchase_order_voucher_no: grn.purchase_order_voucher_no || null,
             vendor_id: grn.vendor_id || null,
-            dn_date:
-                dto.dn_date ||
-                grn.grn_date ||
-                new Date().toISOString().slice(0, 10),
+            dn_date: dnDate,
             currency_code: pov?.currency_code || null,
             exchange_rate: pov?.exchange_rate || null,
             total_amount: String(total),
@@ -324,6 +335,13 @@ export class DebitNoteService {
             throw new BadRequestException(
                 'A cancelled Debit Note cannot be edited.'
             );
+        }
+
+        // FY closure: block editing a debit note in a closed period, or moving
+        // one onto a closed date.
+        await this.companySettings.assertPostingDateOpen(companyId, dn.dn_date, 'debit note');
+        if (dto.dn_date !== undefined && dto.dn_date !== dn.dn_date) {
+            await this.companySettings.assertPostingDateOpen(companyId, dto.dn_date, 'debit note');
         }
 
         if (dto.dn_date !== undefined) dn.dn_date = dto.dn_date;
