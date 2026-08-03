@@ -945,6 +945,17 @@ export class GrnService {
             products.map((p: any) => [p._id.toString(), p])
         );
 
+        // Qty already accounted (received good + rejected) on the OTHER
+        // non-cancelled GRNs of this POV, keyed by po_vendor_line_id. Used to
+        // derive each line's true remaining Pending across multiple GRNs.
+        const otherReceived = grn.po_vendor_id
+            ? await this.receivedByPovLineExcluding(
+                  companyId,
+                  grn.po_vendor_id.toString(),
+                  grnId
+              )
+            : new Map<string, number>();
+
         const dto = plainToInstance(GrnGetResponseDto, grn);
         dto.vendor_name = (vendor as any)?.company_name;
         dto.vendor_code = (vendor as any)?.vendor_code;
@@ -952,6 +963,9 @@ export class GrnService {
             const prod = l.product_id
                 ? productById.get(l.product_id.toString())
                 : null;
+            const other = round4(
+                otherReceived.get(l.po_vendor_line_id?.toString()) || 0
+            );
             return {
                 _id: l._id.toString(),
                 po_vendor_line_id: l.po_vendor_line_id?.toString(),
@@ -964,9 +978,25 @@ export class GrnService {
                 unit: l.unit,
                 ordered_qty: l.ordered_qty,
                 dispatched_qty: l.dispatched_qty,
+                // Accounted on other GRNs of this POV (received good + rejected).
+                other_received_qty: String(other),
                 received_qty: l.received_qty,
                 accepted_qty: l.accepted_qty,
                 rejected_qty: l.rejected_qty,
+                // Pending = dispatched − (other GRNs' accounted) − this GRN's
+                // received(good) − rejected. The remaining still to be received
+                // across all GRNs of this POV.
+                pending_qty: String(
+                    Math.max(
+                        0,
+                        round4(
+                            num(l.dispatched_qty) -
+                                other -
+                                num(l.accepted_qty) -
+                                num(l.rejected_qty)
+                        )
+                    )
+                ),
                 batch_no: l.batch_no,
                 remarks: l.remarks,
                 seq: l.seq,
@@ -1099,8 +1129,10 @@ export class GrnService {
                 }</td>
                 <td>${this.esc(l.part_no || '-')}</td>
                 <td>${this.esc(l.hsn_code || '-')}</td>
+                <td style="text-align:right">${(num(l.dispatched_qty) - num((l as any).other_received_qty)).toFixed(2)} ${this.esc(l.unit || '')}</td>
                 <td style="text-align:right">${num(l.accepted_qty).toFixed(2)} ${this.esc(l.unit || '')}</td>
                 <td style="text-align:right">${num(l.rejected_qty).toFixed(2)}</td>
+                <td style="text-align:right">${num((l as any).pending_qty).toFixed(2)} ${this.esc(l.unit || '')}</td>
                 <td>${this.esc(l.batch_no || '')}</td>
                 <td>${this.esc(l.remarks || '')}</td>
             </tr>`
@@ -1126,8 +1158,8 @@ export class GrnService {
           </div>
           <table>
             <thead><tr>
-              <th>#</th><th>Item</th><th>Part No</th><th>HSN</th><th>Received</th>
-              <th>Rejected</th><th>Batch</th><th>Remarks</th>
+              <th>#</th><th>Item</th><th>Part No</th><th>HSN</th><th>Dispatched</th><th>Received</th>
+              <th>Rejected</th><th>Pending</th><th>Batch</th><th>Remarks</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>

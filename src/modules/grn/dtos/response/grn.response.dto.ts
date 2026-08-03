@@ -12,9 +12,13 @@ export class GrnLineResponseDto {
     @ApiProperty({ required: false }) unit?: string;
     @ApiProperty({ required: false }) ordered_qty?: string;
     @ApiProperty({ required: false }) dispatched_qty?: string;
+    /** Accounted (received good + rejected) on OTHER GRNs of the same POV. */
+    @ApiProperty({ required: false }) other_received_qty?: string;
     @ApiProperty({ required: false }) received_qty?: string;
     @ApiProperty({ required: false }) accepted_qty?: string;
     @ApiProperty({ required: false }) rejected_qty?: string;
+    /** Derived: dispatched − received − rejected (still to be received). */
+    @ApiProperty({ required: false }) pending_qty?: string;
     @ApiProperty({ required: false }) batch_no?: string;
     @ApiProperty({ required: false }) remarks?: string;
     @ApiProperty() seq: number;
