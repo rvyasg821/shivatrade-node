@@ -157,8 +157,8 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
      *  detail page. Each row carries enough info to render the
      *  vendor invoice copy independently of the master.
      *
-     *  Shape: [{ expense_id, code, name, type ("percent"|"fixed"),
-     *           value (string), amount (string, computed) }]
+     *  Shape: [{ expense_id, code, name, hsn_code, type ("percent"|"fixed"),
+     *           value (string), amount (string, computed), gst_pct (string) }]
      */
     @Column({
         type: 'jsonb',
@@ -169,9 +169,11 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
         expense_id: string;
         code: string;
         name: string;
+        hsn_code?: string;
         type: string;
         value: string;
         amount: string;
+        gst_pct?: string;
     }>;
 
     /** Cached sum of active (non-voided) vendor payments. Derived from the

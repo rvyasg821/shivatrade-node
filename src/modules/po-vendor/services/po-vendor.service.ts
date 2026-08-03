@@ -282,6 +282,7 @@ export class PoVendorService {
             expense_id: string;
             code: string;
             name: string;
+            hsn_code: string;
             type: string;
             value: string;
             amount: string;
@@ -316,6 +317,7 @@ export class PoVendorService {
             expense_id: string;
             code: string;
             name: string;
+            hsn_code: string;
             type: string;
             value: string;
             amount: string;
@@ -347,6 +349,7 @@ export class PoVendorService {
                 expense_id: p.expense_id,
                 code: m.code,
                 name: m.name,
+                hsn_code: m.hsn_code || '',
                 type,
                 value,
                 amount: String(amount),

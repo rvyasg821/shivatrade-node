@@ -253,6 +253,7 @@ export class PoVendorPdfService {
         // Per-row `amount` is server-computed at save time and stored.
         const expensesSnapshot: Array<{
             name: string;
+            hsn_code?: string;
             type: string;
             value: string;
             amount: string;
@@ -337,6 +338,36 @@ export class PoVendorPdfService {
             (a, b) => a.rate - b.rate
         );
 
+        // Expense charges grouped into their OWN HSN/SAC + rate buckets, mirroring
+        // the goods GST summary — each charge is taxed by its per-charge gst_pct
+        // against its expense HSN/SAC code (independent of the product HSN).
+        const expenseGstBucketMap = new Map<
+            string,
+            { hsn: string; rate: number; taxable: number; gst: number }
+        >();
+        if (gstApplies) {
+            for (const e of expensesSnapshot) {
+                const rate = Number((e as any).gst_pct) || 0;
+                if (rate <= 0) continue;
+                const taxable = Number(e.amount) || 0;
+                const gst = (taxable * rate) / 100;
+                const hsn = (e as any).hsn_code || '-';
+                const key = `${hsn}|${rate}`;
+                const b = expenseGstBucketMap.get(key) || {
+                    hsn,
+                    rate,
+                    taxable: 0,
+                    gst: 0,
+                };
+                b.taxable += taxable;
+                b.gst += gst;
+                expenseGstBucketMap.set(key, b);
+            }
+        }
+        const expenseGstBuckets = Array.from(
+            expenseGstBucketMap.values()
+        ).sort((a, b) => a.rate - b.rate);
+
         return {
             pov,
             logoDataUri,
@@ -382,6 +413,7 @@ export class PoVendorPdfService {
             inrTotal: linesInrTotal,
             gstInrTotal,
             gstBuckets,
+            expenseGstBuckets,
             chargesInrTotal,
             chargeGstInrTotal,
             expensesSnapshot,
@@ -438,10 +470,17 @@ interface PovPdfContext {
         taxable: number;
         gst: number;
     }>;
+    expenseGstBuckets: Array<{
+        hsn: string;
+        rate: number;
+        taxable: number;
+        gst: number;
+    }>;
     chargesInrTotal: number;
     chargeGstInrTotal: number;
     expensesSnapshot: Array<{
         name: string;
+        hsn_code?: string;
         type: string;
         value: string;
         amount: string;
@@ -760,6 +799,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
         inrTotal,
         gstInrTotal,
         gstBuckets,
+        expenseGstBuckets,
         chargesInrTotal,
         chargeGstInrTotal,
         expensesSnapshot,
@@ -783,15 +823,21 @@ function buildPovHtml(ctx: PovPdfContext): string {
     // own currency, so the document prints them as-is — no conversion. (pov
     // .exchange_rate is now INR-per-unit, used only for INR stock/books valuation.)
     const rate = 1;
+    // GST is an Indian (INR) tax — never applies on a foreign-currency POV.
+    const gstApplies = ((pov as any).currency_code || 'INR') === 'INR';
 
     // Money chain: Subtotal + Charges = Taxable; + CGST/SGST; round.
     const subtotalCcy = inrTotal * rate;
     const chargesCcy = chargesInrTotal * rate; // charges taxable value
     const chargeGstCcy = chargeGstInrTotal * rate; // GST on charges (per gst_pct)
     const taxableCcy = subtotalCcy + chargesCcy;
-    const gstTotalCcy = gstInrTotal * rate; // goods GST only
-    const cgstCcy = gstTotalCcy / 2;
-    const sgstCcy = gstTotalCcy - cgstCcy;
+    const gstTotalCcy = gstInrTotal * rate; // goods GST only (goods GST table)
+    // Input tax credit = goods GST + charge GST, shown as ONE CGST/SGST (or
+    // IGST) figure like a standard tax invoice. The charge GST is no longer a
+    // separate "Expense GST" summary line.
+    const inputGstCcy = gstTotalCcy + chargeGstCcy;
+    const cgstCcy = inputGstCcy / 2;
+    const sgstCcy = inputGstCcy - cgstCcy;
     // Grand total = goods + charges + goods GST + charge GST. Charge GST is
     // shown baked into each charge's row (gross), so it's added here too.
     const grandRawCcy = taxableCcy + gstTotalCcy + chargeGstCcy;
@@ -855,32 +901,31 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="num nowrap"><b>${value}</b></td>
         </tr>`;
 
-    // Each expense at its BASE (without its own GST); the charges' GST is
-    // summed into a single "Expense GST" row below it, so the expense value and
-    // the tax on it read separately (matches the on-screen POV form).
-    const expenseGstCcy = expensesSnapshot.reduce(
-        (s, e) =>
-            s + (Number(e.amount) || 0) * ((Number(e.gst_pct) || 0) / 100),
-        0
-    ) * rate;
+    // Each expense at its BASE (without its own GST); the charge GST is folded
+    // into the Input CGST/SGST (or IGST) totals below — no separate "Expense
+    // GST" row. The per-charge HSN/SAC GST breakdown still prints in its own
+    // table (expenseGstDetailTable).
     const summaryRows =
         sumRow('', ccyMoney(sym, subtotalCcy)) +
         expensesSnapshot
             .map((e) => {
-                const label =
-                    e.type === 'percent'
-                        ? `${e.name} (${Number(e.value) || 0}%)`
-                        : e.name;
+                const gstPct = Number(e.gst_pct) || 0;
+                // Name + its own % (percent charges) + a GST bracket — always
+                // shown: the rate when GST applies, else "GST N/A" so it's clear
+                // no GST was charged on that line.
+                const bits: string[] = [];
+                if (e.type === 'percent') bits.push(`${Number(e.value) || 0}%`);
+                bits.push(
+                    gstApplies && gstPct > 0 ? `GST ${gstPct}%` : 'GST N/A'
+                );
+                const label = `${e.name} ${bits.map(b => `(${b})`).join(' ')}`;
                 const baseCcy = (Number(e.amount) || 0) * rate;
                 return sumRow(label, ccyMoney(sym, baseCcy));
             })
             .join('') +
-        (expenseGstCcy > 0.005
-            ? sumRow('Expense GST', ccyMoney(sym, expenseGstCcy))
-            : '') +
-        (gstTotalCcy > 0
+        (inputGstCcy > 0.005
             ? interState
-                ? sumRow('Input IGST', ccyMoney(sym, gstTotalCcy))
+                ? sumRow('Input IGST', ccyMoney(sym, inputGstCcy))
                 : sumRow('Input CGST', ccyMoney(sym, cgstCcy)) +
                   sumRow('Input SGST', ccyMoney(sym, sgstCcy))
             : '') +
@@ -940,6 +985,70 @@ function buildPovHtml(ctx: PovPdfContext): string {
       <td></td>
       ${interState ? '' : '<td></td>'}
       <td class="num nowrap"><b>${ccyMoney(sym, gstTotalCcy)}</b></td>
+    </tr>
+  </tbody>
+</table>`
+        : '';
+
+    // Expense-charges HSN/SAC-wise GST summary — mirrors the goods table above,
+    // built from each charge's own HSN/SAC code + per-charge gst_pct.
+    const expenseGstTotalCcy = expenseGstBuckets.reduce(
+        (s, b) => s + b.gst * rate,
+        0
+    );
+    const expenseGstDetailTable = expenseGstBuckets.length
+        ? `<table class="items" style="margin-top:6px">
+  <thead>
+    <tr>
+      <th colspan="${interState ? 5 : 7}" class="c"><b>Expense Charges — HSN/SAC wise GST</b></th>
+    </tr>
+    <tr>
+      <th style="width:70px">HSN/SAC</th>
+      <th class="num">Taxable Value</th>
+      ${
+          interState
+              ? `<th class="num" style="width:56px">IGST %</th>
+                 <th class="num" style="width:90px">IGST Amt</th>`
+              : `<th class="num" style="width:52px">CGST %</th>
+                 <th class="num" style="width:84px">CGST Amt</th>
+                 <th class="num" style="width:52px">SGST %</th>
+                 <th class="num" style="width:84px">SGST Amt</th>`
+      }
+      <th class="num" style="width:90px">Total Tax</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${expenseGstBuckets
+        .map((b) => {
+            const taxableCcyRow = b.taxable * rate;
+            const gstCcyRow = b.gst * rate;
+            const halfRate = b.rate / 2;
+            const halfAmt = gstCcyRow / 2;
+            const cells = interState
+                ? `<td class="num nowrap">${b.rate}%</td>
+                   <td class="num nowrap">${ccyMoney(sym, gstCcyRow)}</td>`
+                : `<td class="num nowrap">${halfRate}%</td>
+                   <td class="num nowrap">${ccyMoney(sym, halfAmt)}</td>
+                   <td class="num nowrap">${halfRate}%</td>
+                   <td class="num nowrap">${ccyMoney(sym, gstCcyRow - halfAmt)}</td>`;
+            return `<tr>
+      <td class="c">${esc(b.hsn)}</td>
+      <td class="num nowrap">${ccyMoney(sym, taxableCcyRow)}</td>
+      ${cells}
+      <td class="num nowrap"><b>${ccyMoney(sym, gstCcyRow)}</b></td>
+    </tr>`;
+        })
+        .join('')}
+    <tr>
+      <td class="num"><b>Total</b></td>
+      <td class="num nowrap"><b>${ccyMoney(
+          sym,
+          expenseGstBuckets.reduce((s, b) => s + b.taxable * rate, 0)
+      )}</b></td>
+      ${interState ? '<td></td>' : '<td></td><td></td>'}
+      <td></td>
+      ${interState ? '' : '<td></td>'}
+      <td class="num nowrap"><b>${ccyMoney(sym, expenseGstTotalCcy)}</b></td>
     </tr>
   </tbody>
 </table>`
@@ -1099,6 +1208,8 @@ function buildPovHtml(ctx: PovPdfContext): string {
 </table>
 
 ${gstDetailTable}
+
+${expenseGstDetailTable}
 
 <table class="box" style="border-top:none">
   <tr><td class="words">

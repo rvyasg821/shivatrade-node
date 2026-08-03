@@ -23,6 +23,11 @@ export class ExpenseEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 30, nullable: false })
     code: string;
 
+    /** HSN/SAC code for this EXPENSE/charge — independent of any product HSN.
+     *  Optional, printed on vendor documents where the charge appears. */
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    hsn_code: string;
+
     @Column({
         type: 'varchar',
         length: 20,
