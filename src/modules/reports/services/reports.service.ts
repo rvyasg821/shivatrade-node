@@ -1556,6 +1556,23 @@ export class ReportsService {
             to
         );
 
+        // Split each row's GST into the three tax-type columns the client
+        // asked for, driven by the same classification the GST Split label
+        // shows: inter-state → IGST, intra-state → half CGST / half SGST.
+        // Unclassified/none rows can't be split, so their GST stays only in
+        // the GST (INR) total (mirrors the Unclassified bucket on Sheet 1).
+        const splitGst = (
+            p: GstBalancePurchaseSourceDto
+        ): { cgst: number; sgst: number; igst: number } => {
+            const g = r2(n(p.gst_inr));
+            if (p.gst_split === 'igst') return { cgst: 0, sgst: 0, igst: g };
+            if (p.gst_split === 'cgst_sgst') {
+                const half = r2(g / 2);
+                return { cgst: half, sgst: r2(g - half), igst: 0 };
+            }
+            return { cgst: 0, sgst: 0, igst: 0 };
+        };
+
         const purchaseHeader = [
             'Month',
             'Date',
@@ -1565,33 +1582,46 @@ export class ReportsService {
             'Status',
             'Taxable (INR)',
             'GST (INR)',
+            'CGST (INR)',
+            'SGST (INR)',
+            'IGST (INR)',
             'GST Split',
         ];
-        const purchaseBody = purchases.map((p) => [
-            monthLabel(String(p.date || '').slice(0, 7)),
-            isoToDdmmyyyy(String(p.date || '')),
-            p.voucher_no,
-            p.vendor_name,
-            p.vendor_state || '—',
-            p.status,
-            p.taxable_inr,
-            p.gst_inr,
-            p.gst_split,
-        ]);
+        const purchaseBody = purchases.map((p) => {
+            const s = splitGst(p);
+            return [
+                monthLabel(String(p.date || '').slice(0, 7)),
+                isoToDdmmyyyy(String(p.date || '')),
+                p.voucher_no,
+                p.vendor_name,
+                p.vendor_state || '—',
+                p.status,
+                p.taxable_inr,
+                p.gst_inr,
+                s.cgst,
+                s.sgst,
+                s.igst,
+                p.gst_split,
+            ];
+        });
         const purchaseTotals = purchases.reduce(
             (acc, p) => {
+                const s = splitGst(p);
                 acc.taxable += p.taxable_inr;
                 acc.gst += p.gst_inr;
+                acc.cgst += s.cgst;
+                acc.sgst += s.sgst;
+                acc.igst += s.igst;
                 return acc;
             },
-            { taxable: 0, gst: 0 }
+            { taxable: 0, gst: 0, cgst: 0, sgst: 0, igst: 0 }
         );
         const purchaseAoa: (string | number)[][] = [
             [
                 `Purchases — Vendor POs behind the Input GST — ${result.period_label} (INR). Totals back to the Purchase Taxable and input-tax columns on the GST Balance sheet.`,
             ],
             [
-                'GST Split: igst = inter-state vendor, cgst_sgst = same state as the company, unclassified = vendor state unknown (no GSTIN on file).',
+                'GST Split: igst = inter-state vendor, cgst_sgst = same state as the company, unclassified = vendor state unknown (no GSTIN on file). CGST/SGST/IGST columns split the row GST by that classification; unclassified rows keep their GST in the GST (INR) column only.',
             ],
             [],
             purchaseHeader,
@@ -1606,6 +1636,9 @@ export class ReportsService {
                 '',
                 r2(purchaseTotals.taxable),
                 r2(purchaseTotals.gst),
+                r2(purchaseTotals.cgst),
+                r2(purchaseTotals.sgst),
+                r2(purchaseTotals.igst),
                 '',
             ],
         ];

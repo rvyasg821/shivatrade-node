@@ -830,7 +830,11 @@ export class DebitNoteService {
           <div style="margin-top:8px">
             <strong>Debit Note No:</strong> ${this.esc(dn.voucher_no || '-')} &nbsp;
             <strong>Date:</strong> ${this.esc(dn.dn_date || '-')}<br/>
-            <strong>Vendor:</strong> ${this.esc(dn.vendor_name || '-')}<br/>
+            <strong>Vendor:</strong> ${this.esc(dn.vendor_name || '-')}${
+                (dn as any).vendor_code
+                    ? ` &nbsp; <strong>Vendor Code:</strong> ${this.esc((dn as any).vendor_code)}`
+                    : ''
+            }<br/>
             <strong>GRN:</strong> ${this.esc(dn.grn_voucher_no || '-')} &nbsp;
             <strong>VPO:</strong> ${this.esc(dn.po_vendor_voucher_no || '-')} &nbsp;
             <strong>Invoice No:</strong> ${this.esc((dn as any).po_vendor_invoice_number || '-')} &nbsp;

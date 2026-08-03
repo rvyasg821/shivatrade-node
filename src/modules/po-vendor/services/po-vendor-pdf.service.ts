@@ -402,6 +402,7 @@ export class PoVendorPdfService {
             },
             vendor: {
                 name: pov.vendor_name || '',
+                code: pov.vendor_code || '',
                 contact_name: pov.vendor_contact_name || '',
                 email: pov.vendor_contact_email || '',
                 phone: pov.vendor_contact_phone || '',
@@ -454,6 +455,7 @@ interface PovPdfContext {
     };
     vendor: {
         name: string;
+        code?: string;
         contact_name?: string;
         email?: string;
         phone?: string;
@@ -677,8 +679,10 @@ function buildPaymentVoucherHtml(
   <div class="section">
     <div class="label">Paid To</div>
     <div class="party"><span class="nm">${esc(vendor.name || '-')}</span>${
-        vendor.address ? `\n${esc(vendor.address)}` : ''
-    }${vendor.gstin ? `\nGSTIN: ${esc(vendor.gstin)}` : ''}</div>
+        vendor.code ? `\nVendor Code: ${esc(vendor.code)}` : ''
+    }${vendor.address ? `\n${esc(vendor.address)}` : ''}${
+        vendor.gstin ? `\nGSTIN: ${esc(vendor.gstin)}` : ''
+    }</div>
   </div>
 
   <div class="section">
@@ -1133,6 +1137,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
         <tr><td class="party" style="height:96px">
           <div class="cap">Supplier (Bill from)</div>
           ${vendor.name ? `<div class="pname">${esc(vendor.name)}</div>` : ''}
+          ${vendor.code ? `<div class="co-line">Vendor Code : ${esc(vendor.code)}</div>` : ''}
           ${vendor.address ? `<div class="pline">${esc(vendor.address)}</div>` : ''}
           ${vendor.gstin ? `<div class="co-line">GSTIN/UIN : ${esc(vendor.gstin)}</div>` : ''}
           ${vendor.state ? `<div class="co-line">State Name : ${esc(vendor.state)}${vendor.stateCode ? `, Code : ${esc(vendor.stateCode)}` : ''}</div>` : ''}

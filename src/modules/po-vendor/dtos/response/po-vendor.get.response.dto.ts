@@ -69,6 +69,7 @@ export class PoVendorGetResponseDto {
 
     @ApiProperty({ required: true, type: String }) vendor_id: string;
     @ApiProperty({ required: false, type: String }) vendor_name?: string;
+    @ApiProperty({ required: false, type: String }) vendor_code?: string;
     @ApiProperty({ required: false, type: String }) vendor_contact_name?: string;
     @ApiProperty({ required: false, type: String }) vendor_contact_email?: string;
     @ApiProperty({ required: false, type: String }) vendor_contact_phone?: string;
