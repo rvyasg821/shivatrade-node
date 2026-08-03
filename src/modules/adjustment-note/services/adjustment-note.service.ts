@@ -18,7 +18,6 @@ import {
     ENUM_ADJUSTMENT_PARTY_TYPE,
     ENUM_ADJUSTMENT_DIRECTION,
 } from '../enums/adjustment-note.enum';
-import { adjustmentReducesBalance } from '../helpers/adjustment-balance.helper';
 import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
 import { InvoiceService } from '@modules/invoice/services/invoice.service';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
@@ -137,21 +136,17 @@ export class AdjustmentNoteService {
 
     /**
      * Validate the optional document link and return its frozen voucher.
-     * Rejects: a document that isn't this party's, a currency mismatch, and a
-     * "reduce the bill" note bigger than what is still outstanding.
+     * The link is REFERENCE-ONLY (client 2026-08-03): it does NOT change the
+     * invoice/POV balance or status — the note posts to the party ledger only.
+     * So there is no currency-match or over-adjust ceiling; we just confirm the
+     * document is this party's and not cancelled/draft, then snapshot its
+     * voucher for the "Applied To" reference.
      */
     private async resolveDocumentLink(
         companyId: string,
-        dto: AdjustmentNoteCreateRequestDto,
-        noteCurrency: string,
-        effectiveAmount: number
+        dto: AdjustmentNoteCreateRequestDto
     ): Promise<string | null> {
         if (!dto.document_id) return null;
-
-        const reduces = adjustmentReducesBalance(dto.party_type, dto.direction);
-        let voucherNo = '';
-        let balance = 0;
-        let docCurrency = 'INR';
 
         if (dto.party_type === ENUM_ADJUSTMENT_PARTY_TYPE.CUSTOMER) {
             const inv: any = await this.invoiceRepository.findOneById(
@@ -171,63 +166,31 @@ export class AdjustmentNoteService {
             }
             if (!LINKABLE_INVOICE_STATUSES.includes(String(inv.status))) {
                 throw new BadRequestException(
-                    `Invoice ${inv.voucher_no} is ${inv.status} — only an issued invoice can be adjusted.`
+                    `Invoice ${inv.voucher_no} is ${inv.status} — only an issued invoice can be referenced.`
                 );
             }
-            voucherNo = inv.voucher_no;
-            balance = round2(num(inv.balance_receivable));
-            docCurrency = inv.currency_code || 'INR';
-        } else {
-            const pov: any = await this.povRepository.findOneById(
-                dto.document_id
-            );
-            if (
-                !pov ||
-                pov.soft_delete ||
-                pov.company_id?.toString() !== companyId
-            ) {
-                throw new NotFoundException('Vendor PO not found.');
-            }
-            if (pov.vendor_id?.toString() !== dto.party_id) {
-                throw new BadRequestException(
-                    'That Vendor PO belongs to a different vendor.'
-                );
-            }
-            if (NON_LINKABLE_POV_STATUSES.includes(String(pov.status))) {
-                throw new BadRequestException(
-                    `Vendor PO ${pov.voucher_no} is cancelled — it cannot be adjusted.`
-                );
-            }
-            voucherNo = pov.voucher_no;
-            const mapped = await this.povService.mapList([pov] as any);
-            balance = round2(num((mapped as any[])[0]?.balance_payable));
-            docCurrency = pov.currency_code || 'INR';
+            return inv.voucher_no;
         }
 
-        if (docCurrency !== noteCurrency) {
+        const pov: any = await this.povRepository.findOneById(dto.document_id);
+        if (
+            !pov ||
+            pov.soft_delete ||
+            pov.company_id?.toString() !== companyId
+        ) {
+            throw new NotFoundException('Vendor PO not found.');
+        }
+        if (pov.vendor_id?.toString() !== dto.party_id) {
             throw new BadRequestException(
-                `${voucherNo} is in ${docCurrency} but this note is in ${noteCurrency} — they must match.`
+                'That Vendor PO belongs to a different vendor.'
             );
         }
-        // Only a "reduce the bill" note is capped; increasing a bill has no
-        // ceiling. 1e-2 tolerance mirrors the payment guards.
-        if (reduces && effectiveAmount - balance > 1e-2) {
+        if (NON_LINKABLE_POV_STATUSES.includes(String(pov.status))) {
             throw new BadRequestException(
-                `${voucherNo} has only ${balance.toFixed(2)} outstanding — this note would over-adjust it.`
+                `Vendor PO ${pov.voucher_no} is cancelled — it cannot be referenced.`
             );
         }
-        return voucherNo;
-    }
-
-    /** Re-derive the linked document's balance + status after create/void. */
-    private async recomputeLinkedDocument(note: any): Promise<void> {
-        const docId = note?.document_id?.toString();
-        if (!docId) return;
-        if (note.party_type === ENUM_ADJUSTMENT_PARTY_TYPE.CUSTOMER) {
-            await this.invoiceService.recomputeAfterAdjustment(docId);
-        } else {
-            await this.povService.recomputeAfterAdjustment(docId);
-        }
+        return pov.voucher_no;
     }
 
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
@@ -297,12 +260,7 @@ export class AdjustmentNoteService {
         const effectiveAmount = round2(
             Number(dto.amount) + Number(gstAmount ?? 0)
         );
-        const documentVoucherNo = await this.resolveDocumentLink(
-            companyId,
-            dto,
-            currencyCode,
-            effectiveAmount
-        );
+        const documentVoucherNo = await this.resolveDocumentLink(companyId, dto);
 
         const prefix = await this.resolveCompanyPrefix(companyId);
         const voucherNo = await this.voucherService.getNext(
@@ -330,8 +288,8 @@ export class AdjustmentNoteService {
             created_by: userId,
         } as any);
 
-        // Move the linked document's balance/status now that the note exists.
-        await this.recomputeLinkedDocument(note);
+        // The document link is reference-only — it does NOT move the invoice/POV
+        // balance (client 2026-08-03). The note posts to the party ledger only.
 
         this.logger.log(
             `Adjustment note ${voucherNo} (${dto.direction} ${currencyCode} ${dto.amount}) → ${dto.party_type} ${partyName}${
@@ -402,9 +360,7 @@ export class AdjustmentNoteService {
         note.voided_by = userId;
         note.voided_reason = reason || null;
         await this.repo.save(note);
-        // Voiding reverses the document balance — sumAdjustmentEffect skips
-        // voided rows, so a plain recompute is all that's needed.
-        await this.recomputeLinkedDocument(note);
+        // Document link is reference-only, so nothing to recompute on the doc.
         this.logger.log(`Adjustment note ${note.voucher_no} voided.`);
     }
 
