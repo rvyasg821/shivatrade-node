@@ -55,6 +55,8 @@ export class PoVendorGetResponseDto {
 
     @ApiProperty({ required: true, type: String }) purchase_order_id: string;
     @ApiProperty({ required: false, type: String }) purchase_order_voucher_no?: string;
+    /** Standalone POV soft-links to Sales Orders (traceability). */
+    @ApiProperty({ required: false, type: Array }) linked_sales_orders?: Array<{ id: string; voucher_no: string }>;
 
     /** The POV this one re-orders the balance of, when it is a balance POV. */
     @ApiProperty({ required: false, type: String }) balance_of_po_vendor_id?: string;

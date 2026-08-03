@@ -755,6 +755,35 @@ export class PoVendorService {
      * `purchase_order_line_id` are null, so it never appears in any PO
      * coverage roll-up.
      */
+    /**
+     * Resolve Sales-Order link ids → `[{ id, voucher_no }]` snapshots for a
+     * standalone POV's `linked_sales_orders` (traceability only). Validates
+     * each SO belongs to the company and isn't soft-deleted; dedupes. Returns
+     * [] for empty/undefined input.
+     */
+    private async resolveLinkedSalesOrders(
+        companyId: string,
+        ids?: string[]
+    ): Promise<Array<{ id: string; voucher_no: string }>> {
+        const out: Array<{ id: string; voucher_no: string }> = [];
+        const soIds = Array.from(new Set((ids || []) as string[]));
+        for (const soId of soIds) {
+            const so: any = await this.poRepository.findOne({
+                _id: soId,
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            if (!so) {
+                throw new NotFoundException('Linked Sales Order not found.');
+            }
+            out.push({
+                id: so._id.toString(),
+                voucher_no: so.voucher_no || '',
+            });
+        }
+        return out;
+    }
+
     async createStandalone(
         companyId: string,
         data: PoVendorStandaloneCreateRequestDto,
@@ -911,12 +940,19 @@ export class PoVendorService {
             preSubtotal
         );
 
+        // ── Optional Sales-Order links → snapshot [{ id, voucher_no }] ──
+        const linkedSalesOrders = await this.resolveLinkedSalesOrders(
+            companyId,
+            (data as any).linked_sales_order_ids
+        );
+
         // ── Header (purchase_order_id = null) ──────────────────────────
         const header = await this.povRepository.create({
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
             purchase_order_id: null,
+            linked_sales_orders: linkedSalesOrders,
             vendor_id: vendorId,
             vendor_address_id: vendorAddressId,
             delivery_address,
@@ -1974,6 +2010,7 @@ export class PoVendorService {
             'eway_bill_date',
             'notes',
             'internal_notes',
+            'linked_sales_order_ids',
             'status',
         ]);
         const dispatchedEditable = new Set([
@@ -1991,9 +2028,14 @@ export class PoVendorService {
             'eway_bill_date',
             'notes',
             'internal_notes',
+            'linked_sales_order_ids',
             'status',
         ]);
-        const terminalEditable = new Set(['internal_notes', 'status']);
+        const terminalEditable = new Set([
+            'internal_notes',
+            'linked_sales_order_ids',
+            'status',
+        ]);
 
         const allowed =
             fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT
@@ -2052,10 +2094,52 @@ export class PoVendorService {
         // `line_taxes` must be pulled out here: anything left in `scalar` gets
         // Object.assign'd straight onto the entity, and an array of line patches
         // is not a column.
-        const { lines, line_taxes, line_edits, expenses, status, ...scalar } =
-            data as any;
+        // Snapshot the header fields shown in the event timeline BEFORE they're
+        // overwritten below, so the "Updated: …" summary lists exactly what
+        // changed (not just delivery / lines).
+        const beforeEdit = {
+            delivery_address: row.delivery_address,
+            expected_arrival_date: row.expected_arrival_date,
+            transporter_name: row.transporter_name,
+            vehicle_no: row.vehicle_no,
+            lr_no: row.lr_no,
+            lr_date: row.lr_date,
+            eway_bill_no: row.eway_bill_no,
+            eway_bill_date: row.eway_bill_date,
+            notes: row.notes,
+            internal_notes: row.internal_notes,
+            dispatched_through: (row as any).dispatched_through,
+            payment_terms: (row as any).payment_terms,
+            delivery_terms: (row as any).delivery_terms,
+            currency_code: row.currency_code,
+            linkedIds: JSON.stringify(
+                (((row as any).linked_sales_orders || []) as any[])
+                    .map(s => s.id)
+                    .sort()
+            ),
+        };
+
+        const {
+            lines,
+            line_taxes,
+            line_edits,
+            expenses,
+            status,
+            linked_sales_order_ids,
+            ...scalar
+        } = data as any;
         Object.assign(row, scalar);
         if (status) row.status = status;
+
+        // Re-resolve Sales-Order traceability links when the caller sent a new
+        // list (an empty array clears them). Snapshots voucher_no onto header.
+        if (linked_sales_order_ids !== undefined) {
+            (row as any).linked_sales_orders =
+                await this.resolveLinkedSalesOrders(
+                    companyId,
+                    linked_sales_order_ids
+                );
+        }
 
         // Normalise currency + rate when either changed: the home currency
         // always pins exchange_rate to 1, and a foreign one keeps a positive
@@ -2310,17 +2394,71 @@ export class PoVendorService {
         }
 
         this.logger.log(`POV updated: ${row._id}`);
-        if ((deliveryChanged || linesChanged) && userId) {
+        if (userId) {
+            // Compare each editable field to its pre-edit value so the timeline
+            // reflects everything that actually changed — an empty summary means
+            // nothing meaningful changed, so no event is logged.
+            const norm = (v: any) => (v == null ? '' : String(v));
             const summaryBits: string[] = [];
-            if (deliveryChanged) summaryBits.push('delivery address');
+            if (
+                deliveryChanged &&
+                norm(row.delivery_address) !== norm(beforeEdit.delivery_address)
+            )
+                summaryBits.push('delivery address');
+            if (
+                norm(row.expected_arrival_date) !==
+                norm(beforeEdit.expected_arrival_date)
+            )
+                summaryBits.push('expected arrival');
+            if (
+                norm((row as any).dispatched_through) !==
+                norm(beforeEdit.dispatched_through)
+            )
+                summaryBits.push('dispatch mode');
+            if (
+                norm((row as any).payment_terms) !==
+                norm(beforeEdit.payment_terms)
+            )
+                summaryBits.push('payment terms');
+            if (
+                norm((row as any).delivery_terms) !==
+                norm(beforeEdit.delivery_terms)
+            )
+                summaryBits.push('delivery terms');
+            if (
+                norm(row.transporter_name) !== norm(beforeEdit.transporter_name) ||
+                norm(row.vehicle_no) !== norm(beforeEdit.vehicle_no) ||
+                norm(row.lr_no) !== norm(beforeEdit.lr_no) ||
+                norm(row.lr_date) !== norm(beforeEdit.lr_date) ||
+                norm(row.eway_bill_no) !== norm(beforeEdit.eway_bill_no) ||
+                norm(row.eway_bill_date) !== norm(beforeEdit.eway_bill_date)
+            )
+                summaryBits.push('transport details');
+            if (norm(row.currency_code) !== norm(beforeEdit.currency_code))
+                summaryBits.push('currency');
+            if (norm(row.notes) !== norm(beforeEdit.notes))
+                summaryBits.push('notes');
+            if (norm(row.internal_notes) !== norm(beforeEdit.internal_notes))
+                summaryBits.push('internal notes');
+            if (Array.isArray(expenses)) summaryBits.push('vendor charges');
             if (linesChanged) summaryBits.push('lines');
-            await this.emitSystemEvent(
-                companyId,
-                row._id.toString(),
-                ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
-                userId,
-                `Updated: ${summaryBits.join(', ')}`
+            const linkedAfter = JSON.stringify(
+                (((row as any).linked_sales_orders || []) as any[])
+                    .map(s => s.id)
+                    .sort()
             );
+            if (linkedAfter !== beforeEdit.linkedIds)
+                summaryBits.push('linked sales orders');
+
+            if (summaryBits.length) {
+                await this.emitSystemEvent(
+                    companyId,
+                    row._id.toString(),
+                    ENUM_TRACKING_EVENT_TYPE.POV_UPDATED,
+                    userId,
+                    `Updated: ${summaryBits.join(', ')}`
+                );
+            }
         }
         return this.povRepository.findOneById(row._id.toString());
     }
@@ -3325,6 +3463,7 @@ export class PoVendorService {
 
                 purchase_order_id: r.purchase_order_id?.toString(),
                 purchase_order_voucher_no: po?.voucher_no,
+                linked_sales_orders: (r as any).linked_sales_orders || [],
 
                 vendor_id: r.vendor_id?.toString(),
                 vendor_name: (vendor as any)?.company_name,

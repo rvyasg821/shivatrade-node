@@ -28,6 +28,14 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     purchase_order_id?: string;
 
+    /** Soft links to one or more Sales Orders, for traceability on a
+     *  standalone POV (many — unlike the single `purchase_order_id` coverage
+     *  link above). Snapshot of `[{ id, voucher_no }]` frozen at create time so
+     *  the detail view/PDF can list them without a join. Empty by default.
+     *  Does NOT participate in PO coverage roll-ups. */
+    @Column({ type: 'jsonb', nullable: false, default: () => "'[]'::jsonb" })
+    linked_sales_orders: Array<{ id: string; voucher_no: string }>;
+
     /** Set when this POV was raised as the BALANCE of an earlier one — i.e.
      *  to re-order what that POV never delivered (undispatched, plus any short
      *  receipt once it closed). Lets the source POV subtract what has already
