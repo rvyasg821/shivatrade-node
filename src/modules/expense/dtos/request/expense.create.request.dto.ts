@@ -18,6 +18,9 @@ export class ExpenseCreateRequestDto {
     @IsString() @IsNotEmpty() @MaxLength(150) name: string;
     @IsString() @IsNotEmpty() @MaxLength(30) code: string;
 
+    /** Expense HSN/SAC code — independent of product HSN. Optional. */
+    @IsString() @IsOptional() @MaxLength(20) hsn_code?: string;
+
     @IsEnum(ENUM_EXPENSE_TYPE) @IsOptional() type?: ENUM_EXPENSE_TYPE;
 
     @Type(() => Number)

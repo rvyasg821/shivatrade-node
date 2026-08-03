@@ -23,12 +23,13 @@ import { ENUM_EXPENSE_STATUS, ENUM_EXPENSE_TYPE } from '../enums/expense.enum';
  * so on update the code is NOT re-sent. The value lives in the `value` column
  * on both the entity and the sheet.
  */
-const EXCEL_HEADERS = ['code', 'name', 'type', 'value', 'status'];
+const EXCEL_HEADERS = ['code', 'hsn_code', 'name', 'type', 'value', 'status'];
 const SHEET_NAME = 'Expenses';
 
 const SAMPLE_ROWS = [
     {
         code: 'FRT',
+        hsn_code: '996511',
         name: 'Freight',
         type: 'fixed',
         value: 1200,
@@ -36,6 +37,7 @@ const SAMPLE_ROWS = [
     },
     {
         code: 'INS',
+        hsn_code: '997133',
         name: 'Insurance',
         type: 'percent',
         value: 1.5,
@@ -45,6 +47,7 @@ const SAMPLE_ROWS = [
 
 export interface ExpenseImportData {
     code: string;
+    hsn_code: string;
     name: string;
     type: ENUM_EXPENSE_TYPE;
     value: number;
@@ -79,6 +82,7 @@ export class ExpenseImportExportService {
 
         const rows = expenses.map((e) => ({
             code: e.code || '',
+            hsn_code: e.hsn_code || '',
             name: e.name || '',
             type: e.type || ENUM_EXPENSE_TYPE.PERCENT,
             value: e.value ?? '',
@@ -125,6 +129,7 @@ export class ExpenseImportExportService {
             const get = cellReader(rawRows[i]);
 
             const code = get('code');
+            const hsnCode = get('hsn_code');
             const name = get('name');
             const typeRaw = get('type').toLowerCase();
             const valueRaw = get('value');
@@ -134,6 +139,11 @@ export class ExpenseImportExportService {
                 errors.push('Code is required');
             } else if (code.length > 30) {
                 errors.push('Code must not exceed 30 characters');
+            }
+
+            // HSN/SAC is optional; only length-bounded.
+            if (hsnCode && hsnCode.length > 20) {
+                errors.push('HSN code must not exceed 20 characters');
             }
 
             if (!name) {
@@ -204,7 +214,7 @@ export class ExpenseImportExportService {
 
             rows.push({
                 rowNum,
-                data: { code, name, type, value, status },
+                data: { code, hsn_code: hsnCode, name, type, value, status },
                 status: rowStatus,
                 existingId,
                 errors,
@@ -234,6 +244,7 @@ export class ExpenseImportExportService {
                     // `code` is the match key and is NOT re-sent.
                     return this.expenseService.update(existing, {
                         name: row.data.name,
+                        hsn_code: row.data.hsn_code,
                         type: row.data.type,
                         value: row.data.value,
                         status: row.data.status,
@@ -246,6 +257,7 @@ export class ExpenseImportExportService {
                         companyId,
                         {
                             code: row.data.code,
+                            hsn_code: row.data.hsn_code,
                             name: row.data.name,
                             type: row.data.type,
                             value: row.data.value,

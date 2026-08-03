@@ -12,6 +12,7 @@ export class ExpenseGetResponseDto {
 
     @ApiProperty({ required: true, type: String }) name: string;
     @ApiProperty({ required: true, type: String }) code: string;
+    @ApiProperty({ required: false, type: String }) hsn_code?: string;
     @ApiProperty({ required: true, enum: ENUM_EXPENSE_TYPE }) type: ENUM_EXPENSE_TYPE;
     @ApiProperty({ required: true, type: String }) value: string;
 
