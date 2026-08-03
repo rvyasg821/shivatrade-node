@@ -52,6 +52,7 @@ export class PoVendorLineResponseDto {
 export class PoVendorGetResponseDto {
     @ApiProperty({ required: true, type: String }) _id: string;
     @ApiProperty({ required: true, type: String }) voucher_no: string;
+    @ApiProperty({ required: false, type: String }) invoice_number?: string;
 
     @ApiProperty({ required: true, type: String }) purchase_order_id: string;
     @ApiProperty({ required: false, type: String }) purchase_order_voucher_no?: string;
@@ -62,6 +63,8 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ required: false, type: String }) balance_of_po_vendor_id?: string;
     /** Detail-page only: this POV still has un-delivered qty to re-order. */
     @ApiProperty({ required: false, type: Boolean }) has_balance?: boolean;
+    /** Detail-page only: at least one non-cancelled GRN exists (gates payments). */
+    @ApiProperty({ required: false, type: Boolean }) has_grn?: boolean;
 
 
     @ApiProperty({ required: true, type: String }) vendor_id: string;

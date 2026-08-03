@@ -21,12 +21,12 @@ export class PoVendorPaymentCreateRequestDto {
     @IsNotEmpty()
     amount: string;
 
-    /** The vendor's invoice number this payment is against. */
-    @ApiProperty({ required: false, type: String, example: 'VINV-5521' })
-    @IsOptional()
+    /** The vendor's invoice number this payment is against. Required. */
+    @ApiProperty({ required: true, type: String, example: 'VINV-5521' })
     @IsString()
+    @IsNotEmpty()
     @MaxLength(120)
-    invoice_number?: string;
+    invoice_number: string;
 
     // ── Paying company bank account (#7) ──
     @ApiProperty({ required: false, type: String })

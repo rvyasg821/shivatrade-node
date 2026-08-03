@@ -20,6 +20,12 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
+    /** Vendor's invoice number for this PO — free text, required on create/edit.
+     *  Snapshotted onto the GRN and Debit Note. Default '' keeps existing rows
+     *  valid when the column is added (synchronize); new docs always set it. */
+    @Column({ type: 'varchar', length: 120, nullable: false, default: '' })
+    invoice_number: string;
+
     /** Source PO — must be `confirmed` (or `in_process`) at create time.
      *  Nullable since 2026-06: a POV can be raised standalone (no parent
      *  Sales Order). Null = standalone POV; it does not participate in any

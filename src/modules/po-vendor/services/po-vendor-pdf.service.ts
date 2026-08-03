@@ -1151,7 +1151,7 @@ function buildPovHtml(ctx: PovPdfContext): string {
         </tr>
         <tr>
           <td class="meta">${meta('Dispatched through', dispatchedThrough)}</td>
-          <td class="meta">${meta('Destination', '')}</td>
+          <td class="meta">${meta('Invoice No.', (pov as any).invoice_number)}</td>
         </tr>
         <tr>
           <td class="meta">${meta('Vehicle No.', pov.vehicle_no)}</td>

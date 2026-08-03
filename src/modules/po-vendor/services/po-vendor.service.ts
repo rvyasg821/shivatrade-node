@@ -4,6 +4,9 @@ import {
     BadRequestException,
     NotFoundException,
 } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import { InjectDatabaseConnection } from '@common/database/decorators/database.decorator';
+import { GRN_COLLECTION_NAME } from '@modules/grn/constants/grn.entity.constant';
 
 import { CreatorScopeService } from '@modules/creator-scope/creator-scope.service';
 import { PoVendorRepository } from '../repository/repositories/po-vendor.repository';
@@ -88,8 +91,21 @@ export class PoVendorService {
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
         private readonly stockLedger: StockLedgerService,
         private readonly dependencyCheckService: DependencyCheckService,
-        private readonly companySettings: CompanySettingsService
+        private readonly companySettings: CompanySettingsService,
+        @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
+
+    /** True when the POV has at least one non-cancelled GRN (goods received). */
+    private async hasGrn(companyId: string, povId: string): Promise<boolean> {
+        const rows = await this.dataSource.query(
+            `SELECT 1 FROM ${GRN_COLLECTION_NAME}
+             WHERE po_vendor_id = $1 AND company_id = $2
+               AND soft_delete = false AND status <> 'cancelled'
+             LIMIT 1`,
+            [povId, companyId]
+        );
+        return Array.isArray(rows) && rows.length > 0;
+    }
 
     /**
      * Delete policy: block if any GRN / Debit-Note references this POV;
@@ -667,6 +683,7 @@ export class PoVendorService {
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
+            invoice_number: data.invoice_number,
             purchase_order_id: purchaseOrderId,
             vendor_id: vendorId,
             vendor_address_id: vendorAddressId,
@@ -954,6 +971,7 @@ export class PoVendorService {
             company_id: companyId,
             created_by: createdBy,
             voucher_no,
+            invoice_number: data.invoice_number,
             purchase_order_id: null,
             linked_sales_orders: linkedSalesOrders,
             vendor_id: vendorId,
@@ -1032,7 +1050,9 @@ export class PoVendorService {
                     invoice_number: advance.invoice_number,
                     notes: advance.notes,
                 },
-                createdBy
+                createdBy,
+                // Advance paid before goods — no GRN required.
+                { skipGrnCheck: true }
             );
         }
 
@@ -1164,6 +1184,8 @@ export class PoVendorService {
             company_id: companyId,
             created_by: userId,
             voucher_no,
+            // Carry the vendor invoice number forward from the source POV.
+            invoice_number: source.invoice_number || '',
             purchase_order_id: source.purchase_order_id || null,
             balance_of_po_vendor_id: srcId,
             vendor_id: source.vendor_id,
@@ -1582,6 +1604,10 @@ export class PoVendorService {
                 {
                     payment_date?: string;
                     amount?: string;
+                    company_bank_account_id?: string;
+                    tds_section?: string;
+                    tds_rate_pct?: string;
+                    tds_amount?: string;
                     invoice_number?: string;
                     notes?: string;
                 }
@@ -1593,6 +1619,7 @@ export class PoVendorService {
             vendor_terms?: Record<
                 string,
                 {
+                    invoice_number?: string;
                     dispatched_through?: string;
                     payment_terms?: string;
                     delivery_terms?: string;
@@ -1843,6 +1870,7 @@ export class PoVendorService {
                     data.delivery_address_id,
                 expenses: data.vendor_expenses?.[vendorId] || [],
                 // Per-vendor terms typed on the generate-POV screen.
+                invoice_number: data.vendor_terms?.[vendorId]?.invoice_number || '',
                 dispatched_through:
                     data.vendor_terms?.[vendorId]?.dispatched_through,
                 payment_terms: data.vendor_terms?.[vendorId]?.payment_terms,
@@ -1871,10 +1899,21 @@ export class PoVendorService {
                             adv.payment_date ||
                             new Date().toISOString().slice(0, 10),
                         amount: String(adv.amount),
-                        invoice_number: adv.invoice_number,
+                        company_bank_account_id: adv.company_bank_account_id,
+                        tds_section: adv.tds_section,
+                        tds_rate_pct: adv.tds_rate_pct,
+                        tds_amount: adv.tds_amount,
+                        // Advance uses the POV's header invoice number (the
+                        // advance no longer has its own invoice field on the UI).
+                        invoice_number:
+                            data.vendor_terms?.[vendorId]?.invoice_number ||
+                            adv.invoice_number ||
+                            '',
                         notes: adv.notes,
                     },
-                    createdBy
+                    createdBy,
+                    // Advance paid before goods — no GRN required.
+                    { skipGrnCheck: true }
                 );
                 created.push(
                     await this.povRepository.findOneById(row._id.toString())
@@ -1988,6 +2027,7 @@ export class PoVendorService {
         const draftEditable = new Set([
             'delivery_address',
             'delivery_address_id',
+            'invoice_number',
             // Display currency + rate — draft only. Amounts stay stored in INR;
             // these just re-target how the POV renders (view / PDF).
             'currency_code',
@@ -3051,12 +3091,28 @@ export class PoVendorService {
     async recordPayment(
         row: PoVendorDoc,
         data: PoVendorPaymentCreateRequestDto,
-        userId: string
+        userId: string,
+        opts?: { skipGrnCheck?: boolean }
     ): Promise<PoVendorPaymentDoc> {
         if (row.status === ENUM_PO_VENDOR_STATUS.CANCELLED) {
             throw new BadRequestException(
                 'Cannot record a payment on a cancelled vendor PO.'
             );
+        }
+        // A payment can only be recorded once goods are received (a GRN exists).
+        // Exceptions: the create-time advance (skipGrnCheck), and any POV that
+        // ALREADY has an advance/payment (amount_paid > 0) — once the advance
+        // flow has started, further payments are free.
+        if (!opts?.skipGrnCheck && num(row.amount_paid) <= 0) {
+            const grnExists = await this.hasGrn(
+                row.company_id.toString(),
+                row._id.toString()
+            );
+            if (!grnExists) {
+                throw new BadRequestException(
+                    'Record a GRN (goods receipt) before recording a payment.'
+                );
+            }
         }
         const amount = num(data.amount);
         if (amount <= 0) {
@@ -3463,6 +3519,7 @@ export class PoVendorService {
             out.push({
                 _id: r._id.toString(),
                 voucher_no: r.voucher_no,
+                invoice_number: (r as any).invoice_number || '',
 
                 purchase_order_id: r.purchase_order_id?.toString(),
                 purchase_order_voucher_no: po?.voucher_no,
@@ -3535,6 +3592,11 @@ export class PoVendorService {
         // Detail-page only — balancePlan() costs a few queries per row, so it
         // deliberately does not run in mapList.
         mapped.has_balance = await this.hasBalance(row as any);
+        // Gate the Payments tab: no GRN → no payment (advances excepted).
+        mapped.has_grn = await this.hasGrn(
+            row.company_id.toString(),
+            row._id.toString()
+        );
         mapped.balance_of_po_vendor_id = (
             row as any
         ).balance_of_po_vendor_id?.toString();

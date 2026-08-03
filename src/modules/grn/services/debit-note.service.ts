@@ -300,6 +300,7 @@ export class DebitNoteService {
             grn_voucher_no: grn.voucher_no || null,
             po_vendor_id: grn.po_vendor_id || null,
             po_vendor_voucher_no: grn.po_vendor_voucher_no || null,
+            po_vendor_invoice_number: grn.po_vendor_invoice_number || null,
             purchase_order_id: grn.purchase_order_id || null,
             purchase_order_voucher_no: grn.purchase_order_voucher_no || null,
             vendor_id: grn.vendor_id || null,
@@ -832,6 +833,7 @@ export class DebitNoteService {
             <strong>Vendor:</strong> ${this.esc(dn.vendor_name || '-')}<br/>
             <strong>GRN:</strong> ${this.esc(dn.grn_voucher_no || '-')} &nbsp;
             <strong>VPO:</strong> ${this.esc(dn.po_vendor_voucher_no || '-')} &nbsp;
+            <strong>Invoice No:</strong> ${this.esc((dn as any).po_vendor_invoice_number || '-')} &nbsp;
             <strong>SO:</strong> ${this.esc(dn.purchase_order_voucher_no || '-')}
           </div>
           <table>
