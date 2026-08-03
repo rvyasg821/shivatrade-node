@@ -1152,7 +1152,11 @@ export class GrnService {
           <div style="margin-top:8px">
             <strong>GRN No:</strong> ${this.esc(grn.voucher_no || '-')} &nbsp;
             <strong>Date:</strong> ${this.esc(grn.grn_date || '-')}<br/>
-            <strong>Vendor:</strong> ${this.esc(grn.vendor_name || '-')}<br/>
+            <strong>Vendor:</strong> ${this.esc(grn.vendor_name || '-')}${
+                (grn as any).vendor_code
+                    ? ` &nbsp; <strong>Vendor Code:</strong> ${this.esc((grn as any).vendor_code)}`
+                    : ''
+            }<br/>
             <strong>VPO:</strong> ${this.esc(grn.po_vendor_voucher_no || '-')} &nbsp;
             <strong>Invoice No:</strong> ${this.esc((grn as any).po_vendor_invoice_number || '-')} &nbsp;
             <strong>SO:</strong> ${this.esc(grn.purchase_order_voucher_no || '-')} &nbsp;
