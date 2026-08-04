@@ -25,9 +25,17 @@ const toIso = (d: any): string => {
     return String(d).slice(0, 10);
 };
 
-// Statuses that count as a posted document on the ledger.
+// Statuses that count as a BILLED document (drive `total_billed` / outstanding).
 const LEDGER_INVOICE_STATUSES = ['issued', 'partially_paid', 'paid'];
 const LEDGER_POV_STATUSES = ['dispatched', 'closed'];
+// Statuses to scan when gathering cash movements (receipts / payments). DRAFT is
+// included because an upfront ADVANCE can be paid/received while the doc is still
+// a draft (Vendor PO advance, or a customer invoice advance seeded as a receipt),
+// and that cash MUST post to the ledger + register. Draft docs are still EXCLUDED
+// from `total_billed` (a `status !== 'draft'` filter on each reduce below), so a
+// draft never counts as invoiced/ordered — only its cash row shows.
+const LEDGER_INVOICE_STATUSES_TXN = ['draft', ...LEDGER_INVOICE_STATUSES];
+const LEDGER_POV_STATUSES_TXN = ['draft', ...LEDGER_POV_STATUSES];
 
 interface RawRow {
     date: string;
@@ -122,7 +130,9 @@ export class LedgerService {
             company_id: companyId,
             customer_id: customerId,
             soft_delete: false,
-            status: { $in: LEDGER_INVOICE_STATUSES },
+            // Include draft so a draft invoice's advance receipt posts here;
+            // drafts are dropped from total_billed below.
+            status: { $in: LEDGER_INVOICE_STATUSES_TXN },
         } as any);
 
         // Client rule (2026-07-17): a cash-movement record, mirroring the vendor
@@ -203,7 +213,9 @@ export class LedgerService {
         //   Credit note (we owe the customer back) → CR → ↓ outstanding
         //   Debit note   (we charge them more)     → DR → ↑ outstanding
         const totalBilled = round2(
-            invoices.reduce((s, i) => s + num(i.grand_total), 0)
+            invoices
+                .filter((i) => i.status !== 'draft')
+                .reduce((s, i) => s + num(i.grand_total), 0)
         );
         const totalPaid = round2(
             rows.reduce((s, r) => s + num(r.cr) - num(r.dr), 0)
@@ -268,7 +280,9 @@ export class LedgerService {
             company_id: companyId,
             vendor_id: vendorId,
             soft_delete: false,
-            status: { $in: LEDGER_POV_STATUSES },
+            // Include draft so a draft POV's advance payment posts here; drafts
+            // are dropped from total_billed below.
+            status: { $in: LEDGER_POV_STATUSES_TXN },
         } as any);
         const povs = await this.povService.mapList(povRows as any);
 
@@ -339,7 +353,9 @@ export class LedgerService {
         // pages' Balance Payable cards once a note exists — the VPO card can't
         // see party-level notes. That difference is intended.
         const totalBilled = round2(
-            (povs as any[]).reduce((s, p) => s + num(p.order_value), 0)
+            (povs as any[])
+                .filter((p) => p.status !== 'draft')
+                .reduce((s, p) => s + num(p.order_value), 0)
         );
         const totalPaid = round2(
             rows.reduce((s, r) => s + num(r.dr) - num(r.cr), 0)
@@ -445,7 +461,8 @@ export class LedgerService {
             const povFind: Record<string, any> = {
                 company_id: companyId,
                 soft_delete: false,
-                status: { $in: LEDGER_POV_STATUSES },
+                // Include draft so advance payments on draft POVs list here.
+                status: { $in: LEDGER_POV_STATUSES_TXN },
             };
             if (q.party_id) povFind.vendor_id = q.party_id;
             const povRows: any[] = await this.povRepository.findAll(
@@ -489,7 +506,8 @@ export class LedgerService {
             const invFind: Record<string, any> = {
                 company_id: companyId,
                 soft_delete: false,
-                status: { $in: LEDGER_INVOICE_STATUSES },
+                // Include draft so advance receipts on draft invoices list here.
+                status: { $in: LEDGER_INVOICE_STATUSES_TXN },
             };
             if (q.party_id) invFind.customer_id = q.party_id;
             const invoices: any[] = await this.invoiceRepository.findAll(

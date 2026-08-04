@@ -162,11 +162,11 @@ export class PoVendorRecoverAdvanceDto {
  * the vendor's, not the parent Sales Order's (those are the customer's).
  */
 export class PoVendorRecoverTermsDto {
-    /** Vendor's invoice number — required; stamped on the spawned POV header. */
-    @ApiProperty({ required: true, type: String })
+    /** Vendor's invoice number — optional; stamped on the spawned POV header. */
+    @ApiProperty({ required: false, type: String })
     @IsString()
-    @IsNotEmpty()
-    invoice_number: string;
+    @IsOptional()
+    invoice_number?: string;
 
     @ApiProperty({ required: false, type: String })
     @IsString()

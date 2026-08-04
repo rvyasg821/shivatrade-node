@@ -110,11 +110,11 @@ export class PoVendorCreateRequestDto {
     @IsNotEmpty()
     vendor_id: string;
 
-    /** Vendor's invoice number — required free text. */
+    /** Vendor's invoice number — optional free text. */
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     @MaxLength(120)
-    invoice_number: string;
+    invoice_number?: string;
 
     /** Optional vendor address; defaults to the vendor's default bill-from. */
     @IsUUID()

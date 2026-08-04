@@ -458,6 +458,13 @@ export class InvoiceService {
         );
         await this.recompute(header._id.toString());
 
+        // Post the upfront advance (carried from the SO) as a real receipt right
+        // away, so it shows in the customer ledger/register on a draft.
+        const createdRow = await this.invoiceRepository.findOneById(
+            header._id.toString()
+        );
+        if (createdRow) await this.syncDraftAdvanceReceipt(createdRow, userId);
+
         this.logger.log(`Invoice DRAFT created: ${header._id}`);
         return this.invoiceRepository.findOneById(header._id.toString());
     }
@@ -522,6 +529,17 @@ export class InvoiceService {
                 );
             }
             await this.recompute(row._id.toString());
+
+            // Re-sync the advance receipt with the (possibly edited) advance.
+            const updatedRow = await this.invoiceRepository.findOneById(
+                row._id.toString()
+            );
+            if (updatedRow)
+                await this.syncDraftAdvanceReceipt(
+                    updatedRow,
+                    (row as any).created_by
+                );
+
             return this.invoiceRepository.findOneById(row._id.toString());
         }
 
@@ -541,6 +559,72 @@ export class InvoiceService {
         await this.invoiceRepository.save(row);
         await this.recompute(row._id.toString());
         return this.invoiceRepository.findOneById(row._id.toString());
+    }
+
+    /**
+     * Keep a DRAFT invoice's upfront advance in sync with a REAL receipt so it
+     * posts to the customer ledger/register immediately — not only at issue.
+     * (Mirrors the Vendor PO advance, which is a real payment even on a draft.)
+     *   • advance set & no receipt yet → seed a `method:'advance'` receipt (RCP…)
+     *   • advance amount changed        → update the seeded receipt
+     *   • advance cleared               → void the seeded receipt
+     * Issued invoices are untouched (issue() freezes receipts; its own guard
+     * skips re-seeding because this already created one).
+     */
+    private async syncDraftAdvanceReceipt(
+        row: InvoiceDoc,
+        stampUserId?: string
+    ): Promise<void> {
+        if (row.status !== ENUM_INVOICE_STATUS.DRAFT) return;
+        const advanceAmt = round2(num(row.advance_received));
+        const active =
+            await this.invoicePaymentRepository.findActiveByInvoiceId(
+                row._id.toString()
+            );
+        const advancePay: any = active.find(
+            (p: any) => p.method === 'advance' && !p.voided_at
+        );
+
+        if (advanceAmt > 0.005) {
+            if (advancePay) {
+                // Re-sync the amount on a draft edit.
+                if (round2(num(advancePay.amount)) !== advanceAmt) {
+                    advancePay.amount = String(advanceAmt);
+                    advancePay.payment_date = row.invoice_date;
+                    await this.invoicePaymentRepository.save(advancePay);
+                }
+                return;
+            }
+            // Only seed when there are no other LIVE receipts (a draft can't
+            // have manual ones — recordPayment blocks draft — so this is the
+            // clean path). `active` includes voided rows, so filter them out;
+            // this also lets an advance re-added after a clear re-seed. Mints
+            // its own RCP voucher; issue() then skips re-seeding.
+            if (active.some((p: any) => !p.voided_at)) return;
+            const ctx = await this.loadCompanyContext(row.company_id.toString());
+            const receiptNo = await this.voucherService.getNext(
+                row.company_id.toString(),
+                ENUM_VOUCHER_DOC_TYPE.RECEIPT,
+                ctx.voucher_prefix,
+                new Date(row.invoice_date)
+            );
+            await this.invoicePaymentRepository.create({
+                invoice_id: row._id.toString(),
+                company_id: row.company_id.toString(),
+                payment_date: row.invoice_date,
+                amount: String(advanceAmt),
+                currency_code: row.currency_code,
+                method: 'advance',
+                reference: 'Advance against Sales Order',
+                receipt_voucher_no: receiptNo,
+                created_by: stampUserId || (row as any).created_by,
+            } as any);
+        } else if (advancePay) {
+            // Advance cleared on a draft edit → void the seeded receipt.
+            advancePay.voided_at = new Date();
+            advancePay.voided_reason = 'Advance removed';
+            await this.invoicePaymentRepository.save(advancePay);
+        }
     }
 
     /**
