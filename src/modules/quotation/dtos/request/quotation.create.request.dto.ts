@@ -195,6 +195,14 @@ export class QuotationCreateRequestDto {
     )
     currency_code: string;
 
+    /** Vendor (buy) currency — one per document (multi-currency rule). */
+    @IsString()
+    @IsOptional()
+    @Transform(({ value }) =>
+        typeof value === 'string' ? value.trim().toUpperCase() : value
+    )
+    vendor_currency_code?: string;
+
     @IsNumberString({}, { message: 'exchange_rate must be a numeric string' })
     @IsOptional()
     exchange_rate?: string;

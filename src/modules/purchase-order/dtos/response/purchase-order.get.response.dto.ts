@@ -96,6 +96,9 @@ export class PurchaseOrderGetResponseDto {
 
     @ApiProperty({ required: true, type: String }) currency_code: string;
     @ApiProperty({ required: false, type: String }) currency_symbol?: string;
+    /** Vendor (buy) currency — one per document (multi-currency rule). */
+    @ApiProperty({ required: false, type: String })
+    vendor_currency_code?: string;
     @ApiProperty({ required: true, type: String }) exchange_rate: string;
     /** Shipment freight (document currency) for a CNF sales order. */
     @ApiProperty({ required: false, type: String }) freight_total?: string;

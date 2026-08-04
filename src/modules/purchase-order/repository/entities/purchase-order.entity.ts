@@ -152,6 +152,14 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: false, default: 'INR' })
     currency_code: string;
 
+    /**
+     * Vendor (buy) currency — one per document (multi-currency rule). Drives
+     * the line-item vendor filter in the costing worksheet. Nullable: legacy
+     * docs derive it from the lines' source currency.
+     */
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    vendor_currency_code?: string;
+
     @Column({
         type: 'numeric',
         precision: 18,
