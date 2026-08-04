@@ -304,6 +304,27 @@ export class QuotationAdminController {
         );
         res.end(buffer);
     }
+
+    /** Client-facing Excel (mirrors the PDF). */
+    @AuthJwtAccessProtected()
+    @Get('/:id/excel')
+    async excel(
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const { buffer, filename } =
+            await this.quotationService.generateExcel(id);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buffer.length));
+        res.end(buffer);
+    }
 }
 
 // Normalize `status` query: empty → undefined, "a" → "a", "a,b" → ["a","b"].

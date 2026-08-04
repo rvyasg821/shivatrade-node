@@ -204,6 +204,29 @@ export class DebitNoteAdminController {
         res.end(buffer);
     }
 
+    /** Debit Note Excel (mirrors the PDF). */
+    @AuthJwtAccessProtected()
+    @Get('/:id/excel')
+    async excel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const { buffer, filename } = await this.debitNoteService.generateExcel(
+            companyId,
+            id
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buffer.length);
+        res.end(buffer);
+    }
 }
 
 // `status` query param → undefined / single / array (comma-separated).

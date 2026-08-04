@@ -428,6 +428,32 @@ export class PurchaseOrderAdminController {
         res.end(buf);
     }
 
+    /** Sales Order Excel (mirrors the PDF). */
+    @AuthJwtAccessProtected()
+    @Get('/:id/excel')
+    async adminExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const row = await this.poService.findOneById(id);
+        const dto = await this.poService.mapGet(row);
+        const { buffer, filename } = await this.poPdfService.renderExcel(
+            dto,
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buffer.length));
+        res.end(buffer);
+    }
+
     /** Per-PFI coverage roll-up — covered/pending qty per PFI line. */
     @Response('purchaseOrder.pfiCoverage')
     @AuthJwtAccessProtected()
