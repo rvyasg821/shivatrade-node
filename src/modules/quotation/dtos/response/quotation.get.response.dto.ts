@@ -87,6 +87,8 @@ export class QuotationGetResponseDto {
     valid_until?: string;
     currency_code?: string;
     currency_symbol?: string;
+    /** Vendor (buy) currency — one per document (multi-currency rule). */
+    vendor_currency_code?: string;
     exchange_rate?: string;
     /** Shipment freight (document currency) for a CNF quote. */
     freight_total?: string;

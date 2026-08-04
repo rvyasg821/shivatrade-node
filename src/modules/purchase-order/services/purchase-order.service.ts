@@ -362,6 +362,7 @@ export class PurchaseOrderService {
             internal_notes: data.internal_notes || null,
             remarks: remarks || null,
             currency_code: data.currency_code || 'INR',
+            vendor_currency_code: data.vendor_currency_code || null,
             exchange_rate: data.exchange_rate || '1',
             freight_total: (data as any).freight_total || '0',
             status: ctx?.status || data.status || ENUM_PURCHASE_ORDER_STATUS.DRAFT,
@@ -2096,6 +2097,8 @@ export class PurchaseOrderService {
                 delivery_address: opts?.deliveryAddressText || undefined,
                 delivery_address_id: opts?.deliveryAddressId || undefined,
                 currency_code: q.currency_code || 'INR',
+                vendor_currency_code:
+                    (q as any).vendor_currency_code || undefined,
                 exchange_rate: q.exchange_rate || '1',
                 // Carry the CNF shipment freight from the quotation onto the SO
                 // (same document currency) so the costing worksheet matches.
@@ -2346,6 +2349,7 @@ export class PurchaseOrderService {
                 remarks: r.remarks,
                 currency_code: r.currency_code,
                 currency_symbol: getCurrencySymbol(r.currency_code),
+                vendor_currency_code: (r as any).vendor_currency_code ?? null,
                 exchange_rate: r.exchange_rate,
                 freight_total: (r as any).freight_total ?? '0',
                 subtotal: r.subtotal,

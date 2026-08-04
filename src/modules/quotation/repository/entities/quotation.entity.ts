@@ -79,6 +79,14 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: false })
     currency_code: string;
 
+    /**
+     * Vendor (buy) currency for this document — one currency per doc
+     * (multi-currency rule). Drives the line-item vendor filter in the costing
+     * worksheet. Nullable: legacy docs derive it from the lines' source currency.
+     */
+    @Column({ type: 'varchar', length: 10, nullable: true })
+    vendor_currency_code?: string;
+
     /** FX rate at the time of quote (snapshot - does not auto-update). */
     @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
     exchange_rate?: string;
