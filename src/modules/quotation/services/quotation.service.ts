@@ -43,6 +43,14 @@ import { VoucherService } from '@common/voucher/services/voucher.service';
 import { PdfService } from '@common/pdf/pdf.service';
 import { docDate } from '@common/pdf/tally-pdf.util';
 import {
+    buildDocWorkbook,
+    buildExcelFilename,
+    curCell,
+    textCell,
+    DocCell,
+    DocSection,
+} from '@common/excel-doc/excel-doc.builder';
+import {
     buildPdfLetterhead,
     buildPdfHeaderTemplate,
     buildPdfFooterTemplate,
@@ -1462,6 +1470,140 @@ export class QuotationService {
             .replace(/[\\/]+/g, '_')
             .replace(/[^A-Za-z0-9_\-.]/g, '');
         return { buffer, filename: `${safe}.pdf` };
+    }
+
+    /** Styled Quotation Excel — mirrors generatePdf, reuses mapPublic/mapGet. */
+    async generateExcel(
+        id: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const row = await this.findOneById(id);
+        const q = await this.mapPublic(row);
+        const full = await this.mapGet(row);
+        const referenceNo = (full as any).reference_no || '';
+
+        const code = q.currency_code || 'INR';
+        const sym = q.currency_symbol || code || '₹';
+        const COLS = 7;
+        const pad = (cells: DocCell[]): DocCell[] => {
+            const out = cells.slice(0, COLS);
+            while (out.length < COLS) out.push(textCell(''));
+            return out;
+        };
+
+        const buyerLines = [q.customer_name || '-'];
+        if (q.customer_contact_name) buyerLines.push(q.customer_contact_name);
+        if (q.customer_address)
+            buyerLines.push(...String(q.customer_address).split('\n'));
+        if (q.customer_phone) buyerLines.push(q.customer_phone);
+        if (q.customer_email) buyerLines.push(q.customer_email);
+
+        const metaPairs: Array<[string, string]> = [
+            ['Voucher No.', q.voucher_no || '-'],
+            ['Date', docDate(q.quotation_date) || '-'],
+        ];
+        if (q.valid_until)
+            metaPairs.push(['Valid Until', docDate(q.valid_until)]);
+        if (referenceNo) metaPairs.push(['Reference No.', referenceNo]);
+        if (q.payment_terms) metaPairs.push(['Payment Terms', q.payment_terms]);
+        if (q.delivery_terms)
+            metaPairs.push(['Delivery Terms', q.delivery_terms]);
+        metaPairs.push(['Currency', code]);
+
+        const head = [
+            '#',
+            'Product',
+            'Part No',
+            'Qty',
+            'Unit',
+            'Rate',
+            `Amount (${sym})`,
+        ];
+        const rows: DocCell[][] = (q.lines || []).length
+            ? (q.lines || []).map((l: any, i: number) =>
+                  pad([
+                      textCell(i + 1, 'c'),
+                      textCell(
+                          (l.product_name || '-') +
+                              (l.hs_code ? ` · HSN ${l.hs_code}` : '') +
+                              (l.description ? ` — ${l.description}` : ''),
+                          'l'
+                      ),
+                      textCell(l.part_no || '-', 'c'),
+                      textCell(l.qty ? String(l.qty) : '-', 'r'),
+                      textCell(l.unit || '-', 'c'),
+                      curCell(Number(l.unit_price) || 0, sym, 2),
+                      curCell(Number(l.line_total) || 0, sym, 2, { bold: true }),
+                  ])
+              )
+            : [pad([textCell('No line items.', 'c')])];
+
+        // Total rows aligned under the Amount column.
+        const sumRow = (label: string, value: number, opts?: { bold?: boolean; fill?: string; color?: string }): DocCell[] => {
+            const cells: DocCell[] = [
+                { ...textCell(label, 'r', { bold: opts?.bold }), colSpan: COLS - 1 },
+            ];
+            for (let k = 1; k < COLS - 1; k++) cells.push(textCell(''));
+            cells.push(curCell(value, sym, 2, opts));
+            return cells;
+        };
+        if (num(q.freight_total) > 0) {
+            rows.push(sumRow('Subtotal', num(q.subtotal)));
+            rows.push(sumRow('Freight', num(q.freight_total)));
+        }
+        rows.push(
+            sumRow('Grand Total', num(q.grand_total), {
+                bold: true,
+                fill: 'FDEBD8',
+                color: 'C25E10',
+            })
+        );
+
+        const shipLines: string[] = [];
+        if (q.consignee_name) shipLines.push(q.consignee_name);
+        if (q.consignee_address)
+            shipLines.push(...String(q.consignee_address).split('\n'));
+        else if (q.delivery_location) shipLines.push(q.delivery_location);
+
+        const sections: DocSection[] = [
+            { kind: 'title', text: 'QUOTATION', subtitle: q.company_name },
+            {
+                kind: 'band',
+                left: { label: 'Bill To', lines: buyerLines },
+                right: { pairs: metaPairs },
+            },
+        ];
+        if (shipLines.length)
+            sections.push({ kind: 'party', label: 'Ship To', lines: shipLines });
+        sections.push({ kind: 'spacer' });
+        sections.push({
+            kind: 'table',
+            head,
+            rows,
+            align: ['c', 'l', 'c', 'r', 'c', 'r', 'r'],
+        });
+        if (q.notes_to_client)
+            sections.push({
+                kind: 'note',
+                text: `Notes: ${q.notes_to_client}`,
+            });
+        sections.push({
+            kind: 'band',
+            left: { label: '', lines: [] },
+            right: {
+                label: '',
+                lines: [`for ${q.company_name || ''}`, 'Authorised Signatory'],
+            },
+        });
+
+        const buffer = buildDocWorkbook({
+            sheetName: 'Quotation',
+            sections,
+            columnWidths: [6, 36, 14, 12, 10, 14, 16],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(q.voucher_no || 'Quotation'),
+        };
     }
 
     private esc(s: any): string {

@@ -41,6 +41,14 @@ import {
     buildPdfFooterTemplate,
     loadCompanyLogoDataUri,
 } from '@common/pdf/pdf-letterhead.util';
+import {
+    buildDocWorkbook,
+    buildExcelFilename,
+    moneyCell,
+    textCell,
+    DocCell,
+    DocSection,
+} from '@common/excel-doc/excel-doc.builder';
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 
@@ -745,6 +753,93 @@ export class DebitNoteService {
         });
         const safe = (data.voucher_no || dnId).replace(/[^A-Za-z0-9_-]+/g, '_');
         return { buffer, filename: `DN-${safe}.pdf` };
+    }
+
+    /** Styled Debit Note Excel (mirrors the PDF) — vendor return + Vendor Code. */
+    async generateExcel(
+        companyId: string,
+        dnId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const dn = await this.mapGet(companyId, dnId);
+        const company: any = await this.companyRepository.findOneById(companyId);
+        const code = dn.currency_code || 'INR';
+
+        const vendorLines = [dn.vendor_name || '-'];
+        if ((dn as any).vendor_code)
+            vendorLines.push(`Vendor Code: ${(dn as any).vendor_code}`);
+
+        const metaPairs: Array<[string, string]> = [
+            ['Debit Note No.', dn.voucher_no || '-'],
+            ['Date', dn.dn_date || '-'],
+            ['GRN', dn.grn_voucher_no || '-'],
+            ['Vendor PO', dn.po_vendor_voucher_no || '-'],
+            ['Vendor Invoice No.', (dn as any).po_vendor_invoice_number || '-'],
+            ['Sales Order', dn.purchase_order_voucher_no || '-'],
+            ['Currency', code],
+        ];
+
+        const head = [
+            '#',
+            'Item',
+            'Part No',
+            'HSN',
+            'Return Qty',
+            'Unit Price',
+            `Amount (${code})`,
+            'Remarks',
+        ];
+        const rows: DocCell[][] = (dn.lines || []).map((l: any, i: number) => [
+            textCell(i + 1, 'c'),
+            textCell(
+                (l.product_name || l.product_code || '-') +
+                    (l.description ? ` — ${l.description}` : ''),
+                'l'
+            ),
+            textCell(l.part_no || '-', 'c'),
+            textCell(l.hsn_code || '-', 'c'),
+            textCell(`${num(l.returned_qty).toFixed(2)} ${l.unit || ''}`.trim(), 'r'),
+            moneyCell(num(l.unit_price)),
+            moneyCell(num(l.line_total), { bold: true }),
+            textCell(l.remarks || '', 'l'),
+        ]);
+
+        const sections: DocSection[] = [
+            {
+                kind: 'title',
+                text: 'DEBIT NOTE',
+                subtitle: company?.company_name,
+            },
+            { kind: 'note', text: 'Vendor Return' },
+            {
+                kind: 'band',
+                left: { label: 'Vendor', lines: vendorLines },
+                right: { label: 'Debit Note Details', pairs: metaPairs },
+            },
+            { kind: 'spacer' },
+            {
+                kind: 'table',
+                head,
+                rows,
+                align: ['c', 'l', 'c', 'c', 'r', 'r', 'r', 'l'],
+            },
+            {
+                kind: 'totals',
+                pairs: [[`Total (${code})`, num(dn.total_amount)]],
+                emphasizeLast: true,
+            },
+        ];
+        if (dn.notes)
+            sections.push({ kind: 'note', text: `Notes: ${dn.notes}` });
+
+        const buffer = buildDocWorkbook({
+            sheetName: 'Debit Note',
+            sections,
+            columnWidths: [5, 30, 12, 10, 14, 14, 16, 18],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(`DN-${dn.voucher_no || dnId}`),
+        };
     }
 
     /** Generate the PDF from the DN id alone — resolves the company from the

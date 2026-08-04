@@ -457,6 +457,33 @@ export class PoVendorAdminController {
         res.end(buf);
     }
 
+    // ─── Excel download (mirrors the PDF) ───────────────────────────────
+
+    @AuthJwtAccessProtected()
+    @Get('/:id/excel')
+    async excel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const row = await this.povService.findOneById(id);
+        const dto = await this.povService.mapGet(row);
+        const { buffer, filename } = await this.povPdfService.renderExcel(
+            dto,
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buffer.length));
+        res.end(buffer);
+    }
+
     // ─── Update (status-locked field edits + status transitions) ────────
 
     @Response('poVendor.update')
@@ -608,6 +635,39 @@ export class PoVendorAdminController {
         );
         res.setHeader('Content-Length', String(buf.length));
         res.end(buf);
+    }
+
+    /** Download the Payment Voucher Excel (mirrors the PDF) for one payment. */
+    @AuthJwtAccessProtected()
+    @Get('/:id/payment-excel/:paymentId')
+    async paymentExcel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Param('paymentId') paymentId: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const row = await this.povService.findOneById(id);
+        if (row.company_id.toString() !== companyId) {
+            throw new NotFoundException('Vendor PO not found');
+        }
+        const dto = await this.povService.mapGet(row);
+        const payment = (dto.payments || []).find((p) => p._id === paymentId);
+        if (!payment) throw new NotFoundException('Payment not found');
+        const { buffer, filename } = await this.povPdfService.renderPaymentExcel(
+            dto,
+            payment,
+            companyId
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', String(buffer.length));
+        res.end(buffer);
     }
 
     // ─── Soft delete (draft only) ───────────────────────────────────────

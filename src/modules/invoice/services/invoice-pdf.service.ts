@@ -4,6 +4,15 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
 import { docDate } from '@common/pdf/tally-pdf.util';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
+import {
+    buildDocWorkbook,
+    buildExcelFilename,
+    curCell,
+    moneyCell,
+    textCell,
+    DocCell,
+    DocSection,
+} from '@common/excel-doc/excel-doc.builder';
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
 import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
@@ -158,6 +167,74 @@ export class InvoicePdfService {
             .replace(/[\\/]+/g, '-')
             .replace(/[^A-Za-z0-9_\-.]/g, '');
         return { buffer, filename: `${safe}.pdf` };
+    }
+
+    /**
+     * Styled Excel of an invoice document (commercial | export | packing-list).
+     * Reuses the SAME loadRenderData path as the PDF (build plan §5/§7.2).
+     */
+    async renderExcel(
+        companyId: string,
+        invoiceId: string,
+        doc: InvoicePdfDocType
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const data = await this.loadRenderData(companyId, invoiceId);
+        const sections = buildInvoiceExcelSections(data, doc);
+        const sheetName =
+            doc === 'packing-list'
+                ? 'Packing List'
+                : doc === 'export'
+                ? 'Export Invoice'
+                : 'Commercial Invoice';
+        const buffer = buildDocWorkbook({
+            sheetName,
+            sections,
+            columnWidths: [6, 14, 14, 34, 18, 12, 14, 16],
+        });
+        const suffix =
+            doc === 'packing-list'
+                ? '-PackingList'
+                : doc === 'export'
+                ? '-Export'
+                : '';
+        return {
+            buffer,
+            filename: buildExcelFilename(
+                `${data.invoice.voucher_no || 'INVOICE'}${suffix}`
+            ),
+        };
+    }
+
+    /** Styled Excel of a single customer Receipt — mirrors renderReceipt. */
+    async renderReceiptExcel(
+        companyId: string,
+        invoiceId: string,
+        paymentId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const data = await this.loadRenderData(companyId, invoiceId);
+        const payment: any = await this.invoicePaymentRepository.findOne({
+            _id: paymentId,
+            invoice_id: invoiceId,
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!payment || payment.voided_at) {
+            throw new NotFoundException('Receipt not found');
+        }
+        const totalReceived =
+            await this.invoicePaymentRepository.sumActiveByInvoiceId(invoiceId);
+        const sections = buildReceiptExcelSections(data, payment, totalReceived);
+        const buffer = buildDocWorkbook({
+            sheetName: 'Receipt',
+            sections,
+            columnWidths: [30, 22, 16, 16, 16, 18],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(
+                payment.receipt_voucher_no || 'Receipt'
+            ),
+        };
     }
 
     /** Hydrates everything the templates need into a flat shape. */
@@ -335,6 +412,449 @@ interface RenderData {
     billToCustomer: any;
     billToAddr: any;
     billToSnapshot: any;
+}
+
+// ─── Excel sections (mirror the PDF templates) ──────────────────────────────
+
+/** Bill-To (buyer) address lines — snapshot preferred, else FK lookup. */
+function billToExcelLines(d: RenderData): string[] {
+    const bSnap = d.billToSnapshot || null;
+    const btCust = d.billToCustomer || {};
+    const bta = d.billToAddr || {};
+    const parts = bSnap
+        ? [
+              bSnap.name,
+              bSnap.address_line1,
+              bSnap.address_line2,
+              [bSnap.city, bSnap.state].filter(Boolean).join(', '),
+              [bSnap.country, bSnap.postcode].filter(Boolean).join(' - '),
+          ]
+        : [
+              btCust.company_name,
+              bta?.address_line1,
+              bta?.address_line2,
+              [bta?.city, bta?.state].filter(Boolean).join(', '),
+              bta?.country,
+          ];
+    return parts.map((s: any) => String(s || '').trim()).filter(Boolean);
+}
+
+/** Consignee (Ship-To) address lines — snapshot preferred, else FK lookup. */
+function consigneeExcelLines(d: RenderData): string[] {
+    const cSnap = d.consigneeSnapshot || null;
+    const cust = d.customer || {};
+    const cad = d.consigneeAddr || {};
+    const parts = cSnap
+        ? [
+              cSnap.name,
+              cSnap.address_line1,
+              cSnap.address_line2,
+              [cSnap.city, cSnap.state].filter(Boolean).join(', '),
+              [cSnap.country, cSnap.postcode].filter(Boolean).join(' - '),
+          ]
+        : [
+              cust.company_name,
+              cad?.address_line1,
+              cad?.address_line2,
+              [cad?.city, cad?.state].filter(Boolean).join(', '),
+              cad?.country,
+          ];
+    return parts.map((s: any) => String(s || '').trim()).filter(Boolean);
+}
+
+/** Exporter / shipper (company) address lines for the header block. */
+function exporterExcelLines(d: RenderData): string[] {
+    const c = d.company || {};
+    const ca = d.companyAddr || {};
+    const parts = [
+        ca.address_line1,
+        ca.address_line2,
+        [ca.city, ca.state].filter(Boolean).join(', '),
+        [ca.country, ca.postcode].filter(Boolean).join(' - '),
+        ca.gstin || c.tax_number ? `GSTIN/UIN: ${ca.gstin || c.tax_number}` : '',
+        c.email ? `E-Mail: ${c.email}` : '',
+    ];
+    return parts.map((s: any) => String(s || '').trim()).filter(Boolean);
+}
+
+/** Notify-party address lines (export docs). */
+function notifyExcelLines(d: RenderData): string[] {
+    const n = d.notifySnapshot || {};
+    if (!(n.name || n.address_line1 || n.address)) return [];
+    const parts = [
+        n.name,
+        n.address_line1 || n.address,
+        n.address_line2,
+        [n.city, n.state].filter(Boolean).join(', '),
+        [n.country, n.postcode].filter(Boolean).join(' - '),
+    ];
+    return parts.map((s: any) => String(s || '').trim()).filter(Boolean);
+}
+
+/** Commercial / Export / Packing List Excel sections — mirrors the PDF field-for-field. */
+function buildInvoiceExcelSections(
+    d: RenderData,
+    doc: InvoicePdfDocType
+): DocSection[] {
+    const inv = d.invoice || {};
+    const c = d.company || {};
+    const ca = d.companyAddr || {};
+    const code = inv.currency_code || 'INR';
+    const sym = inv.currency_symbol || getCurrencySymbol(code) || code;
+    const isPacking = doc === 'packing-list';
+    const isExport = doc === 'export';
+    const isLut = inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED;
+    const showIgst = !isPacking && !isExport && !isLut;
+    const er = Number(inv.exchange_rate || 0);
+    const COLS = 8;
+    const dash = (v: any): string => {
+        const s = String(v == null ? '' : v).trim();
+        return s || '-';
+    };
+    const pad = (cells: DocCell[]): DocCell[] => {
+        const out = cells.slice(0, COLS);
+        while (out.length < COLS) out.push(textCell(''));
+        return out;
+    };
+
+    const title = isPacking
+        ? 'PACKING LIST'
+        : isExport
+        ? 'EXPORT INVOICE'
+        : 'COMMERCIAL INVOICE';
+    const subtitle = isPacking
+        ? 'SUPPLY MEANT FOR EXPORT'
+        : isLut
+        ? 'SUPPLY MEANT FOR EXPORT UNDER LUT WITHOUT PAYMENT OF IGST'
+        : 'SUPPLY MEANT FOR EXPORT WITH PAYMENT OF IGST';
+
+    // Distinct line-level fallback for the SO/Quotation refs.
+    const distinct = (key: string): string =>
+        Array.from(
+            new Set(
+                (d.lines || [])
+                    .map((l: any) => l?.[key])
+                    .filter((v: any): v is string => !!v)
+            )
+        ).join(', ');
+    const quotationNo = inv.quotation_voucher_no || distinct('quotation_voucher_no');
+    const soNo = inv.purchase_order_voucher_no || distinct('purchase_order_voucher_no');
+
+    // ── SHIPPER block (left of the top band) ──
+    const shipperLines: string[] = [];
+    for (const s of [
+        ca.address_line1,
+        ca.address_line2,
+        [ca.city, ca.state].filter(Boolean).join(', '),
+        [ca.country, ca.postcode].filter(Boolean).join(' - '),
+    ])
+        if (String(s || '').trim()) shipperLines.push(String(s).trim());
+    shipperLines.push(`GST No: ${dash(ca.gstin || c.tax_number)}`);
+    shipperLines.push(`PAN No.: ${dash(c.pan)}`);
+    shipperLines.push(`IEC No.: ${dash(c.iec)}`);
+    shipperLines.push(
+        `LUT No. & date: ${dash(inv.lut_no)}${inv.lut_date ? ' / ' + docDate(inv.lut_date) : ''}`
+    );
+
+    // ── Header meta grid (right of the top band) ──
+    const metaPairs: Array<[string, string]> = [
+        [isPacking ? 'Packing List No.' : 'Invoice No.', dash(inv.voucher_no)],
+        ['Date', dash(docDate(inv.invoice_date))],
+        ['Quotation No.', dash(quotationNo)],
+        ['Sales Order No.', dash(soNo)],
+        ['Reference No.', dash(inv.reference_nos || inv.reference_no)],
+        ['Shipping No.', dash(inv.shipping_voucher_no)],
+    ];
+    if (!isPacking) {
+        metaPairs.push(['Incoterm', dash(inv.incoterm)]);
+        metaPairs.push(["Buyer's PO #", dash(inv.customer_po_no)]);
+        metaPairs.push(['Currency', code]);
+        metaPairs.push([
+            'Exchange Rate',
+            er > 0 ? `${sym} 1 = ₹${fmt(1 / er, 2)}` : '-',
+        ]);
+        if (isExport && inv.bl_awb_no)
+            metaPairs.push([`${awbLabel(inv.mode)} No.`, inv.bl_awb_no]);
+    }
+
+    const sections: DocSection[] = [
+        { kind: 'title', text: title, subtitle },
+        {
+            kind: 'band',
+            left: { label: `SHIPPER: ${c.company_name || ''}`, lines: shipperLines },
+            right: { pairs: metaPairs },
+        },
+        {
+            kind: 'band',
+            left: { label: 'Bill To', lines: billToExcelLines(d) },
+            right: { label: 'Ship To', lines: consigneeExcelLines(d).length ? consigneeExcelLines(d) : billToExcelLines(d) },
+        },
+    ];
+    const notifyLines = notifyExcelLines(d);
+    if (notifyLines.length)
+        sections.push({ kind: 'party', label: 'Buyer(s) / Notify Party', lines: notifyLines });
+
+    // ── Origin / destination / terms / export route ──
+    const routeLabel = isLut
+        ? 'Export Under LUT (Without Payment of IGST)'
+        : 'Export With Payment of IGST';
+    const billType = inv.shipping_bill_type
+        ? SHIPPING_BILL_TYPE_LABELS[inv.shipping_bill_type] || inv.shipping_bill_type
+        : '';
+    const termsPay =
+        dash(inv.delivery_terms || inv.incoterm) +
+        (inv.payment_terms ? ` · Payment: ${inv.payment_terms}` : '');
+    const originPairs: Array<[string, string]> = [
+        ['Country of Origin', dash(inv.country_of_origin || 'India')],
+        ['Terms of Delivery and Payment', termsPay],
+        ['Country of Destination', dash(inv.country_of_destination)],
+        ['Export Route', routeLabel + (billType ? ` · Export Under ${billType}` : '')],
+    ];
+    if (!isPacking) sections.push({ kind: 'kv', pairs: originPairs });
+
+    // ── Shipping route / ports (always shown) ──
+    const pol = inv.port_of_loading_snapshot || {};
+    const pod = inv.port_of_discharge_snapshot || {};
+    const routePairs: Array<[string, string]> = [
+        ['Pre-Carriage By', dash(inv.pre_carriage_by)],
+        ['Place of Receipt', dash(inv.place_of_receipt)],
+        ['Port of Loading', dash(pol.name || pol.port_name || pol.code)],
+        ['Port of Discharge', dash(pod.name || pod.port_name || pod.code)],
+        ['Place of Delivery', dash(inv.place_of_delivery)],
+    ];
+    sections.push({ kind: 'kv', pairs: routePairs });
+    sections.push({ kind: 'spacer' });
+
+    if (isPacking) {
+        const head = [
+            'SR', 'Part No', 'HSN', 'Description of Goods',
+            'Qty / Unit', 'No. of Pkgs', 'Net Weight', 'Gross Weight',
+        ];
+        const rows: DocCell[][] = (d.lines || []).map((l: any, i: number) =>
+            pad([
+                textCell(i + 1, 'c'),
+                textCell(l.part_no || '-', 'c'),
+                textCell(l.hsn_code || '-', 'c'),
+                textCell((l.product_name || '') + (l.product_code ? ` (${l.product_code})` : ''), 'l'),
+                textCell(`${fmt(l.qty, 2)} ${l.uqc_code || l.unit || ''}`.trim(), 'r'),
+                textCell(l.packages != null && l.packages !== '' ? String(l.packages) : '-', 'r'),
+                textCell(l.net_weight != null && l.net_weight !== '' ? `${fmt(l.net_weight, 3)} kg` : '-', 'r'),
+                textCell(l.gross_weight != null && l.gross_weight !== '' ? `${fmt(l.gross_weight, 3)} kg` : '-', 'r'),
+            ])
+        );
+        const gt: DocCell[] = [
+            { ...textCell('GRAND TOTAL', 'r', { bold: true }), colSpan: 5, fill: 'F3F2F7' },
+            textCell(''), textCell(''), textCell(''), textCell(''),
+            textCell(inv.total_packages != null ? String(inv.total_packages) : '-', 'r', { bold: true }),
+            textCell(inv.net_weight_kg != null ? `${fmt(inv.net_weight_kg, 3)} kg` : '-', 'r', { bold: true }),
+            textCell(inv.gross_weight_kg != null ? `${fmt(inv.gross_weight_kg, 3)} kg` : '-', 'r', { bold: true }),
+        ];
+        rows.push(gt);
+        sections.push({ kind: 'table', head, rows, align: ['c', 'c', 'c', 'l', 'r', 'r', 'r', 'r'] });
+        // Bank + declaration still print on the packing list PDF footer.
+        pushBankAndFooter(sections, d, inv);
+        return sections;
+    }
+
+    // ── Commercial / Export line table ──
+    const head = [
+        'SR', 'HSN', 'Part No', 'Description of Goods',
+        'Requirement #', 'Qty', 'Price / Unit', `Amount (${sym})`,
+    ];
+    let totalIgstInr = 0;
+    const rows: DocCell[][] = (d.lines || []).map((l: any, i: number) => {
+        const qty = num(l.qty);
+        const lineTotal = num(l.line_total);
+        const priceUnit = qty > 0 ? lineTotal / qty : num(l.unit_price);
+        if (showIgst) {
+            const rate = Number(l.igst_rate_pct || 0);
+            if (rate > 0)
+                totalIgstInr += (Number(l.taxable_amount || 0) / (er > 0 ? er : 1)) * (rate / 100);
+        }
+        return pad([
+            textCell(i + 1, 'c'),
+            textCell(l.hsn_code || '-', 'c'),
+            textCell(l.part_no || '-', 'c'),
+            textCell(
+                (l.product_name || '') +
+                    (l.product_code ? ` (${l.product_code})` : '') +
+                    (l.description && l.description !== l.product_name ? ` — ${l.description}` : ''),
+                'l'
+            ),
+            textCell(l.customer_reference || '', 'l'),
+            textCell(`${fmt(qty, 2)} ${l.uqc_code || l.unit || ''}`.trim(), 'r'),
+            curCell(priceUnit, sym, 2),
+            curCell(lineTotal, sym, 2, { bold: true }),
+        ]);
+    });
+
+    const sumRow = (label: string, value: number, s2 = sym, opts?: { bold?: boolean; fill?: string; color?: string }): DocCell[] => {
+        const cells: DocCell[] = [{ ...textCell(label, 'r', { bold: opts?.bold }), colSpan: COLS - 1 }];
+        for (let k = 1; k < COLS - 1; k++) cells.push(textCell(''));
+        cells.push(curCell(value, s2, 2, opts));
+        return cells;
+    };
+    if (num(inv.discount_total) > 0) {
+        rows.push(sumRow('Subtotal', num(inv.subtotal)));
+        rows.push(sumRow('Discount', -num(inv.discount_total)));
+    }
+    if (num(inv.freight_charges) > 0 || num(inv.insurance_charges) > 0 || num(inv.other_charges) > 0)
+        rows.push(sumRow('FOB Value', num(inv.fob_value), sym, { bold: true, fill: 'F3F2F7' }));
+    if (num(inv.freight_charges) > 0) rows.push(sumRow('Freight', num(inv.freight_charges)));
+    if (num(inv.insurance_charges) > 0) rows.push(sumRow('Insurance', num(inv.insurance_charges)));
+    if (num(inv.other_charges) > 0) rows.push(sumRow('Other', num(inv.other_charges)));
+    if (showIgst) rows.push(sumRow('Total IGST Amt. (INR)', totalIgstInr, '₹', { bold: true }));
+    rows.push(sumRow(`TOTAL ${inv.incoterm || 'CNF'} Amount`, num(inv.grand_total), sym, { bold: true, fill: 'FDEBD8', color: 'C25E10' }));
+    rows.push(sumRow('Advance Received', num(inv.advance_received)));
+    if (isExport) rows.push(sumRow('Balance Receivable', num(inv.balance_receivable), sym, { bold: true }));
+
+    sections.push({ kind: 'table', head, rows, align: ['c', 'c', 'c', 'l', 'l', 'r', 'r', 'r'] });
+    sections.push({ kind: 'spacer' });
+    if (inv.amount_in_words)
+        sections.push({ kind: 'note', text: `Amount Chargeable (in words): ${inv.amount_in_words}`, bold: true });
+
+    // IGST refund buckets (commercial, INR).
+    if (showIgst && Array.isArray(inv.igst_refund_buckets) && inv.igst_refund_buckets.length) {
+        sections.push({ kind: 'note', text: 'IGST Refund (INR)', bold: true });
+        const bRows = inv.igst_refund_buckets.map((b: any) => [
+            curCell(num(b.assessable_value_inr), '₹', 2),
+            textCell(`${fmt(b.rate, 2)}%`, 'c'),
+            curCell(num(b.igst_amount_inr), '₹', 2, { bold: true }),
+        ]);
+        bRows.push([
+            { ...textCell('Total IGST Refund', 'r', { bold: true }), colSpan: 2 } as DocCell,
+            textCell(''),
+            curCell(num(inv.igst_refund_amount), '₹', 2, { bold: true }),
+        ]);
+        sections.push({ kind: 'table', head: ['Assessable Value (INR)', 'IGST Rate', 'IGST Amount (INR)'], rows: bRows, align: ['r', 'c', 'r'] });
+    }
+
+    // End-use / preferential / place of supply / advance received strip.
+    sections.push({
+        kind: 'kv',
+        pairs: [
+            ['End Use Code', dash(inv.end_use_code)],
+            ['Preferential Agreement', dash(inv.preferential_agreement || 'N/A')],
+            ['Place of Supply', `${inv.place_of_supply || '96'} - Other Territory`],
+            ['Advance Received', `${sym} ${fmt(inv.advance_received, 2)}`],
+        ],
+    });
+    // Cargo totals strip.
+    sections.push({
+        kind: 'kv',
+        pairs: [
+            ['Total Packages', dash(inv.total_packages)],
+            ['Net Weight', inv.net_weight_kg != null ? `${fmt(inv.net_weight_kg, 3)} kg` : '-'],
+            ['Gross Weight', inv.gross_weight_kg != null ? `${fmt(inv.gross_weight_kg, 3)} kg` : '-'],
+        ],
+    });
+
+    pushBankAndFooter(sections, d, inv);
+    return sections;
+}
+
+/** Bank details + terms + declaration/signatory footer — shared by all invoice docs. */
+function pushBankAndFooter(sections: DocSection[], d: RenderData, inv: any): void {
+    const banks = Array.isArray(inv.bank_snapshots) ? inv.bank_snapshots : [];
+    for (const b of banks) {
+        const bankLines = [
+            b.name ? `Bank Name: ${b.name}` : '',
+            b.account_no ? `A/c No.: ${b.account_no}` : '',
+            b.beneficiary ? `Beneficiary: ${b.beneficiary}` : '',
+            b.branch ? `Branch: ${b.branch}` : '',
+            b.swift_code ? `SWIFT: ${b.swift_code}` : '',
+            b.ad_code ? `AD Code: ${b.ad_code}` : '',
+        ].filter(Boolean);
+        if (bankLines.length)
+            sections.push({ kind: 'party', label: 'Bank Details', lines: bankLines });
+    }
+    if (inv.terms)
+        sections.push({ kind: 'note', text: `Terms & Conditions: ${inv.terms}` });
+    sections.push({
+        kind: 'band',
+        left: {
+            label: 'Declaration',
+            lines: [
+                inv.declaration_text ||
+                    'We declare that invoice shows the actual price of the goods described and that all particulars are true and correct.',
+            ],
+        },
+        right: { label: '', lines: [`for ${d.company?.company_name || ''}`, 'Authorized Signatory'] },
+    });
+}
+
+/** Receipt Voucher Excel sections. */
+function buildReceiptExcelSections(
+    d: RenderData,
+    payment: any,
+    totalReceived: number
+): DocSection[] {
+    const inv = d.invoice || {};
+    const code = inv.currency_code || 'INR';
+    const grand = num(inv.grand_total);
+    const balance = grand - totalReceived;
+    const receivedFrom =
+        d.consigneeSnapshot?.name || d.customer?.company_name || '';
+    const methodLabel = (payment.method || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (m: string) => m.toUpperCase());
+
+    const sym = inv.currency_symbol || getCurrencySymbol(code) || code;
+    const metaPairs: Array<[string, string]> = [
+        ['Receipt No.', payment.receipt_voucher_no || '—'],
+        ['Date', docDate(payment.payment_date) || '-'],
+    ];
+    const detailPairs: Array<[string, string]> = [
+        [
+            'Towards Invoice',
+            `${inv.voucher_no || '(DRAFT)'}${inv.invoice_date ? ' dated ' + docDate(inv.invoice_date) : ''}`,
+        ],
+        ['Mode', methodLabel || '—'],
+        ['Reference', payment.reference || '—'],
+        ['Received in Bank', payment.bank_name || '—'],
+        ['Currency', code],
+    ];
+
+    // Summary as a 2-col table (right-aligned currency) — mirrors the PDF box.
+    const sumRow = (label: string, value: number, opts?: { bold?: boolean; fill?: string; color?: string }): DocCell[] => [
+        textCell(label, 'r', { bold: opts?.bold }),
+        curCell(value, sym, 2, opts),
+    ];
+    const summaryRows: DocCell[][] = [
+        sumRow('Invoice Total', grand),
+        sumRow('Total Received (incl. this receipt)', totalReceived),
+        sumRow('Balance Receivable', balance, { bold: true, fill: 'FDEBD8', color: 'C25E10' }),
+    ];
+
+    const sections: DocSection[] = [
+        { kind: 'title', text: 'RECEIPT VOUCHER', subtitle: d.company?.company_name },
+        {
+            kind: 'band',
+            left: { label: d.company?.company_name || 'Company', lines: exporterExcelLines(d) },
+            right: { pairs: metaPairs },
+        },
+        {
+            kind: 'party',
+            label: 'Received With Thanks From',
+            lines: [receivedFrom].filter(Boolean),
+        },
+        {
+            kind: 'note',
+            text: `Amount Received: ${sym} ${fmt(payment.amount, 2)}`,
+            bold: true,
+        },
+        { kind: 'kv', pairs: detailPairs },
+        { kind: 'spacer' },
+        {
+            kind: 'table',
+            head: ['Summary', `Amount (${sym})`],
+            rows: summaryRows,
+            align: ['r', 'r'],
+        },
+    ];
+    if (payment.notes)
+        sections.push({ kind: 'note', text: `Notes: ${payment.notes}` });
+    return sections;
 }
 
 /** AWB/BL transport-doc label, derived from invoice.mode (sea→BL, air-courier

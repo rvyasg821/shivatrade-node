@@ -10,6 +10,14 @@ import { CustomerAddressRepository } from '@modules/customer/repository/reposito
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
 import {
+    buildDocWorkbook,
+    buildExcelFilename,
+    curCell,
+    textCell,
+    DocCell,
+    DocSection,
+} from '@common/excel-doc/excel-doc.builder';
+import {
     escHtml as esc,
     fmt2 as fmt,
     fmt4,
@@ -66,6 +74,26 @@ export class PoPdfService {
             .replace(/[\\/]+/g, '-')
             .replace(/[^A-Za-z0-9_\-.]/g, '');
         return `${safe}.pdf`;
+    }
+
+    /** Styled Sales Order Excel — mirrors render, reuses buildContext. */
+    async renderExcel(
+        po: PurchaseOrderGetResponseDto,
+        companyId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const ctx = await this.buildContext(po, companyId);
+        const sections = buildPoExcelSections(ctx);
+        const buffer = buildDocWorkbook({
+            sheetName: 'Sales Order',
+            // 10 cols mirroring the PDF: Sl | Description | HSN/SAC | Part No |
+            // Due on | Quantity | Rate | per | Disc % | Amount.
+            sections,
+            columnWidths: [5, 30, 12, 12, 12, 12, 14, 8, 8, 16],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(po.voucher_no || 'SalesOrder'),
+        };
     }
 
     private async buildContext(
@@ -433,6 +461,212 @@ function lineSellDoc(l: any): { amount: number; rate: number } {
     const amount = r2(taxable + expenses - rebates + margin);
     const rate = qty > 0 ? amount / qty : costDoc;
     return { amount, rate };
+}
+
+/**
+ * Map the SO PDF context to styled Excel sections — a faithful mirror of
+ * buildPoHtml: company block + voucher meta band, Consignee | Buyer band, the
+ * full 10-column line table with Total / Freight / Grand Total rows, amount in
+ * words, remarks, then the PAN·Declaration | Bank·Signatory footer band.
+ */
+function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
+    const { po, company, customer, bank, amountInWords, fobTotal, freightTotal } =
+        ctx;
+    const lines = po.lines || [];
+    const sym = po.currency_symbol || po.currency_code || '₹';
+    const COLS = 10;
+    const pad = (cells: DocCell[]): DocCell[] => {
+        const out = cells.slice(0, COLS);
+        while (out.length < COLS) out.push(textCell(''));
+        return out;
+    };
+
+    // ── Company block (left of the top band) ──
+    const companyLines: string[] = [];
+    if (company.address) companyLines.push(...company.address.split('\n'));
+    if (company.gstin) companyLines.push(`GSTIN/UIN: ${company.gstin}`);
+    if (company.state)
+        companyLines.push(
+            `State Name: ${company.state}${company.stateCode ? `, Code: ${company.stateCode}` : ''}`
+        );
+    if (company.cin) companyLines.push(`CIN: ${company.cin}`);
+    if (company.email) companyLines.push(`E-Mail: ${company.email}`);
+
+    // ── Voucher meta grid (right of the top band) ──
+    const cs: any = (po as any).consignee_snapshot || {};
+    const consigneeCountry = cs.country || '';
+    const otherRef =
+        (po as any).quotation_voucher_no || (po as any).pfi_voucher_no || '';
+    const metaPairs: Array<[string, string]> = [
+        ['Voucher No.', po.voucher_no || '-'],
+        ['Dated', docDate(po.po_date) || '-'],
+    ];
+    if ((po as any).reference_no)
+        metaPairs.push(['Reference No.', (po as any).reference_no]);
+    metaPairs.push(['Lead Ref.', (po as any).lead_voucher_no || '-']);
+    metaPairs.push(['Mode/Terms of Payment', po.payment_terms || '-']);
+    metaPairs.push([
+        "Buyer's Ref./Order No.",
+        (po as any).customer_po_number || po.voucher_no || '-',
+    ]);
+    metaPairs.push(['Other References', otherRef || '-']);
+    metaPairs.push(['Dispatched through', (po as any).dispatched_through || '-']);
+    metaPairs.push(['Destination', consigneeCountry || '-']);
+    metaPairs.push(['Country', consigneeCountry || '-']);
+    metaPairs.push(['Terms of Delivery', po.delivery_terms || '-']);
+
+    // ── Consignee (Ship to) | Buyer (Bill to) band ──
+    const consigneeName = cs.name || customer.name || '';
+    const consigneeAddrLines = [
+        cs.address_line1,
+        cs.address_line2,
+        [cs.city, cs.postcode].filter(Boolean).join(' '),
+        cs.country,
+    ].filter(Boolean);
+    const consigneeLines = consigneeAddrLines.length
+        ? [consigneeName, ...consigneeAddrLines]
+        : [consigneeName, customer.address || ''].filter(Boolean);
+    if (cs.state) consigneeLines.push(`State Name: ${cs.state}`);
+    const buyerLines = [customer.name || '-'];
+    if (customer.address) buyerLines.push(...customer.address.split('\n'));
+    if (customer.phone) buyerLines.push(customer.phone);
+    if (customer.email) buyerLines.push(customer.email);
+
+    // ── Line table (10 cols) ──
+    const head = [
+        'Sl No.',
+        'Description of Goods',
+        'HSN/SAC',
+        'Part No.',
+        'Due on',
+        'Quantity',
+        'Rate',
+        'per',
+        'Disc. %',
+        `Amount (${sym})`,
+    ];
+    const dueOn = docDate(po.expected_delivery_date) || docDate(po.po_date) || '';
+    const rows: DocCell[][] = lines.length
+        ? lines.map((l: any, i: number) => {
+              const sell = lineSellDoc(l);
+              const qty = Number(l.qty) || 0;
+              const disc = Number(l.discount_pct) || 0;
+              return pad([
+                  textCell(i + 1, 'c'),
+                  textCell(l.product_name || '-', 'l', { bold: true }),
+                  textCell(l.hsn_code || '', 'c'),
+                  textCell(l.part_no || '', 'c'),
+                  textCell(dueOn, 'c'),
+                  textCell(`${fmt(qty)} ${l.unit || ''}`.trim(), 'r'),
+                  curCell(sell.rate, sym, 4),
+                  textCell(l.unit || '', 'c'),
+                  textCell(disc ? `${fmt(disc)} %` : '', 'r'),
+                  curCell(sell.amount, sym, 4, { bold: true }),
+              ]);
+          })
+        : [pad([textCell('No line items.', 'c')])];
+
+    // Total / Freight / Grand Total rows (aligned under Quantity + Amount).
+    const totalQty = lines.reduce((s: number, l: any) => s + (Number(l.qty) || 0), 0);
+    const unitSet = new Set(lines.map((l: any) => l.unit).filter(Boolean));
+    const totalUnit = unitSet.size === 1 ? `${[...unitSet][0]}` : '';
+    const totalRow = pad([
+        textCell(''),
+        textCell('Total', 'r', { bold: true }),
+        textCell(''),
+        textCell(''),
+        textCell(''),
+        textCell(`${fmt(totalQty)} ${totalUnit}`.trim(), 'r', { bold: true }),
+        textCell(''),
+        textCell(''),
+        textCell(''),
+        curCell(fobTotal, sym, 4, { bold: true, fill: 'F3F2F7' }),
+    ]);
+    totalRow[9].fill = 'F3F2F7';
+    rows.push(totalRow);
+    if (freightTotal > 0) {
+        rows.push(
+            pad([
+                textCell(''),
+                textCell('Freight', 'r'),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                curCell(freightTotal, sym, 4),
+            ])
+        );
+    }
+    rows.push(
+        pad([
+            textCell(''),
+            textCell('Grand Total', 'r', { bold: true }),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            curCell(fobTotal + freightTotal, sym, 2, {
+                bold: true,
+                fill: 'FDEBD8',
+                color: 'C25E10',
+            }),
+        ])
+    );
+
+    // ── Footer band: PAN·Declaration | Bank·Signatory ──
+    const leftFooter: string[] = [];
+    if (company.pan) leftFooter.push(`Company's PAN: ${company.pan}`);
+    leftFooter.push(
+        'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.'
+    );
+    const rightFooter: string[] = [];
+    if (bank) {
+        rightFooter.push(`Bank Name: ${bank.bank_name}`);
+        rightFooter.push(`A/c No.: ${bank.account_number}`);
+        rightFooter.push(
+            `Branch & IFS Code: ${[bank.branch_name, bank.ifsc].filter(Boolean).join(' & ')}`
+        );
+    }
+    rightFooter.push(`for ${company.name || ''}`);
+    if (company.signatory) rightFooter.push(company.signatory);
+    rightFooter.push('Authorised Signatory');
+
+    const sections: DocSection[] = [
+        { kind: 'title', text: 'SALES ORDER', subtitle: company.name },
+        {
+            kind: 'band',
+            left: { label: company.name || 'Seller', lines: companyLines },
+            right: { pairs: metaPairs },
+        },
+        {
+            kind: 'band',
+            left: { label: 'Consignee (Ship to)', lines: consigneeLines },
+            right: { label: 'Buyer (Bill to)', lines: buyerLines },
+        },
+        { kind: 'spacer' },
+        {
+            kind: 'table',
+            head,
+            rows,
+            align: ['c', 'l', 'c', 'c', 'c', 'r', 'r', 'c', 'r', 'r'],
+        },
+        { kind: 'spacer' },
+        { kind: 'note', text: `Amount Chargeable (in words): ${amountInWords}`, bold: true },
+    ];
+    const remarks = (po as any).remarks || company.remarks || '';
+    if (remarks) sections.push({ kind: 'note', text: `Remarks: ${remarks}` });
+    sections.push({
+        kind: 'band',
+        left: { label: "Company's PAN & Declaration", lines: leftFooter },
+        right: { label: "Company's Bank Details", lines: rightFooter },
+    });
+    return sections;
 }
 
 function buildPoHtml(ctx: PoPdfContext): string {

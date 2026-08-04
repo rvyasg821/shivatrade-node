@@ -43,6 +43,13 @@ import {
     buildPdfFooterTemplate,
     loadCompanyLogoDataUri,
 } from '@common/pdf/pdf-letterhead.util';
+import {
+    buildDocWorkbook,
+    buildExcelFilename,
+    textCell,
+    DocCell,
+    DocSection,
+} from '@common/excel-doc/excel-doc.builder';
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking-event.enum';
 import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
@@ -1080,6 +1087,92 @@ export class GrnService {
         });
         const safe = (data.voucher_no || grnId).replace(/[^A-Za-z0-9_-]+/g, '_');
         return { buffer, filename: `GRN-${safe}.pdf` };
+    }
+
+    /** Styled GRN Excel (mirrors the PDF) — received/rejected/pending qty. */
+    async generateExcel(
+        companyId: string,
+        grnId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const grn = await this.mapGet(companyId, grnId);
+        const company: any = await this.companyRepository.findOneById(companyId);
+
+        const metaPairs: Array<[string, string]> = [
+            ['GRN No.', grn.voucher_no || '-'],
+            ['Date', grn.grn_date || '-'],
+            ['Vendor PO', grn.po_vendor_voucher_no || '-'],
+            ['Vendor Invoice No.', (grn as any).po_vendor_invoice_number || '-'],
+            ['Sales Order', grn.purchase_order_voucher_no || '-'],
+            ['Customer PO', grn.customer_po_number || '-'],
+        ];
+        const vendorLines = [grn.vendor_name || '-'];
+        if ((grn as any).vendor_code)
+            vendorLines.push(`Vendor Code: ${(grn as any).vendor_code}`);
+
+        const head = [
+            '#',
+            'Item',
+            'Part No',
+            'HSN',
+            'Dispatched',
+            'Received',
+            'Rejected',
+            'Pending',
+            'Batch',
+            'Remarks',
+        ];
+        const rows: DocCell[][] = (grn.lines || []).map((l: any, i: number) => {
+            const dispatched = num(l.dispatched_qty) - num(l.other_received_qty);
+            const unit = l.unit || '';
+            return [
+                textCell(i + 1, 'c'),
+                textCell(
+                    (l.product_name || l.product_code || '-') +
+                        (l.description ? ` — ${l.description}` : ''),
+                    'l'
+                ),
+                textCell(l.part_no || '-', 'c'),
+                textCell(l.hsn_code || '-', 'c'),
+                textCell(`${dispatched.toFixed(2)} ${unit}`.trim(), 'r'),
+                textCell(`${num(l.accepted_qty).toFixed(2)} ${unit}`.trim(), 'r'),
+                textCell(num(l.rejected_qty).toFixed(2), 'r'),
+                textCell(`${num(l.pending_qty).toFixed(2)} ${unit}`.trim(), 'r'),
+                textCell(l.batch_no || '', 'l'),
+                textCell(l.remarks || '', 'l'),
+            ];
+        });
+
+        const sections: DocSection[] = [
+            {
+                kind: 'title',
+                text: 'GOODS RECEIPT NOTE',
+                subtitle: company?.company_name,
+            },
+            {
+                kind: 'band',
+                left: { label: 'Vendor', lines: vendorLines },
+                right: { label: 'GRN Details', pairs: metaPairs },
+            },
+            { kind: 'spacer' },
+            {
+                kind: 'table',
+                head,
+                rows,
+                align: ['c', 'l', 'c', 'c', 'r', 'r', 'r', 'r', 'l', 'l'],
+            },
+        ];
+        if (grn.notes)
+            sections.push({ kind: 'note', text: `Notes: ${grn.notes}` });
+
+        const buffer = buildDocWorkbook({
+            sheetName: 'GRN',
+            sections,
+            columnWidths: [5, 28, 12, 10, 14, 14, 12, 14, 12, 18],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(`GRN-${grn.voucher_no || grnId}`),
+        };
     }
 
     /** Generate the PDF from the GRN id alone — resolves the company from the

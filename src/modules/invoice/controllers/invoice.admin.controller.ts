@@ -650,6 +650,58 @@ export class InvoiceAdminController {
         res.end(buffer);
     }
 
+    /**
+     * Styled single-document Excel mirroring the invoice PDF. Same `doc` switch
+     * as /pdf: commercial (default) | export | packing-list | receipt.
+     */
+    @AuthJwtAccessProtected()
+    @Get('/:invoiceId/excel')
+    async excel(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('invoiceId') invoiceId: string,
+        @Query('doc') docQuery: string | undefined,
+        @Query('paymentId') paymentIdQuery: string | undefined,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        let buffer: Buffer;
+        let filename: string;
+        if (docQuery === 'receipt') {
+            if (!paymentIdQuery) {
+                throw new BadRequestException(
+                    'paymentId is required for a receipt.'
+                );
+            }
+            ({ buffer, filename } =
+                await this.invoicePdfService.renderReceiptExcel(
+                    companyId,
+                    invoiceId,
+                    paymentIdQuery
+                ));
+        } else {
+            const doc: InvoicePdfDocType =
+                docQuery === 'packing-list'
+                    ? 'packing-list'
+                    : docQuery === 'export'
+                    ? 'export'
+                    : 'commercial';
+            ({ buffer, filename } = await this.invoicePdfService.renderExcel(
+                companyId,
+                invoiceId,
+                doc
+            ));
+        }
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buffer.length.toString());
+        res.end(buffer);
+    }
+
     // ─── Tracking events (SHIPPING_INVOICE_MERGE_PLAN §8) ───────────────
 
     @Response('invoice.event.list')

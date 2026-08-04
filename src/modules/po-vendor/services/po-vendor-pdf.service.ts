@@ -14,6 +14,15 @@ import {
     buildTallyFooterTemplate,
 } from '@common/pdf/tally-pdf.util';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
+import {
+    buildDocWorkbook,
+    buildExcelFilename,
+    curCell,
+    moneyCell,
+    textCell,
+    DocCell,
+    DocSection,
+} from '@common/excel-doc/excel-doc.builder';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
@@ -74,6 +83,30 @@ export class PoVendorPdfService {
         return `${safe}.pdf`;
     }
 
+    /**
+     * Styled single-document Excel mirroring the POV PDF. Reuses the SAME
+     * `buildContext` fetch/derive path as `render`, then maps to DocSection[]
+     * for the shared workbook builder (build plan §5/§7.2 — no re-query).
+     */
+    async renderExcel(
+        pov: PoVendorGetResponseDto,
+        companyId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const ctx = await this.buildContext(pov, companyId);
+        const sections = buildPovExcelSections(ctx);
+        const buffer = buildDocWorkbook({
+            sheetName: 'Vendor PO',
+            // 11 cols: Sl | Description | Part No | HSN/SAC | Due on | Quantity
+            // | Rate | per | Disc % | GST % | Amount.
+            sections,
+            columnWidths: [5, 26, 11, 11, 11, 12, 12, 7, 8, 8, 15],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(pov.voucher_no || 'VendorPO'),
+        };
+    }
+
     /** Printable Payment Voucher (STIPL/PV/…) for a single vendor payment. */
     async renderPayment(
         pov: PoVendorGetResponseDto,
@@ -101,6 +134,27 @@ export class PoVendorPdfService {
             .replace(/[\\/]+/g, '-')
             .replace(/[^A-Za-z0-9_\-.]/g, '');
         return `${safe}.pdf`;
+    }
+
+    /** Styled Excel of a single Payment Voucher — mirrors renderPayment. */
+    async renderPaymentExcel(
+        pov: PoVendorGetResponseDto,
+        payment: PoVendorPaymentResponseDto,
+        companyId: string
+    ): Promise<{ buffer: Buffer; filename: string }> {
+        const ctx = await this.buildContext(pov, companyId);
+        const sections = buildPaymentExcelSections(ctx, payment);
+        const buffer = buildDocWorkbook({
+            sheetName: 'Payment Voucher',
+            sections,
+            columnWidths: [30, 22, 16, 16, 16, 18],
+        });
+        return {
+            buffer,
+            filename: buildExcelFilename(
+                payment.payment_voucher_no || 'PaymentVoucher'
+            ),
+        };
     }
 
     private async buildContext(
@@ -531,6 +585,166 @@ function buildPaymentFooterTemplate(ctx: PovPdfContext): string {
     });
 }
 
+/** Map the payment-voucher context to styled Excel sections — mirrors the PDF. */
+function buildPaymentExcelSections(
+    ctx: PovPdfContext,
+    payment: PoVendorPaymentResponseDto
+): DocSection[] {
+    const { pov, company, vendor } = ctx;
+    const code = pov.currency_code || 'INR';
+    const sym = pov.currency_symbol || code || '₹';
+    const voided = !!payment.voided_at;
+
+    // Company (header) block.
+    const companyLines: string[] = [];
+    if (company.phone) companyLines.push(company.phone);
+    if (company.email) companyLines.push(company.email);
+
+    // PAID TO block — vendor.
+    const paidToLines = [vendor.name || '-'];
+    if (vendor.code) paidToLines.push(`Vendor Code: ${vendor.code}`);
+    if (vendor.address)
+        paidToLines.push(...String(vendor.address).split('\n'));
+    if (vendor.state && !vendor.address) paidToLines.push(vendor.state);
+    if (vendor.gstin) paidToLines.push(`GSTIN: ${vendor.gstin}`);
+
+    // PAYMENT DETAILS rows.
+    const bankSnap: any = payment.company_bank_snapshot || null;
+    const detailPairs: Array<[string, string]> = [
+        ['Vendor PO', pov.voucher_no || '-'],
+        ['Vendor Invoice No.', payment.invoice_number || '-'],
+        ['Payment Date', dateOnly(payment.payment_date) || '-'],
+        [
+            'Paid From (Bank)',
+            bankSnap?.bank_name
+                ? `${bankSnap.bank_name}${bankSnap.account_number ? ' — A/c ' + bankSnap.account_number : ''}`
+                : '-',
+        ],
+        ['Notes', payment.notes || '-'],
+    ];
+
+    // Summary — Order Value / Total Paid / (TDS · Net) / Balance Payable.
+    const povTdsTotal = (pov.payments || [])
+        .filter((pp: any) => !pp.voided_at)
+        .reduce((s: number, pp: any) => s + Number(pp.tds_amount || 0), 0);
+    const grossPaid = Number(pov.amount_paid || 0);
+    const netCashPaid = Math.round((grossPaid - povTdsTotal) * 100) / 100;
+
+    const sumCell = (label: string, value: number, opts?: { bold?: boolean; fill?: string; color?: string }): DocCell[] => [
+        textCell(label, 'r', { bold: opts?.bold }),
+        curCell(value, sym, 2, opts),
+    ];
+    const summaryRows: DocCell[][] = [
+        sumCell('Order Value (Payable)', Number(pov.order_value || 0)),
+    ];
+    if (povTdsTotal > 0) {
+        summaryRows.push(sumCell('Total Paid (Gross)', grossPaid));
+        summaryRows.push(sumCell('TDS Deducted', -povTdsTotal));
+        summaryRows.push(sumCell('Net Cash Paid', netCashPaid));
+    } else {
+        summaryRows.push(sumCell('Total Paid', grossPaid));
+    }
+    summaryRows.push(
+        sumCell('Balance Payable', Number(pov.balance_payable || 0), {
+            bold: true,
+            fill: 'FDEBD8',
+            color: 'C25E10',
+        })
+    );
+
+    const sections: DocSection[] = [
+        {
+            kind: 'title',
+            text: 'PAYMENT VOUCHER',
+            subtitle: `${payment.payment_voucher_no || ''}${voided ? '  —  VOIDED' : '  —  PAID'}`,
+        },
+        {
+            kind: 'band',
+            left: { label: company.name || 'Company', lines: companyLines },
+            right: {
+                pairs: [
+                    ['Voucher No.', payment.payment_voucher_no || '-'],
+                    ['Status', voided ? 'VOIDED' : 'PAID'],
+                    ['Currency', code],
+                ],
+            },
+        },
+    ];
+    if (voided)
+        sections.push({
+            kind: 'note',
+            text: `VOIDED — ${payment.voided_reason || 'this payment has been voided'}`,
+            bold: true,
+        });
+    sections.push({ kind: 'party', label: 'Paid To', lines: paidToLines });
+    sections.push({ kind: 'note', text: 'PAYMENT DETAILS', bold: true });
+    sections.push({ kind: 'kv', pairs: detailPairs });
+    sections.push({ kind: 'spacer' });
+
+    // AMOUNT PAID box — one emphasised table row.
+    sections.push({
+        kind: 'table',
+        head: ['AMOUNT PAID', `(${code})`],
+        rows: [
+            [
+                textCell('AMOUNT PAID', 'l', { bold: true }),
+                curCell(Number(payment.amount || 0), sym, 2, {
+                    bold: true,
+                    fill: 'FDEBD8',
+                    color: 'C25E10',
+                }),
+            ],
+        ],
+        align: ['l', 'r'],
+    });
+    if (Number(payment.tds_amount || 0) > 0) {
+        const secLabel =
+            'TDS' +
+            (payment.tds_section
+                ? ` (${payment.tds_section}${Number(payment.tds_rate_pct || 0) > 0 ? ' @ ' + payment.tds_rate_pct + '%' : ''})`
+                : '');
+        summaryRows.unshift(
+            sumCell(
+                'Net Paid (this voucher)',
+                Number(payment.amount || 0) - Number(payment.tds_amount || 0)
+            )
+        );
+        summaryRows.unshift(sumCell(secLabel, -Number(payment.tds_amount || 0)));
+        summaryRows.unshift(
+            sumCell('Gross Amount (this voucher)', Number(payment.amount || 0))
+        );
+    }
+
+    sections.push({ kind: 'spacer' });
+    sections.push({
+        kind: 'table',
+        head: ['Summary', `Amount (${sym})`],
+        rows: summaryRows,
+        align: ['r', 'r'],
+    });
+    sections.push({ kind: 'spacer' });
+    // Signature blocks.
+    sections.push({
+        kind: 'band',
+        left: { label: '', lines: ['', 'Receiver Signature'] },
+        right: {
+            label: '',
+            lines: [
+                `for ${company.name || ''}`,
+                '',
+                company.signatory || '',
+                'Authorised Signature',
+            ].filter((l, i) => l !== '' || i === 1),
+        },
+    });
+    sections.push({
+        kind: 'band',
+        left: { label: '', lines: ['', 'Checked by'] },
+        right: { label: '', lines: ['', 'Verified by'] },
+    });
+    return sections;
+}
+
 function buildPaymentVoucherHtml(
     ctx: PovPdfContext,
     payment: PoVendorPaymentResponseDto
@@ -792,6 +1006,260 @@ function gstStateCode(gstin?: string, stateName?: string): string | undefined {
     if (gstin && /^\d{2}/.test(gstin)) return gstin.slice(0, 2);
     const key = (stateName || '').trim().toLowerCase();
     return GST_STATE_CODE_BY_NAME[key];
+}
+
+/**
+ * Map the SAME POV PDF context to styled Excel sections. Mirrors buildPovHtml's
+ * layout (Supplier block + voucher meta → line table → tax summary + grand
+ * total → amount in words), reusing its money chain so figures match the PDF.
+ */
+function buildPovExcelSections(ctx: PovPdfContext): DocSection[] {
+    const {
+        pov,
+        company,
+        consignee,
+        vendor,
+        inrTotal,
+        gstInrTotal,
+        gstBuckets,
+        chargesInrTotal,
+        chargeGstInrTotal,
+        expensesSnapshot,
+    } = ctx;
+
+    const interState = (() => {
+        const cc = gstStateCode(company.gstin, company.state);
+        const vc = gstStateCode(vendor.gstin, vendor.state);
+        if (cc && vc) return cc !== vc;
+        return false;
+    })();
+    const lines = pov.lines || [];
+    const code = pov.currency_code || 'INR';
+    const sym = pov.currency_symbol || code || '₹';
+    const gstApplies = code === 'INR';
+    const COLS = 11;
+    const pad = (cells: DocCell[]): DocCell[] => {
+        const out = cells.slice(0, COLS);
+        while (out.length < COLS) out.push(textCell(''));
+        return out;
+    };
+
+    // Money chain (native, rate = 1) — same as the PDF.
+    const subtotal = inrTotal;
+    const charges = chargesInrTotal;
+    const gstTotal = gstInrTotal;
+    const chargeGst = chargeGstInrTotal;
+    const inputGst = gstTotal + chargeGst;
+    const cgst = inputGst / 2;
+    const sgst = inputGst - cgst;
+    const grandRaw = subtotal + charges + gstTotal + chargeGst;
+    const grand = Math.round(grandRaw);
+    const roundOff = grand - grandRaw;
+    const amountInWords = numberToIndianWords(grand, code);
+
+    const orderDate = pov.dispatch_date || pov.createdAt || '';
+    const dispatchedThrough =
+        (pov as any).dispatched_through ||
+        pov.transporter_name ||
+        company.dispatched_through ||
+        '';
+    const paymentTerms =
+        (pov as any).payment_terms || company.payment_terms || '';
+    const deliveryTerms =
+        (pov as any).delivery_terms || company.delivery_terms || '';
+    const remarks = pov.notes || company.remarks || '';
+
+    // Company (Invoice To) block.
+    const companyLines: string[] = [];
+    if (company.address) companyLines.push(...company.address.split('\n'));
+    if (company.gstin) companyLines.push(`GSTIN/UIN: ${company.gstin}`);
+    if (company.state)
+        companyLines.push(
+            `State Name: ${company.state}${company.stateCode ? `, Code: ${company.stateCode}` : ''}`
+        );
+    if (company.cin) companyLines.push(`CIN: ${company.cin}`);
+    if (company.email) companyLines.push(`E-Mail: ${company.email}`);
+
+    // Voucher meta grid.
+    const metaPairs: Array<[string, string]> = [
+        ['Voucher No.', pov.voucher_no || '-'],
+        ['Dated', docDate(orderDate) || '-'],
+        ['Reference No. & Date', pov.purchase_order_voucher_no || '-'],
+        ['Mode/Terms of Payment', paymentTerms || '-'],
+        ['Dispatched through', dispatchedThrough || '-'],
+        ['Invoice No.', (pov as any).invoice_number || '-'],
+        ['Vehicle No.', pov.vehicle_no || '-'],
+        ['LR No.', pov.lr_no || '-'],
+        ['Currency', code],
+        ['Terms of Delivery', deliveryTerms || '-'],
+    ];
+
+    // Consignee (Ship to) | Supplier (Bill from) band.
+    const consigneeLines: string[] = [];
+    if (consignee.name) consigneeLines.push(consignee.name);
+    if (consignee.address) consigneeLines.push(...String(consignee.address).split('\n'));
+    if (consignee.gstin) consigneeLines.push(`GSTIN/UIN: ${consignee.gstin}`);
+    if (consignee.state) consigneeLines.push(`State Name: ${consignee.state}`);
+    const supplierLines = [vendor.name || '-'];
+    if (vendor.code) supplierLines.push(`Vendor Code: ${vendor.code}`);
+    if (vendor.address) supplierLines.push(...String(vendor.address).split('\n'));
+    if (vendor.gstin) supplierLines.push(`GSTIN/UIN: ${vendor.gstin}`);
+    if (vendor.state)
+        supplierLines.push(
+            `State Name: ${vendor.state}${vendor.stateCode ? `, Code: ${vendor.stateCode}` : ''}`
+        );
+
+    // Line table (11 cols).
+    const head = [
+        'Sl No.',
+        'Description of Goods',
+        'Part No',
+        'HSN/SAC',
+        'Due on',
+        'Quantity',
+        'Rate',
+        'per',
+        'Disc. %',
+        interState ? 'IGST %' : 'GST %',
+        `Amount (${sym})`,
+    ];
+    const dueOn = docDate(pov.expected_arrival_date) || '';
+    const rows: DocCell[][] = lines.length
+        ? lines.map((l: any, i: number) => {
+              const qty = Number(l.ordered_qty) || 0;
+              const disc = Number(l.discount_pct) || 0;
+              const gstPct = Number(l.tax_pct) || 0;
+              return pad([
+                  textCell(i + 1, 'c'),
+                  textCell(l.product_name || '-', 'l', { bold: true }),
+                  textCell(l.part_no || '-', 'c'),
+                  textCell(l.hsn_code || '-', 'c'),
+                  textCell(dueOn, 'c'),
+                  textCell(`${fmt(qty)} ${l.unit || ''}`.trim(), 'r'),
+                  curCell(Number(l.unit_price) || 0, sym, 2),
+                  textCell(l.unit || '', 'c'),
+                  textCell(disc > 0 ? `${disc} %` : '', 'r'),
+                  textCell(gstPct > 0 ? `${gstPct}%` : '-', 'c'),
+                  curCell(Number(l.line_total) || 0, sym, 2, { bold: true }),
+              ]);
+          })
+        : [pad([textCell('No line items.', 'c')])];
+
+    // Tax-summary rows in the Amount column (Tally style).
+    const sumRow = (label: string, value: number, opts?: { bold?: boolean; fill?: string; color?: string }): DocCell[] =>
+        pad([
+            textCell(''),
+            textCell(label, 'r', { bold: opts?.bold }),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            textCell(''),
+            curCell(value, sym, 2, opts),
+        ]);
+    rows.push(sumRow('Subtotal', subtotal, { bold: true, fill: 'F3F2F7' }));
+    for (const e of expensesSnapshot) {
+        const gstPct = Number((e as any).gst_pct) || 0;
+        const bits: string[] = [];
+        if ((e as any).type === 'percent')
+            bits.push(`${Number((e as any).value) || 0}%`);
+        bits.push(gstApplies && gstPct > 0 ? `GST ${gstPct}%` : 'GST N/A');
+        rows.push(
+            sumRow(`${(e as any).name} (${bits.join(', ')})`, Number((e as any).amount) || 0)
+        );
+    }
+    if (inputGst > 0.005) {
+        if (interState) rows.push(sumRow('Input IGST', inputGst));
+        else {
+            rows.push(sumRow('Input CGST', cgst));
+            rows.push(sumRow('Input SGST', sgst));
+        }
+    }
+    if (Math.abs(roundOff) > 0.005) rows.push(sumRow('Round Off', roundOff));
+    rows.push(
+        sumRow('Grand Total', grand, { bold: true, fill: 'FDEBD8', color: 'C25E10' })
+    );
+
+    const sections: DocSection[] = [
+        { kind: 'title', text: 'PURCHASE ORDER', subtitle: company.name },
+        {
+            kind: 'band',
+            left: { label: company.name || 'Invoice To', lines: companyLines },
+            right: { pairs: metaPairs },
+        },
+        {
+            kind: 'band',
+            left: { label: 'Consignee (Ship to)', lines: consigneeLines },
+            right: { label: 'Supplier (Bill from)', lines: supplierLines },
+        },
+        { kind: 'spacer' },
+        {
+            kind: 'table',
+            head,
+            rows,
+            align: ['c', 'l', 'c', 'c', 'c', 'r', 'r', 'c', 'r', 'c', 'r'],
+        },
+        { kind: 'spacer' },
+        { kind: 'note', text: `Amount Chargeable (in words): ${amountInWords}`, bold: true },
+    ];
+
+    // GST HSN/rate summary (mirrors the PDF's detailed GST table).
+    if (gstBuckets.length) {
+        const gstHead = interState
+            ? ['HSN/SAC', 'Taxable', 'IGST %', 'IGST Amt', 'Total Tax']
+            : ['HSN/SAC', 'Taxable', 'CGST %', 'CGST Amt', 'SGST %', 'SGST Amt', 'Total Tax'];
+        const gstRows = gstBuckets.map((b) => {
+            const halfRate = b.rate / 2;
+            const halfAmt = b.gst / 2;
+            return interState
+                ? [
+                      textCell(b.hsn, 'c'),
+                      curCell(b.taxable, sym, 2),
+                      textCell(`${b.rate}%`, 'c'),
+                      curCell(b.gst, sym, 2),
+                      curCell(b.gst, sym, 2, { bold: true }),
+                  ]
+                : [
+                      textCell(b.hsn, 'c'),
+                      curCell(b.taxable, sym, 2),
+                      textCell(`${halfRate}%`, 'c'),
+                      curCell(halfAmt, sym, 2),
+                      textCell(`${halfRate}%`, 'c'),
+                      curCell(b.gst - halfAmt, sym, 2),
+                      curCell(b.gst, sym, 2, { bold: true }),
+                  ];
+        });
+        sections.push({ kind: 'note', text: 'GST Summary (HSN/SAC)', bold: true });
+        sections.push({
+            kind: 'table',
+            head: gstHead,
+            rows: gstRows,
+            align: interState
+                ? ['c', 'r', 'c', 'r', 'r']
+                : ['c', 'r', 'c', 'r', 'c', 'r', 'r'],
+        });
+    }
+
+    // Footer: Declaration | Signatory.
+    const leftFooter: string[] = [];
+    if (company.pan) leftFooter.push(`Company's PAN: ${company.pan}`);
+    leftFooter.push(
+        'We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.'
+    );
+    const rightFooter: string[] = [`for ${company.name || ''}`];
+    if (company.signatory) rightFooter.push(company.signatory);
+    rightFooter.push('Authorised Signatory');
+    if (remarks) sections.push({ kind: 'note', text: `Remarks: ${remarks}` });
+    sections.push({
+        kind: 'band',
+        left: { label: 'Declaration', lines: leftFooter },
+        right: { label: '', lines: rightFooter },
+    });
+
+    return sections;
 }
 
 function buildPovHtml(ctx: PovPdfContext): string {
