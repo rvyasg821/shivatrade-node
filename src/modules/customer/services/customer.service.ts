@@ -230,6 +230,15 @@ export class CustomerService {
         );
     }
 
+    /**
+     * Empty string from the form → null for typed (numeric/date) columns, else
+     * Postgres rejects "" ("invalid input syntax for type numeric/date").
+     */
+    private nullifyEmptyTypedFields(fields: any): void {
+        if (fields.opening_balance === '') fields.opening_balance = null;
+        if (fields.opening_balance_date === '') fields.opening_balance_date = null;
+    }
+
     async create(
         companyId: string,
         data: CustomerCreateRequestDto,
@@ -264,6 +273,7 @@ export class CustomerService {
         await this.assertContactEmailsUnique(companyId, data.contacts);
 
         const { contacts: contactsRaw, addresses, ...customerFields } = data;
+        this.nullifyEmptyTypedFields(customerFields);
         const contacts = contactsRaw || [];
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
         const primaryHasEmail = !!(
@@ -375,6 +385,7 @@ export class CustomerService {
         const wasActive = !!customer.is_active;
 
         const { contacts: _c, addresses: _a, ...scalarFields } = data;
+        this.nullifyEmptyTypedFields(scalarFields);
         Object.assign(customer, scalarFields);
         // Keep status and is_active consistent.
         if (data.status !== undefined) {
@@ -664,6 +675,7 @@ export class CustomerService {
         // Overwrite scalar fields with the new payload — same shape used
         // by the regular create path.
         const { contacts, addresses, ...customerFields } = data;
+        this.nullifyEmptyTypedFields(customerFields);
         Object.assign(customer, customerFields);
         (customer as any).company_name = data.company_name.trim();
         (customer as any).soft_delete = false;

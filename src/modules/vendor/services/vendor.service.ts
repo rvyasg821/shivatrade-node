@@ -283,6 +283,12 @@ export class VendorService {
         await this.assertBankAccountsValid(companyId, data.bank_accounts);
 
         const { contacts: rawContacts, category_ids, product_category_ids, addresses, bank_accounts, ...vendorFields } = data;
+        // Empty string from the form → null for typed columns, else Postgres
+        // rejects "" ("invalid input syntax for type numeric/date").
+        if ((vendorFields as any).opening_balance === '')
+            (vendorFields as any).opening_balance = null;
+        if ((vendorFields as any).opening_balance_date === '')
+            (vendorFields as any).opening_balance_date = null;
         const contacts = rawContacts || [];
         const primaryContact = contacts.find((c) => c.is_primary) || contacts[0];
         const primaryHasEmail = !!(primaryContact && (primaryContact.email || '').trim());
@@ -446,6 +452,12 @@ export class VendorService {
             bank_accounts: _ba,
             ...scalarFields
         } = data;
+        // Empty string from the form → null for typed columns, else Postgres
+        // rejects "" ("invalid input syntax for type numeric/date").
+        if ((scalarFields as any).opening_balance === '')
+            (scalarFields as any).opening_balance = null;
+        if ((scalarFields as any).opening_balance_date === '')
+            (scalarFields as any).opening_balance_date = null;
         Object.assign(vendor, scalarFields);
         // Keep status and is_active consistent — caller may send only one.
         if (data.status !== undefined) {
