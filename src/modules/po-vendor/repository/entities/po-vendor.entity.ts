@@ -20,9 +20,9 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 60, nullable: false })
     voucher_no: string;
 
-    /** Vendor's invoice number for this PO — free text, required on create/edit.
-     *  Snapshotted onto the GRN and Debit Note. Default '' keeps existing rows
-     *  valid when the column is added (synchronize); new docs always set it. */
+    /** Vendor's invoice number for this PO — free text, OPTIONAL on create/edit.
+     *  Snapshotted onto the GRN and Debit Note. Default '' (never null) keeps the
+     *  NOT-NULL column valid whether or not the operator supplies a value. */
     @Column({ type: 'varchar', length: 120, nullable: false, default: '' })
     invoice_number: string;
 
