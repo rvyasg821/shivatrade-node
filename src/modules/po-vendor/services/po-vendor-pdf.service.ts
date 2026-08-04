@@ -1634,10 +1634,15 @@ function buildPovHtml(ctx: PovPdfContext): string {
           <td class="meta">${meta('Currency', pov.currency_code || 'INR')}</td>
           <td class="meta">${meta(
               'Exchange Rate',
-              rate !== 1
-                  ? `₹${(1 / rate).toLocaleString('en-IN', {
+              // Frozen at POV creation (INR per 1 vendor unit) — reflects the
+              // rate the deal used, NOT today's master rate. Blank for INR.
+              (pov.currency_code || 'INR') !== 'INR' &&
+                  Number((pov as any).exchange_rate) > 0
+                  ? `1 ${pov.currency_code} = ₹${Number(
+                        (pov as any).exchange_rate
+                    ).toLocaleString('en-IN', {
                         maximumFractionDigits: 4,
-                    })} per 1 ${pov.currency_code}`
+                    })}`
                   : ''
           )}</td>
         </tr>
