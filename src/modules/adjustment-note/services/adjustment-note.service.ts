@@ -13,6 +13,7 @@ import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.en
 import { AdjustmentNoteRepository } from '../repository/repositories/adjustment-note.repository';
 import { AdjustmentNoteDoc } from '../repository/entities/adjustment-note.entity';
 import { AdjustmentNoteCreateRequestDto } from '../dtos/request/adjustment-note.create.request.dto';
+import { AdjustmentNoteBatchCreateRequestDto } from '../dtos/request/adjustment-note.batch-create.request.dto';
 import { AdjustmentNoteResponseDto } from '../dtos/response/adjustment-note.response.dto';
 import {
     ENUM_ADJUSTMENT_PARTY_TYPE,
@@ -297,6 +298,72 @@ export class AdjustmentNoteService {
             }`
         );
         return this.mapOne(note);
+    }
+
+    /**
+     * Post several adjustment notes for one party in a single action (client
+     * 2026-08-05). The header (party / type / date / reason) is shared; every
+     * `lines[]` entry becomes its OWN note with its own voucher — no schema
+     * change, and each document shows as a distinct row in the register.
+     *
+     * Practical atomicity: every line (amount > 0, posting period, document
+     * link) is validated up front so a bad row aborts the WHOLE batch before
+     * any note or voucher number is minted. create() is not wrapped in a single
+     * DB transaction, but after this pre-flight a mid-loop failure is unlikely.
+     */
+    async createBatch(
+        companyId: string,
+        dto: AdjustmentNoteBatchCreateRequestDto,
+        userId: string
+    ): Promise<AdjustmentNoteResponseDto[]> {
+        if (!dto.lines?.length) {
+            throw new BadRequestException('At least one line is required.');
+        }
+        for (const line of dto.lines) {
+            if (Number(line.amount) <= 0) {
+                throw new BadRequestException(
+                    'Each amount must be greater than 0.'
+                );
+            }
+        }
+        // FY closure — check the shared posting date once.
+        await this.companySettings.assertPostingDateOpen(
+            companyId,
+            dto.note_date,
+            'adjustment note'
+        );
+        // Pre-validate every document link so a bad row rejects the whole batch
+        // before the first voucher is burned.
+        for (const line of dto.lines) {
+            if (line.document_id) {
+                await this.resolveDocumentLink(companyId, {
+                    party_type: dto.party_type,
+                    party_id: dto.party_id,
+                    document_id: line.document_id,
+                } as AdjustmentNoteCreateRequestDto);
+            }
+        }
+        // One note per line, sharing the header fields.
+        const created: AdjustmentNoteResponseDto[] = [];
+        for (const line of dto.lines) {
+            created.push(
+                await this.create(
+                    companyId,
+                    {
+                        party_type: dto.party_type,
+                        party_id: dto.party_id,
+                        direction: dto.direction,
+                        note_date: dto.note_date,
+                        reason: dto.reason,
+                        amount: String(line.amount),
+                        gst_rate: line.gst_rate,
+                        document_id: line.document_id,
+                    } as AdjustmentNoteCreateRequestDto,
+                    userId
+                )
+            );
+        }
+        return created;
     }
 
     async list(

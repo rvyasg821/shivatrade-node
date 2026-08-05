@@ -215,7 +215,8 @@ export class ProductAdminController {
     async dropdown(
         @AuthJwtPayload('companyId') companyId: string,
         @Query('search') search?: string,
-        @Query('limit') limit?: string
+        @Query('limit') limit?: string,
+        @Query('ids') ids?: string
     ): Promise<
         IResponse<
             Array<{
@@ -250,20 +251,31 @@ export class ProductAdminController {
             }>
         >
     > {
-        const find: any = { soft_delete: false, is_active: true };
+        const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
-        // Optional server-side search (code/name) — powers the line-item
-        // modal's AsyncSelect so the full catalog isn't shipped to the client.
-        if (search) {
-            find.$or = [
-                { code: { $regex: search, $options: 'i' } },
-                { name: { $regex: search, $options: 'i' } },
-            ];
-        }
+        // `ids` = resolve labels for already-selected values (edit forms) — return
+        // exactly those rows, even if now inactive, so the picker shows a name.
+        const idList = (ids || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
         const opts: any = { order: { name: 'asc' as any } };
-        const lim = Number(limit);
-        if (Number.isFinite(lim) && lim > 0) {
-            opts.paging = { limit: lim, offset: 0 };
+        if (idList.length) {
+            find._id = { $in: idList };
+        } else {
+            find.is_active = true;
+            // Optional server-side search (code/name) — powers the searchable
+            // dropdowns so the full catalog isn't shipped to the client.
+            if (search) {
+                find.$or = [
+                    { code: { $regex: search, $options: 'i' } },
+                    { name: { $regex: search, $options: 'i' } },
+                ];
+            }
+            const lim = Number(limit);
+            if (Number.isFinite(lim) && lim > 0) {
+                opts.paging = { limit: lim, offset: 0 };
+            }
         }
         const products = await this.productRepository.findAll(find, opts);
         const productIds = products.map((p) => p._id.toString());
