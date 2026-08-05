@@ -265,6 +265,10 @@ export class InvoicePdfService {
             }
         };
         pushRef(invoice.reference_no);
+        // Per-line source SO, so the Requirement # column can show WHICH Sales
+        // Order each product came from on a multi-SO invoice.
+        const lineSoVoucher = new Map<string, string>(); // poLineId → SO voucher
+        const lineSoRef = new Map<string, string>(); // poLineId → SO reference_no
         const poLineIds = Array.from(
             new Set(
                 (lines as any[])
@@ -288,6 +292,24 @@ export class InvoicePdfService {
                     const pos = await this.poRepository.findAll({
                         _id: { $in: poIds },
                     } as any);
+                    const poById = new Map<string, any>(
+                        (pos as any[]).map((po) => [po._id.toString(), po])
+                    );
+                    // poLine → its SO's voucher + reference_no.
+                    for (const pl of poLines as any[]) {
+                        const po = poById.get(
+                            pl.purchase_order_id?.toString()
+                        );
+                        if (!po) continue;
+                        lineSoVoucher.set(
+                            pl._id.toString(),
+                            po.voucher_no || ''
+                        );
+                        lineSoRef.set(
+                            pl._id.toString(),
+                            po.reference_no || ''
+                        );
+                    }
                     // Preserve SO order by voucher for a stable, readable list.
                     (pos as any[])
                         .slice()
@@ -301,6 +323,13 @@ export class InvoicePdfService {
             } catch {
                 /* non-fatal — fall back to the invoice's own reference_no */
             }
+        }
+        // Stamp each line with its source SO voucher + reference_no for the
+        // Requirement # column.
+        for (const l of lines as any[]) {
+            const plId = l.purchase_order_line_id?.toString();
+            l.so_voucher_no = plId ? lineSoVoucher.get(plId) || '' : '';
+            l.so_reference_no = plId ? lineSoRef.get(plId) || '' : '';
         }
         // Attach onto the fetched (non-persisted) invoice object for the
         // templates. `reference_nos` is the joined list; falls back to the
@@ -681,7 +710,12 @@ function buildInvoiceExcelSections(
                     (l.description && l.description !== l.product_name ? ` — ${l.description}` : ''),
                 'l'
             ),
-            textCell(l.customer_reference || '', 'l'),
+            textCell(
+                [l.so_voucher_no, l.so_reference_no, l.customer_reference]
+                    .filter(Boolean)
+                    .join('\n'),
+                'l'
+            ),
             textCell(`${fmt(qty, 2)} ${l.uqc_code || l.unit || ''}`.trim(), 'r'),
             curCell(priceUnit, sym, 2),
             curCell(lineTotal, sym, 2, { bold: true }),
@@ -1226,7 +1260,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
                 <td class="center">${esc(l.hsn_code)}</td>
                 <td class="center">${esc(l.part_no)}</td>
                 <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
-                <td style="white-space:nowrap;">${esc(l.customer_reference)}</td>
+                <td style="white-space:nowrap;">${esc(l.so_voucher_no)}${l.so_reference_no ? '<br/><span class="small muted">Ref: ' + esc(l.so_reference_no) + '</span>' : ''}${l.customer_reference ? '<br/><span class="small muted">' + esc(l.customer_reference) + '</span>' : ''}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${sym}${fmt(num(l.qty) > 0 ? (num(l.line_total) * erMul) / num(l.qty) : num(l.unit_price) * erMul, 2)}</td>
                 <td class="right strong">${sym}${fmt(num(l.line_total) * erMul, 2)}</td>
@@ -1393,7 +1427,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
                 <td class="center">${esc(l.hsn_code)}</td>
                 <td class="center">${esc(l.part_no)}</td>
                 <td>${esc(l.product_name)}${l.product_code ? '<br/><span class="small muted">' + esc(l.product_code) + '</span>' : ''}${l.description && l.description !== l.product_name ? '<br/><span class="small muted">' + esc(l.description) + '</span>' : ''}</td>
-                <td style="white-space:nowrap;">${esc(l.customer_reference)}</td>
+                <td style="white-space:nowrap;">${esc(l.so_voucher_no)}${l.so_reference_no ? '<br/><span class="small muted">Ref: ' + esc(l.so_reference_no) + '</span>' : ''}${l.customer_reference ? '<br/><span class="small muted">' + esc(l.customer_reference) + '</span>' : ''}</td>
                 <td class="right">${fmt(l.qty, 2)} ${esc(l.uqc_code || l.unit)}</td>
                 <td class="right">${sym}${fmt(num(l.qty) > 0 ? (num(l.line_total) * erMul) / num(l.qty) : num(l.unit_price) * erMul, 2)}</td>
                 <td class="right strong">${sym}${fmt(num(l.line_total) * erMul, 2)}</td>

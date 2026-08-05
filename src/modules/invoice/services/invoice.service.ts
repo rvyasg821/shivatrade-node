@@ -2001,11 +2001,13 @@ export class InvoiceService {
             customer_id: customerId,
             soft_delete: false,
         } as any)) as any[];
-        // "Active" SO = anything past draft and not cancelled (dispatch, and
-        // therefore invoiceable qty, only exists after the PO is confirmed).
-        const active = pos.filter(
-            (p) => p.status !== 'draft' && p.status !== 'cancelled'
-        );
+        // Invoiceable SO = anything not cancelled — INCLUDING drafts. A draft SO
+        // with free stock is invoiceable (sell-from-stock needs no confirmation
+        // or POV dispatch), so it must appear in this picker. Only cancelled SOs
+        // have nothing to invoice. getAddablePoLines() below still filters each
+        // SO to lines with available qty, so an empty/stockless draft never
+        // shows a line. (Was: excluded drafts, which hid stock-backed draft SOs.)
+        const active = pos.filter((p) => p.status !== 'cancelled');
         if (!active.length) return [];
 
         const quotationIds = Array.from(
