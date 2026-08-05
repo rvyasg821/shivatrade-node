@@ -19,6 +19,7 @@ import {
     AdjustmentLinkableDocument,
 } from '../services/adjustment-note.service';
 import { AdjustmentNoteCreateRequestDto } from '../dtos/request/adjustment-note.create.request.dto';
+import { AdjustmentNoteBatchCreateRequestDto } from '../dtos/request/adjustment-note.batch-create.request.dto';
 import { AdjustmentNoteVoidRequestDto } from '../dtos/request/adjustment-note.void.request.dto';
 import { AdjustmentNoteResponseDto } from '../dtos/response/adjustment-note.response.dto';
 
@@ -104,6 +105,20 @@ export class AdjustmentNoteAdminController {
     ): Promise<IResponse<AdjustmentNoteResponseDto>> {
         const note = await this.service.create(companyId, body, userId);
         return { data: note };
+    }
+
+    /** Post several adjustment notes for one party in one action — each line
+     *  becomes its own note (own voucher), sharing the batch header. */
+    @Response('adjustmentNote.create')
+    @AuthJwtAccessProtected()
+    @Post('/batch')
+    async createBatch(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @Body() body: AdjustmentNoteBatchCreateRequestDto
+    ): Promise<IResponse<AdjustmentNoteResponseDto[]>> {
+        const notes = await this.service.createBatch(companyId, body, userId);
+        return { data: notes };
     }
 
     @Response('adjustmentNote.void')

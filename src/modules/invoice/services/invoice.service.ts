@@ -1805,6 +1805,43 @@ export class InvoiceService {
         (dto as any).reference_nos =
             refList.join(', ') || (row as any).reference_no || undefined;
 
+        // ── Customer details for the detail-page header ─────────────────────
+        // The invoice stores only customer_id (customer_snapshot is unused at
+        // create), so resolve the master + primary contact here — mirrors the
+        // list's mapListBatch enrichment. Non-fatal: a missing customer just
+        // leaves the fields undefined.
+        try {
+            const cust: any = row.customer_id
+                ? await this.customerRepository.findOneById(
+                      row.customer_id.toString()
+                  )
+                : null;
+            if (cust) {
+                (dto as any).customer_name =
+                    cust.company_name || cust.name || undefined;
+                (dto as any).customer_gstin = cust.gstin || undefined;
+                const contacts: any[] =
+                    await this.customerContactRepository.findAll({
+                        customer_id: row.customer_id.toString(),
+                        soft_delete: false,
+                    } as any);
+                const primary =
+                    contacts.find((c) => c.is_primary) || contacts[0];
+                if (primary) {
+                    (dto as any).customer_contact_name =
+                        primary.name || undefined;
+                    (dto as any).customer_contact_email =
+                        primary.email || undefined;
+                    (dto as any).customer_contact_phone =
+                        primary.phone || undefined;
+                    (dto as any).customer_contact_country_code =
+                        primary.country_code || undefined;
+                }
+            }
+        } catch {
+            /* non-fatal — header simply omits the customer details */
+        }
+
         return dto;
     }
 

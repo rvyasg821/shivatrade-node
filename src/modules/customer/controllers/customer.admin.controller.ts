@@ -240,15 +240,42 @@ export class CustomerAdminController {
     @AuthJwtAccessProtected()
     @Get('/dropdown')
     async dropdown(
-        @AuthJwtPayload('companyId') companyId: string
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('search') search?: string,
+        @Query('limit') limit?: string,
+        @Query('ids') ids?: string
     ): Promise<
         IResponse<{ _id: string; company_name: string; currency?: string }[]>
     > {
-        const find: any = { soft_delete: false, is_active: true };
+        const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
-        const customers = await this.customerRepository.findAll(find, {
-            order: { company_name: 'asc' as any },
-        });
+        // `ids` = resolve labels for already-selected values (edit forms). Return
+        // exactly those rows, even if now inactive, so the picker shows a name.
+        const idList = (ids || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const opts: any = { order: { company_name: 'asc' as any } };
+        if (idList.length) {
+            find._id = { $in: idList };
+        } else {
+            find.is_active = true;
+            // Optional server-side search — customer has no code column, so
+            // search identity fields (mirrors the list; a bad column throws).
+            const term = (search || '').trim();
+            if (term) {
+                find.$or = [
+                    { company_name: { $regex: term, $options: 'i' } },
+                    { gstin: { $regex: term, $options: 'i' } },
+                    { pan: { $regex: term, $options: 'i' } },
+                ];
+            }
+            const lim = Number(limit);
+            if (Number.isFinite(lim) && lim > 0) {
+                opts.paging = { limit: lim, offset: 0 };
+            }
+        }
+        const customers = await this.customerRepository.findAll(find, opts);
         return {
             data: customers.map((c) => ({
                 _id: c._id.toString(),

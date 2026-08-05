@@ -239,7 +239,10 @@ export class VendorAdminController {
     @AuthJwtAccessProtected()
     @Get('/dropdown')
     async dropdown(
-        @AuthJwtPayload('companyId') companyId: string
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('search') search?: string,
+        @Query('limit') limit?: string,
+        @Query('ids') ids?: string
     ): Promise<
         IResponse<
             {
@@ -251,18 +254,44 @@ export class VendorAdminController {
             }[]
         >
     > {
-        const find: any = { soft_delete: false, is_active: true };
+        const find: any = { soft_delete: false };
         if (companyId) find.company_id = companyId;
-        const vendors = await this.vendorRepository.findAll(find, {
-            order: { company_name: 'asc' as any },
-        });
+        // `ids` = resolve labels for already-selected values (edit forms). Return
+        // exactly those rows, even if now inactive, so the picker shows a name.
+        const idList = (ids || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const opts: any = { order: { company_name: 'asc' as any } };
+        if (idList.length) {
+            find._id = { $in: idList };
+        } else {
+            find.is_active = true;
+            // Optional server-side search (name/code) — powers the searchable
+            // dropdowns so the full vendor list isn't shipped to the client.
+            const term = (search || '').trim();
+            if (term) {
+                find.$or = [
+                    { company_name: { $regex: term, $options: 'i' } },
+                    { vendor_code: { $regex: term, $options: 'i' } },
+                ];
+            }
+            const lim = Number(limit);
+            if (Number.isFinite(lim) && lim > 0) {
+                opts.paging = { limit: lim, offset: 0 };
+            }
+        }
+        const vendors = await this.vendorRepository.findAll(find, opts);
 
-        // Fetch all vendor↔category links for this company in one query and
-        // group by vendor_id so each vendor in the response gets its
-        // categories without N+1 round-trips.
-        const links = await this.vendorCategoryRepository.findAll(
-            { company_id: companyId } as any
-        );
+        // Fetch the vendor↔category links for JUST the returned vendors and
+        // group by vendor_id so each vendor gets its categories (no N+1).
+        const vendorIds = vendors.map((v) => v._id.toString());
+        const links = vendorIds.length
+            ? await this.vendorCategoryRepository.findAll({
+                  company_id: companyId,
+                  vendor_id: { $in: vendorIds },
+              } as any)
+            : [];
         const byVendor = new Map<string, string[]>();
         for (const l of links as any[]) {
             const vid = l.vendor_id?.toString();
