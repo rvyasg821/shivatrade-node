@@ -385,15 +385,19 @@ export class SalesDocImportService {
                         `Vendor code "${vendorCode}" not found for this company`,
                     );
                 } else {
+                    vendorId = v._id.toString();
                     const pl = activeVendorRows.find(
                         (r) => r.vendor_id.toString() === v._id.toString(),
                     );
                     if (!pl) {
-                        errors.push(
-                            `Vendor "${vendorCode}" does not sell product "${productCode}"`,
+                        // New feature (2026-08-05): a named vendor that doesn't
+                        // yet quote this product is ALLOWED — it's added to the
+                        // vendor's price list at the sheet rate on import (and a
+                        // blank rate can still be set later in the worksheet).
+                        // Was: hard error "does not sell".
+                        warnings.push(
+                            `"${productCode}" isn't in "${vendorCode}"'s price list — it will be added to the price list at the sheet rate`,
                         );
-                    } else {
-                        vendorId = v._id.toString();
                     }
                 }
             } else {
