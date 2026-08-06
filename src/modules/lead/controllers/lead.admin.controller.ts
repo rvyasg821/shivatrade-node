@@ -125,7 +125,7 @@ export class LeadAdminController {
         );
         return {
             statusCode: 200,
-            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            message: `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`,
             data: { summary, ...result },
         };
     }

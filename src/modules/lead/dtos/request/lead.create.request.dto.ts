@@ -11,6 +11,7 @@ import {
     IsUUID,
     MaxLength,
     ValidateNested,
+    ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -27,8 +28,21 @@ export class LeadCreateRequestDto {
 
     @IsString() @IsNotEmpty() @MaxLength(200) company_name: string;
 
-    @IsString() @IsNotEmpty() @MaxLength(150) contact_name: string;
-    @IsEmail() @IsNotEmpty() @MaxLength(200) contact_email: string;
+    // Contact name / email are OPTIONAL (a lead may be captured with just the
+    // company). ValidateIf skips @IsEmail entirely for undefined / null / '' so
+    // a blank email passes; a filled one must still be a valid address.
+    @IsString() @IsOptional() @MaxLength(150) contact_name?: string;
+
+    @ValidateIf(
+        (o) =>
+            o.contact_email !== undefined &&
+            o.contact_email !== null &&
+            o.contact_email !== ''
+    )
+    @IsEmail()
+    @IsOptional()
+    @MaxLength(200)
+    contact_email?: string;
     @IsString() @IsOptional() @MaxLength(50) contact_phone?: string;
 
     @IsObject() @IsOptional() country_code?: { code: string; dialCode: string };
