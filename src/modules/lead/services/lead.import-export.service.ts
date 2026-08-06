@@ -180,14 +180,20 @@ export class LeadImportExportService {
             return key ? String(raw[key] ?? '').trim() : '';
         };
 
-        // Group contiguous rows by voucher_no (order preserved).
+        // Group CONTIGUOUS rows by voucher_no (order preserved). The export
+        // writes a lead's extra product lines on continuation rows with a BLANK
+        // voucher_no (only the first row of a lead carries the header), so a
+        // blank-voucher row must attach to the CURRENT lead — carry the last
+        // seen voucher forward instead of keying every blank row under "".
         const groups = new Map<string, { rowNum: number; raw: any }[]>();
         const order: string[] = [];
+        let currentVno = '';
         for (let i = 0; i < rawRows.length; i++) {
             const raw = rawRows[i];
             const rowNum = i + 2;
             const vno = get(raw, 'voucher_no');
-            const key = vno.toLowerCase();
+            if (vno) currentVno = vno; // a voucher starts / switches the group
+            const key = currentVno.toLowerCase(); // blanks inherit the current lead
             if (!groups.has(key)) {
                 groups.set(key, []);
                 order.push(key);
