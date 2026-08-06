@@ -262,6 +262,20 @@ export class SalesDocImportService {
         const existingSet = new Set<string>(
             existingPairs.map((p) => `${p.product_id || ''}|${p.vendor_id || ''}`),
         );
+        // Leads dedup existing form lines by product CODE (no vendor), so an
+        // imported product already on the form classifies as UPDATED even when
+        // the form line still carries a legacy vendor_id. Resolve the code from
+        // the sheet-sent product_code, else from the product_id.
+        const productCodeById = new Map<string, string>();
+        for (const p of products)
+            productCodeById.set(p._id.toString(), lc(p.code));
+        const existingLeadCodeSet = new Set<string>();
+        for (const k of existingKeys || []) {
+            let code = k.product_code ? lc(k.product_code) : '';
+            if (!code && k.product_id)
+                code = productCodeById.get(k.product_id) || '';
+            if (code) existingLeadCodeSet.add(code);
+        }
         // Per-product vendor map used to reuse the form's existing vendor
         // when the sheet's vendor_code cell is blank.
         const existingVendorsByProduct = new Map<string, Set<string>>();
@@ -272,9 +286,10 @@ export class SalesDocImportService {
             existingVendorsByProduct.get(p.product_id)!.add(p.vendor_id);
         }
 
-        // Track first-seen (product_id, vendor_id) within the sheet —
-        // subsequent occurrences are flagged "skipped".
-        const seenInSheet = new Set<string>();
+        // First-seen (product_id, vendor_id) row within the sheet, keyed so a
+        // later duplicate can MERGE its qty into it (leads) or defer to it
+        // (other docs — first row wins).
+        const firstRowByKey = new Map<string, SalesDocResolveRowResponse>();
 
         const out: SalesDocResolveRowResponse[] = [];
 
@@ -353,6 +368,10 @@ export class SalesDocImportService {
             let vendorCode = get('vendor_code');
             let vendorId: string | undefined;
             const activeVendorRows: any[] = [];
+            // Leads carry NO vendor — skip resolution entirely so a product with
+            // no price-list vendor doesn't error and no vendor/price default is
+            // applied. (The lead line-assembly block below nulls vendor anyway.)
+            if (!isLead) {
             // Pull the product's vendor catalogue from price-list. This gives
             // us "which vendors sell this product" AND a default unit_price/
             // discount when those cells are blank.
@@ -439,6 +458,7 @@ export class SalesDocImportService {
                     );
                 }
             }
+            } // end !isLead vendor resolution
 
             // ── qty / unit / price ──
             const qty = numOrUndef(get('qty'));
@@ -737,24 +757,68 @@ export class SalesDocImportService {
             // Match by IDs — form lines carry product_id / vendor_id, not the
             // string codes — so this is the only reliable key.
             let status: ENUM_SALES_DOC_IMPORT_ROW_STATUS;
+            // In-sheet duplicate key: leads dedup by PRODUCT CODE (the sheet's
+            // own identity, normalised) — a repeated code is the same
+            // requirement. Other docs key by product_id+vendor_id (a real
+            // multi-vendor line key). The "new vs updated" check below stays
+            // product_id-based so re-importing to update an existing line works.
+            const existKey = `${line.product_id || ''}|${line.vendor_id || ''}`;
+            const dupKey = isLead
+                ? `code:${lc(line.product_code || productCode || '')}`
+                : existKey;
             if (errors.length > 0) {
                 status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.ERROR;
-            } else {
-                const key = `${line.product_id || ''}|${line.vendor_id || ''}`;
-                if (seenInSheet.has(key)) {
-                    status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.SKIPPED;
+            } else if (firstRowByKey.has(dupKey)) {
+                // Same product already seen earlier in the sheet.
+                const firstRow = firstRowByKey.get(dupKey)!;
+                status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.SKIPPED;
+                if (isLead) {
+                    // Leads have no vendor, so a repeated product is the same
+                    // requirement — MERGE its qty into the first row (mirrors the
+                    // on-screen "add product" merge) instead of dropping it. The
+                    // skipped row isn't applied, so only the first row (with the
+                    // combined qty) reaches the form.
+                    const addQty = num(line.qty);
+                    firstRow.data.qty = num(firstRow.data.qty) + addQty;
+                    firstRow.warnings.push(
+                        `Row ${rowNum} has the same product — its qty (${addQty}) was merged in (combined qty ${firstRow.data.qty}).`,
+                    );
+                    warnings.push(
+                        `Duplicate product — qty (${addQty}) merged into row ${firstRow.rowNum} (first occurrence).`,
+                    );
+                } else {
                     warnings.push(
                         'Duplicate of an earlier row in this sheet — first row wins',
                     );
-                } else {
-                    seenInSheet.add(key);
-                    status = existingSet.has(key)
-                        ? ENUM_SALES_DOC_IMPORT_ROW_STATUS.UPDATED
-                        : ENUM_SALES_DOC_IMPORT_ROW_STATUS.NEW;
                 }
+            } else {
+                const isExisting = isLead
+                    ? existingLeadCodeSet.has(
+                          lc(line.product_code || productCode || ''),
+                      )
+                    : existingSet.has(existKey);
+                status = isExisting
+                    ? ENUM_SALES_DOC_IMPORT_ROW_STATUS.UPDATED
+                    : ENUM_SALES_DOC_IMPORT_ROW_STATUS.NEW;
             }
 
-            out.push({ rowNum, status, errors, warnings, data: line });
+            const rowObj: SalesDocResolveRowResponse = {
+                rowNum,
+                status,
+                errors,
+                warnings,
+                data: line,
+            };
+            out.push(rowObj);
+            // Register the first NEW/UPDATED occurrence so later duplicates of
+            // the same product merge into (or defer to) it.
+            if (
+                (status === ENUM_SALES_DOC_IMPORT_ROW_STATUS.NEW ||
+                    status === ENUM_SALES_DOC_IMPORT_ROW_STATUS.UPDATED) &&
+                !firstRowByKey.has(dupKey)
+            ) {
+                firstRowByKey.set(dupKey, rowObj);
+            }
         }
 
         // ── One-currency-per-document rule ──────────────────────────────
@@ -847,10 +911,29 @@ export class SalesDocImportService {
 
         const examples: SalesDocExportLineDto[] = [];
         const today = new Date().toISOString().slice(0, 10);
+        const isLead = docType === ENUM_SALES_DOC_TYPE.LEAD;
 
         for (const product of products) {
             if (examples.length >= 2) break;
             const productId = product._id.toString();
+
+            // Leads have no vendor / pricing — a plain requirement example, so
+            // they don't need (and must not be gated on) a price-list vendor.
+            if (isLead) {
+                const leadLine: SalesDocExportLineDto = {
+                    product_code: product.code,
+                    product_name: product.name,
+                    part_no: product.part_no || '',
+                    description: product.description || '',
+                    customer_reference: '',
+                    qty: 10,
+                    unit: product.unit_of_measure || '',
+                    hs_code: product.hsn_code || '',
+                } as any;
+                examples.push(leadLine);
+                continue;
+            }
+
             const pls = await this.priceListRepository.findAll(
                 { company_id: companyId, product_id: productId } as any,
                 { order: { effective_date: 'desc' as any } },
@@ -1787,7 +1870,6 @@ export class SalesDocImportService {
                   'product_name',
                   'qty',
                   'unit',
-                  'unit_price',
                   'hs_code',
                   'part_no',
                   'customer_reference',
@@ -1896,7 +1978,6 @@ export class SalesDocImportService {
                     productName,
                     l.qty ?? '',
                     l.unit || '',
-                    l.unit_price ?? '',
                     l.hs_code || '',
                     partNo,
                     (l as any).customer_reference || '',
