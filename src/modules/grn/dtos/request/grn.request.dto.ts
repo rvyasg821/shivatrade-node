@@ -22,6 +22,13 @@ export class GrnCreateFromPovDto {
     @IsOptional()
     @MaxLength(2000)
     notes?: string;
+
+    // Vendor invoice number for this receipt — defaults to the POV's when
+    // omitted; editable on the create form (and later on detail).
+    @IsString()
+    @IsOptional()
+    @MaxLength(120)
+    invoice_number?: string;
 }
 
 export class GrnLineUpdateDto {
