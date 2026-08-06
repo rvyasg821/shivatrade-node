@@ -145,7 +145,9 @@ export class LeadService {
         // Import mode legitimately backfills historical leads whose emails may
         // already belong to a customer or an earlier lead — relax uniqueness
         // (§12.2). The normal API create path (no ctx) is unaffected.
-        if (!data.customer_id && !ctx?.silent) {
+        // Skip the uniqueness check when no email was given (contact_email is
+        // optional now) — a blank email can't collide.
+        if (!data.customer_id && !ctx?.silent && data.contact_email) {
             const normalizedEmail = data.contact_email.trim().toLowerCase();
             const dupLead = await this.leadRepository.findOne({
                 company_id: companyId,
@@ -187,7 +189,10 @@ export class LeadService {
             voucher_no,
             status: ctx?.status || (leadData as any).status,
             company_name: data.company_name.trim(),
-            contact_email: data.contact_email.trim().toLowerCase(),
+            // Contact name / email are optional — store '' (not null/undefined)
+            // when blank so the NOT NULL columns are satisfied.
+            contact_name: (data.contact_name || '').trim(),
+            contact_email: (data.contact_email || '').trim().toLowerCase(),
             company_id: companyId,
             created_by: createdBy,
         } as any);
