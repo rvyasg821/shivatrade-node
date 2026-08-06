@@ -737,7 +737,15 @@ export class GrnService {
                 (rows as any[]).map((r) => r.vendor_id?.toString()).filter(Boolean)
             )
         ) as string[];
-        const [lines, vendors, dnotes] = await Promise.all([
+        // Source POVs of these GRNs — for the line unit price + vendor currency.
+        const povIds = Array.from(
+            new Set(
+                (rows as any[])
+                    .map((r) => r.po_vendor_id?.toString())
+                    .filter(Boolean)
+            )
+        ) as string[];
+        const [lines, vendors, dnotes, povLinesAll, povsAll] = await Promise.all([
             this.grnLineRepository.findAll({
                 grn_id: { $in: ids },
                 soft_delete: false,
@@ -751,16 +759,45 @@ export class GrnService {
                 grn_id: { $in: ids },
                 soft_delete: false,
             } as any) as Promise<any[]>,
+            povIds.length
+                ? (this.povLineRepository.findAll({
+                      po_vendor_id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+            povIds.length
+                ? (this.povRepository.findAll({
+                      _id: In(povIds),
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
         ]);
+        // Unit price by POV line id + vendor currency by POV id.
+        const priceByPovLineId = new Map<string, number>();
+        for (const pl of povLinesAll)
+            priceByPovLineId.set(pl._id.toString(), num(pl.unit_price));
+        const currencyByPovId = new Map<string, string>();
+        for (const pv of povsAll)
+            currencyByPovId.set(pv._id.toString(), pv.currency_code || 'INR');
         const lineCount = new Map<string, number>();
         const rejectedByGrn = new Map<string, number>();
         // "Received" shown on the GRN list = the good qty (accepted).
         const receivedByGrn = new Map<string, number>();
+        // Received value = Σ(accepted_qty × POV unit price), and the distinct
+        // unit prices per GRN (to show a single price, or "mixed" → null).
+        const valueByGrn = new Map<string, number>();
+        const pricesByGrn = new Map<string, Set<number>>();
         for (const l of lines) {
             const k = l.grn_id.toString();
             lineCount.set(k, (lineCount.get(k) || 0) + 1);
             rejectedByGrn.set(k, (rejectedByGrn.get(k) || 0) + num(l.rejected_qty));
             receivedByGrn.set(k, (receivedByGrn.get(k) || 0) + num(l.accepted_qty));
+            const price =
+                priceByPovLineId.get(l.po_vendor_line_id?.toString()) || 0;
+            valueByGrn.set(
+                k,
+                (valueByGrn.get(k) || 0) + num(l.accepted_qty) * price
+            );
+            if (!pricesByGrn.has(k)) pricesByGrn.set(k, new Set());
+            pricesByGrn.get(k)!.add(price);
         }
         // Active (non-cancelled) Debit Note per GRN — one per GRN by design.
         const activeDnByGrn = new Map<string, string>();
@@ -778,6 +815,17 @@ export class GrnService {
             dto.line_count = lineCount.get(k) || 0;
             dto.received_qty = String(round4(receivedByGrn.get(k) || 0));
             dto.rejected_qty = String(round4(rejectedByGrn.get(k) || 0));
+            // Pricing (vendor currency): single unit price if the GRN's lines
+            // all share one, else null (mixed); total = Σ received × price.
+            const priceSet = pricesByGrn.get(k);
+            dto.unit_price =
+                priceSet && priceSet.size === 1
+                    ? String([...priceSet][0])
+                    : null;
+            dto.total_value = String(round4(valueByGrn.get(k) || 0));
+            dto.currency_code = r.po_vendor_id
+                ? currencyByPovId.get(r.po_vendor_id.toString())
+                : undefined;
             const dnId = activeDnByGrn.get(k);
             dto.debit_note_id = dnId || undefined;
             dto.has_debit_note = !!dnId;
@@ -939,7 +987,7 @@ export class GrnService {
         const productIds = Array.from(
             new Set(lines.map((l) => l.product_id?.toString()).filter(Boolean))
         ) as string[];
-        const [products, vendor] = await Promise.all([
+        const [products, vendor, pov, povLines] = await Promise.all([
             productIds.length
                 ? (this.productRepository.findAll({
                       _id: In(productIds),
@@ -948,10 +996,25 @@ export class GrnService {
             grn.vendor_id
                 ? this.vendorRepository.findOneById(grn.vendor_id.toString())
                 : Promise.resolve(null),
+            // Source POV header (for the vendor currency) + its lines (for each
+            // received line's unit price — GRN lines don't carry a price).
+            grn.po_vendor_id
+                ? this.povRepository.findOneById(grn.po_vendor_id.toString())
+                : Promise.resolve(null),
+            grn.po_vendor_id
+                ? (this.povLineRepository.findAll({
+                      po_vendor_id: grn.po_vendor_id.toString(),
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
         ]);
         const productById = new Map<string, any>(
             products.map((p: any) => [p._id.toString(), p])
         );
+        // Unit price (vendor currency) by POV line id — the GRN line references
+        // its source POV line, which holds the agreed price.
+        const priceByPovLineId = new Map<string, string>();
+        for (const pl of (povLines as any[]) || [])
+            priceByPovLineId.set(pl._id.toString(), pl.unit_price);
 
         // Qty already accounted (received good + rejected) on the OTHER
         // non-cancelled GRNs of this POV, keyed by po_vendor_line_id. Used to
@@ -967,6 +1030,8 @@ export class GrnService {
         const dto = plainToInstance(GrnGetResponseDto, grn);
         dto.vendor_name = (vendor as any)?.company_name;
         dto.vendor_code = (vendor as any)?.vendor_code;
+        // Vendor currency of the source POV — the price column is shown in it.
+        dto.currency_code = (pov as any)?.currency_code || 'INR';
         dto.lines = lines.map((l) => {
             const prod = l.product_id
                 ? productById.get(l.product_id.toString())
@@ -984,6 +1049,10 @@ export class GrnService {
                 hsn_code: l.hsn_code || prod?.hsn_code,
                 part_no: l.part_no || prod?.part_no,
                 unit: l.unit,
+                // Agreed unit price (vendor currency) from the source POV line.
+                unit_price: l.po_vendor_line_id
+                    ? priceByPovLineId.get(l.po_vendor_line_id.toString()) ?? '0'
+                    : '0',
                 ordered_qty: l.ordered_qty,
                 dispatched_qty: l.dispatched_qty,
                 // Accounted on other GRNs of this POV (received good + rejected).
