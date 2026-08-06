@@ -270,7 +270,10 @@ export class GrnService {
             voucher_no,
             po_vendor_id: povId,
             po_vendor_voucher_no: pov.voucher_no || null,
-            po_vendor_invoice_number: pov.invoice_number || null,
+            // Editable per receipt — the form value when provided, else the
+            // POV's invoice number (default).
+            po_vendor_invoice_number:
+                (dto.invoice_number ?? pov.invoice_number) || null,
             purchase_order_id: pov.purchase_order_id || null,
             purchase_order_voucher_no: po?.voucher_no || null,
             customer_po_number: po?.customer_po_number || null,
@@ -980,6 +983,18 @@ export class GrnService {
     }
 
     // ─── Map ─────────────────────────────────────────────────────────────
+    /** Set the (editable) vendor invoice number on a GRN. Defaults from the POV
+     *  on create; this lets the operator correct it per receipt. */
+    async updateInvoiceNumber(
+        companyId: string,
+        grnId: string,
+        invoiceNumber?: string
+    ): Promise<void> {
+        const grn: any = await this.getOrThrow(companyId, grnId);
+        grn.po_vendor_invoice_number = (invoiceNumber || '').trim() || null;
+        await this.grnRepository.save(grn);
+    }
+
     async mapGet(companyId: string, grnId: string): Promise<GrnGetResponseDto> {
         const grn: any = await this.getOrThrow(companyId, grnId);
         const lines = (await this.grnLineRepository.findByGrnId(grnId)) as any[];

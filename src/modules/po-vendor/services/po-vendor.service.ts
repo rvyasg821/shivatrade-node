@@ -2705,19 +2705,14 @@ export class PoVendorService {
             }
             seen.add(dl._id);
             const req = num(dl.dispatched_qty);
-            const ordered = num(ln.ordered_qty);
             if (req < 0) {
                 throw new BadRequestException(
                     `dispatched_qty cannot be negative (line ${dl._id}).`
                 );
             }
-            if (req > ordered + 1e-6) {
-                throw new BadRequestException(
-                    `dispatched_qty (${req}) exceeds ordered_qty (${round4(
-                        ordered
-                    )}) on line ${dl._id}.`
-                );
-            }
+            // Over-dispatch (dispatched > ordered) is ALLOWED (client
+            // 2026-08-06): the vendor may ship more than ordered. The parent
+            // PO's pending simply goes negative (over-covered) — no cap here.
         }
 
         // Apply: write dispatched_qty for each line. Track shortfall
@@ -2836,20 +2831,14 @@ export class PoVendorService {
             }
             seen.add(dl._id);
             const req = num(dl.dispatched_qty);
-            const ordered = num(ln.ordered_qty);
             const received = num(ln.received_qty);
             if (req < 0) {
                 throw new BadRequestException(
                     `dispatched_qty cannot be negative (line ${dl._id}).`
                 );
             }
-            if (req > ordered + 1e-6) {
-                throw new BadRequestException(
-                    `dispatched_qty (${req}) exceeds ordered_qty (${round4(
-                        ordered
-                    )}) on line ${dl._id}.`
-                );
-            }
+            // Over-dispatch (dispatched > ordered) is ALLOWED (client
+            // 2026-08-06). Still cannot drop BELOW what's already received.
             if (req < received - 1e-6) {
                 throw new BadRequestException(
                     `dispatched_qty (${req}) cannot be less than already received (${round4(
@@ -2960,58 +2949,77 @@ export class PoVendorService {
     }
 
     /**
-     * Revert a CANCELLED POV back to DRAFT. Only permitted when the POV had
-     * no dispatch/receipt activity and its ordered quantities still fit the
-     * PO line pending (i.e. they weren't re-issued on another POV after the
-     * cancel). Symmetric to cancel(): pending is computed dynamically, so no
-     * PO recompute is needed.
+     * Revert a CANCELLED or DISPATCHED POV back to DRAFT. Blocked once goods
+     * have been received (a GRN exists) — that's an immutable receipt. For a
+     * DISPATCHED POV the dispatch is undone (per-line dispatched_qty cleared +
+     * dispatch_date cleared). Availability is re-validated so re-claiming the
+     * full ordered qty can't over-issue the PO. Pending is computed dynamically,
+     * so no PO recompute is needed.
      */
     async revertToDraft(
         row: PoVendorDoc,
         userId?: string
     ): Promise<PoVendorDoc> {
-        if (row.status !== ENUM_PO_VENDOR_STATUS.CANCELLED) {
+        const fromCancelled = row.status === ENUM_PO_VENDOR_STATUS.CANCELLED;
+        const fromDispatched = row.status === ENUM_PO_VENDOR_STATUS.DISPATCHED;
+        if (!fromCancelled && !fromDispatched) {
             throw new BadRequestException(
-                `Only a cancelled POV can be reverted to draft (current: ${row.status}).`
+                `Only a cancelled or dispatched POV can be reverted to draft (current: ${row.status}).`
             );
         }
         const lines = (await this.povLineRepository.findAll({
             po_vendor_id: row._id.toString(),
         } as any)) as any[];
 
-        // Block if the POV ever had dispatch/receipt activity — those qty
-        // movements are part of the immutable audit trail.
-        const hadActivity = lines.some(
-            l => num(l.dispatched_qty) > 0 || num(l.received_qty) > 0
-        );
-        if (hadActivity) {
+        // Received goods (a GRN posted receipts) can never be undone.
+        const hasReceipt = lines.some((l) => num(l.received_qty) > 0);
+        if (hasReceipt) {
             throw new BadRequestException(
-                'This POV had dispatch or receipt activity and cannot be reverted to draft.'
+                'This POV has received goods (a GRN exists) and cannot be reverted to draft — cancel the GRN first.'
             );
         }
 
-        // Re-validate availability. computePendingByPoLineId already excludes
-        // cancelled POVs (including this one), so the returned pending is the
-        // headroom available if we re-activate this POV's lines.
-        const pending = await this.computePendingByPoLineId(
-            row.purchase_order_id.toString()
-        );
-        const over: string[] = [];
-        for (const ln of lines) {
-            const req = num(ln.ordered_qty);
-            const avail = pending.get(ln.purchase_order_line_id) || 0;
-            if (req > avail + 1e-6) {
-                over.push(
-                    `${ln.product_name || ln.purchase_order_line_id} ` +
-                        `(need ${round4(req)}, available ${round4(avail)})`
+        // Re-validate availability: a DRAFT POV re-claims the FULL ordered qty
+        // per line, so ensure that fits the PO headroom once this POV's own
+        // current consumption (dispatched_qty while dispatched; 0 while
+        // cancelled — already excluded from pending) is added back. Only
+        // applies to a PO-backed POV; a STANDALONE POV has no purchase_order_id
+        // and no PO pending to validate against.
+        if (row.purchase_order_id) {
+            const pending = await this.computePendingByPoLineId(
+                row.purchase_order_id.toString()
+            );
+            const over: string[] = [];
+            for (const ln of lines) {
+                const req = num(ln.ordered_qty);
+                const curCons = fromDispatched ? num(ln.dispatched_qty) : 0;
+                const avail =
+                    (pending.get(ln.purchase_order_line_id) || 0) + curCons;
+                if (req > avail + 1e-6) {
+                    over.push(
+                        `${ln.product_name || ln.purchase_order_line_id} ` +
+                            `(need ${round4(req)}, available ${round4(avail)})`
+                    );
+                }
+            }
+            if (over.length) {
+                throw new BadRequestException(
+                    'Cannot revert to draft — these quantities have been ' +
+                        `re-issued on other POVs: ${over.join('; ')}.`
                 );
             }
         }
-        if (over.length) {
-            throw new BadRequestException(
-                'Cannot revert to draft — these quantities have been ' +
-                    `re-issued on other POVs: ${over.join('; ')}.`
-            );
+
+        // Undo a dispatch: clear per-line dispatched qty + the dispatch date so
+        // the POV becomes a clean draft.
+        if (fromDispatched) {
+            for (const ln of lines) {
+                if (num(ln.dispatched_qty) !== 0) {
+                    ln.dispatched_qty = '0';
+                    await this.povLineRepository.save(ln);
+                }
+            }
+            (row as any).dispatch_date = null;
         }
 
         row.status = ENUM_PO_VENDOR_STATUS.DRAFT;

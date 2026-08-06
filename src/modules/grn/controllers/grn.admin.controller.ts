@@ -171,6 +171,22 @@ export class GrnAdminController {
         return { data: await this.grnService.mapGet(companyId, id) };
     }
 
+    @Response('grn.update')
+    @AuthJwtAccessProtected()
+    @Put('/invoice-number/:id')
+    async updateInvoiceNumber(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Body() body: { invoice_number?: string }
+    ): Promise<IResponse<GrnGetResponseDto>> {
+        await this.grnService.updateInvoiceNumber(
+            companyId,
+            id,
+            body?.invoice_number
+        );
+        return { data: await this.grnService.mapGet(companyId, id) };
+    }
+
     @Response('grn.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
