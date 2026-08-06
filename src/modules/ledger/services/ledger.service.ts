@@ -3,7 +3,11 @@ import { FileService } from '@common/file/services/file.service';
 import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
 import { InvoicePaymentRepository } from '@modules/invoice/repository/repositories/invoice-payment.repository';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
+import { GrnRepository } from '@modules/grn/repository/repositories/grn.repository';
+import { GrnLineRepository } from '@modules/grn/repository/repositories/grn-line.repository';
+import { ENUM_GRN_STATUS } from '@modules/grn/enums/grn.enum';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
@@ -44,6 +48,9 @@ interface RawRow {
     voucher_no?: string;
     dr: number;
     cr: number;
+    // Row creation timestamp — breaks same-day ties so postings appear in the
+    // order they were actually recorded (document dates are date-only).
+    created_at?: string | Date;
 }
 
 export interface LedgerRegisterQuery {
@@ -101,7 +108,10 @@ export class LedgerService {
         private readonly invoiceRepository: InvoiceRepository,
         private readonly invoicePaymentRepository: InvoicePaymentRepository,
         private readonly povRepository: PoVendorRepository,
+        private readonly povLineRepository: PoVendorLineRepository,
         private readonly povService: PoVendorService,
+        private readonly grnRepository: GrnRepository,
+        private readonly grnLineRepository: GrnLineRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly adjustmentRepository: AdjustmentNoteRepository,
@@ -167,6 +177,7 @@ export class LedgerService {
                     voucher_no: p.receipt_voucher_no,
                     dr: 0,
                     cr: num(p.amount),
+                    created_at: p.createdAt,
                 });
             }
         }
@@ -195,6 +206,7 @@ export class LedgerService {
                 voucher_no: n.voucher_no,
                 dr: isDebit ? num(n.amount) : 0,
                 cr: isDebit ? 0 : num(n.amount),
+                created_at: n.createdAt,
             });
         }
 
@@ -259,6 +271,88 @@ export class LedgerService {
     }
 
     // ── Vendor ledger (native — in the vendor's own currency) ──
+    // GRN goods-received → vendor CREDIT (client 2026-08-06). One row per GRN,
+    // valued at Σ(accepted/received qty × source-POV unit price) in the vendor
+    // currency. Only CONFIRMED GRNs post (a draft receipt is still being
+    // entered). Returns one entry per GRN; callers map it to a ledger CR row /
+    // a register row.
+    private async vendorGrnCredits(
+        companyId: string,
+        vendorId?: string
+    ): Promise<
+        Array<{
+            grn_id: string;
+            voucher_no?: string;
+            date: string;
+            value: number;
+            currency_code: string;
+            vendor_id?: string;
+            created_at?: Date;
+            po_vendor_voucher_no?: string;
+        }>
+    > {
+        const find: Record<string, any> = {
+            company_id: companyId,
+            soft_delete: false,
+            status: ENUM_GRN_STATUS.CONFIRMED,
+        };
+        if (vendorId) find.vendor_id = vendorId;
+        const grns: any[] = await this.grnRepository.findAll(find as any);
+        if (!grns.length) return [];
+        const grnIds = grns.map((g) => g._id.toString());
+        const povIds = Array.from(
+            new Set(
+                grns.map((g) => g.po_vendor_id?.toString()).filter(Boolean)
+            )
+        ) as string[];
+        const [grnLines, povLines, povs] = await Promise.all([
+            this.grnLineRepository.findAll({
+                grn_id: { $in: grnIds },
+                soft_delete: false,
+            } as any) as Promise<any[]>,
+            povIds.length
+                ? (this.povLineRepository.findAll({
+                      po_vendor_id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+            povIds.length
+                ? (this.povRepository.findAll({
+                      _id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+        ]);
+        const priceByPovLineId = new Map<string, number>();
+        for (const pl of povLines)
+            priceByPovLineId.set(pl._id.toString(), num(pl.unit_price));
+        const currencyByPovId = new Map<string, string>();
+        for (const pv of povs)
+            currencyByPovId.set(pv._id.toString(), pv.currency_code || 'INR');
+        // Value = Σ(accepted qty × unit price). "Received" = good/accepted qty,
+        // matching the GRN's Received column; rejected units are debit-noted.
+        const valueByGrn = new Map<string, number>();
+        for (const l of grnLines) {
+            const k = l.grn_id.toString();
+            const price =
+                priceByPovLineId.get(l.po_vendor_line_id?.toString()) || 0;
+            valueByGrn.set(
+                k,
+                (valueByGrn.get(k) || 0) + num(l.accepted_qty) * price
+            );
+        }
+        return grns.map((g) => ({
+            grn_id: g._id.toString(),
+            voucher_no: g.voucher_no,
+            date: g.grn_date,
+            value: round2(valueByGrn.get(g._id.toString()) || 0),
+            currency_code: g.po_vendor_id
+                ? currencyByPovId.get(g.po_vendor_id.toString()) || 'INR'
+                : 'INR',
+            vendor_id: g.vendor_id?.toString(),
+            created_at: g.createdAt,
+            po_vendor_voucher_no: g.po_vendor_voucher_no,
+        }));
+    }
+
     async vendorLedger(
         companyId: string,
         vendorId: string,
@@ -306,6 +400,7 @@ export class LedgerService {
                     voucher_no: pay.payment_voucher_no,
                     dr: num(pay.amount),
                     cr: 0,
+                    created_at: pay.createdAt,
                 });
             }
         }
@@ -338,6 +433,26 @@ export class LedgerService {
                 voucher_no: n.voucher_no,
                 dr: isDebit ? eff : 0,
                 cr: isDebit ? 0 : eff,
+                created_at: n.createdAt,
+            });
+        }
+
+        // GRN goods received → CREDIT (client 2026-08-06): value of goods
+        // received (received qty × POV unit price, vendor currency). Flows into
+        // the Balance column and the Outstanding card, like a credit note.
+        const grnCredits = await this.vendorGrnCredits(companyId, vendorId);
+        for (const g of grnCredits) {
+            if (g.value <= 0) continue;
+            rows.push({
+                date: g.date,
+                type: 'grn',
+                particulars: `Goods received${
+                    g.voucher_no ? ` (${g.voucher_no})` : ''
+                }`,
+                voucher_no: g.voucher_no,
+                dr: 0,
+                cr: g.value,
+                created_at: g.created_at,
             });
         }
 
@@ -496,6 +611,48 @@ export class LedgerService {
                     });
                 }
             }
+
+            // GRN goods received → vendor CREDIT (client 2026-08-06). Same value
+            // as the vendor ledger's GRN rows. Read-only (no void from here).
+            const grnCredits = await this.vendorGrnCredits(
+                companyId,
+                q.party_id
+            );
+            const grnVendorIds = Array.from(
+                new Set(grnCredits.map((g) => g.vendor_id).filter(Boolean))
+            ) as string[];
+            const grnVendors = grnVendorIds.length
+                ? ((await this.vendorRepository.findAll({
+                      _id: { $in: grnVendorIds },
+                  } as any)) as any[])
+                : [];
+            const vendorNameById = new Map<string, string>(
+                grnVendors.map((v) => [v._id.toString(), v.company_name])
+            );
+            for (const g of grnCredits) {
+                if (g.value <= 0) continue;
+                rows.push({
+                    _id: g.grn_id,
+                    source: 'grn',
+                    date: toIso(g.date),
+                    created_at: g.created_at as any,
+                    voucher_no: g.voucher_no,
+                    party_type: 'vendor',
+                    party_id: g.vendor_id,
+                    party_name: g.vendor_id
+                        ? vendorNameById.get(g.vendor_id)
+                        : undefined,
+                    direction: 'credit',
+                    amount: String(g.value),
+                    currency_code: g.currency_code,
+                    // Source Vendor PO → deep-link target (no GRN page route in
+                    // the register today; the voucher still identifies it).
+                    document_voucher_no: g.po_vendor_voucher_no || undefined,
+                    particulars: `Goods received${
+                        g.voucher_no ? ` (${g.voucher_no})` : ''
+                    }`,
+                });
+            }
         }
 
         // Customer receipts — money in from the customer → CREDIT, mirroring the
@@ -619,12 +776,19 @@ export class LedgerService {
             if (to && r.date > to) return false;
             return true;
         });
-        // Sort by date, then bills/invoices before their payments on the same day.
+        // Sort by date, then bills/invoices before their payments on the same
+        // day, then by creation time so same-day rows read in the order they
+        // were actually recorded (dates are date-only; without this a payment
+        // could sort above a GRN booked earlier the same day).
         const rank = (t: string) =>
             t === 'invoice' || t === 'bill' ? 0 : 1;
+        const stamp = (r: RawRow) =>
+            r.created_at ? new Date(r.created_at).getTime() : 0;
         inRange.sort((a, b) => {
             if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-            return rank(a.type) - rank(b.type);
+            const rk = rank(a.type) - rank(b.type);
+            if (rk !== 0) return rk;
+            return stamp(a) - stamp(b);
         });
 
         let bal = 0;

@@ -5,6 +5,7 @@ import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendo
 import { CustomerRepositoryModule } from '@modules/customer/repository/customer.repository.module';
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
+import { GrnRepositoryModule } from '@modules/grn/repository/grn.repository.module';
 import { LedgerService } from './services/ledger.service';
 import { LedgerAdminController } from './controllers/ledger.admin.controller';
 
@@ -20,6 +21,7 @@ import { LedgerAdminController } from './controllers/ledger.admin.controller';
         CustomerRepositoryModule,
         VendorRepositoryModule,
         AdjustmentNoteRepositoryModule,
+        GrnRepositoryModule,
     ],
     providers: [LedgerService],
     controllers: [LedgerAdminController],

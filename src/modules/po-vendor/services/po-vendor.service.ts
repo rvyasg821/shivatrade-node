@@ -3099,21 +3099,8 @@ export class PoVendorService {
                 'Cannot record a payment on a cancelled vendor PO.'
             );
         }
-        // A payment can only be recorded once goods are received (a GRN exists).
-        // Exceptions: the create-time advance (skipGrnCheck), and any POV that
-        // ALREADY has an advance/payment (amount_paid > 0) — once the advance
-        // flow has started, further payments are free.
-        if (!opts?.skipGrnCheck && num(row.amount_paid) <= 0) {
-            const grnExists = await this.hasGrn(
-                row.company_id.toString(),
-                row._id.toString()
-            );
-            if (!grnExists) {
-                throw new BadRequestException(
-                    'Record a GRN (goods receipt) before recording a payment.'
-                );
-            }
-        }
+        // GRN lock removed (client 2026-08-06): a payment can be recorded on any
+        // live (non-cancelled) POV, whether or not goods have been received yet.
         const amount = num(data.amount);
         if (amount <= 0) {
             throw new BadRequestException('Payment amount must be > 0.');

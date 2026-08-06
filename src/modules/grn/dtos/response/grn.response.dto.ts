@@ -10,6 +10,8 @@ export class GrnLineResponseDto {
     @ApiProperty({ required: false }) hsn_code?: string;
     @ApiProperty({ required: false }) part_no?: string;
     @ApiProperty({ required: false }) unit?: string;
+    /** Agreed unit price (vendor currency) from the source POV line. */
+    @ApiProperty({ required: false }) unit_price?: string;
     @ApiProperty({ required: false }) ordered_qty?: string;
     @ApiProperty({ required: false }) dispatched_qty?: string;
     /** Accounted (received good + rejected) on OTHER GRNs of the same POV. */
@@ -38,6 +40,8 @@ export class GrnGetResponseDto {
     @ApiProperty({ required: false }) vendor_name?: string;
     @ApiProperty({ required: false }) vendor_code?: string;
     @ApiProperty({ required: false }) grn_date?: string;
+    /** Vendor currency of the source POV — the line price column is in it. */
+    @ApiProperty({ required: false }) currency_code?: string;
     @ApiProperty({ required: false }) notes?: string;
     @ApiProperty({ required: false }) internal_notes?: string;
     @ApiProperty() status: string;
@@ -60,6 +64,13 @@ export class GrnListResponseDto {
     // Σ rejected qty across this GRN's lines + the active Debit Note (if any),
     // driving the "Create / View Debit Note" action on the POV GRNs tab.
     @ApiProperty({ required: false }) rejected_qty?: string;
+    // Single POV unit price when all this GRN's lines share one, else null
+    // (mixed). Vendor currency.
+    @ApiProperty({ required: false }) unit_price?: string | null;
+    // Received value = Σ(accepted_qty × POV unit price), vendor currency.
+    @ApiProperty({ required: false }) total_value?: string;
+    // Vendor currency of the source POV (for the price/total columns).
+    @ApiProperty({ required: false }) currency_code?: string;
     @ApiProperty({ required: false }) has_debit_note?: boolean;
     @ApiProperty({ required: false }) debit_note_id?: string;
     @ApiProperty({ required: false }) createdAt?: Date;
