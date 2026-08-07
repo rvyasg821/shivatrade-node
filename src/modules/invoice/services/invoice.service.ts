@@ -62,6 +62,11 @@ const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
 const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
+// Trim a value to fit a varchar(n) column so an over-long reference/voucher
+// snapshot degrades to a truncated string instead of a 500 (Postgres rejects
+// an over-length insert with "value too long for type character varying").
+const cap = (v: any, n: number): string | undefined =>
+    v === null || v === undefined || v === '' ? undefined : String(v).slice(0, n);
 
 /**
  * Sum a rebate snapshot array. PFI/PO convention: value lives in `pct`
@@ -336,17 +341,22 @@ export class InvoiceService {
             invoice_date: data.invoice_date,
             due_date: data.due_date,
             purchase_order_id: data.purchase_order_id,
-            purchase_order_voucher_no: sourcePoVouchers.join(', ') || null,
+            purchase_order_voucher_no:
+                cap(sourcePoVouchers.join(', '), 255) || null,
             pfi_id: data.pfi_id,
             quotation_id: data.quotation_id,
-            quotation_voucher_no: sourceQuotationVouchers.join(', ') || null,
+            quotation_voucher_no:
+                cap(sourceQuotationVouchers.join(', '), 255) || null,
             // Default the buyer's PO# from the source Sales Order (S4) when
             // the invoice payload didn't carry one; operator can override.
-            customer_po_no:
+            // Capped to the varchar(60) column so a long buyer PO reference is
+            // truncated rather than 500ing the whole create.
+            customer_po_no: cap(
                 data.customer_po_no ||
-                (source.pos || []).find((p) => p?.customer_po_number)
-                    ?.customer_po_number ||
-                undefined,
+                    (source.pos || []).find((p) => p?.customer_po_number)
+                        ?.customer_po_number,
+                60
+            ),
             // Manual tracking reference — carried from the source Sales Order
             // (S: Lead Reference Number). Operator can override on the invoice.
             reference_no:

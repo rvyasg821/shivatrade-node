@@ -12,6 +12,10 @@ export class GrnLineResponseDto {
     @ApiProperty({ required: false }) unit?: string;
     /** Agreed unit price (vendor currency) from the source POV line. */
     @ApiProperty({ required: false }) unit_price?: string;
+    /** GST rate (%) from the source POV line — read-only, drives the GST column. */
+    @ApiProperty({ required: false }) tax_pct?: string;
+    /** Vendor discount (%) from the source POV line — applied before GST. */
+    @ApiProperty({ required: false }) discount_pct?: string;
     @ApiProperty({ required: false }) ordered_qty?: string;
     @ApiProperty({ required: false }) dispatched_qty?: string;
     /** Accounted (received good + rejected) on OTHER GRNs of the same POV. */
@@ -67,8 +71,12 @@ export class GrnListResponseDto {
     // Single POV unit price when all this GRN's lines share one, else null
     // (mixed). Vendor currency.
     @ApiProperty({ required: false }) unit_price?: string | null;
-    // Received value = Σ(accepted_qty × POV unit price), vendor currency.
+    // Taxable value = Σ(accepted_qty × unit price × (1−disc%)), vendor currency.
     @ApiProperty({ required: false }) total_value?: string;
+    // GST value = Σ(taxable × GST%), vendor currency (0 on a foreign POV).
+    @ApiProperty({ required: false }) gst_value?: string;
+    // GST-inclusive value = total_value + gst_value — what posts to the ledger.
+    @ApiProperty({ required: false }) total_with_gst?: string;
     // Vendor currency of the source POV (for the price/total columns).
     @ApiProperty({ required: false }) currency_code?: string;
     @ApiProperty({ required: false }) has_debit_note?: boolean;
