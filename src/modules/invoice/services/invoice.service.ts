@@ -71,35 +71,42 @@ const cap = (v: any, n: number): string | undefined =>
 /**
  * Sum a rebate snapshot array. PFI/PO convention: value lives in `pct`
  * regardless of `type`. For `type='fixed'` the `pct` field carries an
- * absolute amount in document currency.
+ * absolute amount in the VENDOR (source) currency, so it is converted to the
+ * document currency via `rate` (cost_exchange_rate; 1 for a domestic line) —
+ * exactly like the unit price. `percent` rebates are a % of a base that is
+ * already in document currency, so they need no conversion.
  *
  *   rebate row = { rebate_id, code, name, type: 'percent'|'fixed', pct: string }
  */
-function sumRebates(items: any, base: number): number {
+function sumRebates(items: any, base: number, rate = 1): number {
     if (!Array.isArray(items) || items.length === 0) return 0;
     let total = 0;
     for (const r of items) {
         if (!r) continue;
         total +=
-            r.type === 'fixed' ? num(r.pct) : (base * num(r.pct)) / 100;
+            r.type === 'fixed' ? num(r.pct) * rate : (base * num(r.pct)) / 100;
     }
     return total;
 }
 
 /**
  * Sum an expense snapshot array. PFI/PO convention: value lives in `value`
- * (not `pct`). For `type='percent'` it's a % of base; for `type='fixed'`
- * it's an absolute amount.
+ * (not `pct`). For `type='percent'` it's a % of base (already in document
+ * currency → no conversion); for `type='fixed'` it's an absolute amount in the
+ * VENDOR (source) currency, converted to the document currency via `rate`
+ * (cost_exchange_rate; 1 for a domestic line) — like the unit price.
  *
  *   expense row = { expense_id, code, name, type: 'percent'|'fixed', value: string }
  */
-function sumExpenses(items: any, base: number): number {
+function sumExpenses(items: any, base: number, rate = 1): number {
     if (!Array.isArray(items) || items.length === 0) return 0;
     let total = 0;
     for (const e of items) {
         if (!e) continue;
         total +=
-            e.type === 'percent' ? (base * num(e.value)) / 100 : num(e.value);
+            e.type === 'percent'
+                ? (base * num(e.value)) / 100
+                : num(e.value) * rate;
     }
     return total;
 }
@@ -613,11 +620,13 @@ export class InvoiceService {
                 }
                 return;
             }
-            // Only seed when there are no other LIVE receipts (a draft can't
-            // have manual ones — recordPayment blocks draft — so this is the
-            // clean path). `active` includes voided rows, so filter them out;
-            // this also lets an advance re-added after a clear re-seed. Mints
-            // its own RCP voucher; issue() then skips re-seeding.
+            // Only seed the SO-derived advance when there are no other LIVE
+            // receipts. A draft CAN now carry manually-recorded receipts, so if
+            // one already exists we don't also auto-seed the SO advance (the
+            // manual row stands; it is never wiped by this sync). `active`
+            // includes voided rows, so filter them out; this also lets an
+            // advance re-added after a clear re-seed. Mints its own RCP
+            // voucher; issue() then skips re-seeding.
             if (active.some((p: any) => !p.voided_at)) return;
             const ctx = await this.loadCompanyContext(row.company_id.toString());
             const receiptNo = await this.voucherService.getNext(
@@ -635,6 +644,9 @@ export class InvoiceService {
                 method: 'advance',
                 reference: 'Advance against Sales Order',
                 receipt_voucher_no: receiptNo,
+                // Advance seeds at the invoice's rate (0 forex gain/loss); the
+                // operator can edit it later to realise the advance's own rate.
+                exchange_rate: row.exchange_rate || '1',
                 created_by: stampUserId || (row as any).created_by,
             } as any);
         } else if (advancePay) {
@@ -824,6 +836,7 @@ export class InvoiceService {
                     method: 'advance',
                     reference: 'Advance against Sales Order',
                     receipt_voucher_no: receiptNo,
+                    exchange_rate: row.exchange_rate || '1',
                     created_by: userId,
                 } as any);
             }
@@ -985,6 +998,7 @@ export class InvoiceService {
         userId: string
     ): Promise<InvoicePaymentDoc> {
         if (
+            row.status !== ENUM_INVOICE_STATUS.DRAFT &&
             row.status !== ENUM_INVOICE_STATUS.ISSUED &&
             row.status !== ENUM_INVOICE_STATUS.PARTIALLY_PAID
         ) {
@@ -1069,6 +1083,12 @@ export class InvoiceService {
             receipt_voucher_no: receiptVoucherNo,
             company_bank_account_id: bankAccountId,
             bank_name: bankName,
+            // Receipt-time rate for the realized forex gain/loss — defaults to
+            // the invoice's own rate (→ 0 gain/loss) when the caller omits it.
+            exchange_rate:
+                data.exchange_rate != null && data.exchange_rate !== ''
+                    ? data.exchange_rate
+                    : row.exchange_rate || '1',
             created_by: userId,
         } as any);
 
@@ -1135,12 +1155,16 @@ export class InvoiceService {
         row.advance_received = String(round2(paid));
         row.adjustment_total = String(adj);
         row.balance_receivable = String(bal);
-        if (settled <= 1e-2) {
-            row.status = ENUM_INVOICE_STATUS.ISSUED;
-        } else if (bal <= 1e-2) {
-            row.status = ENUM_INVOICE_STATUS.PAID;
-        } else {
-            row.status = ENUM_INVOICE_STATUS.PARTIALLY_PAID;
+        // A DRAFT stays a DRAFT — recording a receipt/advance on it must not
+        // "issue" the invoice. Only issued invoices cycle ISSUED↔PARTIAL↔PAID.
+        if (row.status !== ENUM_INVOICE_STATUS.DRAFT) {
+            if (settled <= 1e-2) {
+                row.status = ENUM_INVOICE_STATUS.ISSUED;
+            } else if (bal <= 1e-2) {
+                row.status = ENUM_INVOICE_STATUS.PAID;
+            } else {
+                row.status = ENUM_INVOICE_STATUS.PARTIALLY_PAID;
+            }
         }
         await this.invoiceRepository.save(row);
     }
@@ -1224,19 +1248,23 @@ export class InvoiceService {
             // currency to the DOCUMENT currency FIRST, then build the sell price
             // in the document currency. cost_exchange_rate = 1 for a domestic /
             // same-currency line, so this is a no-op there.
-            const price =
-                num(l.unit_price) * (num((l as any).cost_exchange_rate) || 1);
+            const lineRate = num((l as any).cost_exchange_rate) || 1;
+            const price = num(l.unit_price) * lineRate;
             const discount = num(l.discount_pct);
             const taxable = qty * price * (1 - discount / 100);
 
+            // Fixed expenses/rebates are in the vendor (source) currency, so
+            // convert them source→doc with the same per-line rate as the price.
             const expensesTotal = sumExpenses(
                 l.product_expenses_snapshot,
-                taxable
+                taxable,
+                lineRate
             );
             const afterExpense = taxable + expensesTotal;
             const rebatesTotal = sumRebates(
                 l.product_rebates_snapshot,
-                afterExpense
+                afterExpense,
+                lineRate
             );
             const afterRebate = afterExpense - rebatesTotal;
             const marginPct = num((l as any).margin_pct);
@@ -1778,7 +1806,28 @@ export class InvoiceService {
         const payments = await this.invoicePaymentRepository.findActiveByInvoiceId(
             row._id.toString()
         );
-        (dto as any).payments = payments;
+        // Realized forex gain/loss per receipt (INR): the ₹ actually received
+        // (amount ÷ receipt rate) minus the ₹ booked at the invoice's rate
+        // (amount ÷ invoice rate). Positive = gain, negative = loss. 0 on a
+        // home-currency invoice (both rates = 1) or a rate-less legacy receipt.
+        const invRate = num(row.exchange_rate) || 1;
+        let forexTotal = 0;
+        (dto as any).payments = (payments as any[]).map((p) => {
+            const amt = num(p.amount);
+            const rcptRate = num(p.exchange_rate) || invRate;
+            const inrExpected = invRate > 0 ? amt / invRate : amt;
+            const inrReceived = rcptRate > 0 ? amt / rcptRate : amt;
+            const gl = round2(inrReceived - inrExpected);
+            forexTotal = round2(forexTotal + gl);
+            return {
+                ...p,
+                exchange_rate: String(rcptRate),
+                inr_expected: String(round2(inrExpected)),
+                inr_received: String(round2(inrReceived)),
+                forex_gain_loss_inr: String(gl),
+            };
+        });
+        (dto as any).forex_gain_loss_inr = String(forexTotal);
 
         // Multi-SO reference numbers: the distinct union of the invoice's own
         // reference_no + every source SO's reference_no (via the lines' SOs) —

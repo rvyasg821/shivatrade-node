@@ -18,9 +18,11 @@ export class CurrencyExchangeRateEntity extends DatabaseObjectIdEntityBase {
 
     /**
      * 1 unit of `from_currency` equals `rate` units of `to_currency`.
-     * 6 decimal places — the ERP/accounting standard for FX rates.
+     * 12 decimal places — wide enough that reversing a small rate (e.g.
+     * 1 INR = 0.010515… USD) round-trips back to the big side (95.09) without
+     * the precision loss a shorter scale would cause.
      */
-    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: false })
+    @Column({ type: 'numeric', precision: 24, scale: 12, nullable: false })
     rate: string;
 
     @Index()

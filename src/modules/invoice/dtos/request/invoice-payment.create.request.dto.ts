@@ -40,6 +40,14 @@ export class InvoicePaymentCreateRequestDto {
     @IsOptional()
     @IsString()
     notes?: string;
+
+    /** Receipt-time exchange rate (foreign-per-₹1, same convention as the
+     *  invoice). Optional — defaults to the invoice's rate. Drives the realized
+     *  forex gain/loss on this receipt. */
+    @ApiProperty({ required: false, type: String })
+    @IsOptional()
+    @IsNumberString()
+    exchange_rate?: string;
 }
 
 export class InvoicePaymentVoidRequestDto {

@@ -836,8 +836,8 @@ export class PurchaseOrderService {
             // currency to the DOCUMENT currency FIRST, then build the sell price
             // in the document currency. cost_exchange_rate = 1 for a domestic
             // (same-currency) line, so this is a no-op there.
-            const costDoc =
-                num(ln.unit_price) * (num((ln as any).cost_exchange_rate) || 1);
+            const lineRate = num((ln as any).cost_exchange_rate) || 1;
+            const costDoc = num(ln.unit_price) * lineRate;
 
             // Use engine only for the intra/inter split; recompute tax on Net.
             const split = computeLineTax({
@@ -849,22 +849,24 @@ export class PurchaseOrderService {
                 company_state: companyState,
             });
 
-            // Expenses first — % on taxable, fixed as-is.
+            // Expenses first — % on taxable (doc currency, no convert); fixed is
+            // an absolute in the vendor (source) currency → convert source→doc
+            // with the same per-line rate as the price.
             let lineExpensesAmt = 0;
             for (const e of lineExpensesSnap) {
                 lineExpensesAmt +=
                     e.type === 'percent'
                         ? (split.taxable * num(e.value)) / 100
-                        : num(e.value);
+                        : num(e.value) * lineRate;
             }
             // Rebates on the post-expense total (FOB = taxable + expenses):
-            // % on that base, fixed as-is.
+            // % on that base; fixed converted source→doc like expenses.
             const lineFobBase = split.taxable + lineExpensesAmt;
             let lineRebatesAmt = 0;
             for (const r of lineRebatesSnap) {
                 lineRebatesAmt +=
                     r.type === 'fixed'
-                        ? num(r.pct)
+                        ? num(r.pct) * lineRate
                         : (lineFobBase * num(r.pct)) / 100;
             }
 
