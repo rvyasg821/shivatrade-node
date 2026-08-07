@@ -67,7 +67,10 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     purchase_order_id?: string;
 
-    @Column({ type: 'varchar', length: 60, nullable: true })
+    // Comma-joined list of every source Sales Order voucher on a multi-source
+    // invoice — one voucher is ~22 chars, so 3+ sources overflow varchar(60).
+    // Widened to hold the full chain (synchronize alters it on boot).
+    @Column({ type: 'varchar', length: 255, nullable: true })
     purchase_order_voucher_no?: string;
 
     @Index()
@@ -81,7 +84,9 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     quotation_id?: string;
 
-    @Column({ type: 'varchar', length: 60, nullable: true })
+    // Comma-joined list of source quotation vouchers — same overflow risk as
+    // purchase_order_voucher_no above, so widened to match.
+    @Column({ type: 'varchar', length: 255, nullable: true })
     quotation_voucher_no?: string;
 
     /** Customer's own PO reference (text on their letterhead). */

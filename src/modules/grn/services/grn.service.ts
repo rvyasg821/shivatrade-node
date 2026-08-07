@@ -773,10 +773,10 @@ export class GrnService {
                   } as any) as Promise<any[]>)
                 : Promise.resolve([] as any[]),
         ]);
-        // Unit price by POV line id + vendor currency by POV id.
-        const priceByPovLineId = new Map<string, number>();
-        for (const pl of povLinesAll)
-            priceByPovLineId.set(pl._id.toString(), num(pl.unit_price));
+        // Whole POV line by id (price + discount + GST) so the per-GRN value can
+        // mirror the ledger's GST-inclusive amount.
+        const povLineById = new Map<string, any>();
+        for (const pl of povLinesAll) povLineById.set(pl._id.toString(), pl);
         const currencyByPovId = new Map<string, string>();
         for (const pv of povsAll)
             currencyByPovId.set(pv._id.toString(), pv.currency_code || 'INR');
@@ -784,21 +784,23 @@ export class GrnService {
         const rejectedByGrn = new Map<string, number>();
         // "Received" shown on the GRN list = the good qty (accepted).
         const receivedByGrn = new Map<string, number>();
-        // Received value = Σ(accepted_qty × POV unit price), and the distinct
-        // unit prices per GRN (to show a single price, or "mixed" → null).
+        // Taxable value = Σ(accepted_qty × price × (1−disc%)); GST value =
+        // Σ(taxable × GST%); the distinct unit prices per GRN (single or mixed).
         const valueByGrn = new Map<string, number>();
+        const gstByGrn = new Map<string, number>();
         const pricesByGrn = new Map<string, Set<number>>();
         for (const l of lines) {
             const k = l.grn_id.toString();
             lineCount.set(k, (lineCount.get(k) || 0) + 1);
             rejectedByGrn.set(k, (rejectedByGrn.get(k) || 0) + num(l.rejected_qty));
             receivedByGrn.set(k, (receivedByGrn.get(k) || 0) + num(l.accepted_qty));
-            const price =
-                priceByPovLineId.get(l.po_vendor_line_id?.toString()) || 0;
-            valueByGrn.set(
-                k,
-                (valueByGrn.get(k) || 0) + num(l.accepted_qty) * price
-            );
+            const pl = povLineById.get(l.po_vendor_line_id?.toString());
+            const price = num(pl?.unit_price);
+            const disc = num(pl?.discount_pct);
+            const tax = num(pl?.tax_pct);
+            const taxable = num(l.accepted_qty) * price * (1 - disc / 100);
+            valueByGrn.set(k, (valueByGrn.get(k) || 0) + taxable);
+            gstByGrn.set(k, (gstByGrn.get(k) || 0) + taxable * (tax / 100));
             if (!pricesByGrn.has(k)) pricesByGrn.set(k, new Set());
             pricesByGrn.get(k)!.add(price);
         }
@@ -826,6 +828,10 @@ export class GrnService {
                     ? String([...priceSet][0])
                     : null;
             dto.total_value = String(round4(valueByGrn.get(k) || 0));
+            dto.gst_value = String(round4(gstByGrn.get(k) || 0));
+            dto.total_with_gst = String(
+                round4((valueByGrn.get(k) || 0) + (gstByGrn.get(k) || 0))
+            );
             dto.currency_code = r.po_vendor_id
                 ? currencyByPovId.get(r.po_vendor_id.toString())
                 : undefined;
@@ -1028,8 +1034,14 @@ export class GrnService {
         // Unit price (vendor currency) by POV line id — the GRN line references
         // its source POV line, which holds the agreed price.
         const priceByPovLineId = new Map<string, string>();
-        for (const pl of (povLines as any[]) || [])
+        // GST% + discount% by POV line id — read-only, for the GST column.
+        const taxByPovLineId = new Map<string, string>();
+        const discByPovLineId = new Map<string, string>();
+        for (const pl of (povLines as any[]) || []) {
             priceByPovLineId.set(pl._id.toString(), pl.unit_price);
+            taxByPovLineId.set(pl._id.toString(), String(pl.tax_pct ?? '0'));
+            discByPovLineId.set(pl._id.toString(), String(pl.discount_pct ?? '0'));
+        }
 
         // Qty already accounted (received good + rejected) on the OTHER
         // non-cancelled GRNs of this POV, keyed by po_vendor_line_id. Used to
@@ -1067,6 +1079,13 @@ export class GrnService {
                 // Agreed unit price (vendor currency) from the source POV line.
                 unit_price: l.po_vendor_line_id
                     ? priceByPovLineId.get(l.po_vendor_line_id.toString()) ?? '0'
+                    : '0',
+                // GST% + discount% from the source POV line (read-only).
+                tax_pct: l.po_vendor_line_id
+                    ? taxByPovLineId.get(l.po_vendor_line_id.toString()) ?? '0'
+                    : '0',
+                discount_pct: l.po_vendor_line_id
+                    ? discByPovLineId.get(l.po_vendor_line_id.toString()) ?? '0'
                     : '0',
                 ordered_qty: l.ordered_qty,
                 dispatched_qty: l.dispatched_qty,

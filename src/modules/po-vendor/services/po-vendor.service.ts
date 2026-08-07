@@ -2278,16 +2278,22 @@ export class PoVendorService {
             );
             const isDraft = fromStatus === ENUM_PO_VENDOR_STATUS.DRAFT;
 
+            const isDispatched =
+                fromStatus === ENUM_PO_VENDOR_STATUS.DISPATCHED;
+
             if (wantsTax && !isDraft) {
                 throw new BadRequestException(
                     `POV is ${fromStatus}. The GST rate is frozen once the PO is with the vendor — only the rate can be revised.`
                 );
             }
-            // Quantity is a commitment once the PO leaves draft (and a GRN would
-            // cost it into stock), so it is editable in DRAFT only — like GST.
-            if (wantsQty && !isDraft) {
+            // Quantity is editable in DRAFT, and once DISPATCHED too: the vendor
+            // may ship more/less than ordered, so the order qty can be corrected
+            // to match the dispatch (like the rate — until a GRN exists, which
+            // is enforced by the shared price/qty GRN-block below). The
+            // received-qty floor further stops it dropping under a partial GRN.
+            if (wantsQty && !isDraft && !isDispatched) {
                 throw new BadRequestException(
-                    `POV is ${fromStatus}. Quantity is frozen once the PO is with the vendor — only the rate can be revised.`
+                    `POV is ${fromStatus}. Quantity is frozen at this status.`
                 );
             }
             // Both print on the vendor PDF, so they freeze with it.
@@ -2296,9 +2302,9 @@ export class PoVendorService {
                     `POV is ${fromStatus}. HSN and part number are frozen once the PO is with the vendor — only the rate can be revised.`
                 );
             }
-            // A GRN means the goods are already costed into stock; re-pricing
-            // afterwards would silently misstate that valuation.
-            if (wantsPrice && !isDraft) {
+            // A GRN means the goods are already costed into stock; re-pricing or
+            // re-quantifying afterwards would silently misstate that valuation.
+            if ((wantsPrice || wantsQty) && !isDraft) {
                 const deps = await this.dependencyCheckService.check(
                     'po_vendor',
                     row._id.toString()
@@ -2306,7 +2312,7 @@ export class PoVendorService {
                 const grn = deps.dependents.find(d => d.label === 'GRN');
                 if (grn) {
                     throw new BadRequestException(
-                        `Prices cannot be revised — this POV already has ${grn.count} GRN${
+                        `Price and quantity cannot be revised — this POV already has ${grn.count} GRN${
                             grn.count > 1 ? 's' : ''
                         }. Raise a Debit Note for the difference instead.`
                     );
@@ -2389,6 +2395,14 @@ export class PoVendorService {
                     }
                     if (q !== num(line.ordered_qty)) qtyChanges += 1;
                     line.ordered_qty = String(q);
+                    // On a DISPATCHED POV the dispatch follows the order: the
+                    // operator is reconciling the whole line to one number, so
+                    // dispatched_qty is set to match (no leftover un-dispatched
+                    // "pending"). Safe because a GRN blocks this edit entirely,
+                    // so received_qty is 0 and nothing downstream is costed yet.
+                    if (isDispatched) {
+                        line.dispatched_qty = String(q);
+                    }
                     line.line_total = String(
                         round2(
                             q *

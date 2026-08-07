@@ -272,8 +272,9 @@ export class LedgerService {
 
     // ── Vendor ledger (native — in the vendor's own currency) ──
     // GRN goods-received → vendor CREDIT (client 2026-08-06). One row per GRN,
-    // valued at Σ(accepted/received qty × source-POV unit price) in the vendor
-    // currency. Only CONFIRMED GRNs post (a draft receipt is still being
+    // valued at Σ(accepted qty × unit price × (1−disc%) × (1+GST%)) — the
+    // GST-inclusive billed value (client 2026-08-07) — in the vendor currency.
+    // Only CONFIRMED GRNs post (a draft receipt is still being
     // entered). Returns one entry per GRN; callers map it to a ledger CR row /
     // a register row.
     private async vendorGrnCredits(
@@ -321,23 +322,33 @@ export class LedgerService {
                   } as any) as Promise<any[]>)
                 : Promise.resolve([] as any[]),
         ]);
-        const priceByPovLineId = new Map<string, number>();
-        for (const pl of povLines)
-            priceByPovLineId.set(pl._id.toString(), num(pl.unit_price));
+        // Keep the whole POV line (price + discount + GST rate), so the GRN
+        // value can mirror what the vendor actually bills, not just the raw
+        // goods value.
+        const povLineById = new Map<string, any>();
+        for (const pl of povLines) povLineById.set(pl._id.toString(), pl);
         const currencyByPovId = new Map<string, string>();
         for (const pv of povs)
             currencyByPovId.set(pv._id.toString(), pv.currency_code || 'INR');
-        // Value = Σ(accepted qty × unit price). "Received" = good/accepted qty,
-        // matching the GRN's Received column; rejected units are debit-noted.
+        // Value = Σ(accepted qty × unit price × (1 − disc%) × (1 + GST%)) — the
+        // GST-INCLUSIVE amount for the received goods (client 2026-08-07), so a
+        // partial GRN (e.g. 5 of 10 @ 18% GST) posts 5 × price × 1.18. Discount
+        // is applied first, exactly like the POV line_total. "Received" =
+        // good/accepted qty (the GRN's Received column); rejected units are
+        // debit-noted separately. GST is 0 on a foreign POV (tax_pct = 0 there).
         const valueByGrn = new Map<string, number>();
         for (const l of grnLines) {
             const k = l.grn_id.toString();
-            const price =
-                priceByPovLineId.get(l.po_vendor_line_id?.toString()) || 0;
-            valueByGrn.set(
-                k,
-                (valueByGrn.get(k) || 0) + num(l.accepted_qty) * price
-            );
+            const pl = povLineById.get(l.po_vendor_line_id?.toString());
+            const price = num(pl?.unit_price);
+            const disc = num(pl?.discount_pct);
+            const tax = num(pl?.tax_pct);
+            const lineVal =
+                num(l.accepted_qty) *
+                price *
+                (1 - disc / 100) *
+                (1 + tax / 100);
+            valueByGrn.set(k, (valueByGrn.get(k) || 0) + lineVal);
         }
         return grns.map((g) => ({
             grn_id: g._id.toString(),
@@ -437,9 +448,10 @@ export class LedgerService {
             });
         }
 
-        // GRN goods received → CREDIT (client 2026-08-06): value of goods
-        // received (received qty × POV unit price, vendor currency). Flows into
-        // the Balance column and the Outstanding card, like a credit note.
+        // GRN goods received → CREDIT (client 2026-08-06): GST-inclusive value
+        // of goods received (accepted qty × price × (1−disc%) × (1+GST%),
+        // vendor currency). Flows into the Balance column and the Outstanding
+        // card, like a credit note.
         const grnCredits = await this.vendorGrnCredits(companyId, vendorId);
         for (const g of grnCredits) {
             if (g.value <= 0) continue;
