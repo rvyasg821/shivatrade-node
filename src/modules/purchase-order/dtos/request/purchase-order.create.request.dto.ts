@@ -225,6 +225,16 @@ export class PurchaseOrderCreateRequestDto {
     @MaxLength(200)
     advance_notes?: string;
 
+    /** Company bank account the advance was received into + a name snapshot. */
+    @IsUUID()
+    @IsOptional()
+    advance_bank_account_id?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    advance_bank_name?: string;
+
     /** Free-text snapshot. Optional — if omitted, server resolves from
      *  `delivery_address_id` (preferred) or rejects. */
     @IsString()

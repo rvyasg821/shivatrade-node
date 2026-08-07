@@ -113,6 +113,15 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 200, nullable: true })
     advance_notes?: string;
 
+    /** Company bank account the advance was RECEIVED into (+ a name snapshot so
+     *  it survives if the bank is later edited/removed). Mirrors the invoice
+     *  receipt's `company_bank_account_id`/`bank_name`. */
+    @Column({ type: 'uuid', nullable: true })
+    advance_bank_account_id?: string;
+
+    @Column({ type: 'varchar', length: 200, nullable: true })
+    advance_bank_name?: string;
+
     /** Forwarder warehouse / port — frozen snapshot text printed on the
      *  PO PDF. Inherits from a picked company address (via
      *  `delivery_address_id`) or from a manual text override. */

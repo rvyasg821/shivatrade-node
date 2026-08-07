@@ -96,4 +96,14 @@ export class PurchaseOrderAutoSplitRequestDto {
     @IsOptional()
     @MaxLength(200)
     advance_notes?: string;
+
+    /** Company bank account the advance was received into + a name snapshot. */
+    @IsUUID()
+    @IsOptional()
+    advance_bank_account_id?: string;
+
+    @IsString()
+    @IsOptional()
+    @MaxLength(200)
+    advance_bank_name?: string;
 }

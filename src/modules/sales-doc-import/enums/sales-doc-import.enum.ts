@@ -6,6 +6,9 @@ export enum ENUM_SALES_DOC_TYPE {
     PO = 'po',
     // Lead requirement lines reuse the quotation line shape + export fields.
     LEAD = 'lead',
+    // Invoice reuses the Sales Order (PO) costing layout — same "new layout"
+    // per-code expense/rebate columns + export/shipping fields.
+    INVOICE = 'invoice',
 }
 
 // Row status mirrors the price-list import flow (see

@@ -55,7 +55,8 @@ const docHasExportFields = (t: ENUM_SALES_DOC_TYPE): boolean =>
     t === ENUM_SALES_DOC_TYPE.PFI ||
     t === ENUM_SALES_DOC_TYPE.QUOTATION ||
     t === ENUM_SALES_DOC_TYPE.PO ||
-    t === ENUM_SALES_DOC_TYPE.LEAD;
+    t === ENUM_SALES_DOC_TYPE.LEAD ||
+    t === ENUM_SALES_DOC_TYPE.INVOICE;
 
 const num = (v: any): number => {
     if (v === null || v === undefined || v === '') return 0;
@@ -184,7 +185,8 @@ export class SalesDocImportService {
         // legacy parsing untouched.
         const isNewLayout =
             docType === ENUM_SALES_DOC_TYPE.QUOTATION ||
-            docType === ENUM_SALES_DOC_TYPE.PO;
+            docType === ENUM_SALES_DOC_TYPE.PO ||
+            docType === ENUM_SALES_DOC_TYPE.INVOICE;
         const [products, vendors, rebateMasters, expenseMasters] =
             await Promise.all([
                 this.productRepository.findByCompanyId(companyId),
@@ -262,6 +264,15 @@ export class SalesDocImportService {
         const existingSet = new Set<string>(
             existingPairs.map((p) => `${p.product_id || ''}|${p.vendor_id || ''}`),
         );
+        // COUNT (not just presence) of each product+vendor already on the form —
+        // invoices allow duplicate lines, so a re-import must UPDATE one existing
+        // line per matching sheet row (counted) and only APPEND the extras beyond
+        // that count. Decremented as rows are matched below.
+        const existingCount = new Map<string, number>();
+        for (const p of existingPairs) {
+            const k = `${p.product_id || ''}|${p.vendor_id || ''}`;
+            existingCount.set(k, (existingCount.get(k) || 0) + 1);
+        }
         // Leads dedup existing form lines by product CODE (no vendor), so an
         // imported product already on the form classifies as UPDATED even when
         // the form line still carries a legacy vendor_id. Resolve the code from
@@ -768,6 +779,19 @@ export class SalesDocImportService {
                 : existKey;
             if (errors.length > 0) {
                 status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.ERROR;
+            } else if (docType === ENUM_SALES_DOC_TYPE.INVOICE) {
+                // Invoices allow duplicate product+vendor lines. COUNTED match:
+                // each sheet row UPDATES one existing form line of the same
+                // product+vendor (so a straight export→re-import updates in place
+                // and never grows the grid); once the form's copies are used up,
+                // any extra duplicate row is imported as a NEW appended line.
+                const left = existingCount.get(existKey) || 0;
+                if (left > 0) {
+                    status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.UPDATED;
+                    existingCount.set(existKey, left - 1);
+                } else {
+                    status = ENUM_SALES_DOC_IMPORT_ROW_STATUS.NEW;
+                }
             } else if (firstRowByKey.has(dupKey)) {
                 // Same product already seen earlier in the sheet.
                 const firstRow = firstRowByKey.get(dupKey)!;
@@ -1856,7 +1880,8 @@ export class SalesDocImportService {
         // other docs' import/export are unaffected.
         if (
             opts.docType === ENUM_SALES_DOC_TYPE.QUOTATION ||
-            opts.docType === ENUM_SALES_DOC_TYPE.PO
+            opts.docType === ENUM_SALES_DOC_TYPE.PO ||
+            opts.docType === ENUM_SALES_DOC_TYPE.INVOICE
         ) {
             return this.buildCostingWorkbook(companyId, opts);
         }

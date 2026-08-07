@@ -357,6 +357,8 @@ export class PurchaseOrderAdminController {
                     advance_amount: body.advance_amount,
                     advance_date: body.advance_date,
                     advance_notes: body.advance_notes,
+                    advance_bank_account_id: body.advance_bank_account_id,
+                    advance_bank_name: body.advance_bank_name,
                 },
             }
         );
@@ -394,6 +396,8 @@ export class PurchaseOrderAdminController {
                     advance_amount: body.advance_amount,
                     advance_date: body.advance_date,
                     advance_notes: body.advance_notes,
+                    advance_bank_account_id: body.advance_bank_account_id,
+                    advance_bank_name: body.advance_bank_name,
                 },
             }
         );

@@ -3,6 +3,7 @@ import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.rep
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
 import { CustomerRepositoryModule } from '@modules/customer/repository/customer.repository.module';
+import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
 import { GrnRepositoryModule } from '@modules/grn/repository/grn.repository.module';
@@ -19,6 +20,7 @@ import { LedgerAdminController } from './controllers/ledger.admin.controller';
         PoVendorModule,
         PoVendorRepositoryModule,
         CustomerRepositoryModule,
+        PurchaseOrderRepositoryModule,
         VendorRepositoryModule,
         AdjustmentNoteRepositoryModule,
         GrnRepositoryModule,

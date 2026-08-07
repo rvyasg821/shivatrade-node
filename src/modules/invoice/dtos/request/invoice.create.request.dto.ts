@@ -14,6 +14,7 @@ import {
     IsUUID,
     MaxLength,
     Min,
+    ValidateIf,
     ValidateNested,
 } from 'class-validator';
 import {
@@ -28,9 +29,19 @@ export class InvoiceLineDto {
     @IsOptional()
     _id?: string;
 
+    // Optional: a from-stock / imported / manual invoice line has no source SO
+    // line. Validated as a UUID only when present + non-empty; empty or omitted
+    // is accepted (the service treats it as a from-stock line — the SO qty guard
+    // and source-PO snapshot both skip null purchase_order_line_id).
+    @ValidateIf(
+        (o) =>
+            o.purchase_order_line_id !== undefined &&
+            o.purchase_order_line_id !== null &&
+            o.purchase_order_line_id !== '',
+    )
     @IsUUID()
-    @IsNotEmpty()
-    purchase_order_line_id: string;
+    @IsOptional()
+    purchase_order_line_id?: string;
 
     @IsUUID()
     @IsOptional()

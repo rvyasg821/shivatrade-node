@@ -269,6 +269,14 @@ export class InvoicePdfService {
         // Order each product came from on a multi-SO invoice.
         const lineSoVoucher = new Map<string, string>(); // poLineId → SO voucher
         const lineSoRef = new Map<string, string>(); // poLineId → SO reference_no
+        // Per-SO advance breakdown for the PDFs: one row per source SO with its
+        // billed value (Σ its lines' line_total), advance and receivable.
+        let soAdvanceRows: Array<{
+            sales_order: string;
+            invoice_value: number;
+            advance: number;
+            receivable: number;
+        }> = [];
         const poLineIds = Array.from(
             new Set(
                 (lines as any[])
@@ -311,14 +319,46 @@ export class InvoicePdfService {
                         );
                     }
                     // Preserve SO order by voucher for a stable, readable list.
-                    (pos as any[])
-                        .slice()
-                        .sort((a, b) =>
-                            String(a.voucher_no || '').localeCompare(
-                                String(b.voucher_no || '')
-                            )
+                    const posSorted = (pos as any[]).slice().sort((a, b) =>
+                        String(a.voucher_no || '').localeCompare(
+                            String(b.voucher_no || '')
                         )
-                        .forEach((po) => pushRef(po.reference_no));
+                    );
+                    posSorted.forEach((po) => pushRef(po.reference_no));
+
+                    // Bill value per SO = Σ line_total of its invoice lines.
+                    const poIdByLineId = new Map<string, string>();
+                    for (const pl of poLines as any[])
+                        poIdByLineId.set(
+                            pl._id.toString(),
+                            pl.purchase_order_id?.toString()
+                        );
+                    const billedByPoId = new Map<string, number>();
+                    for (const l of lines as any[]) {
+                        const pid = poIdByLineId.get(
+                            l.purchase_order_line_id?.toString()
+                        );
+                        if (!pid) continue;
+                        billedByPoId.set(
+                            pid,
+                            (billedByPoId.get(pid) || 0) + num(l.line_total)
+                        );
+                    }
+                    soAdvanceRows = posSorted.map((po) => {
+                        const invoiceValue =
+                            Math.round(
+                                (billedByPoId.get(po._id.toString()) || 0) * 100
+                            ) / 100;
+                        const advance =
+                            Math.round(num(po.advance_amount) * 100) / 100;
+                        return {
+                            sales_order: po.voucher_no || '',
+                            invoice_value: invoiceValue,
+                            advance,
+                            receivable:
+                                Math.round((invoiceValue - advance) * 100) / 100,
+                        };
+                    });
                 }
             } catch {
                 /* non-fatal — fall back to the invoice's own reference_no */
@@ -335,6 +375,7 @@ export class InvoicePdfService {
         // templates. `reference_nos` is the joined list; falls back to the
         // single field when nothing resolves.
         (invoice as any).reference_nos = refList.join(', ') || invoice.reference_no;
+        (invoice as any).so_advance_rows = soAdvanceRows;
 
         const company: any =
             (await this.companyRepository.findOneById(companyId)) || {};
@@ -739,11 +780,57 @@ function buildInvoiceExcelSections(
     if (num(inv.other_charges) > 0) rows.push(sumRow('Other', num(inv.other_charges)));
     if (showIgst) rows.push(sumRow('Total IGST Amt. (INR)', totalIgstInr, '₹', { bold: true }));
     rows.push(sumRow(`TOTAL ${inv.incoterm || 'CNF'} Amount`, num(inv.grand_total), sym, { bold: true, fill: 'FDEBD8', color: 'C25E10' }));
-    rows.push(sumRow('Advance Received', num(inv.advance_received)));
-    if (isExport) rows.push(sumRow('Balance Receivable', num(inv.balance_receivable), sym, { bold: true }));
 
     sections.push({ kind: 'table', head, rows, align: ['c', 'c', 'c', 'l', 'l', 'r', 'r', 'r'] });
     sections.push({ kind: 'spacer' });
+
+    // Advance Received (Sales Order-wise) — mirrors the PDF table; only SOs that
+    // carry an advance are listed. Replaces the old Advance/Balance sum rows.
+    const soAdv: any[] = (
+        Array.isArray(inv.so_advance_rows) ? inv.so_advance_rows : []
+    ).filter((r: any) => num(r.advance) > 0);
+    if (soAdv.length) {
+        // Place the 4 logical columns across the sheet's 8 columns so the Sales
+        // Order voucher gets a wide (3-column) cell and never wraps. Cells sit at
+        // their span-start sheet columns; the builder merges via headSpan/colSpan.
+        const soSpan = [3, 2, 2, 1];
+        const spanned = (
+            parts: Array<[DocCell, number]>
+        ): DocCell[] => {
+            const out: DocCell[] = [];
+            let c = 0;
+            for (const [cell, span] of parts) {
+                out[c] = { ...cell, colSpan: span };
+                c += span;
+            }
+            return out;
+        };
+        const soRows: DocCell[][] = soAdv.map((r: any) =>
+            spanned([
+                [textCell(r.sales_order || '-', 'l'), soSpan[0]],
+                [curCell(num(r.invoice_value), sym, 2), soSpan[1]],
+                [curCell(num(r.advance), sym, 2), soSpan[2]],
+                [curCell(num(r.receivable), sym, 2), soSpan[3]],
+            ])
+        );
+        soRows.push(
+            spanned([
+                [textCell('Total', 'r', { bold: true }), soSpan[0]],
+                [curCell(soAdv.reduce((s, r) => s + num(r.invoice_value), 0), sym, 2, { bold: true }), soSpan[1]],
+                [curCell(soAdv.reduce((s, r) => s + num(r.advance), 0), sym, 2, { bold: true }), soSpan[2]],
+                [curCell(soAdv.reduce((s, r) => s + num(r.receivable), 0), sym, 2, { bold: true }), soSpan[3]],
+            ])
+        );
+        sections.push({ kind: 'note', text: 'Advance Received (Sales Order-wise)', bold: true });
+        sections.push({
+            kind: 'table',
+            head: ['Sales Order', `Invoice Value (${sym})`, `Advance Received (${sym})`, `Receivable (${sym})`],
+            headSpan: soSpan,
+            rows: soRows,
+            align: ['l', 'r', 'r', 'r'],
+        });
+        sections.push({ kind: 'spacer' });
+    }
     if (inv.amount_in_words)
         sections.push({ kind: 'note', text: `Amount Chargeable (in words): ${inv.amount_in_words}`, bold: true });
 
@@ -763,14 +850,14 @@ function buildInvoiceExcelSections(
         sections.push({ kind: 'table', head: ['Assessable Value (INR)', 'IGST Rate', 'IGST Amount (INR)'], rows: bRows, align: ['r', 'c', 'r'] });
     }
 
-    // End-use / preferential / place of supply / advance received strip.
+    // End-use / preferential / place-of-supply strip (advance is now itemised
+    // in the Sales-Order-wise table above).
     sections.push({
         kind: 'kv',
         pairs: [
             ['End Use Code', dash(inv.end_use_code)],
             ['Preferential Agreement', dash(inv.preferential_agreement || 'N/A')],
             ['Place of Supply', `${inv.place_of_supply || '96'} - Other Territory`],
-            ['Advance Received', `${sym} ${fmt(inv.advance_received, 2)}`],
         ],
     });
     // Cargo totals strip.
@@ -1197,6 +1284,51 @@ const SHIPPING_BILL_TYPE_LABELS: Record<string, string> = {
 
 /** Cargo totals strip — Total Packages / Net Weight / Gross Weight from the
  *  invoice header (auto-summed from the lines). Returns '' when none set. */
+/**
+ * Sales-Order-wise advance table (client 2026-08-07): when the invoice draws
+ * from several SOs each with its own advance, itemise them — Sales Order,
+ * Invoice Value (that SO's billed lines), Advance Received, Receivable
+ * (invoice value − advance). Only the SOs that actually carry an advance are
+ * listed. Returns '' when there is no advance. Shared by commercial + export.
+ */
+function advanceSoTable(inv: any, sym: string): string {
+    const all: any[] = Array.isArray(inv.so_advance_rows)
+        ? inv.so_advance_rows
+        : [];
+    const rows = all.filter((r) => num(r.advance) > 0);
+    if (!rows.length) return '';
+    const body = rows
+        .map(
+            (r) => `<tr>
+            <td>${esc(r.sales_order)}</td>
+            <td class="right">${sym}${fmt(r.invoice_value, 2)}</td>
+            <td class="right">${sym}${fmt(r.advance, 2)}</td>
+            <td class="right">${sym}${fmt(r.receivable, 2)}</td>
+        </tr>`
+        )
+        .join('');
+    const tVal = rows.reduce((s, r) => s + num(r.invoice_value), 0);
+    const tAdv = rows.reduce((s, r) => s + num(r.advance), 0);
+    const tRec = rows.reduce((s, r) => s + num(r.receivable), 0);
+    return `
+    <table class="avoid-break" style="margin-top: 6px;">
+        <tr><td colspan="4" class="lbl" style="background:#f0f0f0;">Advance Received (Sales Order-wise)</td></tr>
+        <tr>
+            <td class="lbl">Sales Order</td>
+            <td class="right lbl">Invoice Value</td>
+            <td class="right lbl">Advance Received</td>
+            <td class="right lbl">Receivable</td>
+        </tr>
+        ${body}
+        <tr class="strong">
+            <td class="right">Total</td>
+            <td class="right">${sym}${fmt(tVal, 2)}</td>
+            <td class="right">${sym}${fmt(tAdv, 2)}</td>
+            <td class="right">${sym}${fmt(tRec, 2)}</td>
+        </tr>
+    </table>`;
+}
+
 function cargoTotalsBlock(inv: any): string {
     const has =
         inv.total_packages != null ||
@@ -1359,12 +1491,13 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
 
     <table style="margin-top: 6px;">
         <tr>
-            <td style="width:25%;"><span class="lbl">End Use Code</span><br/>${esc(inv.end_use_code)}</td>
-            <td style="width:25%;"><span class="lbl">Preferential Agreement</span><br/>${esc(inv.preferential_agreement || 'N/A')}</td>
-            <td style="width:25%;"><span class="lbl">Place of Supply</span><br/>${esc(inv.place_of_supply || '96')} - Other Territory</td>
-            <td><span class="lbl">Advance Received</span><br/>${sym}${fmt(inv.advance_received, 2)}</td>
+            <td style="width:33%;"><span class="lbl">End Use Code</span><br/>${esc(inv.end_use_code)}</td>
+            <td style="width:33%;"><span class="lbl">Preferential Agreement</span><br/>${esc(inv.preferential_agreement || 'N/A')}</td>
+            <td><span class="lbl">Place of Supply</span><br/>${esc(inv.place_of_supply || '96')} - Other Territory</td>
         </tr>
     </table>
+
+    ${advanceSoTable(inv, sym)}
 
     ${cargoTotalsBlock(inv)}
 
@@ -1496,15 +1629,9 @@ function buildExportInvoiceHtml(d: RenderData): string {
             <td colspan="7" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
         </tr>
-        <tr>
-            <td colspan="7" class="right lbl">Advance Received</td>
-            <td class="right">${sym}${fmt(inv.advance_received, 2)}</td>
-        </tr>
-        <tr>
-            <td colspan="7" class="right strong">Balance Receivable</td>
-            <td class="right strong">${sym}${fmt(inv.balance_receivable, 2)}</td>
-        </tr>
     </table>
+
+    ${advanceSoTable(inv, sym)}
 
     ${inv.amount_in_words ? `<div class="pad" style="border:1px solid #222; border-top:none;"><span class="lbl">Amount in Words:</span> ${esc(inv.amount_in_words)}</div>` : ''}
 

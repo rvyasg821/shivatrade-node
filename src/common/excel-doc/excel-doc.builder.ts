@@ -67,6 +67,11 @@ export type DocSection =
           head: string[];
           rows: DocCell[][];
           align?: DocAlign[];
+          /** Optional per-header column span (parallel to `head`). Lets a header
+           *  (and its body cells, via each cell's colSpan) occupy several sheet
+           *  columns — e.g. a wide "Sales Order" column that shouldn't wrap.
+           *  Body row cells must be placed at the span-start sheet columns. */
+          headSpan?: number[];
       }
     /** Right-aligned totals block; last pair can be emphasised (grand total). */
     | {
@@ -120,7 +125,12 @@ export function buildDocWorkbook(input: BuildDocWorkbookInput): Buffer {
     // Sheet width = widest table header (min 6 so header bands look balanced).
     let width = 6;
     for (const s of sections) {
-        if (s.kind === 'table') width = Math.max(width, s.head.length);
+        if (s.kind === 'table') {
+            const tCols = s.headSpan
+                ? s.headSpan.reduce((a, b) => a + b, 0)
+                : s.head.length;
+            width = Math.max(width, tCols);
+        }
     }
 
     const aoa: (string | number | null)[][] = [];
@@ -374,24 +384,52 @@ export function buildDocWorkbook(input: BuildDocWorkbookInput): Buffer {
             }
 
             case 'table': {
-                const cols = section.head.length;
                 const align = section.align || [];
-                // Header row.
-                const hr = pushRow(section.head);
-                for (let c = 0; c < cols; c++)
-                    style(hr, c, {
-                        fill: {
-                            patternType: 'solid',
-                            fgColor: { rgb: CLR.brand },
-                        },
-                        font: { color: { rgb: CLR.white }, bold: true, sz: 11 },
-                        alignment: {
-                            horizontal: hAlign(align[c] || 'c'),
-                            vertical: 'center',
-                            wrapText: true,
-                        },
-                        border: boxAll(CLR.brandDark),
-                    });
+                // Per-header span (default 1 each). `cols` = total sheet columns.
+                const spanArr =
+                    section.headSpan &&
+                    section.headSpan.length === section.head.length
+                        ? section.headSpan
+                        : section.head.map(() => 1);
+                const cols = spanArr.reduce((a, b) => a + b, 0);
+                // Header row — place each label at its span-start column + merge.
+                const headVals: (string | number | null)[] = new Array(
+                    cols
+                ).fill(null);
+                {
+                    let hc = 0;
+                    for (let i = 0; i < section.head.length; i++) {
+                        headVals[hc] = section.head[i];
+                        hc += spanArr[i];
+                    }
+                }
+                const hr = pushRow(headVals);
+                {
+                    let hc = 0;
+                    for (let i = 0; i < section.head.length; i++) {
+                        const span = spanArr[i] > 1 ? spanArr[i] : 1;
+                        if (span > 1)
+                            mergeRow(hr, hc, Math.min(cols, hc + span) - 1);
+                        style(hr, hc, {
+                            fill: {
+                                patternType: 'solid',
+                                fgColor: { rgb: CLR.brand },
+                            },
+                            font: {
+                                color: { rgb: CLR.white },
+                                bold: true,
+                                sz: 11,
+                            },
+                            alignment: {
+                                horizontal: hAlign(align[i] || 'c'),
+                                vertical: 'center',
+                                wrapText: true,
+                            },
+                            border: boxAll(CLR.brandDark),
+                        });
+                        hc += span;
+                    }
+                }
                 // Body rows (zebra striped).
                 for (let ri = 0; ri < section.rows.length; ri++) {
                     const cells = section.rows[ri];

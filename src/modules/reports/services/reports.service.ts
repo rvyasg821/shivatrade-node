@@ -43,6 +43,13 @@ import {
     SoInvoiceReconRowDto,
 } from '../dtos/response/so-invoice-reconciliation.response.dto';
 import {
+    DocStatusResponseDto,
+    DocStatusRowDto,
+    DocStatusTotalsDto,
+    DocStatusOptionDto,
+    DocStatusBreakdownRowDto,
+} from '../dtos/response/doc-status.response.dto';
+import {
     StockTurnoverResponseDto,
     StockTurnoverRowDto,
 } from '../dtos/response/stock-turnover.response.dto';
@@ -115,6 +122,34 @@ export interface ISoInvoiceReconQuery {
     /** Narrow to a single Sales Order / purchase_order (dropdown). */
     purchase_order_id?: string;
     /** Free text over product name/code. */
+    search?: string;
+    page?: number;
+    perPage?: number;
+}
+
+export interface ISalesOrderStatusQuery {
+    date_from?: string;
+    date_to?: string;
+    customer_id?: string;
+    /** open | partial | closed — coverage status filter. */
+    status?: string;
+    /** export | domestic | all — which invoices count toward coverage. */
+    invoice_type?: string;
+    /** Free text over SO voucher / customer name. */
+    search?: string;
+    page?: number;
+    perPage?: number;
+}
+
+export interface IPurchaseOrderStatusQuery {
+    date_from?: string;
+    date_to?: string;
+    vendor_id?: string;
+    /** open | partial | closed — coverage status filter. */
+    status?: string;
+    /** confirmed | all — which GRNs count toward coverage (received qty). */
+    grn_scope?: string;
+    /** Free text over POV voucher / vendor name. */
     search?: string;
     page?: number;
     perPage?: number;
@@ -2583,6 +2618,493 @@ export class ReportsService {
         return this.fileService.writeExcelFromArray(aoa);
     }
 
+    // ── Document coverage status (shared by SO Status + POV Status) ──────
+    /**
+     * Turn the raw per-document rows (already carrying INR-normalised values —
+     * the per-report SQL owns the currency direction) into the full response:
+     * status/coverage classification, party dropdown, status filter, totals and
+     * pagination. Both the Sales Order and Purchase Order status reports funnel
+     * their SQL through here so the classification never drifts between them.
+     */
+    private assembleDocStatusResponse(
+        raw: any[],
+        from: string,
+        to: string,
+        statusFilter: string | null,
+        page: number,
+        perPage: number
+    ): DocStatusResponseDto {
+        const allRows: DocStatusRowDto[] = mapDocStatusRows(raw);
+        const party_options: DocStatusOptionDto[] =
+            docStatusPartyOptions(allRows);
+        const rows = statusFilter
+            ? allRows.filter((r) => r.status === statusFilter)
+            : allRows;
+        const totals: DocStatusTotalsDto = docStatusTotals(rows);
+        const start = (page - 1) * perPage;
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: rows.slice(start, start + perPage),
+            totals,
+            party_options,
+            pagination: { total: rows.length, perPage },
+        };
+    }
+
+    /** The document status list as an .xlsx Buffer (whole set + TOTAL). Shared
+     *  by both reports; the labels come from `cfg`. */
+    private docStatusExcel(
+        result: DocStatusResponseDto,
+        cfg: {
+            title: string;
+            docNoLabel: string;
+            partyLabel: string;
+            coverCountLabel: string;
+            note: string;
+        }
+    ): Buffer {
+        const statusLabel: Record<string, string> = {
+            open: 'Open',
+            partial: 'Partially Closed',
+            closed: 'Closed',
+        };
+        const header = [
+            cfg.docNoLabel,
+            'Date',
+            cfg.partyLabel,
+            'Currency',
+            'Status',
+            'Ordered Qty',
+            'Covered Qty',
+            'Pending Qty',
+            'Ordered Value (₹)',
+            'Covered Value (₹)',
+            'Pending Value (₹)',
+            'Coverage %',
+            cfg.coverCountLabel,
+        ];
+        const body = result.rows.map((r) => [
+            r.doc_no,
+            isoToDdmmyyyy(r.doc_date),
+            r.party_name || '',
+            r.currency_code,
+            statusLabel[r.status] || r.status,
+            r.ordered_qty,
+            r.covered_qty,
+            r.pending_qty,
+            r.ordered_value_inr,
+            r.covered_value_inr,
+            r.pending_value_inr,
+            r.coverage_pct,
+            r.cover_count,
+        ]);
+        const totalRow = [
+            'TOTAL (INR)',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            result.totals.ordered_value_inr,
+            result.totals.covered_value_inr,
+            result.totals.pending_value_inr,
+            '',
+            '',
+        ];
+        const aoa: (string | number)[][] = [
+            [`${cfg.title} — ${result.period_label}`],
+            [
+                `Open ${result.totals.open_count} · Partially Closed ${result.totals.partial_count} · Closed ${result.totals.closed_count}. ${cfg.note}`,
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Sales Order Status ───────────────────────────────────────────────
+    /**
+     * One row per non-draft/cancelled Sales Order, classified Open / Partially
+     * Closed / Closed by how much of its ordered qty has been billed to
+     * invoices (linked via `invoice_lines.purchase_order_line_id`). The
+     * `invoice_type` filter (export|domestic|all, default export) chooses which
+     * invoices count toward coverage. Values roll up to INR (invoice ÷ its own
+     * frozen rate) so a multi-currency book stays summable.
+     */
+    async salesOrderStatus(
+        companyId: string,
+        query: ISalesOrderStatusQuery
+    ): Promise<DocStatusResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const customerId = query.customer_id || null;
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const statusFilter = query.status?.trim() || null;
+        const typeRaw = (query.invoice_type || 'export').toLowerCase();
+        const invType = typeRaw === 'all' ? null : typeRaw;
+        const perPage = query.perPage || 25;
+        const page = query.page || 1;
+
+        // SO selling value ÷ so_fx → INR (so_fx is doc-per-₹1). The invoiced
+        // subquery already yields INR (taxable_amount ÷ invoice rate).
+        const raw: any[] = await this.dataSource.query(
+            `SELECT po._id                                   AS doc_id,
+                    po.voucher_no                            AS doc_no,
+                    po.po_date                               AS doc_date,
+                    po.customer_id                           AS party_id,
+                    c.company_name                           AS party_name,
+                    COALESCE(po.currency_code, 'INR')        AS currency_code,
+                    SUM(COALESCE(pol.qty, 0))::float8         AS ordered_qty,
+                    (SUM(COALESCE(pol.taxable, 0)
+                         + COALESCE(pol.product_expenses_amount, 0)
+                         - COALESCE(pol.product_rebates_amount, 0)
+                         + COALESCE(pol.margin_amount, 0))
+                     / NULLIF(MAX(COALESCE(po.exchange_rate, '1')::float8), 0)
+                    )::float8                                AS ordered_value_inr,
+                    COALESCE(MAX(inv.covered_qty), 0)::float8       AS covered_qty,
+                    COALESCE(MAX(inv.covered_value_inr), 0)::float8 AS covered_value_inr,
+                    COALESCE(MAX(inv.cover_count), 0)::int          AS cover_count
+             FROM purchase_orders po
+             JOIN purchase_order_lines pol
+                 ON pol.purchase_order_id = po._id
+             LEFT JOIN customers c ON c._id = po.customer_id
+             LEFT JOIN (
+                 SELECT pol2.purchase_order_id AS doc_id,
+                        SUM(COALESCE(il.qty, 0)) AS covered_qty,
+                        SUM(COALESCE(il.taxable_amount, 0)
+                            / NULLIF(COALESCE(i.exchange_rate, '1')::float8, 0))
+                                                 AS covered_value_inr,
+                        COUNT(DISTINCT i._id)    AS cover_count
+                 FROM invoice_lines il
+                 JOIN invoices i
+                     ON i._id = il.invoice_id
+                    AND i.soft_delete = false
+                    AND i.status NOT IN ('draft', 'cancelled')
+                    AND ($6::text IS NULL OR i.invoice_type = $6)
+                 JOIN purchase_order_lines pol2
+                     ON pol2._id = il.purchase_order_line_id
+                 WHERE il.company_id = $1 AND il.soft_delete = false
+                 GROUP BY pol2.purchase_order_id
+             ) inv ON inv.doc_id = po._id
+             WHERE po.company_id = $1
+               AND po.soft_delete = false
+               AND po.status NOT IN ('draft', 'cancelled')
+               AND po.po_date BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR po.customer_id = $4)
+               AND ($5::text IS NULL
+                    OR po.voucher_no ILIKE '%' || $5 || '%'
+                    OR c.company_name ILIKE '%' || $5 || '%')
+             GROUP BY po._id, po.voucher_no, po.po_date, po.customer_id,
+                      c.company_name, po.currency_code
+             ORDER BY po.po_date DESC, po.voucher_no`,
+            [companyId, from, to, customerId, search, invType]
+        );
+
+        return this.assembleDocStatusResponse(
+            raw,
+            from,
+            to,
+            statusFilter,
+            page,
+            perPage
+        );
+    }
+
+    /** Drill-down: the invoice lines billed against ONE Sales Order. */
+    async salesOrderStatusBreakdown(
+        companyId: string,
+        soId: string,
+        invoiceType?: string
+    ): Promise<DocStatusBreakdownRowDto[]> {
+        const typeRaw = (invoiceType || 'export').toLowerCase();
+        const invType = typeRaw === 'all' ? null : typeRaw;
+        const raw: any[] = await this.dataSource.query(
+            `SELECT i._id                                    AS cover_id,
+                    i.voucher_no                             AS cover_no,
+                    i.invoice_type                           AS cover_type,
+                    i.invoice_date                           AS cover_date,
+                    COALESCE(i.currency_code, 'INR')         AS currency_code,
+                    COALESCE(i.currency_symbol, '')          AS currency_symbol,
+                    COALESCE(i.exchange_rate, '1')::float8    AS inv_fx,
+                    COALESCE(p.name, il.product_name, '—')    AS product_name,
+                    il.product_code                          AS product_code,
+                    il.hsn_code                              AS hsn_code,
+                    il.seq                                   AS seq,
+                    COALESCE(il.qty, 0)::float8              AS cover_qty,
+                    COALESCE(il.taxable_amount, 0)::float8   AS cover_amount,
+                    (COALESCE(il.taxable_amount, 0)
+                       / NULLIF(COALESCE(i.exchange_rate, '1')::float8, 0)
+                    )::float8                                AS cover_amount_inr,
+                    COALESCE(pol.qty, 0)::float8            AS order_qty,
+                    -- SO per-unit selling rate, crossed into the invoice currency
+                    -- when the SO and invoice currencies differ (÷so_fx=₹, ×inv_fx).
+                    (CASE
+                        WHEN COALESCE(pol.qty, 0) = 0 THEN NULL
+                        WHEN COALESCE(po.currency_code, 'INR') = COALESCE(i.currency_code, 'INR')
+                            THEN (COALESCE(pol.taxable, 0)
+                                  + COALESCE(pol.product_expenses_amount, 0)
+                                  - COALESCE(pol.product_rebates_amount, 0)
+                                  + COALESCE(pol.margin_amount, 0)) / pol.qty
+                        ELSE ((COALESCE(pol.taxable, 0)
+                               + COALESCE(pol.product_expenses_amount, 0)
+                               - COALESCE(pol.product_rebates_amount, 0)
+                               + COALESCE(pol.margin_amount, 0)) / pol.qty)
+                             / NULLIF(COALESCE(po.exchange_rate, '1')::float8, 0)
+                             * COALESCE(i.exchange_rate, '1')::float8
+                     END)::float8                            AS order_rate
+             FROM invoice_lines il
+             JOIN invoices i
+                 ON i._id = il.invoice_id
+                AND i.soft_delete = false
+                AND i.status NOT IN ('draft', 'cancelled')
+                AND ($3::text IS NULL OR i.invoice_type = $3)
+             JOIN purchase_order_lines pol
+                 ON pol._id = il.purchase_order_line_id
+             JOIN purchase_orders po ON po._id = pol.purchase_order_id
+             LEFT JOIN products p ON p._id = il.product_id
+             WHERE il.company_id = $1
+               AND il.soft_delete = false
+               AND pol.purchase_order_id = $2
+             ORDER BY i.invoice_date, i.voucher_no, il.seq`,
+            [companyId, soId, invType]
+        );
+        return mapDocStatusBreakdown(raw);
+    }
+
+    /** The Sales Order Status list as an .xlsx Buffer. */
+    async salesOrderStatusExcel(
+        companyId: string,
+        query: ISalesOrderStatusQuery
+    ): Promise<Buffer> {
+        const result = await this.salesOrderStatus(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000,
+        });
+        return this.docStatusExcel(result, {
+            title: 'Sales Order Status',
+            docNoLabel: 'SO No',
+            partyLabel: 'Customer',
+            coverCountLabel: 'Invoices',
+            note: `Coverage by ${query.invoice_type || 'export'} invoices; values are ₹-normalised.`,
+        });
+    }
+
+    // ── Purchase Order (Vendor PO) Status ────────────────────────────────
+    /**
+     * One row per non-draft/cancelled Vendor PO, classified Open / Partially
+     * Closed / Closed by how much of its ordered qty has been RECEIVED on GRNs
+     * (linked via `grn_lines.po_vendor_line_id`; received = accepted/good qty).
+     * The `grn_scope` filter (confirmed|all, default confirmed) chooses which
+     * GRNs count. A POV has no order-date column, so it is dated by
+     * `dispatch_date || createdAt`. POV amounts are native to the vendor
+     * currency; the INR roll-up uses the POV's own `exchange_rate` (INR-per-unit,
+     * = 1 for a home-currency POV) so figures stay summable.
+     */
+    async purchaseOrderStatus(
+        companyId: string,
+        query: IPurchaseOrderStatusQuery
+    ): Promise<DocStatusResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const vendorId = query.vendor_id || null;
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const statusFilter = query.status?.trim() || null;
+        // 'all' → every non-cancelled GRN; else confirmed only.
+        const grnScope =
+            (query.grn_scope || 'confirmed').toLowerCase() === 'all'
+                ? 'all'
+                : 'confirmed';
+        const perPage = query.perPage || 25;
+        const page = query.page || 1;
+
+        // Value model mirrors the POV payable (goods + GST + vendor charges):
+        //   goods  = Σ ordered_qty × price × (1−disc)
+        //   GST    = goods × line tax_pct   (0 on a foreign POV — tax_pct is 0)
+        //   charges= Σ expenses_snapshot amount × (1 + its gst_pct)  [header jsonb]
+        // Coverage allocates GST with its goods and charges proportionally to the
+        // received goods value, so pending_value shrinks as goods arrive.
+        const raw: any[] = await this.dataSource.query(
+            `SELECT po._id                                          AS doc_id,
+                    po.voucher_no                                   AS doc_no,
+                    COALESCE(po.dispatch_date, po."createdAt"::date) AS doc_date,
+                    po.vendor_id                                    AS party_id,
+                    v.company_name                                  AS party_name,
+                    COALESCE(po.currency_code, 'INR')               AS currency_code,
+                    SUM(COALESCE(pol.ordered_qty, 0))::float8        AS ordered_qty,
+                    (( SUM(COALESCE(pol.ordered_qty, 0)
+                           * COALESCE(pol.unit_price, 0)
+                           * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                           * (1 + COALESCE(pol.tax_pct, 0) / 100))
+                       + COALESCE(MAX(exp.expenses_total), 0) )
+                     * MAX(COALESCE(po.exchange_rate, '1')::float8)
+                    )::float8                                       AS ordered_value_inr,
+                    COALESCE(MAX(grn.covered_qty), 0)::float8       AS covered_qty,
+                    (( COALESCE(MAX(grn.covered_goodsgst), 0)
+                       + COALESCE(
+                           COALESCE(MAX(exp.expenses_total), 0)
+                           * (COALESCE(MAX(grn.covered_goods), 0)
+                              / NULLIF(SUM(COALESCE(pol.ordered_qty, 0)
+                                           * COALESCE(pol.unit_price, 0)
+                                           * (1 - COALESCE(pol.discount_pct, 0) / 100)), 0)),
+                           0) )
+                     * MAX(COALESCE(po.exchange_rate, '1')::float8)
+                    )::float8                                       AS covered_value_inr,
+                    COALESCE(MAX(grn.cover_count), 0)::int          AS cover_count
+             FROM po_vendors po
+             JOIN po_vendor_lines pol
+                 ON pol.po_vendor_id = po._id
+             LEFT JOIN vendors v ON v._id = po.vendor_id
+             LEFT JOIN LATERAL (
+                 -- Vendor charges (+ their GST) from the POV's expense snapshot.
+                 SELECT COALESCE(SUM(
+                            COALESCE(NULLIF(e->>'amount', '')::float8, 0)
+                            * (1 + COALESCE(NULLIF(e->>'gst_pct', '')::float8, 0) / 100)
+                        ), 0) AS expenses_total
+                 FROM jsonb_array_elements(
+                          COALESCE(po.expenses_snapshot, '[]'::jsonb)) e
+             ) exp ON true
+             LEFT JOIN (
+                 SELECT pol2.po_vendor_id AS doc_id,
+                        SUM(COALESCE(gl.accepted_qty, 0)) AS covered_qty,
+                        -- Received goods taxable (for the charge-allocation ratio).
+                        SUM(COALESCE(gl.accepted_qty, 0)
+                            * COALESCE(pol2.unit_price, 0)
+                            * (1 - COALESCE(pol2.discount_pct, 0) / 100))
+                                                 AS covered_goods,
+                        -- Received goods + their GST.
+                        SUM(COALESCE(gl.accepted_qty, 0)
+                            * COALESCE(pol2.unit_price, 0)
+                            * (1 - COALESCE(pol2.discount_pct, 0) / 100)
+                            * (1 + COALESCE(pol2.tax_pct, 0) / 100))
+                                                 AS covered_goodsgst,
+                        COUNT(DISTINCT g._id)    AS cover_count
+                 FROM grn_lines gl
+                 JOIN grns g
+                     ON g._id = gl.grn_id
+                    AND g.soft_delete = false
+                    AND g.status <> 'cancelled'
+                    AND ($6::text = 'all' OR g.status = $6)
+                 JOIN po_vendor_lines pol2
+                     ON pol2._id = gl.po_vendor_line_id
+                 WHERE gl.company_id = $1 AND gl.soft_delete = false
+                 GROUP BY pol2.po_vendor_id
+             ) grn ON grn.doc_id = po._id
+             WHERE po.company_id = $1
+               AND po.soft_delete = false
+               AND po.status NOT IN ('draft', 'cancelled')
+               AND COALESCE(po.dispatch_date, po."createdAt"::date) BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR po.vendor_id = $4)
+               AND ($5::text IS NULL
+                    OR po.voucher_no ILIKE '%' || $5 || '%'
+                    OR v.company_name ILIKE '%' || $5 || '%')
+             GROUP BY po._id, po.voucher_no, po.dispatch_date, po."createdAt",
+                      po.vendor_id, v.company_name, po.currency_code
+             ORDER BY COALESCE(po.dispatch_date, po."createdAt"::date) DESC,
+                      po.voucher_no`,
+            [companyId, from, to, vendorId, search, grnScope]
+        );
+
+        return this.assembleDocStatusResponse(
+            raw,
+            from,
+            to,
+            statusFilter,
+            page,
+            perPage
+        );
+    }
+
+    /** Drill-down: the GRN lines received against ONE Vendor PO. */
+    async purchaseOrderStatusBreakdown(
+        companyId: string,
+        povId: string,
+        grnScope?: string
+    ): Promise<DocStatusBreakdownRowDto[]> {
+        const scope =
+            (grnScope || 'confirmed').toLowerCase() === 'all'
+                ? 'all'
+                : 'confirmed';
+        const raw: any[] = await this.dataSource.query(
+            `SELECT g._id                                    AS cover_id,
+                    g.voucher_no                             AS cover_no,
+                    g.status                                 AS cover_type,
+                    g.grn_date                               AS cover_date,
+                    COALESCE(po.currency_code, 'INR')        AS currency_code,
+                    COALESCE(po.currency_code, 'INR')        AS currency_symbol,
+                    COALESCE(pr.name, '—')                    AS product_name,
+                    pr.code                                  AS product_code,
+                    COALESCE(gl.hsn_code, pr.hsn_code)       AS hsn_code,
+                    gl.seq                                   AS seq,
+                    COALESCE(gl.accepted_qty, 0)::float8    AS cover_qty,
+                    -- Taxable (goods) amount, GST, and GST-inclusive total.
+                    (COALESCE(gl.accepted_qty, 0)
+                       * COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                    )::float8                                AS cover_amount,
+                    (COALESCE(gl.accepted_qty, 0)
+                       * COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                       * COALESCE(pol.tax_pct, 0) / 100
+                    )::float8                                AS cover_gst,
+                    (COALESCE(gl.accepted_qty, 0)
+                       * COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                       * (1 + COALESCE(pol.tax_pct, 0) / 100)
+                    )::float8                                AS cover_total,
+                    (COALESCE(gl.accepted_qty, 0)
+                       * COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                       * COALESCE(po.exchange_rate, '1')::float8
+                    )::float8                                AS cover_amount_inr,
+                    COALESCE(pol.ordered_qty, 0)::float8    AS order_qty,
+                    (COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                    )::float8                                AS order_rate
+             FROM grn_lines gl
+             JOIN grns g
+                 ON g._id = gl.grn_id
+                AND g.soft_delete = false
+                AND g.status <> 'cancelled'
+                AND ($3::text = 'all' OR g.status = $3)
+             JOIN po_vendor_lines pol ON pol._id = gl.po_vendor_line_id
+             JOIN po_vendors po ON po._id = pol.po_vendor_id
+             LEFT JOIN products pr ON pr._id = gl.product_id
+             WHERE gl.company_id = $1
+               AND gl.soft_delete = false
+               AND pol.po_vendor_id = $2
+             ORDER BY g.grn_date, g.voucher_no, gl.seq`,
+            [companyId, povId, scope]
+        );
+        return mapDocStatusBreakdown(raw);
+    }
+
+    /** The Purchase Order Status list as an .xlsx Buffer. */
+    async purchaseOrderStatusExcel(
+        companyId: string,
+        query: IPurchaseOrderStatusQuery
+    ): Promise<Buffer> {
+        const result = await this.purchaseOrderStatus(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000,
+        });
+        return this.docStatusExcel(result, {
+            title: 'Purchase Order Status',
+            docNoLabel: 'PO No',
+            partyLabel: 'Vendor',
+            coverCountLabel: 'GRNs',
+            note: `Coverage by ${query.grn_scope || 'confirmed'} GRNs; values are ₹-normalised at the POV rate.`,
+        });
+    }
+
     // ── Stock Turnover Ratio ─────────────────────────────────────────────
     /**
      * How many times inventory is sold & replaced over the period, per product
@@ -3659,4 +4181,111 @@ function ddmmyyyyToIso(d: Date): string {
 function isoToDdmmyyyy(iso: string): string {
     const [y, m, d] = String(iso).slice(0, 10).split('-');
     return y && m && d ? `${d}-${m}-${y}` : String(iso);
+}
+
+// ── Document coverage status helpers (shared: SO Status + POV Status) ─────
+// Pure — the per-report SQL already hands over INR-normalised values, so these
+// only classify + total. Reused by `salesOrderStatus` and `purchaseOrderStatus`.
+const DOC_STATUS_EPS = 1e-6;
+function mapDocStatusRows(raw: any[]): DocStatusRowDto[] {
+    return raw.map((r) => {
+        const orderedQty = n(r.ordered_qty);
+        const coveredQty = n(r.covered_qty);
+        const orderedValueInr = r2(n(r.ordered_value_inr));
+        const coveredValueInr = r2(n(r.covered_value_inr));
+        const pendingQty = r2(Math.max(0, orderedQty - coveredQty));
+        const pendingValueInr = r2(
+            Math.max(0, orderedValueInr - coveredValueInr)
+        );
+        const status: 'open' | 'partial' | 'closed' =
+            coveredQty <= DOC_STATUS_EPS
+                ? 'open'
+                : coveredQty + DOC_STATUS_EPS >= orderedQty
+                ? 'closed'
+                : 'partial';
+        const coveragePct =
+            orderedQty > 0
+                ? Math.min(100, r2((coveredQty / orderedQty) * 100))
+                : 0;
+        return {
+            doc_id: r.doc_id,
+            doc_no: r.doc_no,
+            doc_date: r.doc_date,
+            party_id: r.party_id ?? null,
+            party_name: r.party_name ?? null,
+            currency_code: r.currency_code || 'INR',
+            status,
+            ordered_qty: r2(orderedQty),
+            covered_qty: r2(coveredQty),
+            pending_qty: pendingQty,
+            ordered_value_inr: orderedValueInr,
+            covered_value_inr: coveredValueInr,
+            pending_value_inr: pendingValueInr,
+            coverage_pct: coveragePct,
+            cover_count: n(r.cover_count),
+        };
+    });
+}
+function docStatusPartyOptions(rows: DocStatusRowDto[]): DocStatusOptionDto[] {
+    const map = new Map<string, string>();
+    for (const r of rows) {
+        if (r.party_id && !map.has(r.party_id))
+            map.set(r.party_id, r.party_name || '—');
+    }
+    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) =>
+        String(a.name || '').localeCompare(String(b.name || ''))
+    );
+}
+function docStatusTotals(rows: DocStatusRowDto[]): DocStatusTotalsDto {
+    const t = rows.reduce(
+        (acc, r) => {
+            acc.total_docs += 1;
+            if (r.status === 'open') acc.open_count += 1;
+            else if (r.status === 'partial') acc.partial_count += 1;
+            else acc.closed_count += 1;
+            acc.ordered_value_inr += r.ordered_value_inr;
+            acc.covered_value_inr += r.covered_value_inr;
+            acc.pending_value_inr += r.pending_value_inr;
+            return acc;
+        },
+        {
+            total_docs: 0,
+            open_count: 0,
+            partial_count: 0,
+            closed_count: 0,
+            ordered_value_inr: 0,
+            covered_value_inr: 0,
+            pending_value_inr: 0,
+        }
+    );
+    t.ordered_value_inr = r2(t.ordered_value_inr);
+    t.covered_value_inr = r2(t.covered_value_inr);
+    t.pending_value_inr = r2(t.pending_value_inr);
+    return t;
+}
+function mapDocStatusBreakdown(raw: any[]): DocStatusBreakdownRowDto[] {
+    return raw.map((r) => {
+        const coverQty = n(r.cover_qty);
+        const coverAmount = n(r.cover_amount);
+        return {
+            cover_id: r.cover_id,
+            cover_no: r.cover_no,
+            cover_type: r.cover_type,
+            cover_date: r.cover_date,
+            currency_code: r.currency_code || 'INR',
+            currency_symbol: r.currency_symbol || r.currency_code || 'INR',
+            product_name: r.product_name,
+            product_code: r.product_code ?? null,
+            hsn_code: r.hsn_code ?? null,
+            order_qty: n(r.order_qty) || null,
+            order_rate: r.order_rate != null ? r2(n(r.order_rate)) : null,
+            cover_qty: coverQty,
+            cover_rate: coverQty > 0 ? r2(coverAmount / coverQty) : 0,
+            cover_amount: r2(coverAmount),
+            cover_amount_inr: r2(n(r.cover_amount_inr)),
+            // GST split — only reports that carry GST (POV Status) emit these.
+            cover_gst: r.cover_gst != null ? r2(n(r.cover_gst)) : null,
+            cover_total: r.cover_total != null ? r2(n(r.cover_total)) : null,
+        };
+    });
 }

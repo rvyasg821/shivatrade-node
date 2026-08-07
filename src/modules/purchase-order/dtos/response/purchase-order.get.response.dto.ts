@@ -85,6 +85,8 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ required: false, type: String }) advance_amount?: string;
     @ApiProperty({ required: false, type: String }) advance_date?: string;
     @ApiProperty({ required: false, type: String }) advance_notes?: string;
+    @ApiProperty({ required: false, type: String }) advance_bank_account_id?: string;
+    @ApiProperty({ required: false, type: String }) advance_bank_name?: string;
 
     @ApiProperty({ required: true, type: String }) delivery_address: string;
     @ApiProperty({ required: false, type: String }) delivery_address_id?: string;
