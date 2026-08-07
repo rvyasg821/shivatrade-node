@@ -29,6 +29,19 @@ export class InvoicePaymentEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: true })
     currency_code?: string;
 
+    /** Exchange rate on the day the receipt was actually received (same
+     *  foreign-per-₹1 convention as `invoice.exchange_rate`). Defaults to the
+     *  invoice's rate. The realized forex gain/loss on this receipt is
+     *  amount ÷ exchange_rate − amount ÷ invoice.exchange_rate (INR). */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 6,
+        nullable: false,
+        default: 1,
+    })
+    exchange_rate: string;
+
     /** "bank_transfer" / "lc" / "cash" / "cheque" / "other" — free-form. */
     @Column({ type: 'varchar', length: 30, nullable: true })
     method?: string;

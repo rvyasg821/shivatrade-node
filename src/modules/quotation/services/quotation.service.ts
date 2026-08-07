@@ -747,8 +747,8 @@ export class QuotationService {
             // currency to the DOCUMENT currency FIRST, then build the sell price
             // (expenses/rebates/margin) entirely in the document currency. For a
             // domestic (INR) line cost_exchange_rate = 1, so this is a no-op.
-            const costDoc =
-                num(ln.unit_price) * (num((ln as any).cost_exchange_rate) || 1);
+            const lineRate = num((ln as any).cost_exchange_rate) || 1;
+            const costDoc = num(ln.unit_price) * lineRate;
 
             // Use the engine only for the intra/inter split; recompute the
             // tax amount ourselves on Net Total per spec (p.24).
@@ -768,12 +768,15 @@ export class QuotationService {
             // Each % step applies to the running balance from the previous
             // step. Rebates (DBK/RODTEP export incentives) are % of the FOB
             // value = Taxable + Expenses, so they run AFTER expenses.
+            // Fixed expenses/rebates are entered in the vendor (source) currency,
+            // so convert them source→doc with the same per-line rate as the
+            // price. Percent heads are a % of a doc-currency base → no convert.
             let lineExpensesAmt = 0;
             for (const e of (ln as any).product_expenses_snapshot || []) {
                 lineExpensesAmt +=
                     e.type === 'percent'
                         ? (split.taxable * num(e.value)) / 100
-                        : num(e.value);
+                        : num(e.value) * lineRate;
             }
             const afterExpenses = split.taxable + lineExpensesAmt;
             // Rebate % applies on the post-expense total (FOB value).
@@ -781,7 +784,7 @@ export class QuotationService {
             for (const r of (ln as any).product_rebates_snapshot || []) {
                 lineRebatesAmt +=
                     r.type === 'fixed'
-                        ? num(r.pct)
+                        ? num(r.pct) * lineRate
                         : (afterExpenses * num(r.pct)) / 100;
             }
             (ln as any).product_rebates_amount = String(round2(lineRebatesAmt));

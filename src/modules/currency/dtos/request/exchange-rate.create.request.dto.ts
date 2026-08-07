@@ -19,8 +19,8 @@ export class ExchangeRateCreateRequestDto {
     @IsString()
     @IsNotEmpty()
     @IsNumberString({}, { message: 'rate must be a numeric string' })
-    @Matches(/^\d+(\.\d{1,6})?$/, {
-        message: 'rate allows at most 6 decimal places',
+    @Matches(/^\d+(\.\d{1,12})?$/, {
+        message: 'rate allows at most 12 decimal places',
     })
     rate: string;
 
