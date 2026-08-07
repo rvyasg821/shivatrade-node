@@ -7,6 +7,10 @@
     "purchaseTurnover": "Purchase turnover report generated successfully.",
     "salesTurnover": "Sales turnover report generated successfully.",
     "soInvoiceReconciliation": "Sales Order vs Invoice price reconciliation generated successfully.",
+    "salesOrderStatus": "Sales Order status report generated successfully.",
+    "salesOrderStatusBreakdown": "Sales Order invoice breakdown generated successfully.",
+    "purchaseOrderStatus": "Purchase Order status report generated successfully.",
+    "purchaseOrderStatusBreakdown": "Purchase Order GRN breakdown generated successfully.",
     "stockTurnover": "Stock turnover ratio report generated successfully.",
     "inventoryHoldingDays": "Inventory holding days report generated successfully.",
     "inventoryAging": "Inventory aging report generated successfully."

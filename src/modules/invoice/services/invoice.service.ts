@@ -402,20 +402,17 @@ export class InvoiceService {
             freight_charges: data.freight_charges || '0',
             insurance_charges: data.insurance_charges || '0',
             other_charges: data.other_charges || '0',
-            // Carry the advance already collected on the source Sales Order(s)
-            // (S4 advance_amount) when the payload didn't supply one — backstop
-            // for API-direct callers; the create form prefills it visibly. Only
-            // applies when genuinely absent so an explicit 0 is respected.
-            // Overwritten by the sum of recorded payments once any is logged.
-            advance_received:
-                data.advance_received != null && data.advance_received !== ''
+            // Advance is AUTO-MANAGED from the source Sales Orders (client
+            // 2026-08-07): the invoice's advance = Σ advance_amount over EVERY
+            // distinct source SO its lines come from, so a multi-SO invoice
+            // aggregates all their advances (not just the first SO's). The FE
+            // value is ignored here — it's a read-only mirror of this sum.
+            // Import (silent) keeps the value the sheet supplied.
+            advance_received: silent
+                ? data.advance_received != null && data.advance_received !== ''
                     ? data.advance_received
-                    : String(
-                          (source.pos || []).reduce(
-                              (sum, p) => sum + num(p?.advance_amount),
-                              0
-                          ) || 0
-                      ),
+                    : '0'
+                : String(round2(this.sumSourceAdvances(source.pos))),
             gst_route: data.gst_route || ENUM_INVOICE_GST_ROUTE.IGST_PAID,
             lut_no: data.lut_no !== undefined ? data.lut_no : ctx.lut_no,
             lut_date: data.lut_date !== undefined ? data.lut_date : ctx.lut_date,
@@ -502,6 +499,9 @@ export class InvoiceService {
             // Everything editable.
             const lines = data.lines;
             const { lines: _omit, ...header } = data as any;
+            // Advance is auto-managed from the source SOs (recomputed in the
+            // lines block below) — never let the FE set it directly.
+            delete header.advance_received;
             Object.assign(row, header);
 
             // Refresh company_address_snapshot whenever company_address_id
@@ -537,6 +537,14 @@ export class InvoiceService {
                     lines,
                     source.byPoLineId
                 );
+                // Auto-manage the advance: Σ advance_amount over EVERY distinct
+                // source SO now on the invoice — so adding lines from another SO
+                // aggregates its advance too. Persist before recompute (which
+                // reads advance_received to derive the balance).
+                row.advance_received = String(
+                    round2(this.sumSourceAdvances(source.pos))
+                );
+                await this.invoiceRepository.save(row);
             }
             await this.recompute(row._id.toString());
 
@@ -1421,6 +1429,15 @@ export class InvoiceService {
     // ─── Multi-SO source resolution + invariant ─────────────────────────
 
     /**
+     * Σ advance_amount over the DISTINCT source Sales Orders — the auto-managed
+     * invoice advance. `source.pos` from loadSourcePoContext is already distinct
+     * by SO, so a multi-SO invoice sums each SO's advance exactly once.
+     */
+    private sumSourceAdvances(pos: any[]): number {
+        return (pos || []).reduce((s, p) => s + num(p?.advance_amount), 0);
+    }
+
+    /**
      * Resolve each line's source PO (SO) + its quotation voucher, keyed by
      * purchase_order_line_id. Used both to enforce the single-source invariant
      * and to snapshot purchase_order_voucher_no / quotation_voucher_no per line.
@@ -1986,6 +2003,11 @@ export class InvoiceService {
                 net_weight_kg: l.net_weight_kg ?? null,
                 gross_weight_kg: l.gross_weight_kg ?? null,
                 package_count: l.package_count ?? null,
+                // Ordered = SO line qty; available = remaining not-yet-invoiced
+                // (ordered − invoiced elsewhere). The picker shows "remaining X
+                // of ordered Y" and auto-fills the qty with `available` so a
+                // second (partial) invoice defaults to what's still to bill.
+                ordered: String(ordered),
                 dispatched: String(dispatched),
                 invoiced_others: String(invoicedOthers),
                 already_on_draft: String(selfQtyByPoLine.get(k) || 0),
@@ -2043,6 +2065,9 @@ export class InvoiceService {
             groups.push({
                 po_id: po._id.toString(),
                 po_voucher_no: po.voucher_no,
+                // The SO's advance — the FE sums it across the picked SOs so the
+                // invoice's auto-managed advance previews correctly before save.
+                advance_amount: String(po.advance_amount ?? '0'),
                 quotation_id: po.quotation_id?.toString() || null,
                 quotation_voucher_no: po.quotation_id
                     ? qVoucherById.get(po.quotation_id.toString()) || null

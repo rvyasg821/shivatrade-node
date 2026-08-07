@@ -20,6 +20,7 @@ import {
 import { PurchaseTurnoverResponseDto } from '../dtos/response/purchase-turnover.response.dto';
 import { SalesTurnoverResponseDto } from '../dtos/response/sales-turnover.response.dto';
 import { SoInvoiceReconciliationResponseDto } from '../dtos/response/so-invoice-reconciliation.response.dto';
+import { DocStatusResponseDto } from '../dtos/response/doc-status.response.dto';
 import { StockTurnoverResponseDto } from '../dtos/response/stock-turnover.response.dto';
 import { InventoryHoldingDaysResponseDto } from '../dtos/response/inventory-holding-days.response.dto';
 import { InventoryAgingResponseDto } from '../dtos/response/inventory-aging.response.dto';
@@ -497,6 +498,180 @@ export class ReportsAdminController {
         res.setHeader(
             'Content-Disposition',
             `attachment; filename="so-invoice-reconciliation_${stamp(
+                query.date_from
+            )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Sales Order Status ───────────────────────────────────────────────
+    /** Open / Partially Closed / Closed Sales Orders vs their invoiced qty. */
+    @Response('reports.salesOrderStatus')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'status', required: false })
+    @ApiQuery({ name: 'invoice_type', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/sales-order-status')
+    async salesOrderStatus(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<DocStatusResponseDto>> {
+        const data = await this.reportsService.salesOrderStatus(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            customer_id: query.customer_id,
+            status: query.status,
+            invoice_type: query.invoice_type,
+            search: query.search,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Drill-down: the invoice lines billed against one Sales Order. */
+    @Response('reports.salesOrderStatusBreakdown')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'so_id', required: true })
+    @ApiQuery({ name: 'invoice_type', required: false })
+    @Get('/sales-order-status/breakdown')
+    async salesOrderStatusBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<any>> {
+        const data = await this.reportsService.salesOrderStatusBreakdown(
+            companyId,
+            query.so_id,
+            query.invoice_type
+        );
+        return { data };
+    }
+
+    /** Excel export of the Sales Order Status list (whole set + TOTAL). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'status', required: false })
+    @ApiQuery({ name: 'invoice_type', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @Get('/sales-order-status/export')
+    async salesOrderStatusExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.salesOrderStatusExcel(
+            companyId,
+            {
+                date_from: query.date_from,
+                date_to: query.date_to,
+                customer_id: query.customer_id,
+                status: query.status,
+                invoice_type: query.invoice_type,
+                search: query.search,
+            }
+        );
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="sales-order-status_${stamp(
+                query.date_from
+            )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Purchase Order (Vendor PO) Status ────────────────────────────────
+    /** Open / Partially Closed / Closed Vendor POs vs their GRN-received qty. */
+    @Response('reports.purchaseOrderStatus')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'vendor_id', required: false })
+    @ApiQuery({ name: 'status', required: false })
+    @ApiQuery({ name: 'grn_scope', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/purchase-order-status')
+    async purchaseOrderStatus(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<DocStatusResponseDto>> {
+        const data = await this.reportsService.purchaseOrderStatus(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            vendor_id: query.vendor_id,
+            status: query.status,
+            grn_scope: query.grn_scope,
+            search: query.search,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Drill-down: the GRN lines received against one Vendor PO. */
+    @Response('reports.purchaseOrderStatusBreakdown')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'pov_id', required: true })
+    @ApiQuery({ name: 'grn_scope', required: false })
+    @Get('/purchase-order-status/breakdown')
+    async purchaseOrderStatusBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<any>> {
+        const data = await this.reportsService.purchaseOrderStatusBreakdown(
+            companyId,
+            query.pov_id,
+            query.grn_scope
+        );
+        return { data };
+    }
+
+    /** Excel export of the Purchase Order Status list (whole set + TOTAL). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'vendor_id', required: false })
+    @ApiQuery({ name: 'status', required: false })
+    @ApiQuery({ name: 'grn_scope', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @Get('/purchase-order-status/export')
+    async purchaseOrderStatusExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.purchaseOrderStatusExcel(
+            companyId,
+            {
+                date_from: query.date_from,
+                date_to: query.date_to,
+                vendor_id: query.vendor_id,
+                status: query.status,
+                grn_scope: query.grn_scope,
+                search: query.search,
+            }
+        );
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="purchase-order-status_${stamp(
                 query.date_from
             )}_${stamp(query.date_to)}.xlsx"`
         );

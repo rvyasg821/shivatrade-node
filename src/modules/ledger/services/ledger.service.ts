@@ -8,7 +8,10 @@ import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
 import { GrnRepository } from '@modules/grn/repository/repositories/grn.repository';
 import { GrnLineRepository } from '@modules/grn/repository/repositories/grn-line.repository';
 import { ENUM_GRN_STATUS } from '@modules/grn/enums/grn.enum';
+import { ENUM_PURCHASE_ORDER_STATUS } from '@modules/purchase-order/enums/purchase-order.enum';
+import { ENUM_INVOICE_STATUS } from '@modules/invoice/enums/invoice.enum';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
+import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
 import { ENUM_ADJUSTMENT_DIRECTION } from '@modules/adjustment-note/enums/adjustment-note.enum';
@@ -113,10 +116,67 @@ export class LedgerService {
         private readonly grnRepository: GrnRepository,
         private readonly grnLineRepository: GrnLineRepository,
         private readonly customerRepository: CustomerRepository,
+        private readonly poRepository: PurchaseOrderRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly adjustmentRepository: AdjustmentNoteRepository,
         private readonly fileService: FileService
     ) {}
+
+    // Sales-Order advance received → customer CREDIT (client 2026-08-07). The
+    // down-payment entered on the Sales Order form is money received from the
+    // customer BEFORE any invoice. One CR row per non-cancelled SO carrying an
+    // advance, in the SO's currency — shown UNTIL an invoice is generated from
+    // that SO, at which point the invoice seeds its OWN advance receipt (even on
+    // a draft invoice), so the SO row is dropped to avoid double-counting.
+    private async customerSoAdvances(
+        companyId: string,
+        customerId?: string
+    ): Promise<
+        Array<{
+            so_id: string;
+            voucher_no?: string;
+            date: string;
+            value: number;
+            currency_code: string;
+            customer_id?: string;
+            created_at?: Date;
+        }>
+    > {
+        const find: Record<string, any> = {
+            company_id: companyId,
+            soft_delete: false,
+            status: { $ne: ENUM_PURCHASE_ORDER_STATUS.CANCELLED },
+        };
+        if (customerId) find.customer_id = customerId;
+        const sos: any[] = await this.poRepository.findAll(find as any);
+        const withAdvance = sos.filter((s) => num(s.advance_amount) > 0);
+        if (!withAdvance.length) return [];
+        // Dedup: an SO whose advance was already carried onto a (non-cancelled)
+        // invoice is represented by that invoice's advance receipt instead.
+        const soIds = withAdvance.map((s) => s._id.toString());
+        const invoices: any[] = await this.invoiceRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            purchase_order_id: { $in: soIds },
+        } as any);
+        const invoicedSoIds = new Set(
+            invoices
+                .filter((i) => i.status !== ENUM_INVOICE_STATUS.CANCELLED)
+                .map((i) => i.purchase_order_id?.toString())
+        );
+        return withAdvance
+            .filter((s) => !invoicedSoIds.has(s._id.toString()))
+            .map((s) => ({
+                so_id: s._id.toString(),
+                voucher_no: s.voucher_no,
+                // Fall back to the SO date when no explicit advance date.
+                date: s.advance_date || s.po_date,
+                value: round2(num(s.advance_amount)),
+                currency_code: s.currency_code || 'INR',
+                customer_id: s.customer_id?.toString(),
+                created_at: s.createdAt,
+            }));
+    }
 
     // ── Customer ledger (in the customer's currency) ──
     async customerLedger(
@@ -180,6 +240,25 @@ export class LedgerService {
                     created_at: p.createdAt,
                 });
             }
+        }
+
+        // Sales-Order advance received → CREDIT (money in, before invoicing).
+        // Dropped once the SO is invoiced (its invoice's advance receipt then
+        // represents the same money).
+        const soAdvances = await this.customerSoAdvances(companyId, customerId);
+        for (const a of soAdvances) {
+            if (a.value <= 0) continue;
+            rows.push({
+                date: a.date,
+                type: 'advance',
+                particulars: `Advance received${
+                    a.voucher_no ? ` (${a.voucher_no})` : ''
+                }`,
+                voucher_no: a.voucher_no,
+                dr: 0,
+                cr: a.value,
+                created_at: a.created_at,
+            });
         }
 
         // Adjustment notes (customer): the note's own direction maps to the
@@ -731,6 +810,51 @@ export class LedgerService {
                         voided_reason: p.voided_reason || undefined,
                     });
                 }
+            }
+
+            // Sales-Order advance received → customer CREDIT (money in). Same
+            // rows + dedup as the customer ledger; read-only (no void here).
+            const soAdvances = await this.customerSoAdvances(
+                companyId,
+                q.party_id
+            );
+            const advCustIds = Array.from(
+                new Set(soAdvances.map((a) => a.customer_id).filter(Boolean))
+            ) as string[];
+            const advCustomers = advCustIds.length
+                ? ((await this.customerRepository.findAll({
+                      _id: { $in: advCustIds },
+                  } as any)) as any[])
+                : [];
+            const advCustNameById = new Map<string, string>(
+                advCustomers.map((c) => [
+                    c._id.toString(),
+                    c.company_name || c.name,
+                ])
+            );
+            for (const a of soAdvances) {
+                if (a.value <= 0) continue;
+                rows.push({
+                    _id: a.so_id,
+                    source: 'advance',
+                    date: toIso(a.date),
+                    created_at: a.created_at as any,
+                    voucher_no: a.voucher_no,
+                    party_type: 'customer',
+                    party_id: a.customer_id,
+                    party_name: a.customer_id
+                        ? advCustNameById.get(a.customer_id)
+                        : undefined,
+                    direction: 'credit',
+                    amount: String(a.value),
+                    currency_code: a.currency_code,
+                    // Source Sales Order → deep-link target.
+                    document_voucher_no: a.voucher_no || undefined,
+                    document_id: a.so_id,
+                    particulars: `Advance received${
+                        a.voucher_no ? ` (${a.voucher_no})` : ''
+                    }`,
+                });
             }
         }
 

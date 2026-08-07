@@ -64,6 +64,9 @@ type CustomerOrderInput = {
     advance_amount?: string;
     advance_date?: string;
     advance_notes?: string;
+    // Company bank account the advance was received into (+ name snapshot).
+    advance_bank_account_id?: string;
+    advance_bank_name?: string;
 };
 
 @Injectable()
@@ -354,6 +357,9 @@ export class PurchaseOrderService {
             advance_amount: (data as any).advance_amount ?? '0',
             advance_date: (data as any).advance_date || null,
             advance_notes: (data as any).advance_notes || null,
+            advance_bank_account_id:
+                (data as any).advance_bank_account_id || null,
+            advance_bank_name: (data as any).advance_bank_name || null,
             delivery_address: delivery.text,
             delivery_address_id: delivery.id || null,
             payment_terms: data.payment_terms || null,
@@ -1849,6 +1855,9 @@ export class PurchaseOrderService {
                 advance_amount: customerOrder?.advance_amount,
                 advance_date: customerOrder?.advance_date,
                 advance_notes: customerOrder?.advance_notes,
+                advance_bank_account_id:
+                    customerOrder?.advance_bank_account_id,
+                advance_bank_name: customerOrder?.advance_bank_name,
                 payment_terms: src.payment_terms || undefined,
                 delivery_terms: src.delivery_terms || undefined,
                 internal_notes: src.internal_notes || undefined,
@@ -2091,6 +2100,9 @@ export class PurchaseOrderService {
                 advance_amount: opts?.customerOrder?.advance_amount,
                 advance_date: opts?.customerOrder?.advance_date,
                 advance_notes: opts?.customerOrder?.advance_notes,
+                advance_bank_account_id:
+                    opts?.customerOrder?.advance_bank_account_id,
+                advance_bank_name: opts?.customerOrder?.advance_bank_name,
                 payment_terms: q.payment_terms || undefined,
                 delivery_terms: q.delivery_terms || undefined,
                 internal_notes: q.internal_notes || undefined,
@@ -2340,6 +2352,8 @@ export class PurchaseOrderService {
                 advance_amount: (r as any).advance_amount,
                 advance_date: (r as any).advance_date,
                 advance_notes: (r as any).advance_notes,
+                advance_bank_account_id: (r as any).advance_bank_account_id,
+                advance_bank_name: (r as any).advance_bank_name,
                 delivery_address: r.delivery_address,
                 delivery_address_id: r.delivery_address_id?.toString(),
                 payment_terms: r.payment_terms,
