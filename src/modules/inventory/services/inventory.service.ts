@@ -481,6 +481,7 @@ export class InventoryService {
                 p.unit_of_measure                 AS uom,
                 v.company_name                    AS vendor_name,
                 v.vendor_code                     AS vendor_code,
+                COALESCE(inv.invoice_numbers, '') AS invoice_numbers,
                 cb.ccy                            AS currency_code,
                 cb.opening_qty::float8            AS opening_qty,
                 cb.inward_qty::float8             AS inward_qty,
@@ -504,6 +505,25 @@ export class InventoryService {
              ) pr ON pr.product_id = cb.product_id
                  AND pr.ccy = cb.ccy
                  AND pr.vendor_id = cb.vendor_id
+             -- Vendor invoice number(s) that supplied this product/vendor/currency
+             -- (distinct, comma-joined — one product+vendor can span several POVs).
+             LEFT JOIN (
+                SELECT pvl.product_id,
+                       COALESCE(pv.currency_code, 'INR') AS ccy,
+                       pv.vendor_id,
+                       STRING_AGG(DISTINCT pv.invoice_number, ', '
+                           ORDER BY pv.invoice_number) AS invoice_numbers
+                FROM po_vendor_lines pvl
+                JOIN po_vendors pv ON pv._id = pvl.po_vendor_id
+                WHERE pv.company_id = $1
+                  AND pv.soft_delete = false
+                  AND pv.status <> 'cancelled'
+                  AND pv.invoice_number IS NOT NULL
+                  AND pv.invoice_number <> ''
+                GROUP BY pvl.product_id, ccy, pv.vendor_id
+             ) inv ON inv.product_id = cb.product_id
+                 AND inv.ccy = cb.ccy
+                 AND inv.vendor_id = cb.vendor_id
              WHERE (cb.closing_qty <> 0 OR cb.inward_qty <> 0 OR cb.opening_qty <> 0)
                ${prodWhere}
              ORDER BY p.name ASC, p.code ASC, cb.ccy ASC, v.company_name ASC`,
@@ -533,6 +553,7 @@ export class InventoryService {
             'UOM',
             'Vendor Name',
             'Vendor Code',
+            'Vendor Invoice No',
             'Opening',
             'Inward',
             'Outward',
@@ -566,6 +587,7 @@ export class InventoryService {
                     r.uom || '',
                     r.vendor_name || '',
                     r.vendor_code || '',
+                    r.invoice_numbers || '',
                     Number(r.opening_qty) || 0,
                     Number(r.inward_qty) || 0,
                     Number(r.outward_qty) || 0,
@@ -577,6 +599,7 @@ export class InventoryService {
             }
             aoa.push([
                 `Rows: ${section.length}`,
+                '',
                 '',
                 '',
                 '',
