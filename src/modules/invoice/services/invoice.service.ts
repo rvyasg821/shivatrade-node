@@ -1757,6 +1757,8 @@ export class InvoiceService {
                 seq: l.seq ?? i + 1,
                 purchase_order_line_id: l.purchase_order_line_id,
                 po_vendor_line_id: l.po_vendor_line_id,
+                // Frozen vendor from the SO line — kept so an edit re-shows it.
+                vendor_id: (l as any).vendor_id || null,
                 product_id: l.product_id,
                 product_name: l.product_name || prod?.name || '',
                 product_code: l.product_code || prod?.code,
