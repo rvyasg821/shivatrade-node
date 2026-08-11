@@ -11,6 +11,7 @@ export class InvoiceLineResponseDto {
     seq?: number;
     purchase_order_line_id?: string;
     po_vendor_line_id?: string;
+    vendor_id?: string;
     product_id?: string;
     product_name?: string;
     product_code?: string;

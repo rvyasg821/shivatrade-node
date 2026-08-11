@@ -38,6 +38,12 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: true })
     po_vendor_line_id?: string;
 
+    /** Vendor the line's cost was frozen from (carried from the Sales Order
+     *  line). Stored so an edit re-shows the exact vendor instead of blank,
+     *  and the Costing Worksheet never re-picks a (cheaper) vendor. */
+    @Column({ type: 'uuid', nullable: true })
+    vendor_id?: string;
+
     // ── Product snapshot ──
     @Index()
     @Column({ type: 'uuid', nullable: false })
