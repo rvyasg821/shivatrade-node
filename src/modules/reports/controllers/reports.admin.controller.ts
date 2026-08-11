@@ -20,6 +20,9 @@ import {
 import { PurchaseTurnoverResponseDto } from '../dtos/response/purchase-turnover.response.dto';
 import { SalesTurnoverResponseDto } from '../dtos/response/sales-turnover.response.dto';
 import { SoInvoiceReconciliationResponseDto } from '../dtos/response/so-invoice-reconciliation.response.dto';
+import { LeadToInvoiceDurationResponseDto } from '../dtos/response/lead-to-invoice-duration.response.dto';
+import { AdvanceVsInvoiceResponseDto } from '../dtos/response/advance-vs-invoice.response.dto';
+import { ExchangeGainLossResponseDto } from '../dtos/response/exchange-gain-loss.response.dto';
 import { DocStatusResponseDto } from '../dtos/response/doc-status.response.dto';
 import { StockTurnoverResponseDto } from '../dtos/response/stock-turnover.response.dto';
 import { InventoryHoldingDaysResponseDto } from '../dtos/response/inventory-holding-days.response.dto';
@@ -498,6 +501,210 @@ export class ReportsAdminController {
         res.setHeader(
             'Content-Disposition',
             `attachment; filename="so-invoice-reconciliation_${stamp(
+                query.date_from
+            )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Lead → Invoice Duration ──────────────────────────────────────────
+    /** Conversion cycle time Lead → Quotation → SO → Invoice, per invoice. */
+    @Response('reports.leadToInvoiceDuration')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({
+        name: 'invoice_type',
+        required: false,
+        description: 'export (default) | commercial | all',
+    })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/lead-to-invoice-duration')
+    async leadToInvoiceDuration(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<LeadToInvoiceDurationResponseDto>> {
+        const data = await this.reportsService.leadToInvoiceDuration(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            customer_id: query.customer_id,
+            invoice_type: query.invoice_type,
+            search: query.search,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Excel export of the same report (whole filtered set + AVERAGE row). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'invoice_type', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @Get('/lead-to-invoice-duration/export')
+    async leadToInvoiceDurationExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.leadToInvoiceDurationExcel(
+            companyId,
+            {
+                date_from: query.date_from,
+                date_to: query.date_to,
+                customer_id: query.customer_id,
+                invoice_type: query.invoice_type,
+                search: query.search,
+            }
+        );
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="lead-to-invoice-duration_${stamp(
+                query.date_from
+            )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Advance vs Invoice ───────────────────────────────────────────────
+    /** Advances taken on Sales Orders vs invoices raised against them. */
+    @Response('reports.advanceVsInvoice')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({
+        name: 'status',
+        required: false,
+        description:
+            'all | advance_unbilled | partly_adjusted | fully_adjusted | no_advance',
+    })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/advance-vs-invoice')
+    async advanceVsInvoice(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<AdvanceVsInvoiceResponseDto>> {
+        const data = await this.reportsService.advanceVsInvoice(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            customer_id: query.customer_id,
+            status: query.status,
+            search: query.search,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Excel export of the same report (whole filtered set + TOTAL row). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'status', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @Get('/advance-vs-invoice/export')
+    async advanceVsInvoiceExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.advanceVsInvoiceExcel(
+            companyId,
+            {
+                date_from: query.date_from,
+                date_to: query.date_to,
+                customer_id: query.customer_id,
+                status: query.status,
+                search: query.search,
+            }
+        );
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="advance-vs-invoice_${stamp(
+                query.date_from
+            )}_${stamp(query.date_to)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Exchange Gain/Loss ───────────────────────────────────────────────
+    /** Realized forex gain/loss per customer receipt on foreign invoices. */
+    @Response('reports.exchangeGainLoss')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'result', required: false, description: 'all | gain | loss' })
+    @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/exchange-gain-loss')
+    async exchangeGainLoss(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<ExchangeGainLossResponseDto>> {
+        const data = await this.reportsService.exchangeGainLoss(companyId, {
+            date_from: query.date_from,
+            date_to: query.date_to,
+            customer_id: query.customer_id,
+            result: query.result,
+            search: query.search,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
+    /** Excel export of the same report (whole filtered set + TOTAL row). */
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @ApiQuery({ name: 'customer_id', required: false })
+    @ApiQuery({ name: 'result', required: false })
+    @ApiQuery({ name: 'search', required: false })
+    @Get('/exchange-gain-loss/export')
+    async exchangeGainLossExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.exchangeGainLossExcel(
+            companyId,
+            {
+                date_from: query.date_from,
+                date_to: query.date_to,
+                customer_id: query.customer_id,
+                result: query.result,
+                search: query.search,
+            }
+        );
+        const stamp = (s?: string) => (s || '').slice(0, 10);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="exchange-gain-loss_${stamp(
                 query.date_from
             )}_${stamp(query.date_to)}.xlsx"`
         );
