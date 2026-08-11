@@ -638,8 +638,19 @@ export class QuotationService {
                 (l.vendor_id && vendorCurrencyById.get(l.vendor_id)) ||
                 'INR'
             ).toUpperCase();
+            // Respect the per-line rate the worksheet froze/typed (the box lets
+            // the operator override the master, e.g. 1 USD = 95 not 100). Only
+            // fall back to the currency master when the FE sent nothing — same
+            // rule the Sales Order + Invoice services already use. (Previously
+            // this always re-fetched the master, so a typed rate reverted on
+            // reopen.)
+            const sentRate = (l as any).cost_exchange_rate;
             const costRate =
-                sourceCode === docCur ? 1 : await rateForSource(sourceCode);
+                sentRate != null && sentRate !== ''
+                    ? sentRate
+                    : sourceCode === docCur
+                      ? 1
+                      : await rateForSource(sourceCode);
             await this.quotationLineRepository.create({
                 company_id: companyId,
                 quotation_id: quotationId,
