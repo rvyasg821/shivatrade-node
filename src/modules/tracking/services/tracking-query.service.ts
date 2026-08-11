@@ -53,7 +53,13 @@ export class TrackingQueryService {
 
     async listActivity(
         query: IActivityQuery
-    ): Promise<{ items: IActivityItem[]; total: number; page: number; perPage: number }> {
+    ): Promise<{
+        items: IActivityItem[];
+        total: number;
+        page: number;
+        perPage: number;
+        available_actions: string[];
+    }> {
         const page = Math.max(1, Number(query.page) || 1);
         const perPage = Math.min(
             MAX_PER_PAGE,
@@ -81,7 +87,17 @@ export class TrackingQueryService {
             });
         }
         if (query.action) {
-            qb.andWhere('a.action = :action', { action: query.action });
+            // Accept a comma-separated list so one UI choice can map to several
+            // stored actions (e.g. "Deleted" = delete + soft_delete).
+            const actions = query.action
+                .split(',')
+                .map((a) => a.trim())
+                .filter(Boolean);
+            if (actions.length === 1) {
+                qb.andWhere('a.action = :action', { action: actions[0] });
+            } else if (actions.length > 1) {
+                qb.andWhere('a.action IN (:...actions)', { actions });
+            }
         }
         if (query.from) {
             qb.andWhere('a."createdAt" >= :from', { from: query.from });
@@ -97,7 +113,33 @@ export class TrackingQueryService {
         const [rows, total] = await qb.getManyAndCount();
         const actors = await this.resolveActors(rows);
 
+        // Distinct actions that actually exist for this scope (company / user /
+        // entity, ignoring the date + action narrows) — drives a dynamic Action
+        // filter so it never offers a value with zero rows.
+        const actionQb = this.auditLogRepository
+            .queryBuilder('a')
+            .select('DISTINCT a.action', 'action');
+        if (query.company_id) {
+            actionQb.andWhere('a.company_id = :companyId', {
+                companyId: query.company_id,
+            });
+        }
+        if (query.user_id) {
+            actionQb.andWhere('a.user_id = :userId', { userId: query.user_id });
+        }
+        if (query.entity_name) {
+            actionQb.andWhere('a.entity_name = :entityName', {
+                entityName: query.entity_name,
+            });
+        }
+        const actionRows = await actionQb.getRawMany();
+        const available_actions = actionRows
+            .map((r) => r.action)
+            .filter(Boolean)
+            .sort();
+
         return {
+            available_actions,
             items: rows.map((row) => ({
                 _id: row._id,
                 at: row.createdAt,
