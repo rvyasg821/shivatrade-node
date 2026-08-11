@@ -43,6 +43,18 @@ import {
     SoInvoiceReconRowDto,
 } from '../dtos/response/so-invoice-reconciliation.response.dto';
 import {
+    LeadToInvoiceDurationResponseDto,
+    LeadToInvoiceDurationRowDto,
+} from '../dtos/response/lead-to-invoice-duration.response.dto';
+import {
+    AdvanceVsInvoiceResponseDto,
+    AdvanceVsInvoiceRowDto,
+} from '../dtos/response/advance-vs-invoice.response.dto';
+import {
+    ExchangeGainLossResponseDto,
+    ExchangeGainLossRowDto,
+} from '../dtos/response/exchange-gain-loss.response.dto';
+import {
     DocStatusResponseDto,
     DocStatusRowDto,
     DocStatusTotalsDto,
@@ -122,6 +134,42 @@ export interface ISoInvoiceReconQuery {
     /** Narrow to a single Sales Order / purchase_order (dropdown). */
     purchase_order_id?: string;
     /** Free text over product name/code. */
+    search?: string;
+    page?: number;
+    perPage?: number;
+}
+
+export interface ILeadToInvoiceDurationQuery {
+    date_from?: string;
+    date_to?: string;
+    customer_id?: string;
+    /** 'export' (default) | 'commercial' | 'all'. */
+    invoice_type?: string;
+    /** Free text over invoice / SO / quotation / lead voucher numbers. */
+    search?: string;
+    page?: number;
+    perPage?: number;
+}
+
+export interface IAdvanceVsInvoiceQuery {
+    date_from?: string;
+    date_to?: string;
+    customer_id?: string;
+    /** all | advance_unbilled | partly_adjusted | fully_adjusted | no_advance */
+    status?: string;
+    /** Free text over SO voucher / customer name. */
+    search?: string;
+    page?: number;
+    perPage?: number;
+}
+
+export interface IExchangeGainLossQuery {
+    date_from?: string;
+    date_to?: string;
+    customer_id?: string;
+    /** all | gain | loss */
+    result?: string;
+    /** Free text over invoice / receipt voucher / customer name. */
     search?: string;
     page?: number;
     perPage?: number;
@@ -2608,6 +2656,639 @@ export class ReportsService {
             [`SO vs Invoice — Price Reconciliation — ${result.period_label}`],
             [
                 'Row amounts are in each invoice’s currency (* = SO currency differed, converted at invoice rate). Totals are INR.',
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Lead → Invoice Duration ──────────────────────────────────────────
+    /**
+     * Conversion cycle time from Lead to Invoice, one row per issued invoice.
+     * Walks Lead → Quotation → Sales Order → Invoice via the header FKs
+     * (invoice.purchase_order_id → SO; invoice.quotation_id, falling back to the
+     * SO's quotation_id → Quotation; quotation.lead_id → Lead) and reports the
+     * whole-day gaps between each stage plus the total Lead → Invoice cycle.
+     * Missing hops leave that stage's dates/durations null (never dropped).
+     */
+    async leadToInvoiceDuration(
+        companyId: string,
+        query: ILeadToInvoiceDurationQuery
+    ): Promise<LeadToInvoiceDurationResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const customerId = query.customer_id || null;
+        // Default to export invoices — the conversion cycle the client tracks.
+        const typeRaw = (query.invoice_type || 'export').toLowerCase();
+        const invoiceType = typeRaw === 'all' ? null : typeRaw;
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const perPage = query.perPage || 25;
+        const page = query.page || 1;
+
+        const raw: any[] = await this.dataSource.query(
+            `SELECT i._id                                   AS invoice_id,
+                    i.voucher_no                            AS invoice_no,
+                    i.invoice_type                          AS invoice_type,
+                    i.invoice_date                          AS invoice_date,
+                    cust.company_name                       AS customer_name,
+                    so._id                                  AS so_id,
+                    so.voucher_no                           AS so_no,
+                    so.po_date                              AS so_date,
+                    q._id                                   AS quotation_id,
+                    q.voucher_no                            AS quotation_no,
+                    q.quotation_date                        AS quotation_date,
+                    ld._id                                  AS lead_id,
+                    ld.voucher_no                           AS lead_no,
+                    ld."createdAt"::date                    AS lead_date
+             FROM invoices i
+             LEFT JOIN purchase_orders so
+                 ON so._id = i.purchase_order_id AND so.soft_delete = false
+             LEFT JOIN quotations q
+                 ON q._id = COALESCE(i.quotation_id, so.quotation_id)
+                 AND q.soft_delete = false
+             LEFT JOIN leads ld
+                 ON ld._id = q.lead_id AND ld.soft_delete = false
+             LEFT JOIN customers cust ON cust._id = i.customer_id
+             WHERE i.company_id = $1
+               AND i.soft_delete = false
+               AND i.status NOT IN ('draft', 'cancelled')
+               AND i.invoice_date BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR i.customer_id = $4)
+               AND ($5::text IS NULL OR i.invoice_type = $5)
+               AND ($6::text IS NULL
+                    OR i.voucher_no ILIKE '%' || $6 || '%'
+                    OR so.voucher_no ILIKE '%' || $6 || '%'
+                    OR q.voucher_no ILIKE '%' || $6 || '%'
+                    OR ld.voucher_no ILIKE '%' || $6 || '%')
+             ORDER BY i.invoice_date DESC, i.voucher_no`,
+            [companyId, from, to, customerId, invoiceType, search]
+        );
+
+        // Whole days between two ISO/Date values; null when either is missing.
+        const days = (a: any, b: any): number | null => {
+            if (!a || !b) return null;
+            const da = new Date(a);
+            const db = new Date(b);
+            if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime()))
+                return null;
+            return Math.round((db.getTime() - da.getTime()) / 86400000);
+        };
+
+        const rows: LeadToInvoiceDurationRowDto[] = raw.map((r) => ({
+            invoice_id: r.invoice_id,
+            invoice_no: r.invoice_no ?? null,
+            invoice_type: r.invoice_type,
+            invoice_date: r.invoice_date,
+            customer_name: r.customer_name ?? null,
+            so_no: r.so_no ?? null,
+            so_date: r.so_date ?? null,
+            quotation_no: r.quotation_no ?? null,
+            quotation_date: r.quotation_date ?? null,
+            lead_no: r.lead_no ?? null,
+            lead_date: r.lead_date ?? null,
+            lead_to_quotation_days: days(r.lead_date, r.quotation_date),
+            quotation_to_so_days: days(r.quotation_date, r.so_date),
+            so_to_invoice_days: days(r.so_date, r.invoice_date),
+            total_days: days(r.lead_date, r.invoice_date),
+        }));
+
+        // Averages over the rows where each figure is actually computable.
+        const avg = (
+            pick: (x: LeadToInvoiceDurationRowDto) => number | null
+        ): number | null => {
+            const vals = rows
+                .map(pick)
+                .filter((v): v is number => v !== null && v !== undefined);
+            if (!vals.length) return null;
+            return Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10;
+        };
+        const chainedTotals = rows
+            .map((x) => x.total_days)
+            .filter((v): v is number => v !== null && v !== undefined);
+
+        const totals = {
+            invoices: rows.length,
+            chained: chainedTotals.length,
+            avg_total_days: avg((x) => x.total_days),
+            avg_lead_to_quotation_days: avg((x) => x.lead_to_quotation_days),
+            avg_quotation_to_so_days: avg((x) => x.quotation_to_so_days),
+            avg_so_to_invoice_days: avg((x) => x.so_to_invoice_days),
+            min_total_days: chainedTotals.length
+                ? Math.min(...chainedTotals)
+                : null,
+            max_total_days: chainedTotals.length
+                ? Math.max(...chainedTotals)
+                : null,
+        };
+
+        const start = (page - 1) * perPage;
+        const paged = rows.slice(start, start + perPage);
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: paged,
+            totals,
+            pagination: { total: rows.length, perPage },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer (whole filtered set + AVERAGE row). */
+    async leadToInvoiceDurationExcel(
+        companyId: string,
+        query: ILeadToInvoiceDurationQuery
+    ): Promise<Buffer> {
+        const result = await this.leadToInvoiceDuration(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000, // one page = the whole set for export
+        });
+        const header = [
+            'Lead No',
+            'Lead Date',
+            'Quotation No',
+            'Quotation Date',
+            'SO No',
+            'SO Date',
+            'Invoice No',
+            'Type',
+            'Invoice Date',
+            'Customer',
+            'Lead→Quote (days)',
+            'Quote→SO (days)',
+            'SO→Invoice (days)',
+            'Total (days)',
+        ];
+        const dash = '';
+        const body = result.rows.map((r) => [
+            r.lead_no || dash,
+            r.lead_date ? isoToDdmmyyyy(r.lead_date) : dash,
+            r.quotation_no || dash,
+            r.quotation_date ? isoToDdmmyyyy(r.quotation_date) : dash,
+            r.so_no || dash,
+            r.so_date ? isoToDdmmyyyy(r.so_date) : dash,
+            r.invoice_no || dash,
+            r.invoice_type,
+            r.invoice_date ? isoToDdmmyyyy(r.invoice_date) : dash,
+            r.customer_name || dash,
+            r.lead_to_quotation_days ?? dash,
+            r.quotation_to_so_days ?? dash,
+            r.so_to_invoice_days ?? dash,
+            r.total_days ?? dash,
+        ]);
+        const avgRow = [
+            'AVERAGE (days)',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            result.totals.avg_lead_to_quotation_days ?? '',
+            result.totals.avg_quotation_to_so_days ?? '',
+            result.totals.avg_so_to_invoice_days ?? '',
+            result.totals.avg_total_days ?? '',
+        ];
+        const aoa: (string | number)[][] = [
+            [`Lead → Invoice Duration — ${result.period_label}`],
+            [
+                `Invoices: ${result.totals.invoices} · Fully chained: ${result.totals.chained} · Fastest cycle: ${
+                    result.totals.min_total_days ?? '—'
+                } days · Slowest cycle: ${
+                    result.totals.max_total_days ?? '—'
+                } days`,
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            avgRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Advance vs Invoice ───────────────────────────────────────────────
+    /**
+     * Advances taken on Sales Orders vs the invoices later raised against them.
+     * One row per SO (that carries an advance and/or has been invoiced):
+     * advance = SO.advance_amount; invoiced = Σ invoice-line value billed
+     * against that SO's lines (non-cancelled invoices), converted into the SO
+     * currency; balance = invoiced − advance. Row amounts are native to the SO,
+     * totals are INR (÷ the SO's frozen doc-per-₹1 rate) so they stay summable.
+     */
+    async advanceVsInvoice(
+        companyId: string,
+        query: IAdvanceVsInvoiceQuery
+    ): Promise<AdvanceVsInvoiceResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const customerId = query.customer_id || null;
+        const statusFilter =
+            query.status && query.status !== 'all' ? query.status : null;
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const perPage = query.perPage || 25;
+        const page = query.page || 1;
+
+        const raw: any[] = await this.dataSource.query(
+            `WITH inv_lines AS (
+                 SELECT pol.purchase_order_id                        AS so_id,
+                        i._id                                        AS invoice_id,
+                        i.voucher_no                                 AS invoice_no,
+                        COALESCE(il.taxable_amount, 0)::float8
+                            / NULLIF(COALESCE(i.exchange_rate, '1')::float8, 0)
+                                                                     AS line_inr
+                 FROM invoice_lines il
+                 JOIN invoices i
+                     ON i._id = il.invoice_id AND i.soft_delete = false
+                     AND i.status NOT IN ('draft', 'cancelled')
+                 JOIN purchase_order_lines pol
+                     ON pol._id = il.purchase_order_line_id
+                 WHERE il.company_id = $1 AND il.soft_delete = false
+             ),
+             inv_by_so AS (
+                 SELECT so_id,
+                        SUM(line_inr)                                AS invoiced_inr,
+                        COUNT(DISTINCT invoice_id)                   AS invoice_count,
+                        jsonb_agg(DISTINCT jsonb_build_object(
+                            'id', invoice_id, 'no', invoice_no))     AS invoices
+                 FROM inv_lines
+                 GROUP BY so_id
+             )
+             SELECT so._id                                          AS so_id,
+                    so.voucher_no                                   AS so_no,
+                    so.po_date                                      AS so_date,
+                    cust.company_name                               AS customer_name,
+                    COALESCE(so.currency_code, 'INR')               AS currency_code,
+                    COALESCE(
+                        (SELECT cur.symbol FROM currencies cur
+                         WHERE cur.code = so.currency_code
+                           AND cur.company_id = so.company_id
+                         LIMIT 1), '')                              AS currency_symbol,
+                    COALESCE(so.exchange_rate, '1')::float8         AS so_fx,
+                    COALESCE(so.grand_total, 0)::float8             AS so_value,
+                    COALESCE(so.advance_amount, 0)::float8          AS advance,
+                    so.advance_date                                 AS advance_date,
+                    COALESCE(ibs.invoiced_inr, 0)::float8           AS invoiced_inr,
+                    COALESCE(ibs.invoice_count, 0)::int             AS invoice_count,
+                    COALESCE(ibs.invoices, '[]'::jsonb)             AS invoices
+             FROM purchase_orders so
+             LEFT JOIN inv_by_so ibs ON ibs.so_id = so._id
+             LEFT JOIN customers cust ON cust._id = so.customer_id
+             WHERE so.company_id = $1
+               AND so.soft_delete = false
+               AND so.status NOT IN ('draft', 'cancelled')
+               AND so.po_date BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR so.customer_id = $4)
+               AND ($5::text IS NULL
+                    OR so.voucher_no ILIKE '%' || $5 || '%'
+                    OR cust.company_name ILIKE '%' || $5 || '%')
+               AND (COALESCE(so.advance_amount, 0) > 0 OR ibs.invoiced_inr IS NOT NULL)
+             ORDER BY so.po_date DESC, so.voucher_no`,
+            [companyId, from, to, customerId, search]
+        );
+
+        const rows: AdvanceVsInvoiceRowDto[] = raw.map((r) => {
+            const soFx = n(r.so_fx) || 1;
+            const advance = r2(n(r.advance)); // SO currency (native)
+            const soValue = r2(n(r.so_value)); // SO currency (native)
+            const invoicedInr = n(r.invoiced_inr); // already INR
+            const invoicedNative = r2(invoicedInr * soFx); // → SO currency
+            const balance = r2(invoicedNative - advance);
+
+            // INR copies for the summable totals (÷ soFx, doc-per-₹1).
+            const advanceInr = soFx > 0 ? advance / soFx : advance;
+            const soValueInr = soFx > 0 ? soValue / soFx : soValue;
+            const balanceInr = r2(invoicedInr - advanceInr);
+
+            // Status by how far the advance has been billed.
+            let status: string;
+            if (advance <= 0) status = 'no_advance';
+            else if (invoicedNative <= 0) status = 'advance_unbilled';
+            else if (invoicedNative < advance) status = 'partly_adjusted';
+            else status = 'fully_adjusted';
+
+            return {
+                so_id: r.so_id,
+                so_no: r.so_no,
+                so_date: r.so_date,
+                customer_name: r.customer_name ?? null,
+                currency_code: r.currency_code,
+                currency_symbol: r.currency_symbol || r.currency_code,
+                so_value: soValue,
+                advance,
+                advance_date: r.advance_date ?? null,
+                invoiced: invoicedNative,
+                balance,
+                invoice_count: n(r.invoice_count),
+                invoices: (Array.isArray(r.invoices) ? r.invoices : [])
+                    .filter((iv: any) => iv && iv.id)
+                    .map((iv: any) => ({ id: String(iv.id), no: iv.no || '' })),
+                status,
+                so_value_inr: r2(soValueInr),
+                advance_inr: r2(advanceInr),
+                invoiced_inr: r2(invoicedInr),
+                balance_inr: balanceInr,
+            };
+        });
+
+        const filtered = statusFilter
+            ? rows.filter((x) => x.status === statusFilter)
+            : rows;
+
+        const totals = filtered.reduce(
+            (acc, x) => {
+                acc.orders += 1;
+                acc.so_value_inr += x.so_value_inr;
+                acc.advance_inr += x.advance_inr;
+                acc.invoiced_inr += x.invoiced_inr;
+                acc.balance_inr += x.balance_inr;
+                if (x.status === 'advance_unbilled') acc.advance_unbilled += 1;
+                return acc;
+            },
+            {
+                orders: 0,
+                so_value_inr: 0,
+                advance_inr: 0,
+                invoiced_inr: 0,
+                balance_inr: 0,
+                advance_unbilled: 0,
+            }
+        );
+        totals.so_value_inr = r2(totals.so_value_inr);
+        totals.advance_inr = r2(totals.advance_inr);
+        totals.invoiced_inr = r2(totals.invoiced_inr);
+        totals.balance_inr = r2(totals.balance_inr);
+
+        const start = (page - 1) * perPage;
+        const paged = filtered.slice(start, start + perPage);
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: paged,
+            totals,
+            pagination: { total: filtered.length, perPage },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer (whole filtered set + TOTAL row). */
+    async advanceVsInvoiceExcel(
+        companyId: string,
+        query: IAdvanceVsInvoiceQuery
+    ): Promise<Buffer> {
+        const result = await this.advanceVsInvoice(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000, // one page = the whole set for export
+        });
+        const statusLabel: Record<string, string> = {
+            advance_unbilled: 'Advance unbilled',
+            partly_adjusted: 'Advance partly adjusted',
+            fully_adjusted: 'Advance fully adjusted',
+            no_advance: 'No advance',
+        };
+        const header = [
+            'Sales Order',
+            'SO Date',
+            'Customer',
+            'Currency',
+            'Status',
+            'SO Value',
+            'Advance Received',
+            'Invoiced',
+            'Balance (Inv − Adv)',
+            'Invoice(s)',
+        ];
+        const body = result.rows.map((r) => [
+            r.so_no,
+            r.so_date ? isoToDdmmyyyy(r.so_date) : '',
+            r.customer_name || '',
+            r.currency_code,
+            statusLabel[r.status] || r.status,
+            r.so_value,
+            r.advance,
+            r.invoiced,
+            r.balance,
+            (r.invoices || []).map((iv) => iv.no).join(', '),
+        ]);
+        const totalRow = [
+            'TOTAL (INR)',
+            '',
+            '',
+            '',
+            '',
+            result.totals.so_value_inr,
+            result.totals.advance_inr,
+            result.totals.invoiced_inr,
+            result.totals.balance_inr,
+            '',
+        ];
+        const aoa: (string | number)[][] = [
+            [`Advance vs Invoice — ${result.period_label}`],
+            [
+                'Row amounts are in each Sales Order’s currency. Totals are INR (converted at each SO’s frozen rate).',
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+        return this.fileService.writeExcelFromArray(aoa);
+    }
+
+    // ── Exchange Gain/Loss ───────────────────────────────────────────────
+    /**
+     * Realized forex gain/loss per customer receipt: a foreign invoice booked at
+     * its invoice-date rate, paid later at the receipt rate. One row per
+     * non-voided receipt (advances included) on a non-INR invoice. Mirrors the
+     * invoice detail's per-receipt math (invoice.service `mapGet`):
+     *   INR expected = amount ÷ invoice_rate, INR received = amount ÷ receipt_rate,
+     *   gain/loss = received − expected. Amounts are invoice-currency; INR is
+     *   summable. INR invoices carry no forex and are excluded.
+     */
+    async exchangeGainLoss(
+        companyId: string,
+        query: IExchangeGainLossQuery
+    ): Promise<ExchangeGainLossResponseDto> {
+        const today = new Date();
+        const from = query.date_from || isoDate(this.currentFyStart(today));
+        const to = query.date_to || isoDate(today);
+        const customerId = query.customer_id || null;
+        const resultFilter =
+            query.result === 'gain' || query.result === 'loss'
+                ? query.result
+                : null;
+        const search = query.search?.trim() ? query.search.trim() : null;
+        const perPage = query.perPage || 25;
+        const page = query.page || 1;
+
+        const raw: any[] = await this.dataSource.query(
+            `SELECT ip._id                                          AS payment_id,
+                    ip.receipt_voucher_no                          AS receipt_no,
+                    ip.payment_date                                AS payment_date,
+                    ip.method                                      AS method,
+                    COALESCE(ip.amount, 0)::float8                 AS amount,
+                    COALESCE(ip.exchange_rate, '1')::float8        AS receipt_rate,
+                    i._id                                          AS invoice_id,
+                    i.voucher_no                                   AS invoice_no,
+                    i.invoice_date                                 AS invoice_date,
+                    i.invoice_type                                 AS invoice_type,
+                    COALESCE(i.currency_code, 'INR')               AS currency_code,
+                    COALESCE(i.currency_symbol, '')                AS currency_symbol,
+                    COALESCE(i.exchange_rate, '1')::float8         AS invoice_rate,
+                    c.company_name                                 AS customer_name
+             FROM invoice_payments ip
+             JOIN invoices i
+                 ON i._id = ip.invoice_id AND i.soft_delete = false
+             LEFT JOIN customers c ON c._id = i.customer_id
+             WHERE ip.company_id = $1
+               AND ip.soft_delete = false
+               AND ip.voided_at IS NULL
+               AND COALESCE(i.currency_code, 'INR') <> 'INR'
+               AND ip.payment_date BETWEEN $2 AND $3
+               AND ($4::uuid IS NULL OR i.customer_id = $4)
+               AND ($5::text IS NULL
+                    OR i.voucher_no ILIKE '%' || $5 || '%'
+                    OR ip.receipt_voucher_no ILIKE '%' || $5 || '%'
+                    OR c.company_name ILIKE '%' || $5 || '%')
+             ORDER BY ip.payment_date DESC, i.voucher_no`,
+            [companyId, from, to, customerId, search]
+        );
+
+        const rows: ExchangeGainLossRowDto[] = raw.map((r) => {
+            const amt = n(r.amount);
+            const invRate = n(r.invoice_rate) || 1;
+            const rcptRate = n(r.receipt_rate) || invRate;
+            const inrExpected = invRate > 0 ? amt / invRate : amt;
+            const inrReceived = rcptRate > 0 ? amt / rcptRate : amt;
+            const gl = r2(inrReceived - inrExpected);
+            return {
+                payment_id: r.payment_id,
+                receipt_no: r.receipt_no ?? null,
+                payment_date: r.payment_date,
+                method: r.method ?? null,
+                invoice_id: r.invoice_id,
+                invoice_no: r.invoice_no ?? null,
+                invoice_date: r.invoice_date,
+                invoice_type: r.invoice_type,
+                currency_code: r.currency_code,
+                currency_symbol: r.currency_symbol || r.currency_code,
+                customer_name: r.customer_name ?? null,
+                amount: r2(amt),
+                invoice_rate_inr: invRate > 0 ? r2(1 / invRate) : 0,
+                receipt_rate_inr: rcptRate > 0 ? r2(1 / rcptRate) : 0,
+                inr_expected: r2(inrExpected),
+                inr_received: r2(inrReceived),
+                gain_loss_inr: gl,
+            };
+        });
+
+        const filtered = resultFilter
+            ? rows.filter((x) =>
+                  resultFilter === 'gain'
+                      ? x.gain_loss_inr > 0
+                      : x.gain_loss_inr < 0
+              )
+            : rows;
+
+        const totals = filtered.reduce(
+            (acc, x) => {
+                acc.receipts += 1;
+                acc.inr_expected += x.inr_expected;
+                acc.inr_received += x.inr_received;
+                acc.gain_loss_inr += x.gain_loss_inr;
+                if (x.gain_loss_inr > 0) acc.gains += 1;
+                else if (x.gain_loss_inr < 0) acc.losses += 1;
+                return acc;
+            },
+            {
+                receipts: 0,
+                inr_expected: 0,
+                inr_received: 0,
+                gain_loss_inr: 0,
+                gains: 0,
+                losses: 0,
+            }
+        );
+        totals.inr_expected = r2(totals.inr_expected);
+        totals.inr_received = r2(totals.inr_received);
+        totals.gain_loss_inr = r2(totals.gain_loss_inr);
+
+        const start = (page - 1) * perPage;
+        const paged = filtered.slice(start, start + perPage);
+
+        return {
+            period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+            rows: paged,
+            totals,
+            pagination: { total: filtered.length, perPage },
+        };
+    }
+
+    /** The same report as an .xlsx Buffer (whole filtered set + TOTAL row). */
+    async exchangeGainLossExcel(
+        companyId: string,
+        query: IExchangeGainLossQuery
+    ): Promise<Buffer> {
+        const result = await this.exchangeGainLoss(companyId, {
+            ...query,
+            page: 1,
+            perPage: 100000, // one page = the whole set for export
+        });
+        const header = [
+            'Receipt',
+            'Receipt Date',
+            'Invoice',
+            'Invoice Date',
+            'Customer',
+            'Currency',
+            'Amount',
+            'Invoice Rate (₹/unit)',
+            'Receipt Rate (₹/unit)',
+            'INR Expected',
+            'INR Received',
+            'Gain / Loss (₹)',
+        ];
+        const body = result.rows.map((r) => [
+            r.receipt_no || '',
+            r.payment_date ? isoToDdmmyyyy(r.payment_date) : '',
+            r.invoice_no || '',
+            r.invoice_date ? isoToDdmmyyyy(r.invoice_date) : '',
+            r.customer_name || '',
+            r.currency_code,
+            r.amount,
+            r.invoice_rate_inr,
+            r.receipt_rate_inr,
+            r.inr_expected,
+            r.inr_received,
+            r.gain_loss_inr,
+        ]);
+        const totalRow = [
+            'TOTAL (INR)',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            result.totals.inr_expected,
+            result.totals.inr_received,
+            result.totals.gain_loss_inr,
+        ];
+        const aoa: (string | number)[][] = [
+            [`Exchange Gain/Loss — ${result.period_label}`],
+            [
+                `Receipts: ${result.totals.receipts} · Gains: ${result.totals.gains} · Losses: ${result.totals.losses}. Amount is invoice currency; INR figures are ₹.`,
             ],
             [],
             header,

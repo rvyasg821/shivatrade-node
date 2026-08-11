@@ -377,6 +377,14 @@ export class InvoicePdfService {
         (invoice as any).reference_nos = refList.join(', ') || invoice.reference_no;
         (invoice as any).so_advance_rows = soAdvanceRows;
 
+        // Total money actually received against this invoice across ALL active
+        // (non-voided) receipts — the SO advance seed AND any later payments.
+        // Drives the PDF's "Total Received" + "Payable Amount" (= grand_total −
+        // received), so the document always agrees with the Payments tab.
+        const totalReceived =
+            await this.invoicePaymentRepository.sumActiveByInvoiceId(invoiceId);
+        (invoice as any).total_received = num(totalReceived);
+
         const company: any =
             (await this.companyRepository.findOneById(companyId)) || {};
         // Prefer the frozen snapshot on the invoice — historical doc must
@@ -821,6 +829,25 @@ function buildInvoiceExcelSections(
                 [curCell(soAdv.reduce((s, r) => s + num(r.receivable), 0), sym, 2, { bold: true }), soSpan[3]],
             ])
         );
+        // Total received across ALL non-voided receipts, and the remaining
+        // Payable (grand_total + receivable − received) — mirrors the PDF.
+        const totalReceived = num(inv.total_received);
+        const totalReceivable = soAdv.reduce(
+            (s, r) => s + num(r.receivable),
+            0
+        );
+        soRows.push(
+            spanned([
+                [textCell('Total Received', 'r', { bold: true }), 7],
+                [curCell(totalReceived, sym, 2, { bold: true }), 1],
+            ])
+        );
+        soRows.push(
+            spanned([
+                [textCell('Payable Amount', 'r', { bold: true }), 7],
+                [curCell(num(inv.grand_total) + totalReceivable - totalReceived, sym, 2, { bold: true }), 1],
+            ])
+        );
         sections.push({ kind: 'note', text: 'Advance Received (Sales Order-wise)', bold: true });
         sections.push({
             kind: 'table',
@@ -1114,6 +1141,10 @@ function referencesBlock(d: RenderData): string {
         inv.quotation_voucher_no || distinct('quotation_voucher_no');
     const poNo =
         inv.purchase_order_voucher_no || distinct('purchase_order_voucher_no');
+    // Lead requirement number(s) — carried on each line as `customer_reference`
+    // (the "Requirement number" that flows Lead → Quotation → SO → Invoice).
+    // Distinct list so a multi-line/multi-SO invoice shows each once.
+    const requirementNo = distinct('customer_reference');
     const refs: Array<[string, any]> = (
         [
             ['Quotation No.', quotationNo],
@@ -1121,6 +1152,7 @@ function referencesBlock(d: RenderData): string {
             // Manual tracking reference(s). For a multi-SO invoice this is the
             // distinct list of every source SO's reference_no + the invoice's own.
             ['Reference No.', inv.reference_nos || inv.reference_no],
+            ['Lead No.', requirementNo],
             ['Shipping No.', inv.shipping_voucher_no],
         ] as Array<[string, any]>
     ).filter(([, v]) => !!v);
@@ -1310,6 +1342,12 @@ function advanceSoTable(inv: any, sym: string): string {
     const tVal = rows.reduce((s, r) => s + num(r.invoice_value), 0);
     const tAdv = rows.reduce((s, r) => s + num(r.advance), 0);
     const tRec = rows.reduce((s, r) => s + num(r.receivable), 0);
+    // Total actually received across ALL non-voided receipts (the SO advance
+    // seed AND any later payments). Payable = grand_total + receivable − total
+    // received: the SO-wise Receivable ($0.24 the advance under-covered) is
+    // still owed and stays in the payable even after the rest is paid.
+    const totalReceived = num(inv.total_received);
+    const payable = num(inv.grand_total) + tRec - totalReceived;
     return `
     <table class="avoid-break" style="margin-top: 6px;">
         <tr><td colspan="4" class="lbl" style="background:#f0f0f0;">Advance Received (Sales Order-wise)</td></tr>
@@ -1325,6 +1363,14 @@ function advanceSoTable(inv: any, sym: string): string {
             <td class="right">${sym}${fmt(tVal, 2)}</td>
             <td class="right">${sym}${fmt(tAdv, 2)}</td>
             <td class="right">${sym}${fmt(tRec, 2)}</td>
+        </tr>
+        <tr class="strong">
+            <td colspan="3" class="right">Total Received</td>
+            <td class="right">${sym}${fmt(totalReceived, 2)}</td>
+        </tr>
+        <tr class="strong">
+            <td colspan="3" class="right" style="background:#f0f0f0;">Payable Amount</td>
+            <td class="right" style="background:#f0f0f0;">${sym}${fmt(payable, 2)}</td>
         </tr>
     </table>`;
 }
@@ -1478,11 +1524,11 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
         ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
         ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
-        ${showIgst ? `<tr><td colspan="7" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
         <tr>
             <td colspan="7" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
         </tr>
+        ${showIgst ? `<tr><td colspan="7" class="right lbl">Total IGST Amt. (INR)</td><td class="right strong">₹${fmt(totalIgstInr, 2)}</td></tr>` : ''}
     </table>
 
     ${inv.amount_in_words ? `<div class="pad" style="border:1px solid #222; border-top:none;"><span class="lbl">Amount in Words:</span> ${esc(inv.amount_in_words)}</div>` : ''}
@@ -1496,8 +1542,6 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <td><span class="lbl">Place of Supply</span><br/>${esc(inv.place_of_supply || '96')} - Other Territory</td>
         </tr>
     </table>
-
-    ${advanceSoTable(inv, sym)}
 
     ${cargoTotalsBlock(inv)}
 
