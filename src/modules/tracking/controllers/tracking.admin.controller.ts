@@ -44,6 +44,50 @@ export class TrackingAdminController {
         }
     }
 
+    /** COMPANY_ADMIN only — the company-scoped Activity Log (own company). */
+    private assertCompanyAdmin(roleName: string): void {
+        if (roleName !== ENUM_SYSTEM_ROLE.COMPANY_ADMIN) {
+            throw new ForbiddenException(
+                'The activity log is restricted to the company admin.'
+            );
+        }
+    }
+
+    /**
+     * Company Admin's own-company Activity Log. Same activity feed as the
+     * platform console's Activity tab, but `company_id` is FORCED to the
+     * caller's JWT company — they can never read another company's activity, and
+     * the `company_id` query param (if any) is ignored.
+     */
+    @Response('tracking.activity')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'user_id', required: false })
+    @ApiQuery({ name: 'entity_name', required: false })
+    @ApiQuery({ name: 'action', required: false })
+    @ApiQuery({ name: 'from', required: false })
+    @ApiQuery({ name: 'to', required: false })
+    @ApiQuery({ name: 'page', required: false })
+    @ApiQuery({ name: 'perPage', required: false })
+    @Get('/company-activity')
+    async companyActivity(
+        @AuthJwtPayload('roleName') roleName: string,
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<any>> {
+        this.assertCompanyAdmin(roleName);
+        const data = await this.trackingQueryService.listActivity({
+            company_id: companyId, // forced — own company only
+            user_id: query.user_id,
+            entity_name: query.entity_name,
+            action: query.action,
+            from: query.from,
+            to: query.to,
+            page: Number(query.page) || 1,
+            perPage: Number(query.perPage) || 25,
+        });
+        return { data };
+    }
+
     @Response('tracking.activity')
     @AuthJwtAccessProtected()
     @ApiQuery({ name: 'company_id', required: false })
