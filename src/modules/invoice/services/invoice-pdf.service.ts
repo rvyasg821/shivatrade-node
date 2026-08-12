@@ -861,10 +861,15 @@ function buildInvoiceExcelSections(
     if (inv.amount_in_words)
         sections.push({ kind: 'note', text: `Amount Chargeable (in words): ${inv.amount_in_words}`, bold: true });
 
-    // IGST refund buckets (commercial, INR).
-    if (showIgst && Array.isArray(inv.igst_refund_buckets) && inv.igst_refund_buckets.length) {
+    // IGST refund buckets (commercial, INR) — frozen at issue, else computed
+    // live so the breakdown also shows on a DRAFT IGST-paid invoice (matches the
+    // commercial PDF). Empty for LUT/export (showIgst already false there).
+    const igstBuckets = showIgst
+        ? igstRefundBucketsForPdf(inv, d.lines || [])
+        : { buckets: [], total: 0 };
+    if (igstBuckets.buckets.length) {
         sections.push({ kind: 'note', text: 'IGST Refund (INR)', bold: true });
-        const bRows = inv.igst_refund_buckets.map((b: any) => [
+        const bRows = igstBuckets.buckets.map((b: any) => [
             curCell(num(b.assessable_value_inr), '₹', 2),
             textCell(`${fmt(b.rate, 2)}%`, 'c'),
             curCell(num(b.igst_amount_inr), '₹', 2, { bold: true }),
@@ -872,7 +877,7 @@ function buildInvoiceExcelSections(
         bRows.push([
             { ...textCell('Total IGST Refund', 'r', { bold: true }), colSpan: 2 } as DocCell,
             textCell(''),
-            curCell(num(inv.igst_refund_amount), '₹', 2, { bold: true }),
+            curCell(igstBuckets.total, '₹', 2, { bold: true }),
         ]);
         sections.push({ kind: 'table', head: ['Assessable Value (INR)', 'IGST Rate', 'IGST Amount (INR)'], rows: bRows, align: ['r', 'c', 'r'] });
     }
@@ -1321,14 +1326,30 @@ const SHIPPING_BILL_TYPE_LABELS: Record<string, string> = {
  * from several SOs each with its own advance, itemise them — Sales Order,
  * Invoice Value (that SO's billed lines), Advance Received, Receivable
  * (invoice value − advance). Only the SOs that actually carry an advance are
- * listed. Returns '' when there is no advance. Shared by commercial + export.
+ * listed. When NO SO carries an advance, a compact "Payment Summary" (Invoice
+ * Value / Total Received / Payable Amount) is shown instead — so the export PDF
+ * always displays the Payable Amount. Currently used by the export PDF only.
  */
 function advanceSoTable(inv: any, sym: string): string {
     const all: any[] = Array.isArray(inv.so_advance_rows)
         ? inv.so_advance_rows
         : [];
     const rows = all.filter((r) => num(r.advance) > 0);
-    if (!rows.length) return '';
+    // No advance on any source SO → still show a compact payable summary so the
+    // export PDF ALWAYS shows what's left to collect (client 2026-08-12).
+    // Payable = grand_total − total received (no SO-wise receivable shortfall
+    // to carry when there was never an advance).
+    if (!rows.length) {
+        const totalReceived = num(inv.total_received);
+        const payable = num(inv.grand_total) - totalReceived;
+        return `
+    <table class="avoid-break" style="margin-top: 6px;">
+        <tr><td colspan="2" class="lbl" style="background:#f0f0f0;">Payment Summary</td></tr>
+        <tr class="strong"><td class="right">Invoice Value</td><td class="right">${sym}${fmt(num(inv.grand_total), 2)}</td></tr>
+        <tr class="strong"><td class="right">Total Received</td><td class="right">${sym}${fmt(totalReceived, 2)}</td></tr>
+        <tr class="strong"><td class="right" style="background:#f0f0f0;">Payable Amount</td><td class="right" style="background:#f0f0f0;">${sym}${fmt(payable, 2)}</td></tr>
+    </table>`;
+    }
     const body = rows
         .map(
             (r) => `<tr>
@@ -1403,6 +1424,45 @@ function cargoTotalsBlock(inv: any): string {
     </table>`;
 }
 
+/**
+ * IGST refund buckets for the PDF. Uses the buckets FROZEN on the invoice at
+ * issue time when present; otherwise computes them LIVE from the lines so the
+ * breakdown also renders on a DRAFT IGST-paid invoice (client 2026-08-12 —
+ * "always show IGST breakdown even on draft"). Empty for the LUT / zero-rated
+ * route (no IGST is charged, so there is nothing to break down). Mirrors
+ * `InvoiceService.buildIgstRefundBuckets`.
+ */
+function igstRefundBucketsForPdf(
+    inv: any,
+    lines: any[]
+): { buckets: any[]; total: number } {
+    if (inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED)
+        return { buckets: [], total: 0 };
+    // Frozen buckets win once the invoice is issued.
+    if (Array.isArray(inv.igst_refund_buckets) && inv.igst_refund_buckets.length)
+        return { buckets: inv.igst_refund_buckets, total: num(inv.igst_refund_amount) };
+    // Draft (or legacy un-frozen) → derive live, grouped by igst_rate_pct.
+    const er = num(inv.exchange_rate) > 0 ? num(inv.exchange_rate) : 1;
+    const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+    const grouped = new Map<string, number>();
+    for (const l of lines || []) {
+        const rate = num(l.igst_rate_pct);
+        const taxableInr = num(l.taxable_amount) / er;
+        grouped.set(String(rate), (grouped.get(String(rate)) || 0) + taxableInr);
+    }
+    let total = 0;
+    const buckets = Array.from(grouped.entries())
+        .map(([rateStr, assessableInr]) => {
+            const rate = num(rateStr);
+            const inr = r2(assessableInr);
+            const igstInr = r2(inr * (rate / 100));
+            total += igstInr;
+            return { rate, assessable_value_inr: inr, igst_amount_inr: igstInr };
+        })
+        .sort((a, b) => a.rate - b.rate);
+    return { buckets, total: r2(total) };
+}
+
 function buildCommercialInvoiceHtml(d: RenderData): string {
     const inv = d.invoice;
     const isLut = inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED;
@@ -1446,15 +1506,19 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         })
         .join('');
 
-    const bucketsHtml =
-        Array.isArray(inv.igst_refund_buckets) && inv.igst_refund_buckets.length
-            ? `<table style="margin-top: 6px;">
+    // IGST breakdown table — frozen buckets when issued, else computed live so
+    // it also shows on a DRAFT IGST-paid invoice. Empty for LUT (zero-rated).
+    const igstBuckets = showIgst
+        ? igstRefundBucketsForPdf(inv, d.lines || [])
+        : { buckets: [], total: 0 };
+    const bucketsHtml = igstBuckets.buckets.length
+        ? `<table style="margin-top: 6px;">
                 <tr>
                     <th class="right">Assessable Value (INR)</th>
                     <th class="right">IGST Rate</th>
                     <th class="right">IGST Amount (INR)</th>
                 </tr>
-                ${inv.igst_refund_buckets
+                ${igstBuckets.buckets
                     .map(
                         (b: any) => `
                     <tr>
@@ -1466,10 +1530,10 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
                     .join('')}
                 <tr>
                     <td colspan="2" class="right strong">Total IGST Refund</td>
-                    <td class="right strong">₹${fmt(inv.igst_refund_amount, 2)}</td>
+                    <td class="right strong">₹${fmt(igstBuckets.total, 2)}</td>
                 </tr>
             </table>`
-            : '';
+        : '';
 
     const banksHtml = bankDetailsBlock(inv.bank_snapshots);
 
