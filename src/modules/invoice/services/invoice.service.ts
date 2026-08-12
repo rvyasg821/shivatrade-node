@@ -1833,16 +1833,27 @@ export class InvoiceService {
             row._id.toString()
         );
         // Realized forex gain/loss per receipt (INR): the ₹ actually received
-        // (amount ÷ receipt rate) minus the ₹ booked at the invoice's rate
-        // (amount ÷ invoice rate). Positive = gain, negative = loss. 0 on a
+        // (amount × receipt rate) minus the ₹ booked at the invoice's rate
+        // (amount × invoice rate). Positive = gain, negative = loss. 0 on a
         // home-currency invoice (both rates = 1) or a rate-less legacy receipt.
+        //
+        // CRITICAL: both rates are compared in the INR-per-foreign rate the
+        // operator actually SEES and ENTERS — the 2-dp reciprocal of the stored
+        // doc-per-₹1 rate. The stored rate is doc-per-₹1 at 6dp, whose raw
+        // reciprocal drifts (₹95.09 entered → stored 0.010516 → 1/0.010516 =
+        // 95.0932). Dividing by the raw stored rate fabricated a phantom
+        // gain/loss even when the receipt rate equalled the invoice rate. Using
+        // the same 2-dp INR rate on both sides makes an equal rate net EXACTLY 0.
         const invRate = num(row.exchange_rate) || 1;
+        const toInrRate = (r: number) => (r > 0 ? round2(1 / r) : 0);
+        const invRateInr = toInrRate(invRate);
         let forexTotal = 0;
         (dto as any).payments = (payments as any[]).map((p) => {
             const amt = num(p.amount);
             const rcptRate = num(p.exchange_rate) || invRate;
-            const inrExpected = invRate > 0 ? amt / invRate : amt;
-            const inrReceived = rcptRate > 0 ? amt / rcptRate : amt;
+            const rcptRateInr = toInrRate(rcptRate) || invRateInr;
+            const inrExpected = amt * invRateInr;
+            const inrReceived = amt * rcptRateInr;
             const gl = round2(inrReceived - inrExpected);
             forexTotal = round2(forexTotal + gl);
             return {

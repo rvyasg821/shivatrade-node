@@ -3167,8 +3167,14 @@ export class ReportsService {
             const amt = n(r.amount);
             const invRate = n(r.invoice_rate) || 1;
             const rcptRate = n(r.receipt_rate) || invRate;
-            const inrExpected = invRate > 0 ? amt / invRate : amt;
-            const inrReceived = rcptRate > 0 ? amt / rcptRate : amt;
+            // Compare in the 2-dp INR-per-foreign rate the operator sees/enters,
+            // NOT the raw reciprocal of the 6-dp stored doc-per-₹1 rate — whose
+            // drift (95.0932 vs the entered 95.09) otherwise fabricates a phantom
+            // gain/loss when the receipt rate equals the invoice rate.
+            const invRateInr = invRate > 0 ? r2(1 / invRate) : 0;
+            const rcptRateInr = (rcptRate > 0 ? r2(1 / rcptRate) : 0) || invRateInr;
+            const inrExpected = amt * invRateInr;
+            const inrReceived = amt * rcptRateInr;
             const gl = r2(inrReceived - inrExpected);
             return {
                 payment_id: r.payment_id,
@@ -3183,8 +3189,8 @@ export class ReportsService {
                 currency_symbol: r.currency_symbol || r.currency_code,
                 customer_name: r.customer_name ?? null,
                 amount: r2(amt),
-                invoice_rate_inr: invRate > 0 ? r2(1 / invRate) : 0,
-                receipt_rate_inr: rcptRate > 0 ? r2(1 / rcptRate) : 0,
+                invoice_rate_inr: invRateInr,
+                receipt_rate_inr: rcptRateInr,
                 inr_expected: r2(inrExpected),
                 inr_received: r2(inrReceived),
                 gain_loss_inr: gl,

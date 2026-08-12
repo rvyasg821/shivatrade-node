@@ -358,13 +358,17 @@ export class DashboardCompanyController {
                     p => p.status === 'approved'
                 ).length;
 
-                // Pipeline value = sum of open quotation grand_totals in
-                // home currency (multiply by snapshotted exchange_rate).
+                // Pipeline value = sum of open quotation grand_totals in home
+                // currency (₹). The quotation `exchange_rate` is document-per-₹1,
+                // so INR = grand_total ÷ exchange_rate (matches quotation.service
+                // stats + every report). It was MULTIPLYING, which understated
+                // every foreign-currency quote (a $1000 quote at 0.0105 read ₹10.5
+                // instead of ₹95,238). Domestic INR quotes (rate = 1) are unaffected.
                 const pipelineValue = (quotations as any[])
                     .filter(q => q.status === 'draft' || q.status === 'sent')
                     .reduce(
                         (s, q) =>
-                            s + num(q.grand_total) * (num(q.exchange_rate) || 1),
+                            s + num(q.grand_total) / (num(q.exchange_rate) || 1),
                         0
                     );
 
@@ -400,9 +404,13 @@ export class DashboardCompanyController {
 
                 const posByStatus = countBy(pos as any[], 'status');
                 const povsByStatus = countBy(povs as any[], 'status');
+                // SO (purchase-order) grand_total in ₹: exchange_rate is
+                // document-per-₹1 → INR = grand_total ÷ exchange_rate (matches
+                // purchase-order.service stats + reports). Was multiplying, which
+                // understated every foreign-currency Sales Order.
                 const poGrandTotal = (pos as any[]).reduce(
                     (s, p) =>
-                        s + num(p.grand_total) * (num(p.exchange_rate) || 1),
+                        s + num(p.grand_total) / (num(p.exchange_rate) || 1),
                     0
                 );
 
