@@ -1805,6 +1805,30 @@ export class InvoiceService {
         );
         const dto = plainToInstance(InvoiceGetResponseDto, row);
         dto.lines = lines.map((l) => plainToInstance(InvoiceLineResponseDto, l));
+        // Backfill vendor_id from the source SO line for legacy invoices saved
+        // before the invoice line stored its own vendor_id — otherwise the edit
+        // Costing Worksheet opens with a BLANK vendor dropdown even though the
+        // order was priced from a specific vendor. New invoices already carry it.
+        const needVendor = dto.lines.filter(
+            (l) => !l.vendor_id && l.purchase_order_line_id
+        );
+        if (needVendor.length) {
+            const soLineIds = Array.from(
+                new Set(needVendor.map((l) => l.purchase_order_line_id as string))
+            );
+            const soLines = (await this.poLineRepository.findAll({
+                _id: In(soLineIds),
+            } as any)) as any[];
+            const vendorBySoLine = new Map<string, string>();
+            for (const sl of soLines) {
+                if (sl.vendor_id)
+                    vendorBySoLine.set(sl._id.toString(), sl.vendor_id.toString());
+            }
+            for (const l of needVendor) {
+                const vid = vendorBySoLine.get(l.purchase_order_line_id as string);
+                if (vid) l.vendor_id = vid;
+            }
+        }
         const payments = await this.invoicePaymentRepository.findActiveByInvoiceId(
             row._id.toString()
         );
