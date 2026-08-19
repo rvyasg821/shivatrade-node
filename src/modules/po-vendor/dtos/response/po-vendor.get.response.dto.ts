@@ -47,6 +47,12 @@ export class PoVendorLineResponseDto {
     @ApiProperty({ required: true, type: String }) short_qty: string;
     @ApiProperty({ required: true, type: String }) line_total: string;
     @ApiProperty({ required: true, type: Number }) seq: number;
+    /** Set when a pre-GRN price revision moved unit_price outside the
+     *  configured tolerance vs the source PO line's price. */
+    @ApiProperty({ required: false, type: Boolean }) tolerance_hold?: boolean;
+    @ApiProperty({ required: false, type: String }) tolerance_hold_reason?: string;
+    @ApiProperty({ required: false, type: String }) tolerance_override_by?: string;
+    @ApiProperty({ required: false, type: Date }) tolerance_override_at?: Date;
 }
 
 export class PoVendorGetResponseDto {

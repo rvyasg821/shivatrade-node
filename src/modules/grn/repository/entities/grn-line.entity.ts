@@ -65,6 +65,22 @@ export class GrnLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
 
+    // ── Tolerance & Three-Way Match (TOLERANCE_THREE_WAY_MATCH_PLAN.md §5.2) ──
+    // Set when received_qty is outside the company's grn_qty_tolerance_pct
+    // vs the source PO line's ordered_qty. Blocks this GRN's confirm
+    // transition until the line is edited back in range or overridden.
+    @Column({ type: 'boolean', default: false })
+    tolerance_hold: boolean;
+
+    @Column({ type: 'text', nullable: true })
+    tolerance_hold_reason?: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    tolerance_override_by?: string;
+
+    @Column({ type: 'timestamp with time zone', nullable: true })
+    tolerance_override_at?: Date;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

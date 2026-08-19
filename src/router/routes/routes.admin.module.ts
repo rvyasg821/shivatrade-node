@@ -111,6 +111,7 @@ import { CompanyLookupModule } from '@modules/company-lookup/company-lookup.modu
 import { CompanyLookupAdminController } from '@modules/company-lookup/controllers/company-lookup.admin.controller';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { CompanySettingsAdminController } from '@modules/company-settings/controllers/company-settings.admin.controller';
+import { ToleranceGuardModule } from '@modules/tolerance-guard/tolerance-guard.module';
 import { NotificationModule } from '@modules/notification/notification.module';
 import { NotificationAdminController } from '@modules/notification/controllers/notification.admin.controller';
 import { MessageLogAdminController } from '@modules/message-log/controllers/message-log.admin.controller';
@@ -303,6 +304,7 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         ShiftModule,
         CompanyLookupModule,
         CompanySettingsModule,
+        ToleranceGuardModule,
         NotificationModule,
         PayrollModule,
     ],

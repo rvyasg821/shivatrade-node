@@ -163,6 +163,12 @@ export class InvoiceGetResponseDto {
     createdAt?: Date;
     updatedAt?: Date;
 
+    // Tolerance & Three-Way Match (header-level — blocks issue() until resolved)
+    tolerance_hold?: boolean;
+    tolerance_hold_reason?: string;
+    tolerance_override_by?: string;
+    tolerance_override_at?: Date;
+
     lines?: InvoiceLineResponseDto[];
     payments?: any[];
 }

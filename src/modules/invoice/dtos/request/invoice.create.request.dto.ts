@@ -484,4 +484,10 @@ export class InvoiceCreateRequestDto {
     @ValidateNested({ each: true })
     @Type(() => InvoiceLineDto)
     lines: InvoiceLineDto[];
+
+    /** Save/issue despite a line being outside qty/price tolerance vs its
+     *  source SO line (audit-stamped). */
+    @IsBoolean()
+    @IsOptional()
+    override?: boolean;
 }

@@ -28,6 +28,12 @@ export class GrnLineResponseDto {
     @ApiProperty({ required: false }) batch_no?: string;
     @ApiProperty({ required: false }) remarks?: string;
     @ApiProperty() seq: number;
+    /** Set when received_qty is outside the configured GRN qty tolerance vs
+     *  the source PO line's ordered qty. Blocks confirm until overridden. */
+    @ApiProperty({ required: false }) tolerance_hold?: boolean;
+    @ApiProperty({ required: false }) tolerance_hold_reason?: string;
+    @ApiProperty({ required: false }) tolerance_override_by?: string;
+    @ApiProperty({ required: false }) tolerance_override_at?: Date;
 }
 
 export class GrnGetResponseDto {
