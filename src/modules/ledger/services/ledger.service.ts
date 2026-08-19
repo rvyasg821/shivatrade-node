@@ -311,12 +311,12 @@ export class LedgerService {
                 date: n.note_date,
                 type: 'adjustment',
                 // Name the document when the note was applied to one, so the
-                // statement shows WHICH invoice/POV it settled.
-                particulars: `${
-                    n.document_voucher_no
-                        ? `Adjustment against ${n.document_voucher_no}`
-                        : 'Adjustment'
-                }: ${n.reason || ''}`.slice(0, 200),
+                // statement shows WHICH invoice/POV it settled. The note's own
+                // free-text reason is deliberately left OUT (can be long/wrap
+                // the Particulars column) — still visible on the note itself.
+                particulars: n.document_voucher_no
+                    ? `Adjustment against ${n.document_voucher_no}`
+                    : 'Adjustment',
                 voucher_no: n.voucher_no,
                 dr: isDebit ? amt : 0,
                 cr: isDebit ? 0 : amt,
@@ -418,8 +418,9 @@ export class LedgerService {
             total_billed_inr: totalBilledInr,
             total_paid_inr: totalPaidInr,
             // openingOut has no captured rate (migrated as a flat figure) —
-            // used as-is, same limitation as the opening ledger row below.
-            outstanding_inr: round2(totalBilledInr - totalPaidInr + openingOut),
+            // it has NO real INR figure, so it's excluded here entirely
+            // (matches the ledger row's own dr_inr/cr_inr = 0 treatment).
+            outstanding_inr: round2(totalBilledInr - totalPaidInr),
         };
 
         const ledger = this.assemble(
@@ -614,12 +615,12 @@ export class LedgerService {
                 date: n.note_date,
                 type: 'adjustment',
                 // Name the document when the note was applied to one, so the
-                // statement shows WHICH invoice/POV it settled.
-                particulars: `${
-                    n.document_voucher_no
-                        ? `Adjustment against ${n.document_voucher_no}`
-                        : 'Adjustment'
-                }: ${n.reason || ''}`.slice(0, 200),
+                // statement shows WHICH invoice/POV it settled. The note's own
+                // free-text reason is deliberately left OUT (can be long/wrap
+                // the Particulars column) — still visible on the note itself.
+                particulars: n.document_voucher_no
+                    ? `Adjustment against ${n.document_voucher_no}`
+                    : 'Adjustment',
                 voucher_no: n.voucher_no,
                 dr: isDebit ? eff : 0,
                 cr: isDebit ? 0 : eff,
@@ -714,8 +715,9 @@ export class LedgerService {
             total_billed_inr: totalBilledInr,
             total_paid_inr: totalPaidInr,
             // openingOut has no captured rate (migrated as a flat figure) —
-            // used as-is, same limitation as the customer side.
-            outstanding_inr: round2(totalBilledInr - totalPaidInr + openingOut),
+            // it has NO real INR figure, so it's excluded here entirely
+            // (matches the ledger row's own dr_inr/cr_inr = 0 treatment).
+            outstanding_inr: round2(totalBilledInr - totalPaidInr),
         };
 
         const ledger = this.assemble(
@@ -1064,18 +1066,18 @@ export class LedgerService {
         const rows: LedgerRowDto[] = [];
         // Migration opening balance — always the FIRST row and NOT date-filtered
         // (it is the carried-forward balance at migration). Seeds the running
-        // balance + totals so everything below flows from it. No rate was
-        // captured at migration, so its INR figure equals the native one
-        // (rate = 1) — the same documented limitation as the summary cards.
+        // NATIVE balance/totals so everything below flows from it. No rate was
+        // captured at migration, so it has NO real INR figure — it contributes
+        // 0 to the INR totals/running balance (rather than a fake 1:1
+        // native-as-INR value), so the table's INR footer stays consistent
+        // with the "Total Received"/"Outstanding" summary cards, which already
+        // exclude it (see customerLedger/vendorLedger outstanding_inr).
         if (opening && opening.amount > 0) {
             const dr = opening.type === 'debit' ? round2(opening.amount) : 0;
             const cr = opening.type === 'credit' ? round2(opening.amount) : 0;
             totalDr = round2(totalDr + dr);
             totalCr = round2(totalCr + cr);
-            totalDrInr = round2(totalDrInr + dr);
-            totalCrInr = round2(totalCrInr + cr);
             bal = round2(debitPositive ? dr - cr : cr - dr);
-            balInr = bal;
             rows.push({
                 date: opening.date ? toIso(opening.date) : '',
                 type: 'opening',
@@ -1084,9 +1086,9 @@ export class LedgerService {
                 dr,
                 cr,
                 balance: bal,
-                dr_inr: dr,
-                cr_inr: cr,
-                balance_inr: balInr,
+                dr_inr: 0,
+                cr_inr: 0,
+                balance_inr: 0,
             });
         }
         for (const r of inRange) {
