@@ -67,16 +67,25 @@ export class GstBalanceResponseDto {
 // ── Drill-down: what a single month's figures are actually made of ──────
 // Answers "where did this number come from?" document by document.
 
+/**
+ * One CONFIRMED GRN behind a month's Input GST (client change-request #9,
+ * 2026-08-19: linked to GRN, not the PO/POV — a dispatched-but-not-yet-received
+ * POV carries no ITC yet).
+ */
 export class GstBalancePurchaseSourceDto {
+    /** The GRN this row is — unique per row (a POV can have several GRNs). */
+    @ApiProperty({ type: String }) grn_id: string;
+    /** The source Vendor PO — kept for reference, no longer the row's grain. */
     @ApiProperty({ type: String }) po_vendor_id: string;
+    /** The GRN's own voucher (e.g. STIPL/GRN0003/2026-27). */
     @ApiProperty({ type: String }) voucher_no: string;
     @ApiProperty({ type: String }) vendor_name: string;
     /** Vendor's state — what decides IGST vs CGST/SGST. */
     @ApiProperty({ type: String, nullable: true }) vendor_state: string | null;
     @ApiProperty({ type: String }) status: string;
-    /** dispatch_date, falling back to createdAt (a POV has no purchase date). */
+    /** GRN date — when the goods (and the GST) actually landed. */
     @ApiProperty({ type: String }) date: string;
-    /** Goods + charges, excluding GST. */
+    /** Goods, excluding GST. */
     @ApiProperty({ type: Number }) taxable_inr: number;
     @ApiProperty({ type: Number }) gst_inr: number;
     /** 'igst' | 'cgst_sgst' | 'unclassified'. */

@@ -6,24 +6,34 @@ import { ApiProperty } from '@nestjs/swagger';
  * never summed across currencies. A Vendor PO is priced in the vendor's own
  * currency (D-6: inventory/purchases are per-currency native, the POV→INR rate
  * was retired), so USD, EUR and INR purchases live in separate sections.
+ *
+ * Client change-request #8 (2026-08-19): sourced from CONFIRMED GRNs (goods
+ * actually received), not the PO/POV itself — a dispatched-but-not-yet-received
+ * POV no longer counts as turnover. One row per GRN, same grain as Sales
+ * Turnover's one row per invoice.
  */
 export class PurchaseTurnoverRowDto {
     /** '2026-07' in month mode; the vendor uuid in vendor mode. */
     @ApiProperty({ type: String }) key: string;
     /** 'Jul 2026' | 'Aarti Chemson Private Limited'. */
     @ApiProperty({ type: String }) label: string;
+    /** Count of confirmed GRNs in this bucket (field kept as `pov_count` for
+     *  API stability; a POV with several GRNs contributes several rows now). */
     @ApiProperty({ type: Number }) pov_count: number;
 
-    /** Goods + vendor charges, pre-GST (= order_value − gst), native. */
+    /** Goods, pre-GST (= order_value − gst), native — from the GRN's accepted qty. */
     @ApiProperty({ type: Number }) taxable: number;
-    /** Input GST on the purchase (goods + per-charge GST), native. Non-zero
-     *  only for INR (domestic) POVs — GST never applies to a foreign POV. */
+    /** Input GST on the goods received, native. Non-zero only for INR
+     *  (domestic) POVs — GST never applies to a foreign POV. */
     @ApiProperty({ type: Number }) gst: number;
-    /** What the vendor billed — lines + charges + GST, native. */
+    /** GST-inclusive value of goods received on this GRN, native — same
+     *  formula the Vendor Ledger's GRN credit rows use. */
     @ApiProperty({ type: Number }) order_value: number;
-    /** Σ non-voided vendor payments, GROSS (before TDS), native. */
+    /** This GRN's share of its POV's payments — the POV's Σ non-voided
+     *  payments (GROSS, before TDS) apportioned by this GRN's value ÷ the
+     *  POV's total confirmed-GRN value. */
     @ApiProperty({ type: Number }) paid: number;
-    /** order_value − paid. Negative = the vendor was overpaid (legitimate). */
+    /** order_value − paid. Negative = overpaid on this share (legitimate). */
     @ApiProperty({ type: Number }) outstanding: number;
 }
 

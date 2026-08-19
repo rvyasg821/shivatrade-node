@@ -222,6 +222,7 @@ export class InventoryService {
                    COALESCE(pv.currency_code, 'INR')      AS ccy,
                    COALESCE(pvl.received_qty, 0)::numeric AS in_qty,
                    COALESCE(pvl.unit_price, 0)::numeric   AS unit_price,
+                   COALESCE(pv.exchange_rate, 1)::numeric AS exchange_rate,
                    COALESCE(pv.actual_arrival_date, pv."updatedAt")::timestamptz AS mv_at,
                    pvl._id                                AS mv_id
             FROM po_vendor_lines pvl
@@ -254,7 +255,7 @@ export class InventoryService {
             -- FIFO cum_in stays partitioned by (product, lbl) so consumption is
             -- oldest-first across ALL vendors; {{V_RANKED}} only carries the
             -- vendor tag through for the export's per-vendor grain.
-            SELECT l.product_id, l.ccy, l.unit_price, l.in_qty, c.lbl{{V_RANKED}},
+            SELECT l.product_id, l.ccy, l.unit_price, l.exchange_rate, l.in_qty, c.lbl{{V_RANKED}},
                    SUM(l.in_qty) OVER (
                        PARTITION BY l.product_id, c.lbl
                        ORDER BY l.mv_at, l.mv_id
@@ -268,7 +269,7 @@ export class InventoryService {
             GROUP BY o.product_id, c.lbl
         ),
         remaining AS (
-            SELECT r.product_id, r.ccy, r.lbl, r.unit_price{{V_REM}},
+            SELECT r.product_id, r.ccy, r.lbl, r.unit_price, r.exchange_rate{{V_REM}},
                    GREATEST(0, LEAST(r.in_qty, r.cum_in - COALESCE(oa.out_qty, 0))) AS rem_qty
             FROM ranked r
             LEFT JOIN out_at oa ON oa.product_id = r.product_id AND oa.lbl = r.lbl
@@ -276,7 +277,8 @@ export class InventoryService {
         agg AS (
             SELECT product_id, ccy, lbl{{V_AGG}},
                    SUM(rem_qty)             AS qty,
-                   SUM(rem_qty * unit_price) AS val
+                   SUM(rem_qty * unit_price) AS val,
+                   SUM(rem_qty * unit_price * exchange_rate) AS val_inr
             FROM remaining GROUP BY product_id, ccy, lbl{{V_AGG}}
         ),
         inward AS (
@@ -294,8 +296,11 @@ export class InventoryService {
                 COALESCE(iw.qty, 0)  AS inward_qty,
                 COALESCE(cl.qty, 0)  AS closing_qty,
                 COALESCE(cl.val, 0)  AS closing_value,
+                COALESCE(cl.val_inr, 0) AS closing_value_inr,
                 CASE WHEN COALESCE(cl.qty, 0) > 0
-                     THEN COALESCE(cl.val, 0) / cl.qty ELSE 0 END AS avg_rate
+                     THEN COALESCE(cl.val, 0) / cl.qty ELSE 0 END AS avg_rate,
+                CASE WHEN COALESCE(cl.qty, 0) > 0
+                     THEN COALESCE(cl.val_inr, 0) / cl.qty ELSE 0 END AS avg_rate_inr
             FROM       (SELECT * FROM agg WHERE lbl = 'closing') cl
             FULL JOIN  (SELECT * FROM agg WHERE lbl = 'opening') op
                        ON op.product_id = cl.product_id AND op.ccy = cl.ccy{{V_COMB_OP}}
@@ -492,14 +497,21 @@ export class InventoryService {
                 -- to Closing Value); otherwise the avg price of that vendor's
                 -- received layers, so a fully-consumed line still shows its rate.
                 COALESCE(NULLIF(cb.avg_rate, 0), pr.purchase_rate, 0)::float8 AS purchase_rate,
-                cb.closing_value::float8          AS closing_value
+                cb.closing_value::float8          AS closing_value,
+                -- Base-currency (INR) equivalent, using each layer's OWN POV
+                -- exchange_rate (INR per 1 unit of that currency) — never a
+                -- shared/current rate, so this is safe to grand-total across
+                -- currency sections (unlike the native "Closing Value").
+                COALESCE(NULLIF(cb.avg_rate_inr, 0), pr.purchase_rate * pr.avg_exchange_rate, 0)::float8 AS purchase_rate_inr,
+                cb.closing_value_inr::float8      AS closing_value_inr
              FROM combined cb
              JOIN products p          ON p._id = cb.product_id
              LEFT JOIN categories cat ON cat._id = p.category_id
              LEFT JOIN vendors v      ON v._id = cb.vendor_id
              LEFT JOIN (
                 SELECT product_id, ccy, vendor_id,
-                       SUM(in_qty * unit_price) / NULLIF(SUM(in_qty), 0) AS purchase_rate
+                       SUM(in_qty * unit_price) / NULLIF(SUM(in_qty), 0) AS purchase_rate,
+                       SUM(in_qty * exchange_rate) / NULLIF(SUM(in_qty), 0) AS avg_exchange_rate
                 FROM layers
                 GROUP BY product_id, ccy, vendor_id
              ) pr ON pr.product_id = cb.product_id
@@ -539,7 +551,7 @@ export class InventoryService {
             [`Closing Inventory — as at ${asAt}`],
             [`Movement period: ${period}`],
             [
-                'One row per product per vendor per purchase currency. Purchase Rate is the price the on-hand stock was bought at (FIFO cost). Currencies are not summed; quantities are not totalled (mixed units of measure).',
+                'One row per product per vendor per purchase currency. Purchase Rate is the price the on-hand stock was bought at (FIFO cost). Currencies are not summed; quantities are not totalled (mixed units of measure). INR columns use each receipt’s own exchange rate and ARE grand-totalled across currencies.',
             ],
             [],
         ];
@@ -560,6 +572,8 @@ export class InventoryService {
             'Closing',
             'Purchase Rate',
             'Closing Value',
+            'Purchase Rate (INR)',
+            'Closing Value (INR)',
             'Currency',
         ];
 
@@ -571,13 +585,16 @@ export class InventoryService {
             byCcy.get(ccy).push(r);
         }
 
+        let grandValueInr = 0;
         for (const ccy of Array.from(byCcy.keys()).sort()) {
             const section = byCcy.get(ccy);
             aoa.push([`Currency: ${ccy}`]);
             aoa.push(HEADER);
             let sectionValue = 0;
+            let sectionValueInr = 0;
             for (const r of section) {
                 sectionValue += Number(r.closing_value) || 0;
+                sectionValueInr += Number(r.closing_value_inr) || 0;
                 aoa.push([
                     r.product_code || '',
                     r.product_name || '',
@@ -594,9 +611,12 @@ export class InventoryService {
                     Number(r.closing_qty) || 0,
                     Number(r.purchase_rate) || 0,
                     Number(r.closing_value) || 0,
+                    Number(r.purchase_rate_inr) || 0,
+                    Number(r.closing_value_inr) || 0,
                     ccy,
                 ]);
             }
+            grandValueInr += sectionValueInr;
             aoa.push([
                 `Rows: ${section.length}`,
                 '',
@@ -613,10 +633,36 @@ export class InventoryService {
                 '',
                 `Total (${ccy})`,
                 Math.round((sectionValue + Number.EPSILON) * 100) / 100,
+                `Total (INR)`,
+                Math.round((sectionValueInr + Number.EPSILON) * 100) / 100,
                 ccy,
             ]);
             aoa.push([]);
         }
+
+        // Base-currency grand total across ALL currency sections — the one
+        // number that's legitimately summable, since every row's INR value
+        // already used its own receipt-time exchange rate.
+        aoa.push([
+            'GRAND TOTAL — Closing Value (INR, all currencies)',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            Math.round((grandValueInr + Number.EPSILON) * 100) / 100,
+            'INR',
+        ]);
 
         return this.fileService.writeExcelFromArray(aoa as any);
     }
