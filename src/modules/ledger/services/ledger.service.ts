@@ -213,14 +213,20 @@ export class LedgerService {
             status: { $in: LEDGER_INVOICE_STATUSES_TXN },
         } as any);
 
-        // Client rule (2026-07-17): a cash-movement record, mirroring the vendor
-        // ledger. Only receipts and adjustment notes post here — sales invoices
-        // are deliberately NOT rows (the vendor side excludes POV bills the same
-        // way). The invoice total lives in the summary cards instead.
-        //   CREDIT = money received from the customer
-        //   DEBIT  = money returned to them (e.g. a damage refund)
-        //   Balance = ΣCR − ΣDR = net amount received from this customer.
+        // Client rule (2026-08-19, supersedes 2026-07-17): the client asked for
+        // invoices to be visible transaction-wise, not just folded into the
+        // "Total Invoiced" card — so each invoice now posts its own DEBIT row
+        // (money the customer now owes), alongside receipts/adjustments/advances.
+        //   CREDIT = money received from the customer (or an SO advance)
+        //   DEBIT  = an invoice raised, OR money returned to them (a refund)
+        //   Balance = ΣCR − ΣDR = net amount still receivable (unsigned on
+        //   screen) — this is now a running "what they owe", not pure cash.
         const rows: RawRow[] = [];
+        // Cash-movement rows only (receipts/advances/adjustments) — kept apart
+        // from `rows` so the summary cards' "Total Received"/"Outstanding" math
+        // below (which nets against invoice totals separately) doesn't double
+        // count once invoice rows are appended to `rows` further down.
+        const cashRows: RawRow[] = [];
         const invoiceById = new Map<string, any>();
         for (const inv of invoices) {
             invoiceById.set(inv._id.toString(), inv);
@@ -242,7 +248,7 @@ export class LedgerService {
                 // invoice's rate — same as the forex gain/loss calc.
                 const rcptRate = num(p.exchange_rate) || num(inv?.exchange_rate) || 1;
                 const amt = num(p.amount);
-                rows.push({
+                cashRows.push({
                     date: p.payment_date,
                     type: 'receipt',
                     particulars: `Payment${
@@ -265,7 +271,7 @@ export class LedgerService {
         for (const a of soAdvances) {
             if (a.value <= 0) continue;
             const rate = a.exchange_rate || 1;
-            rows.push({
+            cashRows.push({
                 date: a.date,
                 type: 'advance',
                 particulars: `Advance received${
@@ -301,7 +307,7 @@ export class LedgerService {
                 : undefined;
             const noteRate = num(linkedInv?.exchange_rate) || 1;
             const rateInr = noteRate > 0 ? round2(1 / noteRate) : 1;
-            rows.push({
+            cashRows.push({
                 date: n.note_date,
                 type: 'adjustment',
                 // Name the document when the note was applied to one, so the
@@ -351,14 +357,42 @@ export class LedgerService {
                 )
         );
         const totalPaid = round2(
-            rows.reduce((s, r) => s + num(r.cr) - num(r.dr), 0)
+            cashRows.reduce((s, r) => s + num(r.cr) - num(r.dr), 0)
         );
         const totalPaidInr = round2(
-            rows.reduce(
+            cashRows.reduce(
                 (s, r) => s + num(r.cr_inr ?? r.cr) - num(r.dr_inr ?? r.dr),
                 0
             )
         );
+
+        // Invoice Raised → DEBIT (client 2026-08-19): each non-draft invoice
+        // now posts its own row alongside the cash rows above, so the
+        // transaction-wise statement shows WHERE "Total Invoiced" comes from,
+        // not just the summary card. Kept OUT of totalPaid/totalBilled above
+        // (those stay card-accurate, sourced from `invoices`/`cashRows`) —
+        // these rows only feed the on-screen/exported STATEMENT + its own
+        // Total/Balance footer via `assemble()` below.
+        for (const inv of invoices) {
+            if (inv.status === 'draft') continue;
+            const rate = num(inv.exchange_rate) || 1;
+            const amt = num(inv.grand_total);
+            rows.push({
+                date: inv.invoice_date,
+                type: 'invoice',
+                particulars: `Invoice raised${
+                    inv.voucher_no ? ` (${inv.voucher_no})` : ''
+                }`,
+                voucher_no: inv.voucher_no,
+                dr: amt,
+                cr: 0,
+                dr_inr: round2(amt / rate),
+                cr_inr: 0,
+                created_at: inv.createdAt,
+            });
+        }
+        rows.push(...cashRows);
+
         // Migration opening balance. For a customer, a DEBIT opening = they
         // already owe us → adds to outstanding; a CREDIT opening = we hold their
         // advance → reduces it.
@@ -1121,9 +1155,12 @@ export class LedgerService {
                 r.dr || '',
                 r.cr || '',
                 r.balance,
-                r.dr_inr || '',
-                r.cr_inr || '',
-                r.balance_inr,
+                // Opening Balance has no captured exchange rate (flat migrated
+                // figure) — its INR value would just equal the native one,
+                // which reads as a bug rather than a real conversion.
+                r.type === 'opening' ? '' : r.dr_inr || '',
+                r.type === 'opening' ? '' : r.cr_inr || '',
+                r.type === 'opening' ? '' : r.balance_inr,
             ]),
             [
                 '',
