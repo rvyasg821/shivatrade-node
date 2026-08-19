@@ -39,6 +39,7 @@ import { ExpenseRepository } from '@modules/expense/repository/repositories/expe
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
+import { ToleranceGuardService } from '@modules/tolerance-guard/services/tolerance-guard.service';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { formatCompanyAddress } from '@modules/company/utils/format-address';
@@ -92,6 +93,7 @@ export class PoVendorService {
         private readonly stockLedger: StockLedgerService,
         private readonly dependencyCheckService: DependencyCheckService,
         private readonly companySettings: CompanySettingsService,
+        private readonly toleranceGuard: ToleranceGuardService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
@@ -2055,6 +2057,10 @@ export class PoVendorService {
             'internal_notes',
             'linked_sales_order_ids',
             'status',
+            // Confirms a price revision despite an open tolerance hold —
+            // rides alongside whichever field it's accompanying (line_edits),
+            // so it's allowed at every status line_edits itself is allowed.
+            'override',
         ]);
         const dispatchedEditable = new Set([
             // Vendors revise their rates after the PO has gone out, so a
@@ -2073,6 +2079,7 @@ export class PoVendorService {
             'internal_notes',
             'linked_sales_order_ids',
             'status',
+            'override',
         ]);
         const terminalEditable = new Set([
             'internal_notes',
@@ -2321,6 +2328,8 @@ export class PoVendorService {
 
             let priceChanges = 0;
             let qtyChanges = 0;
+            // Price tolerance vs the source PO line (TOLERANCE_THREE_WAY_MATCH_PLAN.md §7.2).
+            // Held lines are flagged, not blocked — see the NOTE after the loop.
             for (const patch of lineEdits) {
                 const line = byId.get(String(patch._id));
                 // Refuse a line id from a different POV rather than silently
@@ -2357,6 +2366,45 @@ export class PoVendorService {
                                 (1 - num(line.discount_pct) / 100)
                         )
                     );
+
+                    // Price tolerance vs the source PO line's price. Nothing
+                    // to compare against on a standalone POV (no source PO
+                    // line) — exempt, same as the GRN qty check.
+                    if (line.purchase_order_line_id) {
+                        const poLine = await this.poLineRepository.findOneById(
+                            line.purchase_order_line_id
+                        );
+                        const result = poLine
+                            ? await this.toleranceGuard.checkPriceTolerance(
+                                  companyId,
+                                  num((poLine as any).unit_price),
+                                  price,
+                                  'pov'
+                              )
+                            : { withinTolerance: true, reason: undefined };
+                        if (!result.withinTolerance) {
+                            if (data.override) {
+                                (line as any).tolerance_hold = false;
+                                (line as any).tolerance_hold_reason =
+                                    result.reason;
+                                (line as any).tolerance_override_by =
+                                    userId || null;
+                                (line as any).tolerance_override_at =
+                                    new Date();
+                            } else {
+                                (line as any).tolerance_hold = true;
+                                (line as any).tolerance_hold_reason =
+                                    result.reason;
+                                (line as any).tolerance_override_by = null;
+                                (line as any).tolerance_override_at = null;
+                            }
+                        } else {
+                            (line as any).tolerance_hold = false;
+                            (line as any).tolerance_hold_reason = null;
+                            (line as any).tolerance_override_by = null;
+                            (line as any).tolerance_override_at = null;
+                        }
+                    }
                 }
                 // Discount % — same rules as the rate (guarded via wantsPrice).
                 if (patch.discount_pct != null && patch.discount_pct !== '') {
@@ -2422,6 +2470,10 @@ export class PoVendorService {
                 }
                 await this.povLineRepository.save(line);
             }
+            // NOTE: unlike GRN confirm, a held POV price line does NOT block
+            // the save (plan §7.2) — it's flagged and the POV saves normally;
+            // the vendor-payment three-way gate (§7.3) is what actually stops
+            // money from moving on a held line.
 
             if (priceChanges > 0 || qtyChanges > 0) {
                 // Percentage vendor charges are a % OF THE SUBTOTAL, so they
@@ -3127,6 +3179,14 @@ export class PoVendorService {
         if (amount <= 0) {
             throw new BadRequestException('Payment amount must be > 0.');
         }
+        // Three-way match (TOLERANCE_THREE_WAY_MATCH_PLAN.md §7.3) — refuses
+        // to pay while a GRN qty hold or a POV price hold is still open on
+        // this POV. Does NOT require a GRN to exist (preserves the 2026-08-06
+        // decision above) — only blocks on an ACTUAL open mismatch.
+        await this.toleranceGuard.assertNoOpenHolds(
+            row.company_id.toString(),
+            row._id.toString()
+        );
         // FY closure: block recording a vendor payment in a closed period.
         await this.companySettings.assertPostingDateOpen(
             row.company_id.toString(),
@@ -3448,6 +3508,10 @@ export class PoVendorService {
                     ),
                     line_total: String(l.line_total ?? '0'),
                     seq: Number(l.seq || 0),
+                    tolerance_hold: !!l.tolerance_hold,
+                    tolerance_hold_reason: l.tolerance_hold_reason || undefined,
+                    tolerance_override_by: l.tolerance_override_by || undefined,
+                    tolerance_override_at: l.tolerance_override_at || undefined,
                 };
             });
 

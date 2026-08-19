@@ -175,6 +175,8 @@ export class CompanySettingsService {
             books_closed_upto: s.books_closed_upto || null,
             // Compliance
             compliance_config: s.compliance_config || null,
+            // Tolerance & Three-Way Match
+            tolerance_config: s.tolerance_config || null,
             // Meta
             is_inherited: !!(s as any).is_inherited,
         };

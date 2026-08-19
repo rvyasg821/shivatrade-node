@@ -28,6 +28,8 @@ import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/p
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
+import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
+import { ToleranceGuardService } from '@modules/tolerance-guard/services/tolerance-guard.service';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
@@ -81,7 +83,9 @@ export class GrnService {
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
         private readonly stockLedger: StockLedgerService,
         private readonly dependencyCheckService: DependencyCheckService,
-        private readonly companySettings: CompanySettingsService
+        private readonly companySettings: CompanySettingsService,
+        private readonly poLineRepository: PurchaseOrderLineRepository,
+        private readonly toleranceGuard: ToleranceGuardService
     ) {}
 
     /**
@@ -336,9 +340,24 @@ export class GrnService {
         if (dto.internal_notes !== undefined)
             grn.internal_notes = dto.internal_notes;
         if (dto.status !== undefined) grn.status = dto.status;
-        await this.grnRepository.save(grn);
+        // NOTE: `grn` is NOT persisted here — the qty-tolerance check below
+        // can throw (blocking a confirm), and a status write BEFORE that
+        // check would leave the GRN silently confirmed in the DB despite the
+        // API call reporting failure. `grn.status` is mutated in-memory now
+        // (downstream logic in this method reads it), but only written to
+        // the DB once validation has fully passed — see the single
+        // `grnRepository.save(grn)` after the tolerance block below.
 
-        if (Array.isArray(dto.lines) && dto.lines.length) {
+        // ── Qty tolerance vs the source PO line's ordered qty ──
+        // (TOLERANCE_THREE_WAY_MATCH_PLAN.md §7.1) — evaluated whenever this
+        // GRN is (already, or now being) CONFIRMED, regardless of whether
+        // this particular request resent `lines` — a bare `{status:
+        // "confirmed"}` (nothing changed since the last draft save) must
+        // still be checked against the currently-stored qty, not skipped.
+        const checkTolerance = grn.status === ENUM_GRN_STATUS.CONFIRMED;
+        const hasLineEdits = Array.isArray(dto.lines) && dto.lines.length > 0;
+
+        if (hasLineEdits || checkTolerance) {
             const lines = await this.grnLineRepository.findByGrnId(grnId);
             // Received on the OTHER non-cancelled GRNs of this POV — so the
             // edited received qty can't push the POV over its dispatched qty.
@@ -350,7 +369,60 @@ export class GrnService {
             const byId = new Map<string, any>(
                 lines.map((l: any) => [l._id.toString(), l])
             );
-            for (const item of dto.lines) {
+            // When lines weren't resent, re-validate every stored line
+            // as-is (empty patch → every field falls back to the stored
+            // row value, same as the per-item loop already does below).
+            const itemsToProcess: Array<{ _id: string; [k: string]: any }> =
+                hasLineEdits
+                    ? dto.lines
+                    : lines.map((l: any) => ({ _id: l._id.toString() }));
+
+            let orderedQtyByPovLine = new Map<string, number>();
+            if (checkTolerance) {
+                const povLineIds = Array.from(
+                    new Set(
+                        lines
+                            .map((l: any) => l.po_vendor_line_id?.toString())
+                            .filter(Boolean)
+                    )
+                ) as string[];
+                const povLines = povLineIds.length
+                    ? await this.povLineRepository.findAll({
+                          _id: In(povLineIds),
+                      } as any)
+                    : [];
+                const poLineIdByPovLine = new Map<string, string>(
+                    (povLines as any[])
+                        .filter((pl) => pl.purchase_order_line_id)
+                        .map((pl) => [
+                            pl._id.toString(),
+                            pl.purchase_order_line_id.toString(),
+                        ])
+                );
+                const poLineIds = Array.from(
+                    new Set(poLineIdByPovLine.values())
+                );
+                const poLines = poLineIds.length
+                    ? await this.poLineRepository.findAll({
+                          _id: In(poLineIds),
+                      } as any)
+                    : [];
+                // NOTE: purchase_order_line's qty column is `qty`, NOT
+                // `ordered_qty` (that field name only exists on po_vendor_line).
+                const orderedQtyByPoLine = new Map<string, number>(
+                    (poLines as any[]).map((pl) => [
+                        pl._id.toString(),
+                        num(pl.qty),
+                    ])
+                );
+                for (const [povLineId, poLineId] of poLineIdByPovLine) {
+                    const oq = orderedQtyByPoLine.get(poLineId);
+                    if (oq !== undefined) orderedQtyByPovLine.set(povLineId, oq);
+                }
+            }
+            const heldLines: string[] = [];
+
+            for (const item of itemsToProcess) {
                 const row = byId.get(item._id);
                 if (!row) continue;
                 const dispatched = round4(num(row.dispatched_qty));
@@ -394,9 +466,61 @@ export class GrnService {
                 row.rejected_qty = String(rejected);
                 if (item.batch_no !== undefined) row.batch_no = item.batch_no;
                 if (item.remarks !== undefined) row.remarks = item.remarks;
+
+                if (checkTolerance) {
+                    const orderedQty = orderedQtyByPovLine.get(
+                        row.po_vendor_line_id?.toString()
+                    );
+                    // Compare the RUNNING TOTAL across all this POV's GRNs
+                    // (this GRN's received + what other GRNs already
+                    // accounted), not just this one document's slice — a
+                    // receipt split across several partial GRNs must still
+                    // be judged against the original order as a whole.
+                    const cumulativeReceived = round4(received + other);
+                    const result =
+                        orderedQty !== undefined
+                            ? await this.toleranceGuard.checkQtyTolerance(
+                                  companyId,
+                                  orderedQty,
+                                  cumulativeReceived,
+                                  'grn'
+                              )
+                            : { withinTolerance: true, reason: undefined };
+                    if (!result.withinTolerance) {
+                        if (dto.override) {
+                            row.tolerance_hold = false;
+                            row.tolerance_hold_reason = result.reason;
+                            row.tolerance_override_by = userId || null;
+                            row.tolerance_override_at = new Date();
+                        } else {
+                            row.tolerance_hold = true;
+                            row.tolerance_hold_reason = result.reason;
+                            row.tolerance_override_by = null;
+                            row.tolerance_override_at = null;
+                            heldLines.push(
+                                `Line ${row.seq}: ${result.reason}`
+                            );
+                        }
+                    } else {
+                        row.tolerance_hold = false;
+                        row.tolerance_hold_reason = null;
+                        row.tolerance_override_by = null;
+                        row.tolerance_override_at = null;
+                    }
+                }
                 await this.grnLineRepository.save(row);
             }
+
+            if (heldLines.length) {
+                throw new BadRequestException(
+                    `Cannot confirm — ${heldLines.length} line(s) outside quantity tolerance: ${heldLines.join('; ')}. Adjust the received qty or confirm with override.`
+                );
+            }
         }
+
+        // Validation passed (or there was nothing to validate) — now it's
+        // safe to persist the header, including a status transition.
+        await this.grnRepository.save(grn);
 
         // Any GRN edit (draft save, confirm, or cancel) can change the POV's
         // received qty → roll it into the POV (and close / re-open it).
@@ -1111,6 +1235,10 @@ export class GrnService {
                 batch_no: l.batch_no,
                 remarks: l.remarks,
                 seq: l.seq,
+                tolerance_hold: !!l.tolerance_hold,
+                tolerance_hold_reason: l.tolerance_hold_reason || undefined,
+                tolerance_override_by: l.tolerance_override_by || undefined,
+                tolerance_override_at: l.tolerance_override_at || undefined,
             };
         });
         return dto;

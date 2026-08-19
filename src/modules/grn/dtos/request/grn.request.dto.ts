@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
     IsArray,
+    IsBoolean,
     IsDateString,
     IsEnum,
     IsNotEmpty,
@@ -83,4 +84,9 @@ export class GrnUpdateDto {
     @Type(() => GrnLineUpdateDto)
     @IsOptional()
     lines?: GrnLineUpdateDto[];
+
+    /** Confirm despite an out-of-tolerance received qty (audit-stamped). */
+    @IsBoolean()
+    @IsOptional()
+    override?: boolean;
 }

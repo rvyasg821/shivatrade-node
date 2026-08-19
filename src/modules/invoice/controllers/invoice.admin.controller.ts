@@ -404,11 +404,12 @@ export class InvoiceAdminController {
     @AuthJwtAccessProtected()
     @Put('/update/:invoiceId')
     async update(
+        @AuthJwtPayload('user') userId: string,
         @Param('invoiceId') invoiceId: string,
         @Body() body: InvoiceUpdateRequestDto
     ): Promise<IResponse<InvoiceGetResponseDto>> {
         const row = await this.invoiceService.findOneById(invoiceId);
-        const updated = await this.invoiceService.update(row, body);
+        const updated = await this.invoiceService.update(row, body, userId);
         const data = await this.invoiceService.mapGet(updated);
         return { data };
     }

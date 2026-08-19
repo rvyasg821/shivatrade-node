@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
     IsArray,
+    IsBoolean,
     IsDateString,
     IsEnum,
     IsNotEmpty,
@@ -261,4 +262,9 @@ export class PoVendorUpdateRequestDto {
     @IsEnum(ENUM_PO_VENDOR_STATUS)
     @IsOptional()
     status?: ENUM_PO_VENDOR_STATUS;
+
+    /** Save a price revision despite it being outside tolerance (audit-stamped). */
+    @IsBoolean()
+    @IsOptional()
+    override?: boolean;
 }

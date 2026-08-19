@@ -169,6 +169,19 @@ export class CompanySettingsEntity extends DatabaseObjectIdEntityBase {
         personal_verification_months?: number;
         additional_notification_emails?: string;
     };
+
+    // ── Tolerance & Three-Way Match (TOLERANCE_THREE_WAY_MATCH_PLAN.md §5.1) ──
+    // Max allowed % difference between a PO/SO baseline and the actual GRN
+    // qty / POV price / invoice qty / invoice price before that line is held
+    // for review. Missing/0 field = that check is disabled (never holds)
+    // until the company sets a real limit — safer default on rollout.
+    @Column({ type: 'jsonb', nullable: true, default: null })
+    tolerance_config: {
+        grn_qty_tolerance_pct?: number;
+        pov_price_tolerance_pct?: number;
+        invoice_qty_tolerance_pct?: number;
+        invoice_price_tolerance_pct?: number;
+    };
 }
 
 export type CompanySettingsDoc = CompanySettingsEntity;

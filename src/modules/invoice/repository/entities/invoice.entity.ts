@@ -383,6 +383,23 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'text', nullable: true })
     cancelled_reason?: string;
 
+    // ── Tolerance & Three-Way Match (TOLERANCE_THREE_WAY_MATCH_PLAN.md §5.2) ──
+    // Header-level (unlike GRN/POV, which hold per line): set when any line's
+    // qty or price is outside the company's invoice tolerance vs its source
+    // SO line. Blocks the draft → issued transition until every held line is
+    // edited back in range or the invoice is overridden.
+    @Column({ type: 'boolean', default: false })
+    tolerance_hold: boolean;
+
+    @Column({ type: 'text', nullable: true })
+    tolerance_hold_reason?: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    tolerance_override_by?: string;
+
+    @Column({ type: 'timestamp with time zone', nullable: true })
+    tolerance_override_at?: Date;
+
     @Index()
     @Column({ type: 'boolean', default: false })
     soft_delete: boolean;

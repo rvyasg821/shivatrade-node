@@ -1,4 +1,4 @@
-import { IsOptional, IsBoolean, IsNumber, IsString, Min, Max, IsIn, IsDateString, ValidateIf } from 'class-validator';
+import { IsOptional, IsBoolean, IsNumber, IsString, Min, Max, IsIn, IsDateString, IsObject, ValidateIf } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CompanySettingsRequestDto {
@@ -240,4 +240,23 @@ export class CompanySettingsRequestDto {
     @ValidateIf((o) => o.books_closed_upto !== null && o.books_closed_upto !== '')
     @IsDateString()
     books_closed_upto?: string | null;
+
+    // ── Tolerance & Three-Way Match ──
+    @ApiPropertyOptional({
+        type: Object,
+        example: {
+            grn_qty_tolerance_pct: 5,
+            pov_price_tolerance_pct: 5,
+            invoice_qty_tolerance_pct: 5,
+            invoice_price_tolerance_pct: 5,
+        },
+    })
+    @IsOptional()
+    @IsObject()
+    tolerance_config?: {
+        grn_qty_tolerance_pct?: number;
+        pov_price_tolerance_pct?: number;
+        invoice_qty_tolerance_pct?: number;
+        invoice_price_tolerance_pct?: number;
+    };
 }

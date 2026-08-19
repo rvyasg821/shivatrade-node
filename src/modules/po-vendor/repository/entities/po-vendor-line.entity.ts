@@ -119,6 +119,23 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
 
     @Column({ type: 'int', nullable: false, default: 0 })
     seq: number;
+
+    // ── Tolerance & Three-Way Match (TOLERANCE_THREE_WAY_MATCH_PLAN.md §5.2) ──
+    // Set when a pre-GRN price revision moves unit_price outside the
+    // company's pov_price_tolerance_pct vs the source PO line's price. Read
+    // by the vendor-payment three-way gate until edited back in range or
+    // overridden.
+    @Column({ type: 'boolean', default: false })
+    tolerance_hold: boolean;
+
+    @Column({ type: 'text', nullable: true })
+    tolerance_hold_reason?: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    tolerance_override_by?: string;
+
+    @Column({ type: 'timestamp with time zone', nullable: true })
+    tolerance_override_at?: Date;
 }
 
 export type PoVendorLineDoc = PoVendorLineEntity;

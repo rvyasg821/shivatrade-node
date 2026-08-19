@@ -57,6 +57,7 @@ import { ENUM_STOCK_MOVEMENT_TYPE } from '@modules/inventory/enums/stock-movemen
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
 import { sumAdjustmentEffect } from '@modules/adjustment-note/helpers/adjustment-balance.helper';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
+import { ToleranceGuardService } from '@modules/tolerance-guard/services/tolerance-guard.service';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -135,6 +136,7 @@ export class InvoiceService {
         private readonly adjustmentNoteRepository: AdjustmentNoteRepository,
         private readonly stockLedger: StockLedgerService,
         private readonly companySettings: CompanySettingsService,
+        private readonly toleranceGuard: ToleranceGuardService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
@@ -268,6 +270,7 @@ export class InvoiceService {
         // import mode (decision 5) a back-filled invoice may carry no SO line
         // (purchase_order_line_id = null), so this guard is skipped — the
         // imported qty is authoritative. Live create (no ctx) always runs it.
+        let tolerance: { hold: boolean; reason?: string } = { hold: false };
         if (!silent) {
             await this.assertQtyGuardForLines(data.lines);
             // FY closure: block posting into a closed period. Bulk import
@@ -276,6 +279,12 @@ export class InvoiceService {
                 companyId,
                 data.invoice_date,
                 'invoice'
+            );
+            // Qty/price tolerance (§8.1) — a draft still SAVES when held
+            // (unlike the hard ceiling above); only issue() blocks on it.
+            tolerance = await this.computeInvoiceTolerance(
+                companyId,
+                data.lines
             );
         }
 
@@ -345,6 +354,12 @@ export class InvoiceService {
             invoice_type: data.invoice_type || ENUM_INVOICE_TYPE.EXPORT,
             status: ENUM_INVOICE_STATUS.DRAFT,
             voucher_no: draftVoucherNo,
+            tolerance_hold: tolerance.hold && !data.override,
+            tolerance_hold_reason: tolerance.reason || null,
+            tolerance_override_by:
+                tolerance.hold && data.override ? userId : null,
+            tolerance_override_at:
+                tolerance.hold && data.override ? new Date() : null,
             invoice_date: data.invoice_date,
             due_date: data.due_date,
             purchase_order_id: data.purchase_order_id,
@@ -487,7 +502,8 @@ export class InvoiceService {
 
     async update(
         row: InvoiceDoc,
-        data: InvoiceUpdateRequestDto
+        data: InvoiceUpdateRequestDto,
+        userId?: string
     ): Promise<InvoiceDoc> {
         if (row.status === ENUM_INVOICE_STATUS.CANCELLED) {
             throw new BadRequestException('Cancelled invoice cannot be updated.');
@@ -509,6 +525,10 @@ export class InvoiceService {
             // Advance is auto-managed from the source SOs (recomputed in the
             // lines block below) — never let the FE set it directly.
             delete header.advance_received;
+            // Not a real column — consumed explicitly below, in the lines
+            // block, alongside the tolerance recompute.
+            const wantsOverride = !!header.override;
+            delete header.override;
             Object.assign(row, header);
 
             // Refresh company_address_snapshot whenever company_address_id
@@ -551,6 +571,21 @@ export class InvoiceService {
                 row.advance_received = String(
                     round2(this.sumSourceAdvances(source.pos))
                 );
+                // Qty/price tolerance (§8.1) — recomputed on every line edit;
+                // saving still succeeds when held (only issue() blocks).
+                const tolerance = await this.computeInvoiceTolerance(
+                    row.company_id.toString(),
+                    lines,
+                    row._id.toString()
+                );
+                row.tolerance_hold = tolerance.hold && !wantsOverride;
+                row.tolerance_hold_reason = tolerance.reason || null;
+                row.tolerance_override_by =
+                    tolerance.hold && wantsOverride
+                        ? userId || (row as any).created_by
+                        : null;
+                row.tolerance_override_at =
+                    tolerance.hold && wantsOverride ? new Date() : null;
                 await this.invoiceRepository.save(row);
             }
             await this.recompute(row._id.toString());
@@ -739,6 +774,17 @@ export class InvoiceService {
         if (row.status !== ENUM_INVOICE_STATUS.DRAFT) {
             throw new BadRequestException(
                 `Only DRAFT invoices can be issued (current: ${row.status}).`
+            );
+        }
+
+        // Qty/price tolerance (§8.1) — blocks the draft → issued transition
+        // while unresolved (resolve by editing the line back in range, or by
+        // saving via update() with `override: true`). Bulk import (silent)
+        // is a historical data-migration path and is exempt, same as the
+        // hard qty ceiling in create().
+        if (!importCtx?.silent && row.tolerance_hold) {
+            throw new BadRequestException(
+                `Cannot issue — outside qty/price tolerance: ${row.tolerance_hold_reason || 'see line details'}. Edit the line(s) back in range, or save with override first.`
             );
         }
 
@@ -1452,6 +1498,128 @@ export class InvoiceService {
                 );
             }
         }
+    }
+
+    /**
+     * Qty + price tolerance vs each line's source SO line
+     * (TOLERANCE_THREE_WAY_MATCH_PLAN.md §8.1) — a SEPARATE, softer check
+     * alongside `assertQtyGuardForLines`'s hard ceiling above, not a
+     * replacement for it. From-stock/manual lines (no
+     * `purchase_order_line_id`) are exempt — nothing to compare against,
+     * same as a standalone POV on the purchase side.
+     *
+     * Qty is compared CUMULATIVELY (this request's qty + what's already
+     * invoiced elsewhere against the same SO line, excluding this invoice's
+     * own prior lines on update) — a shipment split across several partial
+     * invoices must be judged against the SO's ordered qty as a whole, same
+     * lesson as the GRN cumulative-qty fix on the purchase side. Price is
+     * judged per line (not cumulative — each invoice line states its own
+     * price independently).
+     */
+    private async computeInvoiceTolerance(
+        companyId: string,
+        lines: InvoiceLineDto[],
+        excludeInvoiceId?: string
+    ): Promise<{ hold: boolean; reason?: string }> {
+        const poLineIds = Array.from(
+            new Set(lines.map((l) => l.purchase_order_line_id).filter(Boolean))
+        ) as string[];
+        if (!poLineIds.length) return { hold: false };
+
+        const poLines = (await this.poLineRepository.findAll({
+            _id: { $in: poLineIds },
+        } as any)) as any[];
+        const poLineById = new Map<string, any>(
+            poLines.map((pl) => [pl._id.toString(), pl])
+        );
+
+        const reqByPoLine = new Map<string, number>();
+        // purchase_order_line has no product_name column (only product_id) —
+        // prefer the invoice line's own snapshotted name (most clients send
+        // it), falling back to a product-master lookup below for the
+        // (common) case where the caller only sent product_id.
+        const productNameByPoLine = new Map<string, string>();
+        for (const l of lines) {
+            if (!l.purchase_order_line_id) continue;
+            reqByPoLine.set(
+                l.purchase_order_line_id,
+                (reqByPoLine.get(l.purchase_order_line_id) || 0) + num(l.qty)
+            );
+            if (l.product_name && !productNameByPoLine.has(l.purchase_order_line_id)) {
+                productNameByPoLine.set(l.purchase_order_line_id, l.product_name);
+            }
+        }
+        const unnamedPoLineIds = poLineIds.filter(
+            (id) => !productNameByPoLine.has(id)
+        );
+        if (unnamedPoLineIds.length) {
+            const productIds = Array.from(
+                new Set(
+                    unnamedPoLineIds
+                        .map((id) => poLineById.get(id)?.product_id?.toString())
+                        .filter(Boolean)
+                )
+            );
+            const products = productIds.length
+                ? ((await this.productRepository.findAll({
+                      _id: { $in: productIds },
+                  } as any)) as any[])
+                : [];
+            const productNameById = new Map<string, string>(
+                products.map((p) => [p._id.toString(), p.name])
+            );
+            for (const id of unnamedPoLineIds) {
+                const pid = poLineById.get(id)?.product_id?.toString();
+                const name = pid && productNameById.get(pid);
+                if (name) productNameByPoLine.set(id, name);
+            }
+        }
+
+        const reasons: string[] = [];
+        for (const [poLineId, reqQty] of reqByPoLine) {
+            const alreadyInvoiced =
+                await this.invoiceRepository.sumQtyByPoLineId(poLineId);
+            let selfPrev = 0;
+            if (excludeInvoiceId) {
+                const selfLines =
+                    await this.invoiceLineRepository.findByInvoiceId(
+                        excludeInvoiceId
+                    );
+                selfPrev = selfLines
+                    .filter(
+                        (l) => l.purchase_order_line_id?.toString() === poLineId
+                    )
+                    .reduce((s, l) => s + num(l.qty), 0);
+            }
+            const cumulative =
+                reqQty + Math.max(0, alreadyInvoiced - selfPrev);
+            const poLine = poLineById.get(poLineId);
+            const result = await this.toleranceGuard.checkQtyTolerance(
+                companyId,
+                num(poLine?.qty),
+                cumulative,
+                'invoice'
+            );
+            if (!result.withinTolerance) {
+                reasons.push(`Qty (${productNameByPoLine.get(poLineId) || poLineId}): ${result.reason}`);
+            }
+        }
+
+        for (const l of lines) {
+            if (!l.purchase_order_line_id) continue;
+            const poLine = poLineById.get(l.purchase_order_line_id);
+            const result = await this.toleranceGuard.checkPriceTolerance(
+                companyId,
+                num(poLine?.unit_price),
+                num(l.unit_price),
+                'invoice'
+            );
+            if (!result.withinTolerance) {
+                reasons.push(`Price (${l.product_name || productNameByPoLine.get(l.purchase_order_line_id) || l.product_id}): ${result.reason}`);
+            }
+        }
+
+        return { hold: reasons.length > 0, reason: reasons.join('; ') || undefined };
     }
 
     // ─── Multi-SO source resolution + invariant ─────────────────────────
