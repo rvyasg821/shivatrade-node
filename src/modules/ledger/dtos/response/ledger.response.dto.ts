@@ -10,6 +10,12 @@ export class LedgerRowDto {
     @ApiProperty({ type: Number }) cr: number;
     /** Running balance after this row (customer: ΣDR−ΣCR; vendor: ΣCR−ΣDR). */
     @ApiProperty({ type: Number }) balance: number;
+    /** Base-currency (INR) equivalent of dr, using this row's own rate. */
+    @ApiProperty({ type: Number }) dr_inr: number;
+    /** Base-currency (INR) equivalent of cr, using this row's own rate. */
+    @ApiProperty({ type: Number }) cr_inr: number;
+    /** Running INR balance after this row. */
+    @ApiProperty({ type: Number }) balance_inr: number;
 }
 
 /**
@@ -24,6 +30,10 @@ export class LedgerSummaryDto {
     /** Σ non-voided payments (vendor) / receipts (customer). Adjustment notes are NOT netted off. */
     @ApiProperty({ type: Number }) total_paid: number;
     @ApiProperty({ type: Number }) outstanding: number;
+    /** INR equivalents of the three figures above, each row using its OWN rate. */
+    @ApiProperty({ type: Number }) total_billed_inr: number;
+    @ApiProperty({ type: Number }) total_paid_inr: number;
+    @ApiProperty({ type: Number }) outstanding_inr: number;
 }
 
 export class LedgerResponseDto {
@@ -35,6 +45,9 @@ export class LedgerResponseDto {
     @ApiProperty({ type: Number }) total_dr: number;
     @ApiProperty({ type: Number }) total_cr: number;
     @ApiProperty({ type: Number }) balance: number;
+    @ApiProperty({ type: Number }) total_dr_inr: number;
+    @ApiProperty({ type: Number }) total_cr_inr: number;
+    @ApiProperty({ type: Number }) balance_inr: number;
     @ApiProperty({ required: false, type: LedgerSummaryDto })
     summary?: LedgerSummaryDto;
 }

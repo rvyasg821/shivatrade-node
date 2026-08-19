@@ -11,6 +11,10 @@ import { CompanyAddressRepository } from '@modules/company/repository/repositori
 import { InvoiceRepository } from '@modules/invoice/repository/repositories/invoice.repository';
 import { InvoicePaymentRepository } from '@modules/invoice/repository/repositories/invoice-payment.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
+import { GrnRepository } from '@modules/grn/repository/repositories/grn.repository';
+import { GrnLineRepository } from '@modules/grn/repository/repositories/grn-line.repository';
+import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
+import { ENUM_GRN_STATUS } from '@modules/grn/enums/grn.enum';
 import {
     SalesTurnoverResponseDto,
     SalesTurnoverRowDto,
@@ -326,7 +330,11 @@ export class ReportsService {
         // Sales Turnover — invoices, their receipts, customer names.
         private readonly invoiceRepository: InvoiceRepository,
         private readonly invoicePaymentRepository: InvoicePaymentRepository,
-        private readonly customerRepository: CustomerRepository
+        private readonly customerRepository: CustomerRepository,
+        // Purchase Turnover — GRN (goods actually received), not the PO/POV.
+        private readonly grnRepository: GrnRepository,
+        private readonly grnLineRepository: GrnLineRepository,
+        private readonly povLineRepository: PoVendorLineRepository
     ) {}
 
     /**
@@ -1065,6 +1073,119 @@ export class ReportsService {
     }
 
     /**
+     * Input GST source rows — CONFIRMED GRNs (goods actually received), not
+     * the PO/POV itself (client change-request #9, 2026-08-19: "Input GST
+     * must be linked with GRN or purchase invoices, not purchase orders" — a
+     * dispatched-but-not-yet-received POV carries no ITC yet). Domestic (INR)
+     * only, same GST-inclusive goods valuation as Purchase Turnover / the
+     * Vendor Ledger's GRN credit rows, dated by `grn_date`. Shared by
+     * `gstBalance()` (the aggregate) and `fetchGstBalanceSources()` (the
+     * drill-down), so both agree on exactly which rows count.
+     */
+    private async grnGstPurchaseRows(
+        companyId: string,
+        from: string,
+        to: string
+    ): Promise<
+        Array<{
+            grn_id: string;
+            po_vendor_id?: string;
+            voucher_no: string;
+            vendor_id?: string;
+            date: string;
+            taxable_inr: number;
+            gst_inr: number;
+        }>
+    > {
+        const allGrns: any[] = await this.grnRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            status: ENUM_GRN_STATUS.CONFIRMED,
+        } as any);
+        const inRange = allGrns.filter((g) => {
+            const d = String(g.grn_date || '').slice(0, 10);
+            return !!d && d >= from && d <= to;
+        });
+        if (!inRange.length) return [];
+
+        const grnIds = inRange.map((g) => g._id.toString());
+        const povIds = Array.from(
+            new Set(
+                inRange.map((g) => g.po_vendor_id?.toString()).filter(Boolean)
+            )
+        ) as string[];
+        const [grnLines, povLines, povRows] = await Promise.all([
+            this.grnLineRepository.findAll({
+                grn_id: { $in: grnIds },
+                soft_delete: false,
+            } as any) as Promise<any[]>,
+            povIds.length
+                ? (this.povLineRepository.findAll({
+                      po_vendor_id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+            povIds.length
+                ? (this.povRepository.findAll({
+                      _id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+        ]);
+        const povById = new Map<string, any>(
+            povRows.map((p) => [p._id.toString(), p])
+        );
+        const povLineById = new Map<string, any>();
+        for (const pl of povLines) povLineById.set(pl._id.toString(), pl);
+
+        const valueByGrn = new Map<string, { taxable: number; gst: number }>();
+        for (const l of grnLines) {
+            const k = l.grn_id.toString();
+            const pl = povLineById.get(l.po_vendor_line_id?.toString());
+            const price = n(pl?.unit_price);
+            const disc = n(pl?.discount_pct);
+            const tax = n(pl?.tax_pct);
+            const base = n(l.accepted_qty) * price * (1 - disc / 100);
+            const gstAmt = base * (tax / 100);
+            const cur = valueByGrn.get(k) || { taxable: 0, gst: 0 };
+            cur.taxable += base;
+            cur.gst += gstAmt;
+            valueByGrn.set(k, cur);
+        }
+
+        const rows: Array<{
+            grn_id: string;
+            po_vendor_id?: string;
+            voucher_no: string;
+            vendor_id?: string;
+            date: string;
+            taxable_inr: number;
+            gst_inr: number;
+        }> = [];
+        for (const g of inRange) {
+            const povId = g.po_vendor_id?.toString();
+            const pov = povId ? povById.get(povId) : undefined;
+            // GST is an Indian DOMESTIC tax — a foreign-currency POV (import)
+            // carries no POV-level Indian GST/ITC (import IGST is paid
+            // separately at customs, not modelled here). Mirrors the old
+            // POV-based gate.
+            if ((pov?.currency_code || 'INR') !== 'INR') continue;
+            const v = valueByGrn.get(g._id.toString()) || {
+                taxable: 0,
+                gst: 0,
+            };
+            rows.push({
+                grn_id: g._id.toString(),
+                po_vendor_id: povId,
+                voucher_no: g.voucher_no,
+                vendor_id: g.vendor_id?.toString(),
+                date: String(g.grn_date || '').slice(0, 10),
+                taxable_inr: r2(v.taxable),
+                gst_inr: r2(v.gst),
+            });
+        }
+        return rows;
+    }
+
+    /**
      * Input-Output GST Balance (INPUT_OUTPUT_GST_BALANCE_REPORT_PLAN.md).
      *
      *   Output GST = notional IGST on `igst_paid` exports, 0 under LUT. There is
@@ -1143,54 +1264,55 @@ export class ReportsService {
             row.output_taxable_inr = r2(n(o.output_taxable_inr));
         }
 
-        // ── Input: POV GST via mapList, split by state ──
-        // A POV has NO purchase-date column — only dispatch_date (nullable) and
-        // createdAt. So the date can't be pushed into the query; fetch the
-        // company's dispatched/closed POVs and bucket in JS on
-        // `dispatch_date || createdAt`, which is when the goods (and the GST)
-        // actually landed.
-        const povRaw: any[] = await this.povRepository.findAll({
-            company_id: companyId,
-            soft_delete: false,
-            status: { $in: ['dispatched', 'closed'] },
-        } as any);
-
+        // ── Input: confirmed-GRN GST, split by state ──
+        // Client change-request #9: linked to GRN (goods actually received),
+        // not the PO/POV — see `grnGstPurchaseRows` above.
         let unclassifiedPovs = 0;
-        // Date-filter here rather than in the query (see above). Anything with
-        // no resolvable date drops out rather than landing in a wrong month.
-        const povInRange = povRaw.filter((r) => {
-            const d = povIsoDate(r);
-            return !!d && d >= from && d <= to;
-        });
-        if (povInRange.length) {
-            const povs = await this.povService.mapList(povInRange as any);
-            const monthByPov = new Map<string, string>(
-                povInRange.map((r) => [r._id.toString(), monthOf(povIsoDate(r))])
+        const grnPurchases = await this.grnGstPurchaseRows(companyId, from, to);
+        if (grnPurchases.length) {
+            const monthByGrn = new Map<string, string>(
+                grnPurchases.map((g) => [g.grn_id, monthOf(g.date)])
             );
-
-            const vendorIds = Array.from(
+            const povIds = Array.from(
                 new Set(
-                    (povs as any[]).map((p) => p.vendor_id).filter(Boolean)
+                    grnPurchases.map((g) => g.po_vendor_id).filter(Boolean)
                 )
-            );
-            const [vendors, addresses, mine] = await Promise.all([
-                vendorIds.length
-                    ? this.vendorRepository.findAll({
-                          _id: { $in: vendorIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                vendorIds.length
-                    ? this.vendorAddressRepository.findAll({
-                          vendor_id: { $in: vendorIds },
-                          // Editing an address soft-deletes the old row and
-                          // writes a new one — without this we read the dead
-                          // one (stale state, no GSTIN) and misclassify.
-                          soft_delete: false,
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                this.resolveCompanyState(companyId),
-            ]);
+            ) as string[];
+            const vendorIds = Array.from(
+                new Set(grnPurchases.map((g) => g.vendor_id).filter(Boolean))
+            ) as string[];
+            const [povRowsForAddr, vendors, addresses, mine] =
+                await Promise.all([
+                    povIds.length
+                        ? (this.povRepository.findAll({
+                              _id: { $in: povIds },
+                          } as any) as Promise<any[]>)
+                        : Promise.resolve([] as any[]),
+                    vendorIds.length
+                        ? this.vendorRepository.findAll({
+                              _id: { $in: vendorIds },
+                          } as any)
+                        : Promise.resolve([] as any[]),
+                    vendorIds.length
+                        ? this.vendorAddressRepository.findAll({
+                              vendor_id: { $in: vendorIds },
+                              // Editing an address soft-deletes the old row and
+                              // writes a new one — without this we read the dead
+                              // one (stale state, no GSTIN) and misclassify.
+                              soft_delete: false,
+                          } as any)
+                        : Promise.resolve([] as any[]),
+                    this.resolveCompanyState(companyId),
+                ]);
 
+            const povAddrIdById = new Map<string, string>(
+                (povRowsForAddr as any[])
+                    .filter((p) => p.vendor_address_id)
+                    .map((p) => [
+                        p._id.toString(),
+                        p.vendor_address_id.toString(),
+                    ])
+            );
             const vendorById = new Map<string, any>(
                 (vendors as any[]).map((v) => [v._id.toString(), v])
             );
@@ -1214,43 +1336,28 @@ export class ReportsService {
                 const cur = addrByVendor.get(key);
                 if (!cur || rank(a) < rank(cur)) addrByVendor.set(key, a);
             }
-            // The address this POV actually billed from, when it names one —
-            // same precedence as po-vendor-pdf.service.ts:178-227.
-            const addrIdByPov = new Map<string, string>(
-                povInRange
-                    .filter((r) => r.vendor_address_id)
-                    .map((r) => [
-                        r._id.toString(),
-                        r.vendor_address_id.toString(),
-                    ])
-            );
 
-            for (const pov of povs as any[]) {
-                // GST is an Indian DOMESTIC tax. An overseas-vendor POV (import)
-                // is native to a foreign currency and carries NO POV-level Indian
-                // GST/ITC — import IGST is paid separately at customs on a Bill
-                // of Entry, not modelled here. So a foreign-currency POV must not
-                // leak its native value into the INR purchase-taxable base (it
-                // would add e.g. €745 as ₹745). Skip it entirely.
-                if (((pov as any).currency_code || 'INR') !== 'INR') continue;
-                const gst = r2(n((pov as any).gst_inr));
-                const row = rowFor(monthByPov.get(pov._id) || monthOf(from));
-                // The purchase amount the GST was charged on: goods + vendor
-                // charges, excluding the tax itself. Accumulated BEFORE the
-                // `gst <= 0` skip, so a zero-rated domestic purchase still shows
-                // its value — otherwise the base would silently under-report.
+            for (const g of grnPurchases) {
+                const gst = g.gst_inr;
+                const row = rowFor(monthByGrn.get(g.grn_id) || monthOf(from));
+                // The purchase amount the GST was charged on: goods, excluding
+                // the tax itself. Accumulated BEFORE the `gst <= 0` skip, so a
+                // zero-rated domestic receipt still shows its value.
                 row.input_taxable_inr = r2(
-                    row.input_taxable_inr +
-                        (n((pov as any).order_value) - gst)
+                    row.input_taxable_inr + g.taxable_inr
                 );
                 if (gst <= 0) continue;
 
                 // GSTIN lives on the ADDRESS first, the vendor master second —
-                // most data fills only the address one.
-                const vendor = vendorById.get(String(pov.vendor_id));
+                // most data fills only the address one. Address = the POV's
+                // own billed-from address (same precedence as
+                // po-vendor-pdf.service.ts:178-227), falling back to the
+                // vendor's preferred address.
+                const vendor = vendorById.get(String(g.vendor_id));
                 const addr =
-                    addrById.get(addrIdByPov.get(pov._id) || '') ||
-                    addrByVendor.get(String(pov.vendor_id));
+                    addrById.get(
+                        povAddrIdById.get(String(g.po_vendor_id)) || ''
+                    ) || addrByVendor.get(String(g.vendor_id));
                 const vendorCode = gstStateCode(addr?.gstin || vendor?.gstin);
                 let intra: boolean | null = null;
                 if (vendorCode && mine.code) {
@@ -1268,8 +1375,9 @@ export class ReportsService {
                         row.input_unclassified_inr + gst
                     );
                 } else if (intra) {
-                    // Halve the POV's own GST rather than re-deriving per line,
-                    // so CGST + SGST always foots back to it to the paisa.
+                    // Halve the GRN's own GST rather than re-deriving per
+                    // line, so CGST + SGST always foots back to it to the
+                    // paisa.
                     const half = r2(gst / 2);
                     row.input_cgst_inr = r2(row.input_cgst_inr + half);
                     row.input_sgst_inr = r2(row.input_sgst_inr + (gst - half));
@@ -1384,9 +1492,8 @@ export class ReportsService {
      *
      * ONE fetch serving two callers — the month drawer and the export's detail
      * sheets. The export runs it ONCE across the whole report period rather
-     * than month-by-month: the purchase side has to load every Vendor PO to
-     * date-filter it in JS (a POV has no purchase-date column), so twelve
-     * monthly calls would be twelve full scans of the same table.
+     * than month-by-month, so twelve monthly calls don't turn into twelve
+     * full scans of the GRN table.
      */
     private async fetchGstBalanceSources(
         companyId: string,
@@ -1396,48 +1503,49 @@ export class ReportsService {
         purchases: GstBalancePurchaseSourceDto[];
         sales: GstBalanceSalesSourceDto[];
     }> {
-        // ── Purchases (the actual question) ──
-        const povRaw: any[] = await this.povRepository.findAll({
-            company_id: companyId,
-            soft_delete: false,
-            status: { $in: ['dispatched', 'closed'] },
-        } as any);
-        const povInRange = povRaw.filter((r) => {
-            const d = povIsoDate(r);
-            return !!d && d >= from && d <= to;
-        });
+        // ── Purchases (the actual question) — CONFIRMED GRNs, one row each ──
+        // Client change-request #9: linked to GRN (goods actually received),
+        // not the PO/POV — see `grnGstPurchaseRows`.
+        const grnPurchases = await this.grnGstPurchaseRows(companyId, from, to);
 
         const purchases: GstBalancePurchaseSourceDto[] = [];
-        if (povInRange.length) {
-            const povs = await this.povService.mapList(povInRange as any);
-            const dateByPov = new Map<string, string>(
-                povInRange.map((r) => [r._id.toString(), povIsoDate(r) || ''])
-            );
-            const addrIdByPov = new Map<string, string>(
-                povInRange
-                    .filter((r) => r.vendor_address_id)
-                    .map((r) => [
-                        r._id.toString(),
-                        r.vendor_address_id.toString(),
+        if (grnPurchases.length) {
+            const povIds = Array.from(
+                new Set(
+                    grnPurchases.map((g) => g.po_vendor_id).filter(Boolean)
+                )
+            ) as string[];
+            const vendorIds = Array.from(
+                new Set(grnPurchases.map((g) => g.vendor_id).filter(Boolean))
+            ) as string[];
+            const [povRowsForAddr, vendors, addresses, mine] =
+                await Promise.all([
+                    povIds.length
+                        ? (this.povRepository.findAll({
+                              _id: { $in: povIds },
+                          } as any) as Promise<any[]>)
+                        : Promise.resolve([] as any[]),
+                    vendorIds.length
+                        ? this.vendorRepository.findAll({
+                              _id: { $in: vendorIds },
+                          } as any)
+                        : Promise.resolve([] as any[]),
+                    vendorIds.length
+                        ? this.vendorAddressRepository.findAll({
+                              vendor_id: { $in: vendorIds },
+                              soft_delete: false,
+                          } as any)
+                        : Promise.resolve([] as any[]),
+                    this.resolveCompanyState(companyId),
+                ]);
+            const povAddrIdById = new Map<string, string>(
+                (povRowsForAddr as any[])
+                    .filter((p) => p.vendor_address_id)
+                    .map((p) => [
+                        p._id.toString(),
+                        p.vendor_address_id.toString(),
                     ])
             );
-            const vendorIds = Array.from(
-                new Set((povs as any[]).map((p) => p.vendor_id).filter(Boolean))
-            );
-            const [vendors, addresses, mine] = await Promise.all([
-                vendorIds.length
-                    ? this.vendorRepository.findAll({
-                          _id: { $in: vendorIds },
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                vendorIds.length
-                    ? this.vendorAddressRepository.findAll({
-                          vendor_id: { $in: vendorIds },
-                          soft_delete: false,
-                      } as any)
-                    : Promise.resolve([] as any[]),
-                this.resolveCompanyState(companyId),
-            ]);
             const vendorById = new Map<string, any>(
                 (vendors as any[]).map((v) => [v._id.toString(), v])
             );
@@ -1460,16 +1568,13 @@ export class ReportsService {
                 if (!cur || rank(a) < rank(cur)) addrByVendor.set(k, a);
             }
 
-            for (const pov of povs as any[]) {
-                // Domestic (INR) POVs only — a foreign-currency POV (import)
-                // carries no Indian GST/ITC, so it is excluded from the ITC
-                // breakdown (mirrors the aggregate in gstBalance()).
-                if (((pov as any).currency_code || 'INR') !== 'INR') continue;
-                const gst = r2(n((pov as any).gst_inr));
-                const vendor = vendorById.get(String(pov.vendor_id));
+            for (const g of grnPurchases) {
+                const gst = g.gst_inr;
+                const vendor = vendorById.get(String(g.vendor_id));
                 const addr =
-                    addrById.get(addrIdByPov.get(pov._id) || '') ||
-                    addrByVendor.get(String(pov.vendor_id));
+                    addrById.get(
+                        povAddrIdById.get(String(g.po_vendor_id)) || ''
+                    ) || addrByVendor.get(String(g.vendor_id));
                 const vendorCode = gstStateCode(addr?.gstin || vendor?.gstin);
                 let intra: boolean | null = null;
                 if (vendorCode && mine.code) {
@@ -1479,14 +1584,14 @@ export class ReportsService {
                     if (vState && mine.name) intra = vState === mine.name;
                 }
                 purchases.push({
-                    po_vendor_id: String(pov._id),
-                    voucher_no: pov.voucher_no,
-                    vendor_name:
-                        pov.vendor_name || vendor?.company_name || '—',
+                    grn_id: g.grn_id,
+                    po_vendor_id: g.po_vendor_id || '',
+                    voucher_no: g.voucher_no,
+                    vendor_name: vendor?.company_name || '—',
                     vendor_state: addr?.state || null,
-                    status: pov.status,
-                    date: dateByPov.get(String(pov._id)) || '',
-                    taxable_inr: r2(n((pov as any).order_value) - gst),
+                    status: 'confirmed',
+                    date: g.date,
+                    taxable_inr: g.taxable_inr,
                     gst_inr: gst,
                     gst_split:
                         gst <= 0
@@ -1609,7 +1714,7 @@ export class ReportsService {
             [`Input-Output GST Balance — ${result.period_label} (INR)`],
             ['Net ITC = Input Total − Output IGST (positive = refund claimable)'],
             [
-                'Purchase Taxable = Vendor PO goods + charges, excl. GST (status dispatched/closed, dated by dispatch date).',
+                'Purchase Taxable = goods received on CONFIRMED GRNs, excl. GST (dated by GRN date; a dispatched-but-not-yet-received Vendor PO does not count yet).',
             ],
             [
                 'Sales Taxable = invoice-line taxable amount on igst_paid invoices (excl. draft/cancelled, dated by invoice date).',
@@ -1628,8 +1733,7 @@ export class ReportsService {
         //
         // Fetched ONCE over the whole range and tagged with a Month column,
         // rather than month-by-month: flat is what can be filtered or pivoted,
-        // and the purchase side would otherwise re-scan every Vendor PO per
-        // month.
+        // and the purchase side would otherwise re-scan every GRN per month.
         const today = new Date();
         const from = query.date_from || isoDate(this.currentFyStart(today));
         const to = query.date_to || isoDate(today);
@@ -1659,7 +1763,7 @@ export class ReportsService {
         const purchaseHeader = [
             'Month',
             'Date',
-            'Vendor PO',
+            'GRN',
             'Vendor',
             'Vendor State',
             'Status',
@@ -1701,7 +1805,7 @@ export class ReportsService {
         );
         const purchaseAoa: (string | number)[][] = [
             [
-                `Purchases — Vendor POs behind the Input GST — ${result.period_label} (INR). Totals back to the Purchase Taxable and input-tax columns on the GST Balance sheet.`,
+                `Purchases — GRNs behind the Input GST — ${result.period_label} (INR). Totals back to the Purchase Taxable and input-tax columns on the GST Balance sheet.`,
             ],
             [
                 'GST Split: igst = inter-state vendor, cgst_sgst = same state as the company, unclassified = vendor state unknown (no GSTIN on file). CGST/SGST/IGST columns split the row GST by that classification; unclassified rows keep their GST in the GST (INR) column only.',
@@ -2113,37 +2217,154 @@ export class ReportsService {
         const to = query.date_to || isoDate(today);
         const groupBy = query.group_by === 'vendor' ? 'vendor' : 'month';
 
-        const find: Record<string, any> = {
+        // Client rule (client change-request #8): turnover reflects goods
+        // ACTUALLY RECEIVED — a confirmed GRN — not the PO/POV, which may not
+        // have been fulfilled yet. One row per GRN (mirrors Sales Turnover's
+        // one row per invoice). Fetched company-wide first (not date-limited)
+        // so a POV's total received value across ALL its GRNs can be used as
+        // the denominator when apportioning that POV's payments fairly across
+        // GRNs booked on different dates (see `paidShare` below).
+        const grnFind: Record<string, any> = {
             company_id: companyId,
             soft_delete: false,
-            status: { $in: ['dispatched', 'closed'] },
+            status: ENUM_GRN_STATUS.CONFIRMED,
         };
-        if (query.vendor_id) find.vendor_id = query.vendor_id;
-        const povRaw: any[] = await this.povRepository.findAll(find as any);
-
-        // A POV has no purchase-date column — date in JS on dispatch_date ||
-        // createdAt (plan §12.2). No date drops out rather than mis-bucketing.
-        const inRange = povRaw.filter((r) => {
-            const d = povIsoDate(r);
-            return !!d && d >= from && d <= to;
-        });
-        const dateById = new Map<string, string>(
-            inRange.map((r) => [r._id.toString(), povIsoDate(r)])
+        if (query.vendor_id) grnFind.vendor_id = query.vendor_id;
+        const allGrns: any[] = await this.grnRepository.findAll(
+            grnFind as any
         );
 
-        const povs = inRange.length
-            ? ((await this.povService.mapList(inRange as any)) as any[])
+        if (!allGrns.length) {
+            return {
+                period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
+                group_by: groupBy,
+                groups: [],
+                available_currencies: [],
+                overall_pov_count: 0,
+            };
+        }
+
+        const grnIds = allGrns.map((g) => g._id.toString());
+        const povIds = Array.from(
+            new Set(
+                allGrns.map((g) => g.po_vendor_id?.toString()).filter(Boolean)
+            )
+        ) as string[];
+        const [grnLines, povLines, povRows] = await Promise.all([
+            this.grnLineRepository.findAll({
+                grn_id: { $in: grnIds },
+                soft_delete: false,
+            } as any) as Promise<any[]>,
+            povIds.length
+                ? (this.povLineRepository.findAll({
+                      po_vendor_id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+            povIds.length
+                ? (this.povRepository.findAll({
+                      _id: { $in: povIds },
+                  } as any) as Promise<any[]>)
+                : Promise.resolve([] as any[]),
+        ]);
+        const povs = povRows.length
+            ? ((await this.povService.mapList(povRows as any)) as any[])
             : [];
-        // payment_status is derived from amount_paid vs order value, not a
-        // column — so it can only be filtered here, after mapList.
+        const povById = new Map<string, any>(
+            povs.map((p) => [String(p._id), p])
+        );
+        const povLineById = new Map<string, any>();
+        for (const pl of povLines) povLineById.set(pl._id.toString(), pl);
+
+        // Vendor names for GRNs whose POV link may be missing (shouldn't
+        // happen, but GRN carries its own vendor_id so it's the safe source).
+        const vendorIds = Array.from(
+            new Set(allGrns.map((g) => g.vendor_id?.toString()).filter(Boolean))
+        ) as string[];
+        const vendorNameById = new Map<string, string>();
+        if (vendorIds.length) {
+            const vendors: any[] = await this.vendorRepository.findAll({
+                _id: { $in: vendorIds },
+            } as any);
+            for (const v of vendors)
+                vendorNameById.set(v._id.toString(), v.company_name || '—');
+        }
+
+        // Per-GRN value = Σ(accepted qty × price × (1−disc%)) taxable, and its
+        // GST — same GST-INCLUSIVE billed-value formula the Vendor Ledger's
+        // GRN credit rows use (client 2026-08-06), so this report and the
+        // ledger agree on what a GRN is worth.
+        const valueByGrn = new Map<
+            string,
+            { taxable: number; gst: number; total: number }
+        >();
+        for (const l of grnLines) {
+            const k = l.grn_id.toString();
+            const pl = povLineById.get(l.po_vendor_line_id?.toString());
+            const price = n(pl?.unit_price);
+            const disc = n(pl?.discount_pct);
+            const tax = n(pl?.tax_pct);
+            const base = n(l.accepted_qty) * price * (1 - disc / 100);
+            const gstAmt = base * (tax / 100);
+            const cur = valueByGrn.get(k) || { taxable: 0, gst: 0, total: 0 };
+            cur.taxable += base;
+            cur.gst += gstAmt;
+            cur.total += base + gstAmt;
+            valueByGrn.set(k, cur);
+        }
+
+        // Total confirmed-GRN value per POV, ALL time (not date-limited) — the
+        // denominator that apportions a POV's payments across its GRNs, so
+        // Σ paid over an unrestricted range still equals Σ pov.amount_paid
+        // exactly (no double-counting when a POV has several GRNs).
+        const totalValueByPov = new Map<string, number>();
+        for (const g of allGrns) {
+            const povId = g.po_vendor_id?.toString();
+            const v = valueByGrn.get(g._id.toString());
+            if (!povId || !v) continue;
+            totalValueByPov.set(
+                povId,
+                r2((totalValueByPov.get(povId) || 0) + v.total)
+            );
+        }
+
+        // Date filter on the real `grn_date` column (goods actually received).
+        const inRangeGrns = allGrns.filter((g) => {
+            const d = String(g.grn_date || '').slice(0, 10);
+            return !!d && d >= from && d <= to;
+        });
+
+        // payment_status is derived per GRN (its apportioned paid share vs its
+        // own value), so it can only be filtered here, after the value/paid
+        // split below is computed for each GRN.
+        const rowsForStatus = inRangeGrns.map((g) => {
+            const povId = g.po_vendor_id?.toString();
+            const pov = povId ? povById.get(povId) : undefined;
+            const v = valueByGrn.get(g._id.toString()) || {
+                taxable: 0,
+                gst: 0,
+                total: 0,
+            };
+            const totalPovValue = povId ? totalValueByPov.get(povId) || 0 : 0;
+            const share = totalPovValue > 0 ? v.total / totalPovValue : 0;
+            const paid = r2(n(pov?.amount_paid) * share);
+            const status =
+                paid <= 0
+                    ? 'unpaid'
+                    : paid < v.total
+                      ? 'partially_paid'
+                      : paid === v.total
+                        ? 'paid'
+                        : 'overpaid';
+            return { grn: g, pov, v, paid, status };
+        });
         const scoped = query.payment_status
-            ? povs.filter((p) => p.payment_status === query.payment_status)
-            : povs;
+            ? rowsForStatus.filter((r) => r.status === query.payment_status)
+            : rowsForStatus;
 
         // Every currency present in range — the dropdown source. Computed
         // before the currency narrow so the dropdown stays stable.
         const availableCurrencies = Array.from(
-            new Set(scoped.map((p) => p.currency_code || 'INR'))
+            new Set(scoped.map((r) => r.pov?.currency_code || 'INR'))
         ).sort(currencyRank);
 
         // Per-currency sections. Within each, bucket by month or vendor. A POV
@@ -2192,31 +2413,32 @@ export class ReportsService {
             return rm.get(key)!;
         };
 
-        for (const pov of scoped) {
-            const currency = pov.currency_code || 'INR';
+        for (const { grn, pov, v, paid } of scoped) {
+            const currency = pov?.currency_code || 'INR';
             // The currency filter narrows which section(s) to show.
             if (query.currency && currency !== query.currency) continue;
+            const dateStr = String(grn.grn_date || '').slice(0, 10);
             const key =
                 groupBy === 'vendor'
-                    ? String(pov.vendor_id || '—')
-                    : (dateById.get(pov._id) || '').slice(0, 7);
+                    ? String(grn.vendor_id || '—')
+                    : dateStr.slice(0, 7);
             if (!key) continue;
             const label =
                 groupBy === 'vendor'
-                    ? pov.vendor_name || '—'
+                    ? vendorNameById.get(String(grn.vendor_id)) || '—'
                     : monthLabel(key);
             const row = rowFor(
                 currency,
-                pov.currency_symbol || null,
+                pov?.currency_symbol || null,
                 key,
                 label
             );
-            row.pov_count += 1;
-            row.order_value = r2(row.order_value + n(pov.order_value));
-            row.gst = r2(row.gst + n(pov.gst_inr));
-            // GROSS — net_paid (after TDS) is the bank outflow, but gross is
-            // what settles the vendor, so Outstanding must use it (plan §12.4).
-            row.paid = r2(row.paid + n(pov.amount_paid));
+            row.pov_count += 1; // now counts GRNs (one row per GRN, not POV)
+            row.order_value = r2(row.order_value + v.total);
+            row.gst = r2(row.gst + r2(v.gst));
+            // GROSS payment, apportioned to this GRN by its share of its
+            // POV's total confirmed-GRN value (see `totalValueByPov` above).
+            row.paid = r2(row.paid + paid);
         }
 
         // Month mode: emit every month in the range so a quiet month reads 0.00

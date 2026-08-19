@@ -51,6 +51,12 @@ interface RawRow {
     voucher_no?: string;
     dr: number;
     cr: number;
+    // Base-currency (INR) equivalent of dr/cr, using THIS row's own rate (the
+    // POV/invoice/receipt rate captured at the time it was booked) — never a
+    // shared/current rate. Defaults to dr/cr themselves (rate = 1) when not
+    // supplied, which is correct for INR-native rows.
+    dr_inr?: number;
+    cr_inr?: number;
     // Row creation timestamp — breaks same-day ties so postings appear in the
     // order they were actually recorded (document dates are date-only).
     created_at?: string | Date;
@@ -138,6 +144,7 @@ export class LedgerService {
             date: string;
             value: number;
             currency_code: string;
+            exchange_rate: number;
             customer_id?: string;
             created_at?: Date;
         }>
@@ -173,6 +180,7 @@ export class LedgerService {
                 date: s.advance_date || s.po_date,
                 value: round2(num(s.advance_amount)),
                 currency_code: s.currency_code || 'INR',
+                exchange_rate: num(s.exchange_rate) || 1,
                 customer_id: s.customer_id?.toString(),
                 created_at: s.createdAt,
             }));
@@ -228,6 +236,12 @@ export class LedgerService {
             for (const p of payments) {
                 if (p.voided_at) continue;
                 const inv = invoiceById.get(p.invoice_id?.toString());
+                // Sales-doc convention: rate = doc-currency per ₹1, so
+                // INR = amount × round2(1/rate). Receipt's own rate first
+                // (rate at the time money came in), falling back to the
+                // invoice's rate — same as the forex gain/loss calc.
+                const rcptRate = num(p.exchange_rate) || num(inv?.exchange_rate) || 1;
+                const amt = num(p.amount);
                 rows.push({
                     date: p.payment_date,
                     type: 'receipt',
@@ -236,7 +250,9 @@ export class LedgerService {
                     }`,
                     voucher_no: p.receipt_voucher_no,
                     dr: 0,
-                    cr: num(p.amount),
+                    cr: amt,
+                    dr_inr: 0,
+                    cr_inr: round2(amt * (rcptRate > 0 ? round2(1 / rcptRate) : 1)),
                     created_at: p.createdAt,
                 });
             }
@@ -248,6 +264,7 @@ export class LedgerService {
         const soAdvances = await this.customerSoAdvances(companyId, customerId);
         for (const a of soAdvances) {
             if (a.value <= 0) continue;
+            const rate = a.exchange_rate || 1;
             rows.push({
                 date: a.date,
                 type: 'advance',
@@ -257,6 +274,8 @@ export class LedgerService {
                 voucher_no: a.voucher_no,
                 dr: 0,
                 cr: a.value,
+                dr_inr: 0,
+                cr_inr: round2(a.value * (rate > 0 ? round2(1 / rate) : 1)),
                 created_at: a.created_at,
             });
         }
@@ -272,6 +291,16 @@ export class LedgerService {
         for (const n of notes as any[]) {
             if (n.voided_at) continue;
             const isDebit = n.direction === ENUM_ADJUSTMENT_DIRECTION.DEBIT;
+            const amt = num(n.amount);
+            // No rate is captured on the note itself — use the invoice it
+            // settles (when linked); a bare party-level note in a foreign
+            // currency has no rate to draw on, so it falls back to 1 (rare;
+            // the vast majority of notes are either INR or document-linked).
+            const linkedInv = n.document_id
+                ? invoiceById.get(n.document_id.toString())
+                : undefined;
+            const noteRate = num(linkedInv?.exchange_rate) || 1;
+            const rateInr = noteRate > 0 ? round2(1 / noteRate) : 1;
             rows.push({
                 date: n.note_date,
                 type: 'adjustment',
@@ -283,8 +312,10 @@ export class LedgerService {
                         : 'Adjustment'
                 }: ${n.reason || ''}`.slice(0, 200),
                 voucher_no: n.voucher_no,
-                dr: isDebit ? num(n.amount) : 0,
-                cr: isDebit ? 0 : num(n.amount),
+                dr: isDebit ? amt : 0,
+                cr: isDebit ? 0 : amt,
+                dr_inr: isDebit ? round2(amt * rateInr) : 0,
+                cr_inr: isDebit ? 0 : round2(amt * rateInr),
                 created_at: n.createdAt,
             });
         }
@@ -308,8 +339,25 @@ export class LedgerService {
                 .filter((i) => i.status !== 'draft')
                 .reduce((s, i) => s + num(i.grand_total), 0)
         );
+        // INR equivalent — sales-doc convention (grand_total ÷ exchange_rate),
+        // same as every report; each invoice's OWN rate, never today's rate.
+        const totalBilledInr = round2(
+            invoices
+                .filter((i) => i.status !== 'draft')
+                .reduce(
+                    (s, i) =>
+                        s + num(i.grand_total) / (num(i.exchange_rate) || 1),
+                    0
+                )
+        );
         const totalPaid = round2(
             rows.reduce((s, r) => s + num(r.cr) - num(r.dr), 0)
+        );
+        const totalPaidInr = round2(
+            rows.reduce(
+                (s, r) => s + num(r.cr_inr ?? r.cr) - num(r.dr_inr ?? r.dr),
+                0
+            )
         );
         // Migration opening balance. For a customer, a DEBIT opening = they
         // already owe us → adds to outstanding; a CREDIT opening = we hold their
@@ -333,6 +381,11 @@ export class LedgerService {
             total_paid: totalPaid,
             opening_balance: round2(openingOut),
             outstanding: round2(totalBilled - totalPaid + openingOut),
+            total_billed_inr: totalBilledInr,
+            total_paid_inr: totalPaidInr,
+            // openingOut has no captured rate (migrated as a flat figure) —
+            // used as-is, same limitation as the opening ledger row below.
+            outstanding_inr: round2(totalBilledInr - totalPaidInr + openingOut),
         };
 
         const ledger = this.assemble(
@@ -366,6 +419,7 @@ export class LedgerService {
             date: string;
             value: number;
             currency_code: string;
+            exchange_rate: number;
             vendor_id?: string;
             created_at?: Date;
             po_vendor_voucher_no?: string;
@@ -407,8 +461,11 @@ export class LedgerService {
         const povLineById = new Map<string, any>();
         for (const pl of povLines) povLineById.set(pl._id.toString(), pl);
         const currencyByPovId = new Map<string, string>();
-        for (const pv of povs)
+        const rateByPovId = new Map<string, number>();
+        for (const pv of povs) {
             currencyByPovId.set(pv._id.toString(), pv.currency_code || 'INR');
+            rateByPovId.set(pv._id.toString(), num(pv.exchange_rate) || 1);
+        }
         // Value = Σ(accepted qty × unit price × (1 − disc%) × (1 + GST%)) — the
         // GST-INCLUSIVE amount for the received goods (client 2026-08-07), so a
         // partial GRN (e.g. 5 of 10 @ 18% GST) posts 5 × price × 1.18. Discount
@@ -437,6 +494,9 @@ export class LedgerService {
             currency_code: g.po_vendor_id
                 ? currencyByPovId.get(g.po_vendor_id.toString()) || 'INR'
                 : 'INR',
+            exchange_rate: g.po_vendor_id
+                ? rateByPovId.get(g.po_vendor_id.toString()) || 1
+                : 1,
             vendor_id: g.vendor_id?.toString(),
             created_at: g.createdAt,
             po_vendor_voucher_no: g.po_vendor_voucher_no,
@@ -479,8 +539,12 @@ export class LedgerService {
         //   Balance = ΣDR − ΣCR = net amount paid to this vendor.
         const rows: RawRow[] = [];
         for (const pov of povs as any[]) {
+            // POV convention: exchange_rate = INR per 1 unit of the POV
+            // currency (multiply), the opposite direction of sales docs.
+            const rate = num(pov.exchange_rate) || 1;
             for (const pay of pov.payments || []) {
                 if (pay.voided_at) continue;
+                const amt = num(pay.amount);
                 rows.push({
                     date: pay.payment_date,
                     type: 'payment',
@@ -488,8 +552,10 @@ export class LedgerService {
                         pov.voucher_no ? ` of ${pov.voucher_no}` : ''
                     }`,
                     voucher_no: pay.payment_voucher_no,
-                    dr: num(pay.amount),
+                    dr: amt,
                     cr: 0,
+                    dr_inr: round2(amt * rate),
+                    cr_inr: 0,
                     created_at: pay.createdAt,
                 });
             }
@@ -523,6 +589,10 @@ export class LedgerService {
                 voucher_no: n.voucher_no,
                 dr: isDebit ? eff : 0,
                 cr: isDebit ? 0 : eff,
+                // Vendor adjustment-note amount is always INR (see entity) —
+                // no conversion needed.
+                dr_inr: isDebit ? eff : 0,
+                cr_inr: isDebit ? 0 : eff,
                 created_at: n.createdAt,
             });
         }
@@ -543,6 +613,8 @@ export class LedgerService {
                 voucher_no: g.voucher_no,
                 dr: 0,
                 cr: g.value,
+                dr_inr: 0,
+                cr_inr: round2(g.value * (g.exchange_rate || 1)),
                 created_at: g.created_at,
             });
         }
@@ -563,8 +635,25 @@ export class LedgerService {
                 .filter((p) => p.status !== 'draft')
                 .reduce((s, p) => s + num(p.order_value), 0)
         );
+        // INR equivalent — POV convention (order_value × exchange_rate), each
+        // POV's OWN rate, never today's rate.
+        const totalBilledInr = round2(
+            (povs as any[])
+                .filter((p) => p.status !== 'draft')
+                .reduce(
+                    (s, p) =>
+                        s + num(p.order_value) * (num(p.exchange_rate) || 1),
+                    0
+                )
+        );
         const totalPaid = round2(
             rows.reduce((s, r) => s + num(r.dr) - num(r.cr), 0)
+        );
+        const totalPaidInr = round2(
+            rows.reduce(
+                (s, r) => s + num(r.dr_inr ?? r.dr) - num(r.cr_inr ?? r.cr),
+                0
+            )
         );
         // Migration opening balance. For a vendor, a CREDIT opening = we already
         // owe them → adds to outstanding; a DEBIT opening = we hold an advance
@@ -588,6 +677,11 @@ export class LedgerService {
             total_paid: totalPaid,
             opening_balance: round2(openingOut),
             outstanding: round2(totalBilled - totalPaid + openingOut),
+            total_billed_inr: totalBilledInr,
+            total_paid_inr: totalPaidInr,
+            // openingOut has no captured rate (migrated as a flat figure) —
+            // used as-is, same limitation as the customer side.
+            outstanding_inr: round2(totalBilledInr - totalPaidInr + openingOut),
         };
 
         const ledger = this.assemble(
@@ -930,16 +1024,24 @@ export class LedgerService {
         let bal = 0;
         let totalDr = 0;
         let totalCr = 0;
+        let balInr = 0;
+        let totalDrInr = 0;
+        let totalCrInr = 0;
         const rows: LedgerRowDto[] = [];
         // Migration opening balance — always the FIRST row and NOT date-filtered
         // (it is the carried-forward balance at migration). Seeds the running
-        // balance + totals so everything below flows from it.
+        // balance + totals so everything below flows from it. No rate was
+        // captured at migration, so its INR figure equals the native one
+        // (rate = 1) — the same documented limitation as the summary cards.
         if (opening && opening.amount > 0) {
             const dr = opening.type === 'debit' ? round2(opening.amount) : 0;
             const cr = opening.type === 'credit' ? round2(opening.amount) : 0;
             totalDr = round2(totalDr + dr);
             totalCr = round2(totalCr + cr);
+            totalDrInr = round2(totalDrInr + dr);
+            totalCrInr = round2(totalCrInr + cr);
             bal = round2(debitPositive ? dr - cr : cr - dr);
+            balInr = bal;
             rows.push({
                 date: opening.date ? toIso(opening.date) : '',
                 type: 'opening',
@@ -948,14 +1050,24 @@ export class LedgerService {
                 dr,
                 cr,
                 balance: bal,
+                dr_inr: dr,
+                cr_inr: cr,
+                balance_inr: balInr,
             });
         }
         for (const r of inRange) {
             const dr = round2(r.dr);
             const cr = round2(r.cr);
+            const drInr = round2(r.dr_inr ?? r.dr);
+            const crInr = round2(r.cr_inr ?? r.cr);
             totalDr = round2(totalDr + dr);
             totalCr = round2(totalCr + cr);
+            totalDrInr = round2(totalDrInr + drInr);
+            totalCrInr = round2(totalCrInr + crInr);
             bal = round2(bal + (debitPositive ? dr - cr : cr - dr));
+            balInr = round2(
+                balInr + (debitPositive ? drInr - crInr : crInr - drInr)
+            );
             rows.push({
                 date: r.date,
                 type: r.type,
@@ -964,6 +1076,9 @@ export class LedgerService {
                 dr,
                 cr,
                 balance: bal,
+                dr_inr: drInr,
+                cr_inr: crInr,
+                balance_inr: balInr,
             });
         }
 
@@ -976,6 +1091,9 @@ export class LedgerService {
             total_dr: totalDr,
             total_cr: totalCr,
             balance: bal,
+            total_dr_inr: totalDrInr,
+            total_cr_inr: totalCrInr,
+            balance_inr: balInr,
         };
     }
 
@@ -984,7 +1102,17 @@ export class LedgerService {
         const sym = ledger.currency_code;
         const aoa: (string | number)[][] = [
             [`${ledger.party_name || ''} — Ledger (${sym})`],
-            ['Date', 'Particulars', 'Voucher', 'Debit', 'Credit', 'Balance'],
+            [
+                'Date',
+                'Particulars',
+                'Voucher',
+                'Debit',
+                'Credit',
+                'Balance',
+                'Debit (INR)',
+                'Credit (INR)',
+                'Balance (INR)',
+            ],
             ...ledger.rows.map((r) => [
                 // DD-MM-YYYY to match the on-screen statement.
                 r.date ? r.date.split('-').reverse().join('-') : '',
@@ -993,6 +1121,9 @@ export class LedgerService {
                 r.dr || '',
                 r.cr || '',
                 r.balance,
+                r.dr_inr || '',
+                r.cr_inr || '',
+                r.balance_inr,
             ]),
             [
                 '',
@@ -1001,6 +1132,9 @@ export class LedgerService {
                 ledger.total_dr,
                 ledger.total_cr,
                 ledger.balance,
+                ledger.total_dr_inr,
+                ledger.total_cr_inr,
+                ledger.balance_inr,
             ],
         ];
         return this.fileService.writeExcelFromArray(aoa as any);

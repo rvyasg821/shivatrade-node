@@ -5,6 +5,7 @@ import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.reposi
 import { CompanyRepositoryModule } from '@modules/company/repository/company.repository.module';
 import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.repository.module';
 import { CustomerRepositoryModule } from '@modules/customer/repository/customer.repository.module';
+import { GrnRepositoryModule } from '@modules/grn/repository/grn.repository.module';
 import { ReportsService } from './services/reports.service';
 import { ReportsAdminController } from './controllers/reports.admin.controller';
 
@@ -26,6 +27,9 @@ import { ReportsAdminController } from './controllers/reports.admin.controller';
         // Sales Turnover — invoices + their receipts, and customer names.
         InvoiceRepositoryModule,
         CustomerRepositoryModule,
+        // Purchase Turnover / GST Input — GRN (goods actually received), not
+        // the PO/POV itself.
+        GrnRepositoryModule,
     ],
     providers: [ReportsService],
     controllers: [ReportsAdminController],
