@@ -201,6 +201,19 @@ export class LeadService {
             await this.writeLeadLines(companyId, lead._id.toString(), lines);
         }
 
+        // Auto-convert when the lead is created directly with status Won
+        // (e.g. import, or the Add Lead form) — mirrors update()'s
+        // won-transition hook, which only fires on a LATER status change and
+        // never runs for a lead that starts out Won. Without this, the
+        // "Convert to Customer" button stays visible even though a matching
+        // customer may already exist (convertToCustomer() dedupes by email /
+        // company name before creating one).
+        let result = lead;
+        if (lead.status === ENUM_LEAD_STATUS.WON) {
+            const converted = await this.convertToCustomer(lead, createdBy);
+            result = converted.lead;
+        }
+
         // Timeline anchor — every lead's activity feed opens with this entry.
         this.activityService
             .addSystem(
@@ -216,7 +229,7 @@ export class LeadService {
             );
 
         this.logger.log(`Lead created: ${lead._id} for company: ${companyId}`);
-        return lead;
+        return result;
     }
 
     async findOneById(
