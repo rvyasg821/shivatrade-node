@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException, NotFoundException } from '@nes
 import { plainToInstance } from 'class-transformer';
 import { CategoryRepository } from '../repository/repositories/category.repository';
 import { CategoryDoc } from '../repository/entities/category.entity';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import { CategoryCreateRequestDto } from '../dtos/request/category.create.request.dto';
 import { CategoryUpdateRequestDto } from '../dtos/request/category.update.request.dto';
 import { CategoryGetResponseDto } from '../dtos/response/category.get.response.dto';
@@ -19,6 +20,7 @@ export class CategoryService {
 
     constructor(
         private readonly categoryRepository: CategoryRepository,
+        private readonly dependencyCheckService: DependencyCheckService,
     ) {}
 
     async create(
@@ -127,6 +129,9 @@ export class CategoryService {
                 'Cannot delete a category that has sub-categories'
             );
         }
+        await this.dependencyCheckService.assertCategoryNotInUse(
+            category._id.toString()
+        );
 
         category.soft_delete = true;
         category.is_active = false;

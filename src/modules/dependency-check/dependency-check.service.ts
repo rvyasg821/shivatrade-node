@@ -11,6 +11,13 @@ import { RfqVendorRepository } from '@modules/rfq/repository/repositories/rfq-ve
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { LeadRepository } from '@modules/lead/repository/repositories/lead.repository';
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
+import { LeadLineRepository } from '@modules/lead/repository/repositories/lead-line.repository';
+import { RfqLineRepository } from '@modules/rfq/repository/repositories/rfq-line.repository';
+import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
+import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
+import { GrnLineRepository } from '@modules/grn/repository/repositories/grn-line.repository';
+import { InvoiceLineRepository } from '@modules/invoice/repository/repositories/invoice-line.repository';
+import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 
 export interface DependencySummary {
     total: number;
@@ -45,7 +52,14 @@ export class DependencyCheckService {
         private readonly rfqVendorRepository: RfqVendorRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly leadRepository: LeadRepository,
-        private readonly adjustmentNoteRepository: AdjustmentNoteRepository
+        private readonly adjustmentNoteRepository: AdjustmentNoteRepository,
+        private readonly leadLineRepository: LeadLineRepository,
+        private readonly rfqLineRepository: RfqLineRepository,
+        private readonly purchaseOrderLineRepository: PurchaseOrderLineRepository,
+        private readonly poVendorLineRepository: PoVendorLineRepository,
+        private readonly grnLineRepository: GrnLineRepository,
+        private readonly invoiceLineRepository: InvoiceLineRepository,
+        private readonly productRepository: ProductRepository
     ) {}
 
     private rulesFor(type: string): DependencyRule[] | null {
@@ -243,6 +257,84 @@ export class DependencyCheckService {
                 `Cannot delete this Customer — it is still used by ${used.join(
                     ', '
                 )}. Remove or reassign those first.`
+            );
+        }
+    }
+
+    /**
+     * Product is a MASTER record (soft-delete + revive), referenced live
+     * (product_id) by every document line type plus the Price List — unlike
+     * the sales/purchase doc chain (Lead → ... → Debit Note), which is
+     * snapshot-based and safe to delete through. Deleting a used Product
+     * would silently null out product_name/code on every line that still
+     * points at it (confirmed: this is exactly what happened when Category
+     * delete was found to lack this same guard). Block outright, same
+     * pattern as assertVendorNotInUse/assertCustomerNotInUse.
+     */
+    async assertProductNotInUse(productId: string): Promise<void> {
+        const used: string[] = [];
+        const check = async (label: string, count: Promise<number>) => {
+            if ((await count) > 0) used.push(label);
+        };
+        await check(
+            'Leads',
+            this.leadLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'RFQs',
+            this.rfqLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'Quotations',
+            this.quotationLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'Sales Orders',
+            this.purchaseOrderLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'Vendor POs',
+            this.poVendorLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'GRNs',
+            this.grnLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'Invoices',
+            this.invoiceLineRepository.getTotal({ product_id: productId } as any)
+        );
+        await check(
+            'Price List entries',
+            this.priceListRepository.getTotal({ product_id: productId } as any)
+        );
+
+        if (used.length > 0) {
+            throw new BadRequestException(
+                `Cannot delete this Product — it is still used by ${used.join(
+                    ', '
+                )}. Remove or reassign those first.`
+            );
+        }
+    }
+
+    /**
+     * Category is a MASTER record referenced live (category_id) by Product.
+     * Deleting an in-use category previously left products silently pointing
+     * at a soft-deleted row (category_name resolved to null on every read —
+     * confirmed live). Sub-categories are already blocked separately in
+     * category.service.ts; this covers the Product side.
+     */
+    async assertCategoryNotInUse(categoryId: string): Promise<void> {
+        const count = await this.productRepository.getTotal({
+            category_id: categoryId,
+            soft_delete: false,
+        } as any);
+        if (count > 0) {
+            throw new BadRequestException(
+                `Cannot delete this Category — it is still used by ${count} product${
+                    count > 1 ? 's' : ''
+                }. Reassign those first.`
             );
         }
     }

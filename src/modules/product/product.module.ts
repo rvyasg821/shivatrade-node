@@ -10,6 +10,7 @@ import { ExpenseModule } from '@modules/expense/expense.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { UomModule } from '@modules/uom/uom.module';
 import { HsnPropagationModule } from '@modules/hsn-propagation/hsn-propagation.module';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
     imports: [
@@ -23,6 +24,7 @@ import { HsnPropagationModule } from '@modules/hsn-propagation/hsn-propagation.m
         UomModule,
         // Cascade a product's HSN onto every document line that uses it.
         HsnPropagationModule,
+        DependencyCheckModule,
     ],
     providers: [ProductService, ProductImportExportService],
     exports: [

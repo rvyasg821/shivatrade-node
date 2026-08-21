@@ -27,6 +27,7 @@ import { RebateRepository } from '@modules/rebate/repository/repositories/rebate
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { UomService } from '@modules/uom/services/uom.service';
+import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
 import {
     IDatabaseCreateOptions,
     IDatabaseFindAllOptions,
@@ -47,7 +48,8 @@ export class ProductService {
         private readonly productRebateRepository: ProductRebateRepository,
         private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly companySettingsService: CompanySettingsService,
-        private readonly uomService: UomService
+        private readonly uomService: UomService,
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
 
     /**
@@ -257,6 +259,10 @@ export class ProductService {
         deletedBy?: string,
         options?: IDatabaseSaveOptions
     ): Promise<ProductDoc> {
+        await this.dependencyCheckService.assertProductNotInUse(
+            product._id.toString()
+        );
+
         product.soft_delete = true;
         product.is_active = false;
         (product as any).deleted = true;

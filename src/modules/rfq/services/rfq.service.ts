@@ -84,6 +84,32 @@ export class RfqService {
         await this.rfqRepository.delete({ _id: rfqId } as any);
     }
 
+    /**
+     * Bulk delete. Loops the SAME guarded single-delete (deleteWithGuard) so
+     * an RFQ with a linked Quotation, or one that isn't a draft, is skipped
+     * rather than force-deleted. Mirrors Lead/Quotation/Sales Order's
+     * deleteMany — RFQ was the one stage in the chain missing this.
+     */
+    async deleteMany(
+        companyId: string,
+        ids: string[]
+    ): Promise<{
+        deleted: string[];
+        skipped: Array<{ id: string; reason: string }>;
+    }> {
+        const deleted: string[] = [];
+        const skipped: Array<{ id: string; reason: string }> = [];
+        for (const id of ids) {
+            try {
+                await this.deleteWithGuard(companyId, id);
+                deleted.push(id);
+            } catch (e: any) {
+                skipped.push({ id, reason: e?.message || 'Cannot delete' });
+            }
+        }
+        return { deleted, skipped };
+    }
+
     private async resolveCompanyPrefix(companyId: string): Promise<string> {
         const company: any = await this.companyRepository.findOneById(companyId);
         const explicit = company?.voucher_prefix?.trim();
