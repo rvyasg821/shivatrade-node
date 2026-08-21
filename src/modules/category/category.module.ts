@@ -3,9 +3,10 @@ import { CategoryRepositoryModule } from './repository/category.repository.modul
 import { CategoryService } from './services/category.service';
 import { CategoryImportExportService } from './services/category.import-export.service';
 import { CategoryAdminController } from './controllers/category.admin.controller';
+import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 
 @Module({
-    imports: [CategoryRepositoryModule],
+    imports: [CategoryRepositoryModule, DependencyCheckModule],
     providers: [CategoryService, CategoryImportExportService],
     exports: [
         CategoryRepositoryModule,

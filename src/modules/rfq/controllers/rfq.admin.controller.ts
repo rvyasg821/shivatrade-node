@@ -266,6 +266,21 @@ export class RfqAdminController {
         return { data: { deleted: true } };
     }
 
+    @Response('rfq.delete')
+    @AuthJwtAccessProtected()
+    @Post('/delete-many')
+    async deleteMany(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body() body: { ids: string[] }
+    ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
+        const ids = body?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new BadRequestException('ids array is required');
+        }
+        const data = await this.rfqService.deleteMany(companyId, ids);
+        return { data };
+    }
+
     @Response('rfq.vendors')
     @AuthJwtAccessProtected()
     @Post('/:id/vendors')

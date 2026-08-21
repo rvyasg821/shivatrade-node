@@ -8,6 +8,7 @@ import { GrnRepositoryModule } from '@modules/grn/repository/grn.repository.modu
 import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
 import { LeadRepositoryModule } from '@modules/lead/repository/lead.repository.module';
 import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
+import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
 import { DependencyCheckService } from './dependency-check.service';
 
 @Module({
@@ -21,6 +22,7 @@ import { DependencyCheckService } from './dependency-check.service';
         PriceListRepositoryModule,
         LeadRepositoryModule,
         AdjustmentNoteRepositoryModule,
+        ProductRepositoryModule,
     ],
     providers: [DependencyCheckService],
     exports: [DependencyCheckService],
