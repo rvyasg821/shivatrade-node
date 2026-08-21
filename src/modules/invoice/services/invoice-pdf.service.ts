@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PdfService } from '@common/pdf/pdf.service';
-import { docDate } from '@common/pdf/tally-pdf.util';
+import { docDate, fmtRate } from '@common/pdf/tally-pdf.util';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 import {
     buildDocWorkbook,
@@ -649,7 +649,11 @@ function buildInvoiceExcelSections(
         metaPairs.push(['Currency', code]);
         metaPairs.push([
             'Exchange Rate',
-            er > 0 ? `${sym} 1 = ₹${fmt(1 / er, 2)}` : '-',
+            code === 'INR'
+                ? '₹ 1 = ₹ 1'
+                : er > 0
+                ? `${sym} 1 = ₹${fmtRate(1 / er)}`
+                : '-',
         ]);
         if (isExport && inv.bl_awb_no)
             metaPairs.push([`${awbLabel(inv.mode)} No.`, inv.bl_awb_no]);
@@ -1560,7 +1564,11 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         <tr>
             <td style="width:33%;"><span class="lbl">Incoterm</span><br/>${esc(inv.incoterm)}</td>
             <td style="width:33%;"><span class="lbl">Buyer's PO #</span><br/>${esc(inv.customer_po_no)}</td>
-            <td><span class="lbl">Exchange Rate</span><br/>${sym}1 = ₹${fmt(er > 0 ? 1 / er : 1, 2)}</td>
+            <td><span class="lbl">Exchange Rate</span><br/>${
+                (inv.currency_code || 'INR').toUpperCase() === 'INR'
+                    ? '₹1 = ₹1'
+                    : `${sym}1 = ₹${fmtRate(er > 0 ? 1 / er : 1)}`
+            }</td>
         </tr>
     </table>
 

@@ -23,6 +23,12 @@ export class InvoiceLineResponseDto {
     uqc_code?: string;
     qty?: string;
     unit_price?: string;
+    /** Vendor (source) currency this line's unit_price was priced in — carried
+     *  from the source SO/Quotation line. Paired with cost_exchange_rate for
+     *  the detail page's "Vendor Rate" line. */
+    source_currency_code?: string;
+    /** Doc units per 1 source(vendor) unit; frozen at save time. */
+    cost_exchange_rate?: string;
     discount_pct?: string;
     margin_pct?: string;
     tax_pct?: string;
