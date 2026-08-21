@@ -21,6 +21,7 @@ import {
     escHtml as esc,
     fmt2 as fmt,
     fmt4,
+    fmtRate,
     docDate,
     joinAddress,
     buildTallyFooterTemplate as buildFooterTemplate,
@@ -474,6 +475,14 @@ function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
         ctx;
     const lines = po.lines || [];
     const sym = po.currency_symbol || po.currency_code || '₹';
+    // Same "Exchange Rate"/"In INR" convention as the HTML PDF above.
+    const isForeignPo = !!po.currency_code && po.currency_code.toUpperCase() !== 'INR';
+    const xRate = Number(po.exchange_rate) || 0;
+    const exchangeRateLabel = isForeignPo
+        ? xRate > 0
+            ? `${sym} 1 = ₹${fmtRate(1 / xRate)}`
+            : '-'
+        : '₹ 1 = ₹ 1';
     const COLS = 10;
     const pad = (cells: DocCell[]): DocCell[] => {
         const out = cells.slice(0, COLS);
@@ -514,6 +523,7 @@ function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
     metaPairs.push(['Destination', consigneeCountry || '-']);
     metaPairs.push(['Country', consigneeCountry || '-']);
     metaPairs.push(['Terms of Delivery', po.delivery_terms || '-']);
+    metaPairs.push(['Exchange Rate', exchangeRateLabel]);
 
     // ── Consignee (Ship to) | Buyer (Bill to) band ──
     const consigneeName = cs.name || customer.name || '';
@@ -685,6 +695,17 @@ function buildPoHtml(ctx: PoPdfContext): string {
     const rawGrandTotalCcy = inrTotal * rate;
     const grandTotalCcy = rawGrandTotalCcy;
 
+    // Header exchange_rate (sales-doc convention: doc-currency per ₹1, e.g.
+    // 0.0105 for USD). Used ONLY for the printed "Exchange Rate" line — line
+    // amounts stay native (see `rate` above).
+    const isForeignPo = !!po.currency_code && po.currency_code.toUpperCase() !== 'INR';
+    const xRate = Number(po.exchange_rate) || 0;
+    const exchangeRateLabel = isForeignPo
+        ? xRate > 0
+            ? `${sym} 1 = ₹${fmtRate(1 / xRate)}`
+            : '-'
+        : '₹ 1 = ₹ 1';
+
     // Consignee (Ship to) — frozen snapshot; falls back to the buyer.
     const cs: any = (po as any).consignee_snapshot || {};
     const consigneeName = cs.name || customer.name || '';
@@ -838,6 +859,9 @@ function buildPoHtml(ctx: PoPdfContext): string {
         </tr>
         <tr>
           <td class="meta" colspan="2"><span class="ml">Country: </span><b>${esc(consigneeCountry) || '&nbsp;'}</b></td>
+        </tr>
+        <tr>
+          <td class="meta" colspan="2">${meta('Exchange Rate', exchangeRateLabel)}</td>
         </tr>
         <tr>
           <td class="meta" colspan="2" style="height:90px;vertical-align:top">${meta('Terms of Delivery', po.delivery_terms)}</td>

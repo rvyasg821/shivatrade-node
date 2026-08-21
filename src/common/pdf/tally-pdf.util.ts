@@ -35,6 +35,22 @@ export const fmt4 = (v: any): string => {
     });
 };
 
+/**
+ * Exchange-rate display — up to 5dp (only as many as needed, Indian
+ * grouping) so a manual hand-check (doc value × this printed rate)
+ * reproduces a PDF's precise ₹ figure exactly, instead of landing a few
+ * rupees short from a 2dp-rounded rate. Shared by every doc PDF that prints
+ * a "1 {ccy} = X INR" line (Invoice, Sales Order, ...).
+ */
+export const fmtRate = (v: any): string => {
+    const n = Number(v);
+    if (!isFinite(n)) return escHtml(v);
+    return n.toLocaleString('en-IN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 5,
+    });
+};
+
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /**
