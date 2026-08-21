@@ -54,6 +54,13 @@ export class CreatorScopeService {
         jwt: CreatorScopeJwt,
         requested?: CreatorSelection
     ): Promise<undefined | string | string[]> {
+        // Client-wide kill switch: CREATOR_SCOPE_ENABLED=false lets every role
+        // see all company records regardless of who created them, ignoring the
+        // requested selection entirely. Does NOT affect module-level RBAC
+        // (can_read/can_update/etc) — those guards run independently, upstream
+        // of this service. Defaults to enabled if unset.
+        if (process.env.CREATOR_SCOPE_ENABLED === 'false') return undefined;
+
         const role = jwt?.roleName;
 
         // Platform owner — unrestricted.
