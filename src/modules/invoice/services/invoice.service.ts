@@ -495,7 +495,12 @@ export class InvoiceService {
         const createdRow = await this.invoiceRepository.findOneById(
             header._id.toString()
         );
-        if (createdRow) await this.syncDraftAdvanceReceipt(createdRow, userId);
+        if (createdRow)
+            await this.syncDraftAdvanceReceipt(
+                createdRow,
+                userId,
+                this.sourceAdvanceRate(source.pos)
+            );
 
         this.logger.log(`Invoice DRAFT created: ${header._id}`);
         return this.invoiceRepository.findOneById(header._id.toString());
@@ -598,11 +603,24 @@ export class InvoiceService {
             const updatedRow = await this.invoiceRepository.findOneById(
                 row._id.toString()
             );
-            if (updatedRow)
+            if (updatedRow) {
+                // Outside the `if (Array.isArray(lines))` block above — that
+                // `source` may not have run this pass (a status-only save),
+                // so re-derive it fresh from the row's current lines rather
+                // than assume it's in scope.
+                const curLines =
+                    await this.invoiceLineRepository.findByInvoiceId(
+                        row._id.toString()
+                    );
+                const curSource = await this.loadSourcePoContext(
+                    curLines as any
+                );
                 await this.syncDraftAdvanceReceipt(
                     updatedRow,
-                    (row as any).created_by
+                    (row as any).created_by,
+                    this.sourceAdvanceRate(curSource.pos)
                 );
+            }
 
             return this.invoiceRepository.findOneById(row._id.toString());
         }
@@ -637,10 +655,15 @@ export class InvoiceService {
      */
     private async syncDraftAdvanceReceipt(
         row: InvoiceDoc,
-        stampUserId?: string
+        stampUserId?: string,
+        advanceRate?: number
     ): Promise<void> {
         if (row.status !== ENUM_INVOICE_STATUS.DRAFT) return;
         const advanceAmt = round2(num(row.advance_received));
+        const rate =
+            advanceRate && advanceRate > 0
+                ? String(advanceRate)
+                : row.exchange_rate || '1';
         const active =
             await this.invoicePaymentRepository.findActiveByInvoiceId(
                 row._id.toString()
@@ -651,12 +674,19 @@ export class InvoiceService {
 
         if (advanceAmt > 0.005) {
             if (advancePay) {
-                // Re-sync the amount on a draft edit.
+                // Re-sync the amount + rate on a draft edit (e.g. the source
+                // SO's advance_amount/advance_exchange_rate was corrected).
+                let dirty = false;
                 if (round2(num(advancePay.amount)) !== advanceAmt) {
                     advancePay.amount = String(advanceAmt);
                     advancePay.payment_date = row.invoice_date;
-                    await this.invoicePaymentRepository.save(advancePay);
+                    dirty = true;
                 }
+                if (round2(num(advancePay.exchange_rate)) !== round2(Number(rate))) {
+                    advancePay.exchange_rate = rate;
+                    dirty = true;
+                }
+                if (dirty) await this.invoicePaymentRepository.save(advancePay);
                 return;
             }
             // Only seed the SO-derived advance when there are no other LIVE
@@ -683,9 +713,12 @@ export class InvoiceService {
                 method: 'advance',
                 reference: 'Advance against Sales Order',
                 receipt_voucher_no: receiptNo,
-                // Advance seeds at the invoice's rate (0 forex gain/loss); the
-                // operator can edit it later to realise the advance's own rate.
-                exchange_rate: row.exchange_rate || '1',
+                // Seeds at the SO's own advance_exchange_rate (the real rate
+                // at receipt) when available; falls back to the invoice's
+                // rate (0 forex gain/loss) for a domestic advance or an SO
+                // that predates this field. The operator can still edit it
+                // later to realise a different rate.
+                exchange_rate: rate,
                 created_by: stampUserId || (row as any).created_by,
             } as any);
         } else if (advancePay) {
@@ -1638,6 +1671,22 @@ export class InvoiceService {
     }
 
     /**
+     * Document-currency-per-₹1 at the moment the advance was received, from the
+     * first source SO that actually carries an advance — matches
+     * `sumSourceAdvances`' single-total simplification (one seeded receipt
+     * row for a multi-SO invoice, so one rate). Falls back to the invoice's
+     * own header rate (in `syncDraftAdvanceReceipt`) when no source SO has a
+     * real rate (domestic advance, or the SO predates this field).
+     */
+    private sourceAdvanceRate(pos: any[]): number | undefined {
+        const withAdvance = (pos || []).find(
+            (p) => num(p?.advance_amount) > 0
+        );
+        const rate = num(withAdvance?.advance_exchange_rate);
+        return rate > 0 ? rate : undefined;
+    }
+
+    /**
      * Resolve each line's source PO (SO) + its quotation voucher, keyed by
      * purchase_order_line_id. Used both to enforce the single-source invariant
      * and to snapshot purchase_order_voucher_no / quotation_voucher_no per line.
@@ -1705,6 +1754,43 @@ export class InvoiceService {
             });
         }
         return { byPoLineId, pos };
+    }
+
+    /**
+     * Re-sync `advance_received` + the seeded advance receipt for every DRAFT
+     * invoice already generated from this Sales Order. Called when the SO's
+     * own `advance_amount` changes AFTER invoice(s) already exist — an SO
+     * edit otherwise has no effect on invoices already created from it
+     * (`sumSourceAdvances`/`syncDraftAdvanceReceipt` only ever ran at that
+     * invoice's own create/update time). Non-draft invoices are left alone:
+     * their advance is frozen once issued, same rule `syncDraftAdvanceReceipt`
+     * already enforces on its own.
+     */
+    async resyncDraftAdvanceForSo(
+        soId: string,
+        userId?: string
+    ): Promise<void> {
+        const invoices = (await this.invoiceRepository.findAll({
+            purchase_order_id: soId,
+            soft_delete: false,
+            status: ENUM_INVOICE_STATUS.DRAFT,
+        } as any)) as InvoiceDoc[];
+        for (const row of invoices) {
+            const lines = await this.invoiceLineRepository.findByInvoiceId(
+                row._id.toString()
+            );
+            const source = await this.loadSourcePoContext(lines as any);
+            const advanceReceived = round2(this.sumSourceAdvances(source.pos));
+            if (round2(num(row.advance_received)) !== advanceReceived) {
+                row.advance_received = String(advanceReceived);
+                await this.invoiceRepository.save(row);
+            }
+            await this.syncDraftAdvanceReceipt(
+                row,
+                userId,
+                this.sourceAdvanceRate(source.pos)
+            );
+        }
     }
 
     /**

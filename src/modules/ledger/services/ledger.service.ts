@@ -180,7 +180,17 @@ export class LedgerService {
                 date: s.advance_date || s.po_date,
                 value: round2(num(s.advance_amount)),
                 currency_code: s.currency_code || 'INR',
-                exchange_rate: num(s.exchange_rate) || 1,
+                // Prefer the rate captured AT RECEIPT (`advance_exchange_rate`)
+                // over the SO's own header rate — they can legitimately differ
+                // (the header rate may be set/updated later; the advance was
+                // received at whatever rate applied that day). `!== 1` treats
+                // the column's default as "not really set" the same way
+                // `InvoiceService.sourceAdvanceRate` already does.
+                exchange_rate:
+                    num(s.advance_exchange_rate) > 0 &&
+                    num(s.advance_exchange_rate) !== 1
+                        ? num(s.advance_exchange_rate)
+                        : num(s.exchange_rate) || 1,
                 customer_id: s.customer_id?.toString(),
                 created_at: s.createdAt,
             }));

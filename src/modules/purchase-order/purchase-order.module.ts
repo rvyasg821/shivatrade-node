@@ -17,6 +17,7 @@ import { PfiModule } from '@modules/pfi/pfi.module';
 import { PriceListModule } from '@modules/price-list/price-list.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
 import { PoVendorModule } from '@modules/po-vendor/po-vendor.module';
+import { InvoiceModule } from '@modules/invoice/invoice.module';
 import { RebateModule } from '@modules/rebate/rebate.module';
 import { ExpenseModule } from '@modules/expense/expense.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
@@ -40,6 +41,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         PriceListModule,
         CurrencyModule,
         PoVendorModule,
+        InvoiceModule,
         RebateModule,
         ExpenseModule,
         CompanySettingsRepositoryModule,

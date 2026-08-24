@@ -92,6 +92,16 @@ export class PurchaseOrderAutoSplitRequestDto {
     @IsOptional()
     advance_date?: string;
 
+    /** Document-currency-per-₹1 at the moment the advance was received — same
+     *  convention as this SO's own `exchange_rate` and an invoice payment's
+     *  stored `exchange_rate`. Defaults to 1. */
+    @IsNumberString(
+        {},
+        { message: 'advance_exchange_rate must be a numeric string' }
+    )
+    @IsOptional()
+    advance_exchange_rate?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(200)

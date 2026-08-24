@@ -40,6 +40,7 @@ import { PriceListRepository } from '@modules/price-list/repository/repositories
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { PoVendorService } from '@modules/po-vendor/services/po-vendor.service';
+import { InvoiceService } from '@modules/invoice/services/invoice.service';
 
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
@@ -63,6 +64,7 @@ type CustomerOrderInput = {
     reference_no?: string;
     advance_amount?: string;
     advance_date?: string;
+    advance_exchange_rate?: string;
     advance_notes?: string;
     // Company bank account the advance was received into (+ name snapshot).
     advance_bank_account_id?: string;
@@ -97,6 +99,7 @@ export class PurchaseOrderService {
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly povService: PoVendorService,
+        private readonly invoiceService: InvoiceService,
         private readonly voucherService: VoucherService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource,
         private readonly dependencyCheckService: DependencyCheckService,
@@ -356,6 +359,8 @@ export class PurchaseOrderService {
             reference_no: (data as any).reference_no || null,
             advance_amount: (data as any).advance_amount ?? '0',
             advance_date: (data as any).advance_date || null,
+            advance_exchange_rate:
+                (data as any).advance_exchange_rate || '1',
             advance_notes: (data as any).advance_notes || null,
             advance_bank_account_id:
                 (data as any).advance_bank_account_id || null,
@@ -397,9 +402,11 @@ export class PurchaseOrderService {
 
     async update(
         row: PurchaseOrderDoc,
-        data: PurchaseOrderUpdateRequestDto
+        data: PurchaseOrderUpdateRequestDto,
+        userId?: string
     ): Promise<PurchaseOrderDoc> {
         const companyId = row.company_id.toString();
+        const prevAdvance = round2(num(row.advance_amount));
 
         // FY closure: block back-dating a sales order onto a closed date.
         if ((data as any).po_date && (data as any).po_date !== row.po_date) {
@@ -460,6 +467,18 @@ export class PurchaseOrderService {
         const refreshed = await this.poRepository.findOneById(
             row._id.toString()
         );
+
+        // An SO edit otherwise has no effect on invoice(s) already generated
+        // from it — advance_received / the seeded advance receipt only ever
+        // synced at THAT invoice's own create/update time. Re-sync draft
+        // invoices now so a later-added/changed advance actually shows up
+        // (issued invoices are untouched — their advance is frozen).
+        if (round2(num(refreshed?.advance_amount)) !== prevAdvance) {
+            await this.invoiceService.resyncDraftAdvanceForSo(
+                row._id.toString(),
+                userId
+            );
+        }
 
         this.logger.log(`PO updated: ${row._id}`);
         return refreshed;
@@ -1881,6 +1900,7 @@ export class PurchaseOrderService {
                 customer_po_number: customerOrder?.customer_po_number,
                 advance_amount: customerOrder?.advance_amount,
                 advance_date: customerOrder?.advance_date,
+                advance_exchange_rate: customerOrder?.advance_exchange_rate,
                 advance_notes: customerOrder?.advance_notes,
                 advance_bank_account_id:
                     customerOrder?.advance_bank_account_id,
@@ -2126,6 +2146,8 @@ export class PurchaseOrderService {
                     undefined,
                 advance_amount: opts?.customerOrder?.advance_amount,
                 advance_date: opts?.customerOrder?.advance_date,
+                advance_exchange_rate:
+                    opts?.customerOrder?.advance_exchange_rate,
                 advance_notes: opts?.customerOrder?.advance_notes,
                 advance_bank_account_id:
                     opts?.customerOrder?.advance_bank_account_id,
@@ -2378,6 +2400,7 @@ export class PurchaseOrderService {
                 reference_no: (r as any).reference_no,
                 advance_amount: (r as any).advance_amount,
                 advance_date: (r as any).advance_date,
+                advance_exchange_rate: (r as any).advance_exchange_rate,
                 advance_notes: (r as any).advance_notes,
                 advance_bank_account_id: (r as any).advance_bank_account_id,
                 advance_bank_name: (r as any).advance_bank_name,
