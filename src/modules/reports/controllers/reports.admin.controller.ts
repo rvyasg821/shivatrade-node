@@ -759,6 +759,25 @@ export class ReportsAdminController {
         return { data };
     }
 
+    /** Drill-down: EVERY line of one Sales Order — ordered vs invoiced qty,
+     *  including lines that haven't been invoiced at all yet. */
+    @Response('reports.salesOrderStatusLineBreakdown')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'so_id', required: true })
+    @ApiQuery({ name: 'invoice_type', required: false })
+    @Get('/sales-order-status/line-breakdown')
+    async salesOrderStatusLineBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<any>> {
+        const data = await this.reportsService.salesOrderStatusLineBreakdown(
+            companyId,
+            query.so_id,
+            query.invoice_type
+        );
+        return { data };
+    }
+
     /** Excel export of the Sales Order Status list (whole set + TOTAL). */
     @AuthJwtAccessProtected()
     @ApiQuery({ name: 'date_from', required: false })
@@ -839,6 +858,25 @@ export class ReportsAdminController {
         @Query() query: Record<string, string>
     ): Promise<IResponse<any>> {
         const data = await this.reportsService.purchaseOrderStatusBreakdown(
+            companyId,
+            query.pov_id,
+            query.grn_scope
+        );
+        return { data };
+    }
+
+    /** Drill-down: EVERY line of one Vendor PO — ordered vs received qty,
+     *  including lines that haven't been received at all yet. */
+    @Response('reports.purchaseOrderStatusLineBreakdown')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'pov_id', required: true })
+    @ApiQuery({ name: 'grn_scope', required: false })
+    @Get('/purchase-order-status/line-breakdown')
+    async purchaseOrderStatusLineBreakdown(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query() query: Record<string, string>
+    ): Promise<IResponse<any>> {
+        const data = await this.reportsService.purchaseOrderStatusLineBreakdown(
             companyId,
             query.pov_id,
             query.grn_scope

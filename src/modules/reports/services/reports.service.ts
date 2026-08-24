@@ -64,6 +64,7 @@ import {
     DocStatusTotalsDto,
     DocStatusOptionDto,
     DocStatusBreakdownRowDto,
+    DocStatusLineBreakdownRowDto,
 } from '../dtos/response/doc-status.response.dto';
 import {
     StockTurnoverResponseDto,
@@ -3694,7 +3695,13 @@ export class ReportsService {
                  JOIN invoices i
                      ON i._id = il.invoice_id
                     AND i.soft_delete = false
-                    AND i.status NOT IN ('draft', 'cancelled')
+                    -- A draft invoice already reserves this qty against the
+                    -- SO (the same qty-guard that blocks a second invoice
+                    -- from exceeding dispatched qty counts drafts too — see
+                    -- InvoiceRepository.sumQtyByPoLineId), so treat it as
+                    -- covered here as well; only a cancelled invoice frees
+                    -- the qty back up.
+                    AND i.status <> 'cancelled'
                     AND ($6::text IS NULL OR i.invoice_type = $6)
                  JOIN purchase_order_lines pol2
                      ON pol2._id = il.purchase_order_line_id
@@ -3771,7 +3778,10 @@ export class ReportsService {
              JOIN invoices i
                  ON i._id = il.invoice_id
                 AND i.soft_delete = false
-                AND i.status NOT IN ('draft', 'cancelled')
+                -- Draft invoices already reserve qty against the SO (see the
+                -- same note in salesOrderStatus above) — only cancelled frees
+                -- it back up.
+                AND i.status <> 'cancelled'
                 AND ($3::text IS NULL OR i.invoice_type = $3)
              JOIN purchase_order_lines pol
                  ON pol._id = il.purchase_order_line_id
@@ -3784,6 +3794,53 @@ export class ReportsService {
             [companyId, soId, invType]
         );
         return mapDocStatusBreakdown(raw);
+    }
+
+    /**
+     * Drill-down: EVERY line of ONE Sales Order (not just lines an invoice has
+     * touched) with its own ordered vs invoiced-so-far qty — so a line that
+     * hasn't been invoiced at all still shows up as fully pending, rather than
+     * being invisible the way `salesOrderStatusBreakdown`'s coverage-driven
+     * list would leave it.
+     */
+    async salesOrderStatusLineBreakdown(
+        companyId: string,
+        soId: string,
+        invoiceType?: string
+    ): Promise<DocStatusLineBreakdownRowDto[]> {
+        const typeRaw = (invoiceType || 'export').toLowerCase();
+        const invType = typeRaw === 'all' ? null : typeRaw;
+        const raw: any[] = await this.dataSource.query(
+            `SELECT pol._id                                   AS line_id,
+                    pol.product_id                            AS product_id,
+                    COALESCE(p.name, pol.description, '—')    AS product_name,
+                    p.code                                    AS product_code,
+                    pol.hsn_code                               AS hsn_code,
+                    pol.unit                                  AS unit,
+                    COALESCE(pol.qty, 0)::float8              AS ordered_qty,
+                    COALESCE(cov.covered_qty, 0)::float8      AS covered_qty
+             FROM purchase_order_lines pol
+             LEFT JOIN products p ON p._id = pol.product_id
+             LEFT JOIN (
+                 SELECT il.purchase_order_line_id AS line_id,
+                        SUM(COALESCE(il.qty, 0))  AS covered_qty
+                 FROM invoice_lines il
+                 JOIN invoices i
+                     ON i._id = il.invoice_id
+                    AND i.soft_delete = false
+                    -- Draft invoices already reserve qty against the SO (see
+                    -- the same note in salesOrderStatus above) — only
+                    -- cancelled frees it back up.
+                    AND i.status <> 'cancelled'
+                    AND ($3::text IS NULL OR i.invoice_type = $3)
+                 WHERE il.company_id = $1 AND il.soft_delete = false
+                 GROUP BY il.purchase_order_line_id
+             ) cov ON cov.line_id = pol._id
+             WHERE pol.purchase_order_id = $2
+             ORDER BY pol.seq`,
+            [companyId, soId, invType]
+        );
+        return mapDocStatusLineBreakdown(raw);
     }
 
     /** The Sales Order Status list as an .xlsx Buffer. */
@@ -3993,6 +4050,50 @@ export class ReportsService {
             [companyId, povId, scope]
         );
         return mapDocStatusBreakdown(raw);
+    }
+
+    /**
+     * Drill-down: EVERY line of ONE Vendor PO (not just lines a GRN has
+     * touched) with its own ordered vs received-so-far qty — mirrors
+     * `salesOrderStatusLineBreakdown` for the purchase side.
+     */
+    async purchaseOrderStatusLineBreakdown(
+        companyId: string,
+        povId: string,
+        grnScope?: string
+    ): Promise<DocStatusLineBreakdownRowDto[]> {
+        const scope =
+            (grnScope || 'confirmed').toLowerCase() === 'all'
+                ? 'all'
+                : 'confirmed';
+        const raw: any[] = await this.dataSource.query(
+            `SELECT pol._id                                    AS line_id,
+                    pol.product_id                             AS product_id,
+                    COALESCE(pr.name, pol.description, '—')    AS product_name,
+                    pr.code                                    AS product_code,
+                    COALESCE(pol.hsn_code, pr.hsn_code)        AS hsn_code,
+                    pol.unit                                   AS unit,
+                    COALESCE(pol.ordered_qty, 0)::float8       AS ordered_qty,
+                    COALESCE(cov.covered_qty, 0)::float8       AS covered_qty
+             FROM po_vendor_lines pol
+             LEFT JOIN products pr ON pr._id = pol.product_id
+             LEFT JOIN (
+                 SELECT gl.po_vendor_line_id AS line_id,
+                        SUM(COALESCE(gl.accepted_qty, 0)) AS covered_qty
+                 FROM grn_lines gl
+                 JOIN grns g
+                     ON g._id = gl.grn_id
+                    AND g.soft_delete = false
+                    AND g.status <> 'cancelled'
+                    AND ($3::text = 'all' OR g.status = $3)
+                 WHERE gl.company_id = $1 AND gl.soft_delete = false
+                 GROUP BY gl.po_vendor_line_id
+             ) cov ON cov.line_id = pol._id
+             WHERE pol.po_vendor_id = $2
+             ORDER BY pol.seq`,
+            [companyId, povId, scope]
+        );
+        return mapDocStatusLineBreakdown(raw);
     }
 
     /** The Purchase Order Status list as an .xlsx Buffer. */
@@ -5195,6 +5296,33 @@ function mapDocStatusBreakdown(raw: any[]): DocStatusBreakdownRowDto[] {
             // GST split — only reports that carry GST (POV Status) emit these.
             cover_gst: r.cover_gst != null ? r2(n(r.cover_gst)) : null,
             cover_total: r.cover_total != null ? r2(n(r.cover_total)) : null,
+        };
+    });
+}
+function mapDocStatusLineBreakdown(
+    raw: any[]
+): DocStatusLineBreakdownRowDto[] {
+    return raw.map((r) => {
+        const orderedQty = n(r.ordered_qty);
+        const coveredQty = n(r.covered_qty);
+        const pendingQty = r2(Math.max(0, orderedQty - coveredQty));
+        const status: 'open' | 'partial' | 'closed' =
+            coveredQty <= DOC_STATUS_EPS
+                ? 'open'
+                : coveredQty + DOC_STATUS_EPS >= orderedQty
+                ? 'closed'
+                : 'partial';
+        return {
+            line_id: r.line_id,
+            product_id: r.product_id ?? null,
+            product_name: r.product_name || '—',
+            product_code: r.product_code ?? null,
+            hsn_code: r.hsn_code ?? null,
+            unit: r.unit ?? null,
+            ordered_qty: r2(orderedQty),
+            covered_qty: r2(coveredQty),
+            pending_qty: pendingQty,
+            status,
         };
     });
 }

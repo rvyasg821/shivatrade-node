@@ -89,6 +89,25 @@ export class DocStatusBreakdownRowDto {
     cover_total?: number | null;
 }
 
+/** One PRODUCT LINE of the order document (the per-line drill-down) — ordered
+ *  qty on that line vs however much of it has been covered so far, regardless
+ *  of whether any coverage exists yet (unlike `DocStatusBreakdownRowDto`,
+ *  which only lists lines a coverage document actually touched). */
+export class DocStatusLineBreakdownRowDto {
+    line_id: string;
+    product_id: string | null;
+    product_name: string;
+    product_code: string | null;
+    hsn_code: string | null;
+    unit: string | null;
+
+    ordered_qty: number;
+    covered_qty: number;
+    pending_qty: number;
+    /** open | partial | closed — same classification as the doc-level status. */
+    status: 'open' | 'partial' | 'closed';
+}
+
 export class DocStatusResponseDto {
     period_label: string;
     rows: DocStatusRowDto[];
