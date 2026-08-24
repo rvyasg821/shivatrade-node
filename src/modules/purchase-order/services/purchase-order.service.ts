@@ -654,6 +654,28 @@ export class PurchaseOrderService {
             rateCache.set(src, r);
             return r;
         };
+        // A client-supplied rate is trusted only within tolerance of the
+        // Currency master — a frozen historical rate can drift a little from
+        // today's master, but a wildly different value (wrong pair, stale FE
+        // state, mistyped test data) is silently replaced rather than saved.
+        const RATE_TOLERANCE = 0.25;
+        const validatedRate = async (
+            src: string,
+            claimedRaw: string
+        ): Promise<string> => {
+            const master = await rateForSource(src);
+            const claimed = Number(claimedRaw);
+            if (!Number.isFinite(claimed) || claimed <= 0) {
+                return String(master);
+            }
+            if (
+                master > 0 &&
+                Math.abs(claimed - master) / master > RATE_TOLERANCE
+            ) {
+                return String(master);
+            }
+            return String(claimed);
+        };
 
         let seq = 0;
         for (const l of resolvedLines) {
@@ -663,11 +685,14 @@ export class PurchaseOrderService {
                 (l.vendor_id && vendorCurrencyById.get(l.vendor_id)) ||
                 'INR'
             ).toUpperCase();
+            // Same-currency lines always convert 1:1 — never trust a client
+            // value here (this is exactly how INR-doc/INR-source lines ended
+            // up frozen with an unrelated currency's rate).
             const costRate =
-                l.cost_exchange_rate != null && l.cost_exchange_rate !== ''
-                    ? String(l.cost_exchange_rate)
-                    : sourceCode === docCur
-                      ? '1'
+                sourceCode === docCur
+                    ? '1'
+                    : l.cost_exchange_rate != null && l.cost_exchange_rate !== ''
+                      ? await validatedRate(sourceCode, String(l.cost_exchange_rate))
                       : String(await rateForSource(sourceCode));
             const payload: any = {
                 company_id: companyId,
