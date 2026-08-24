@@ -2795,6 +2795,19 @@ export class PoVendorService {
                 shortLineCount += 1;
             }
             ln.dispatched_qty = String(dispatched);
+            // Over-dispatch is allowed (comment above) — when it happens, the
+            // vendor is actually shipping (and must be billed for) more than
+            // the original order, so line_total/POV Total need to follow the
+            // GREATER of ordered vs dispatched qty, not stay pinned to the
+            // original ordered_qty.
+            const billQty = Math.max(ordered, dispatched);
+            ln.line_total = String(
+                round2(
+                    billQty *
+                        num(ln.unit_price) *
+                        (1 - num(ln.discount_pct) / 100)
+                )
+            );
             await this.povLineRepository.save(ln);
         }
 
@@ -2927,6 +2940,20 @@ export class PoVendorService {
                 shortLineCount += 1;
             }
             ln.dispatched_qty = String(dispatched);
+            // Over-dispatch is allowed (line 2906 above) — when it happens,
+            // the vendor is actually shipping (and must be billed for) more
+            // than the original order, so line_total/POV Total need to
+            // follow the GREATER of ordered vs dispatched qty, not stay
+            // pinned to the original ordered_qty forever. Same formula as
+            // the ordered_qty edit path above (unit_price × (1 − disc%)).
+            const billQty = Math.max(ordered, dispatched);
+            ln.line_total = String(
+                round2(
+                    billQty *
+                        num(ln.unit_price) *
+                        (1 - num(ln.discount_pct) / 100)
+                )
+            );
             await this.povLineRepository.save(ln);
         }
 

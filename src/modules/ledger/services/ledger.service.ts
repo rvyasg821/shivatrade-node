@@ -180,7 +180,17 @@ export class LedgerService {
                 date: s.advance_date || s.po_date,
                 value: round2(num(s.advance_amount)),
                 currency_code: s.currency_code || 'INR',
-                exchange_rate: num(s.exchange_rate) || 1,
+                // Prefer the rate captured AT RECEIPT (`advance_exchange_rate`)
+                // over the SO's own header rate — they can legitimately differ
+                // (the header rate may be set/updated later; the advance was
+                // received at whatever rate applied that day). `!== 1` treats
+                // the column's default as "not really set" the same way
+                // `InvoiceService.sourceAdvanceRate` already does.
+                exchange_rate:
+                    num(s.advance_exchange_rate) > 0 &&
+                    num(s.advance_exchange_rate) !== 1
+                        ? num(s.advance_exchange_rate)
+                        : num(s.exchange_rate) || 1,
                 customer_id: s.customer_id?.toString(),
                 created_at: s.createdAt,
             }));
@@ -632,30 +642,16 @@ export class LedgerService {
             });
         }
 
-        // GRN goods received → CREDIT (client 2026-08-06): GST-inclusive value
-        // of goods received (accepted qty × price × (1−disc%) × (1+GST%),
-        // vendor currency). Flows into the Balance column and the Outstanding
-        // card, like a credit note.
-        const grnCredits = await this.vendorGrnCredits(companyId, vendorId);
-        for (const g of grnCredits) {
-            if (g.value <= 0) continue;
-            rows.push({
-                date: g.date,
-                type: 'grn',
-                particulars: `Goods received${
-                    g.voucher_no ? ` (${g.voucher_no})` : ''
-                }`,
-                voucher_no: g.voucher_no,
-                dr: 0,
-                cr: g.value,
-                dr_inr: 0,
-                cr_inr: round2(g.value * (g.exchange_rate || 1)),
-                created_at: g.created_at,
-            });
-        }
-
-        // Headline totals. Computed over ALL rows (not the from/to slice) —
-        // "what do we owe this vendor overall?" isn't a date-range question.
+        // Headline totals. Computed over ALL cash/adjustment rows (not the
+        // from/to slice) — "what do we owe this vendor overall?" isn't a
+        // date-range question. GRN rows are deliberately EXCLUDED here (they
+        // get pushed into `rows` further below, for the on-screen/exported
+        // statement + Balance footer only) — a GRN posts money BILLED, not
+        // money PAID, so folding it into `totalPaid`'s ΣDR−ΣCR would count
+        // the same bill twice once `totalBilled` (from POV order_value) is
+        // also added in the `outstanding` formula below. Mirrors the customer
+        // ledger's `cashRows`-before-`invoice-rows` split (see customer
+        // method above) — same bug pattern, same fix.
         //
         // Client rule (2026-07-21, supersedes 2026-07-17): adjustment notes ARE
         // counted, so Outstanding agrees with the Balance column below it. Same
@@ -690,6 +686,30 @@ export class LedgerService {
                 0
             )
         );
+
+        // GRN goods received → CREDIT (client 2026-08-06): GST-inclusive value
+        // of goods received (accepted qty × price × (1−disc%) × (1+GST%),
+        // vendor currency). Pushed AFTER the totals above so it flows into the
+        // Balance column and the on-screen/exported statement, like a credit
+        // note, WITHOUT double-counting into total_paid/outstanding (those
+        // already capture it via `totalBilled`, sourced from the POV itself).
+        const grnCredits = await this.vendorGrnCredits(companyId, vendorId);
+        for (const g of grnCredits) {
+            if (g.value <= 0) continue;
+            rows.push({
+                date: g.date,
+                type: 'grn',
+                particulars: `Goods received${
+                    g.voucher_no ? ` (${g.voucher_no})` : ''
+                }`,
+                voucher_no: g.voucher_no,
+                dr: 0,
+                cr: g.value,
+                dr_inr: 0,
+                cr_inr: round2(g.value * (g.exchange_rate || 1)),
+                created_at: g.created_at,
+            });
+        }
         // Migration opening balance. For a vendor, a CREDIT opening = we already
         // owe them → adds to outstanding; a DEBIT opening = we hold an advance
         // with them → reduces it.

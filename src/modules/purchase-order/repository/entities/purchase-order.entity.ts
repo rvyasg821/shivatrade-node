@@ -113,6 +113,21 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 200, nullable: true })
     advance_notes?: string;
 
+    /** Exchange rate at the moment the advance was received — document-
+     *  currency-per-₹1 (foreign-per-₹1), the SAME convention as this SO's own
+     *  header `exchange_rate` and an invoice payment's stored `exchange_rate`
+     *  column (both foreign-per-₹1; the Record Payment FORM displays the
+     *  human-friendly ₹-per-foreign inverse but stores this small number).
+     *  Defaults to 1 (domestic / same-currency SO). */
+    @Column({
+        type: 'numeric',
+        precision: 18,
+        scale: 6,
+        nullable: false,
+        default: 1,
+    })
+    advance_exchange_rate: string;
+
     /** Company bank account the advance was RECEIVED into (+ a name snapshot so
      *  it survives if the bank is later edited/removed). Mirrors the invoice
      *  receipt's `company_bank_account_id`/`bank_name`. */

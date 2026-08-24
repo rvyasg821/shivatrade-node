@@ -275,10 +275,11 @@ export class PurchaseOrderAdminController {
     @Put('/update/:id')
     async update(
         @Param('id') id: string,
-        @Body() body: PurchaseOrderUpdateRequestDto
+        @Body() body: PurchaseOrderUpdateRequestDto,
+        @AuthJwtPayload('user') userId: string
     ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
         const row = await this.poService.findOneById(id);
-        const updated = await this.poService.update(row, body);
+        const updated = await this.poService.update(row, body, userId);
         return { data: await this.poService.mapGet(updated) };
     }
 
@@ -356,6 +357,7 @@ export class PurchaseOrderAdminController {
                     reference_no: body.reference_no,
                     advance_amount: body.advance_amount,
                     advance_date: body.advance_date,
+                    advance_exchange_rate: body.advance_exchange_rate,
                     advance_notes: body.advance_notes,
                     advance_bank_account_id: body.advance_bank_account_id,
                     advance_bank_name: body.advance_bank_name,
@@ -395,6 +397,7 @@ export class PurchaseOrderAdminController {
                     reference_no: body.reference_no,
                     advance_amount: body.advance_amount,
                     advance_date: body.advance_date,
+                    advance_exchange_rate: body.advance_exchange_rate,
                     advance_notes: body.advance_notes,
                     advance_bank_account_id: body.advance_bank_account_id,
                     advance_bank_name: body.advance_bank_name,
