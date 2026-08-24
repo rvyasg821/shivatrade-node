@@ -46,6 +46,7 @@ import { CustomerRepository } from '@modules/customer/repository/repositories/cu
 import { CustomerContactRepository } from '@modules/customer/repository/repositories/customer-contact.repository';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
@@ -127,6 +128,7 @@ export class InvoiceService {
         private readonly productRepository: ProductRepository,
         private readonly povRepository: PoVendorRepository,
         private readonly povLineRepository: PoVendorLineRepository,
+        private readonly vendorRepository: VendorRepository,
         private readonly customerRepository: CustomerRepository,
         private readonly customerContactRepository: CustomerContactRepository,
         private readonly poRepository: PurchaseOrderRepository,
@@ -423,7 +425,13 @@ export class InvoiceService {
                 getCurrencySymbol(data.currency_code),
             exchange_rate: data.exchange_rate || '1',
             discount_total: data.discount_total || '0',
-            freight_charges: data.freight_charges || '0',
+            // Default freight to Σ source SOs' own freight_total (a
+            // multi-SO create otherwise silently drops every SO's freight
+            // but the first) — an explicit client-supplied value still wins.
+            freight_charges:
+                data.freight_charges != null && data.freight_charges !== ''
+                    ? data.freight_charges
+                    : String(round2(this.sumSourceFreight(source.pos))),
             insurance_charges: data.insurance_charges || '0',
             other_charges: data.other_charges || '0',
             // Advance is AUTO-MANAGED from the source Sales Orders (client
@@ -563,6 +571,34 @@ export class InvoiceService {
                     source.pos,
                     row.customer_id?.toString()
                 );
+                // Freight fix-up: an SO's freight_total is a per-shipment
+                // charge the operator may have already hand-adjusted on this
+                // invoice, so line edits never blindly RE-derive
+                // freight_charges from Σ source SOs (unlike advance_received
+                // below, which has no manual-edit UI at all). But bringing in
+                // a NEW source SO the operator hasn't seen yet (via "Add
+                // lines from SO" / "Add items from another SO") must add
+                // THAT SO's own freight — it was never in the total before.
+                // Diff against the PRE-edit line set to find genuinely new
+                // source SOs, then bump (never shrink) freight_charges by
+                // their freight_total.
+                const oldLines = await this.invoiceLineRepository.findByInvoiceId(
+                    row._id.toString()
+                );
+                const oldSource = await this.loadSourcePoContext(
+                    oldLines as any
+                );
+                const oldPoIds = new Set(
+                    oldSource.pos.map((p: any) => p._id.toString())
+                );
+                const newlyAddedFreight = source.pos
+                    .filter((p: any) => !oldPoIds.has(p._id.toString()))
+                    .reduce((s: number, p: any) => s + num(p.freight_total), 0);
+                if (newlyAddedFreight > 0) {
+                    row.freight_charges = String(
+                        round2(num(row.freight_charges) + newlyAddedFreight)
+                    );
+                }
                 await this.invoiceLineRepository.deleteByInvoiceId(
                     row._id.toString()
                 );
@@ -1671,6 +1707,16 @@ export class InvoiceService {
     }
 
     /**
+     * Σ freight_total over the DISTINCT source Sales Orders — same
+     * single-count-per-SO shape as `sumSourceAdvances`. Used to seed
+     * freight_charges at create, and to detect a newly-added SO's own
+     * freight contribution when lines are edited (see `update()`).
+     */
+    private sumSourceFreight(pos: any[]): number {
+        return (pos || []).reduce((s, p) => s + num(p?.freight_total), 0);
+    }
+
+    /**
      * Document-currency-per-₹1 at the moment the advance was received, from the
      * first source SO that actually carries an advance — matches
      * `sumSourceAdvances`' single-total simplification (one seeded receipt
@@ -1770,11 +1816,41 @@ export class InvoiceService {
         soId: string,
         userId?: string
     ): Promise<void> {
-        const invoices = (await this.invoiceRepository.findAll({
+        // Match by LINE, not the header `purchase_order_id` — a multi-SO
+        // invoice's header only names its PRIMARY source SO, so an invoice
+        // whose header points at a DIFFERENT SO but carries a line from this
+        // one (added via "Add lines from SO" / "Add items from another SO")
+        // would otherwise be silently skipped when THIS SO's advance changes.
+        const soLines = await this.poLineRepository.findAll({
+            purchase_order_id: soId,
+        } as any);
+        const soLineIds = (soLines as any[]).map((l) => l._id.toString());
+        const invoiceIdsFromLines = soLineIds.length
+            ? new Set(
+                  (
+                      (await this.invoiceLineRepository.findAll({
+                          purchase_order_line_id: { $in: soLineIds },
+                      } as any)) as any[]
+                  ).map((l) => l.invoice_id?.toString())
+              )
+            : new Set<string>();
+        const headerInvoices = (await this.invoiceRepository.findAll({
             purchase_order_id: soId,
             soft_delete: false,
             status: ENUM_INVOICE_STATUS.DRAFT,
         } as any)) as InvoiceDoc[];
+        const lineInvoices = invoiceIdsFromLines.size
+            ? ((await this.invoiceRepository.findAll({
+                  _id: { $in: Array.from(invoiceIdsFromLines) },
+                  soft_delete: false,
+                  status: ENUM_INVOICE_STATUS.DRAFT,
+              } as any)) as InvoiceDoc[])
+            : [];
+        const invoiceById = new Map<string, InvoiceDoc>();
+        for (const inv of [...headerInvoices, ...lineInvoices]) {
+            invoiceById.set(inv._id.toString(), inv);
+        }
+        const invoices = Array.from(invoiceById.values());
         for (const row of invoices) {
             const lines = await this.invoiceLineRepository.findByInvoiceId(
                 row._id.toString()
@@ -2302,6 +2378,25 @@ export class InvoiceService {
             products.map((p: any) => [p._id.toString(), p])
         );
 
+        // PO is multi-vendor at line level — hydrate each line's own vendor
+        // (name) so the invoice line built from it carries the vendor
+        // forward, same as every other line-building path in this module.
+        const vendorIds = Array.from(
+            new Set(
+                poLines
+                    .map((l: any) => l.vendor_id?.toString())
+                    .filter((v: any): v is string => !!v)
+            )
+        );
+        const vendors = vendorIds.length
+            ? ((await this.vendorRepository.findAll({
+                  _id: { $in: vendorIds },
+              } as any)) as any[])
+            : [];
+        const vendorById = new Map<string, any>(
+            vendors.map((v: any) => [v._id.toString(), v])
+        );
+
         // dispatched-qty per PO line, only counting POVs in
         // dispatched/closed status (matches assertQtyGuardForLines).
         const povLinesAll = (await this.povLineRepository.findAll({
@@ -2373,11 +2468,14 @@ export class InvoiceService {
                 ceiling - invoicedOthers - (selfQtyByPoLine.get(k) || 0);
             if (available <= 1e-6) continue;
             const prod = productById.get(l.product_id?.toString());
+            const vendor = vendorById.get(l.vendor_id?.toString());
             result.push({
                 purchase_order_line_id: k,
                 product_id: l.product_id?.toString(),
                 product_name: prod?.name || l.product_name,
                 product_code: prod?.code || l.product_code,
+                vendor_id: l.vendor_id?.toString() || null,
+                vendor_name: vendor?.company_name || null,
                 part_no: prod?.part_no || (l as any).part_no,
                 description: l.description || prod?.description,
                 hsn_code: l.hsn_code || prod?.hsn_code,
@@ -2390,7 +2488,16 @@ export class InvoiceService {
                     (l as any).source_currency_code || 'INR',
                 cost_exchange_rate:
                     (l as any).cost_exchange_rate ?? '1',
-                tax_pct: l.tax_pct,
+                // Costing snapshot — was missing entirely, so an added line
+                // silently lost its SO-side discount/margin (defaulted to 0
+                // on the frontend since the field was simply never sent).
+                discount_pct: (l as any).discount_pct ?? '0',
+                margin_pct: (l as any).margin_pct ?? '0',
+                // GST for the invoice line comes from the PRODUCT master, not
+                // the SO line's own `tax_pct` — that field is the VENDOR's
+                // cost-side GST rate (see purchase-order-line.entity.ts), not
+                // the product's own (HSN-based) sales GST rate.
+                tax_pct: prod?.tax_pct ?? '0',
                 product_rebates_snapshot: l.product_rebates_snapshot || [],
                 product_expenses_snapshot: l.product_expenses_snapshot || [],
                 // Packing snapshot carried from the SO line → invoice line.

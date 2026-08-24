@@ -460,7 +460,14 @@ function lineSellDoc(l: any): { amount: number; rate: number } {
     const marginBase = taxable + expenses - rebates;
     const margin = r2((marginBase * (Number(l.margin_pct) || 0)) / 100);
     const amount = r2(taxable + expenses - rebates + margin);
-    const rate = qty > 0 ? amount / qty : costDoc;
+    // Printed "Rate" is the PRE-discount per-unit price, so the PDF's own
+    // Rate/Disc.%/Amount columns are self-consistent (Amount = Rate × Qty ×
+    // (1 − Disc%)) and visibly show the customer the discount they were
+    // given, rather than a net rate with a redundant/misleading Disc.%
+    // column next to it. `amount` itself is unchanged — still the fully
+    // net (post-discount, post-expenses, post-rebates, post-margin) total.
+    const netRate = qty > 0 ? amount / qty : costDoc;
+    const rate = disc < 100 ? netRate / (1 - disc / 100) : netRate;
     return { amount, rate };
 }
 

@@ -344,10 +344,37 @@ export class InvoicePdfService {
                             (billedByPoId.get(pid) || 0) + num(l.line_total)
                         );
                     }
+                    // `billedByPoId` is only Σline_total (Net + Margin) — the
+                    // rest of each SO's own true total is its OWN
+                    // freight_total (a per-shipment charge, looked up
+                    // directly per SO — never pro-rated from the invoice's
+                    // combined header figure, which can include OTHER SOs'
+                    // freight too, or be stale on an invoice saved before
+                    // this fix, and would misattribute/corrupt the number).
+                    // Insurance/other charges have no per-SO source field,
+                    // so those (rare, usually 0) are still pro-rated by
+                    // billed share. Deliberately NO forced reconciliation to
+                    // header grand_total here — each row is the SO's own
+                    // honest total; if the header itself is wrong (e.g. a
+                    // pre-existing invoice not yet re-saved through the
+                    // freight_charges auto-sum fix), that's a header problem
+                    // to fix by re-saving, not something to paper over by
+                    // corrupting one SO's row to force-fit the total.
+                    const totalBilled = Array.from(
+                        billedByPoId.values()
+                    ).reduce((s, v) => s + v, 0);
+                    const insuranceOther =
+                        num(invoice.insurance_charges) +
+                        num(invoice.other_charges);
                     soAdvanceRows = posSorted.map((po) => {
+                        const billed = billedByPoId.get(po._id.toString()) || 0;
+                        const soFreight = num(po.freight_total);
+                        const share =
+                            totalBilled > 0 ? billed / totalBilled : 0;
                         const invoiceValue =
                             Math.round(
-                                (billedByPoId.get(po._id.toString()) || 0) * 100
+                                (billed + soFreight + insuranceOther * share) *
+                                    100
                             ) / 100;
                         const advance =
                             Math.round(num(po.advance_amount) * 100) / 100;
@@ -796,11 +823,12 @@ function buildInvoiceExcelSections(
     sections.push({ kind: 'table', head, rows, align: ['c', 'c', 'c', 'l', 'l', 'r', 'r', 'r'] });
     sections.push({ kind: 'spacer' });
 
-    // Advance Received (Sales Order-wise) — mirrors the PDF table; only SOs that
-    // carry an advance are listed. Replaces the old Advance/Balance sum rows.
-    const soAdv: any[] = (
-        Array.isArray(inv.so_advance_rows) ? inv.so_advance_rows : []
-    ).filter((r: any) => num(r.advance) > 0);
+    // Advance Received (Sales Order-wise) — mirrors the PDF table. Lists
+    // EVERY source SO, whether or not it carries an advance. Replaces the
+    // old Advance/Balance sum rows.
+    const soAdv: any[] = Array.isArray(inv.so_advance_rows)
+        ? inv.so_advance_rows
+        : [];
     if (soAdv.length) {
         // Place the 4 logical columns across the sheet's 8 columns so the Sales
         // Order voucher gets a wide (3-column) cell and never wraps. Cells sit at
@@ -1326,23 +1354,25 @@ const SHIPPING_BILL_TYPE_LABELS: Record<string, string> = {
 /** Cargo totals strip — Total Packages / Net Weight / Gross Weight from the
  *  invoice header (auto-summed from the lines). Returns '' when none set. */
 /**
- * Sales-Order-wise advance table (client 2026-08-07): when the invoice draws
- * from several SOs each with its own advance, itemise them — Sales Order,
- * Invoice Value (that SO's billed lines), Advance Received, Receivable
- * (invoice value − advance). Only the SOs that actually carry an advance are
- * listed. When NO SO carries an advance, a compact "Payment Summary" (Invoice
- * Value / Total Received / Payable Amount) is shown instead — so the export PDF
- * always displays the Payable Amount. Currently used by the export PDF only.
+ * Sales-Order-wise advance table (client 2026-08-07, revised 2026-08-24):
+ * itemises EVERY source SO on the invoice — Sales Order, Invoice Value (that
+ * SO's billed lines + its pro-rata share of freight/insurance/other so the
+ * column reconciles to the invoice's own grand_total), Advance Received,
+ * Receivable (invoice value − advance) — whether or not that SO actually
+ * carries an advance (a 0 advance just yields Receivable = Invoice Value).
+ * The compact "Payment Summary" fallback only fires when there's no
+ * resolvable source SO at all (e.g. a pure from-stock invoice). Currently
+ * used by the export PDF only.
  */
 function advanceSoTable(inv: any, sym: string): string {
-    const all: any[] = Array.isArray(inv.so_advance_rows)
+    // ALWAYS render the SO-wise table — every source SO of the invoice is
+    // listed, whether or not it carries an advance (client ask: the
+    // simplified "Payment Summary" fallback below is no longer used; kept
+    // only for the true edge case of an invoice with no resolvable source
+    // SO at all, e.g. a from-stock line with no purchase_order_line_id).
+    const rows: any[] = Array.isArray(inv.so_advance_rows)
         ? inv.so_advance_rows
         : [];
-    const rows = all.filter((r) => num(r.advance) > 0);
-    // No advance on any source SO → still show a compact payable summary so the
-    // export PDF ALWAYS shows what's left to collect (client 2026-08-12).
-    // Payable = grand_total − total received (no SO-wise receivable shortfall
-    // to carry when there was never an advance).
     if (!rows.length) {
         const totalReceived = num(inv.total_received);
         const payable = num(inv.grand_total) - totalReceived;
