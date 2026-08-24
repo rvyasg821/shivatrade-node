@@ -22,6 +22,7 @@ import { UserRepositoryModule } from '@modules/user/repository/user.repository.m
 import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
 // Stock ledger (Goods Out) — invoice issue/cancel post sale_out / sale_reversal.
 import { InventoryModule } from '@modules/inventory/inventory.module';
+import { CurrencyModule } from '@modules/currency/currency.module';
 
 /**
  * Phase 1 - Export Commercial Invoice.
@@ -50,6 +51,7 @@ import { InventoryModule } from '@modules/inventory/inventory.module';
         // Linked Adjustment Notes move balance_receivable — repository only, so
         // there is no cycle with AdjustmentNoteModule (which imports this one).
         AdjustmentNoteRepositoryModule,
+        CurrencyModule,
     ],
     providers: [
         InvoiceService,

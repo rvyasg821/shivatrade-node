@@ -38,6 +38,7 @@ import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.en
 import { ImportContext } from '@common/import/import-context.interface';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
+import { CurrencyService } from '@modules/currency/services/currency.service';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
@@ -137,6 +138,7 @@ export class InvoiceService {
         private readonly stockLedger: StockLedgerService,
         private readonly companySettings: CompanySettingsService,
         private readonly toleranceGuard: ToleranceGuardService,
+        private readonly currencyService: CurrencyService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
@@ -483,7 +485,8 @@ export class InvoiceService {
             header._id.toString(),
             companyId,
             data.lines,
-            source.byPoLineId
+            source.byPoLineId,
+            data.currency_code
         );
         await this.recompute(header._id.toString());
 
@@ -562,7 +565,8 @@ export class InvoiceService {
                     row._id.toString(),
                     row.company_id.toString(),
                     lines,
-                    source.byPoLineId
+                    source.byPoLineId,
+                    row.currency_code
                 );
                 // Auto-manage the advance: Σ advance_amount over EVERY distinct
                 // source SO now on the invoice — so adding lines from another SO
@@ -1805,8 +1809,46 @@ export class InvoiceService {
         lines: InvoiceLineDto[],
         // Source PO context keyed by purchase_order_line_id — supplies the
         // per-line SO + Quotation voucher snapshots (§3b / §5c).
-        sourceByPoLineId?: Map<string, { po: any; quotationVoucherNo?: string }>
+        sourceByPoLineId?: Map<string, { po: any; quotationVoucherNo?: string }>,
+        // The invoice's own document currency — needed to validate/derive
+        // each line's source→document cost_exchange_rate against the
+        // Currency master rather than trusting the payload blindly.
+        docCurrencyCode?: string
     ): Promise<void> {
+        const docCur = (docCurrencyCode || 'INR').toUpperCase();
+        const rateCache = new Map<string, number>();
+        const rateForSource = async (src: string): Promise<number> => {
+            if (rateCache.has(src)) return rateCache.get(src)!;
+            const r = await this.currencyService.getPairRate(
+                companyId,
+                src,
+                docCur
+            );
+            rateCache.set(src, r);
+            return r;
+        };
+        // A client-supplied rate is trusted only within tolerance of the
+        // Currency master — a frozen historical rate can drift a little from
+        // today's master, but a wildly different value (wrong pair, stale FE
+        // state, mistyped test data) is silently replaced rather than saved.
+        const RATE_TOLERANCE = 0.25;
+        const validatedRate = async (
+            src: string,
+            claimedRaw: string
+        ): Promise<string> => {
+            const master = await rateForSource(src);
+            const claimed = Number(claimedRaw);
+            if (!Number.isFinite(claimed) || claimed <= 0) {
+                return String(master);
+            }
+            if (
+                master > 0 &&
+                Math.abs(claimed - master) / master > RATE_TOLERANCE
+            ) {
+                return String(master);
+            }
+            return String(claimed);
+        };
         // Pre-fetch the product master for every line in one go, so missing
         // hsn_code / product_name / unit fields on the incoming DTO fall back
         // to the master without N round-trips.
@@ -1919,6 +1961,23 @@ export class InvoiceService {
             )
                 ? (l as any).product_expenses_snapshot
                 : cost?.product_expenses_snapshot ?? null;
+            const sourceCode = (
+                (l as any).source_currency_code ||
+                (cost as any)?.source_currency_code ||
+                'INR'
+            ).toUpperCase();
+            // Same-currency lines always convert 1:1 — never trust a client
+            // value here (this is exactly how INR-doc/INR-source lines ended
+            // up frozen with an unrelated currency's rate).
+            const claimedRate =
+                (l as any).cost_exchange_rate ??
+                (cost as any)?.cost_exchange_rate;
+            const costExchangeRate =
+                sourceCode === docCur
+                    ? '1'
+                    : claimedRate != null && claimedRate !== ''
+                      ? await validatedRate(sourceCode, String(claimedRate))
+                      : String(await rateForSource(sourceCode));
             await this.invoiceLineRepository.create({
                 invoice_id: invoiceId,
                 company_id: companyId,
@@ -1939,15 +1998,10 @@ export class InvoiceService {
                 qty: l.qty,
                 unit_price: l.unit_price,
                 // Multi-currency: carry the line's source (vendor) currency +
-                // frozen source→document rate from the SO line (or the payload).
-                source_currency_code:
-                    (l as any).source_currency_code ||
-                    (cost as any)?.source_currency_code ||
-                    'INR',
-                cost_exchange_rate:
-                    (l as any).cost_exchange_rate ??
-                    (cost as any)?.cost_exchange_rate ??
-                    '1',
+                // frozen source→document rate from the SO line (or the
+                // payload), validated against the Currency master above.
+                source_currency_code: sourceCode,
+                cost_exchange_rate: costExchangeRate,
                 discount_pct: l.discount_pct || '0',
                 margin_pct: marginPct || '0',
                 tax_pct: l.tax_pct || '0',
