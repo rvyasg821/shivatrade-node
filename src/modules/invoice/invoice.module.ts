@@ -14,6 +14,7 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 import { CustomerRepositoryModule } from '@modules/customer/repository/customer.repository.module';
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
+import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
 import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repository/purchase-order.repository.module';
 import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
 import { RebateRepositoryModule } from '@modules/rebate/repository/rebate.repository.module';
@@ -43,6 +44,7 @@ import { CurrencyModule } from '@modules/currency/currency.module';
         CustomerRepositoryModule,
         ProductRepositoryModule,
         PoVendorRepositoryModule,
+        VendorRepositoryModule,
         PurchaseOrderRepositoryModule,
         QuotationRepositoryModule,
         RebateRepositoryModule,
