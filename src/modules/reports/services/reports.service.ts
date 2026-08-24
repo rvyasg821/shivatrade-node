@@ -2160,13 +2160,7 @@ export class ReportsService {
     ): Promise<Buffer> {
         const result = await this.salesTurnover(companyId, query);
         const firstCol = result.group_by === 'customer' ? 'Customer' : 'Month';
-        const header = [
-            firstCol,
-            'Invoices',
-            'Sales Value',
-            'Received',
-            'Outstanding',
-        ];
+        const header = [firstCol, 'Invoices', 'Sales Value'];
 
         const aoa: (string | number)[][] = [
             [`Sales Turnover — ${result.period_label}`],
@@ -2188,20 +2182,12 @@ export class ReportsService {
             aoa.push([label]); // currency section header
             aoa.push(header);
             for (const r of g.rows) {
-                aoa.push([
-                    r.label,
-                    r.invoice_count,
-                    r.sales_value,
-                    r.received,
-                    r.outstanding,
-                ]);
+                aoa.push([r.label, r.invoice_count, r.sales_value]);
             }
             aoa.push([
                 'TOTAL',
                 g.totals.invoice_count,
                 g.totals.sales_value,
-                g.totals.received,
-                g.totals.outstanding,
             ]);
             aoa.push([]); // blank line between currency sections
         }
