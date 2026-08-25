@@ -1246,7 +1246,11 @@ export class SalesDocImportService {
             const qty = num(l.qty);
             if (includeComputed) {
                 row.push(grand);
-                if (isForeign) row.push(qty ? r2(amtDoc / qty) : 0, amtDoc);
+                // NOT r2() here — a sub-cent per-unit rate (e.g. $0.00032 on
+                // a huge qty) rounds to 0.00 at 2dp and prints as a flat
+                // "$0.0000", hiding the real rate. The cell's own numFmt
+                // controls the displayed decimals; keep the raw value.
+                if (isForeign) row.push(qty ? amtDoc / qty : 0, amtDoc);
             }
             // Freight share + CNF = FOB + this line's qty-share of freight.
             // Blank (not 0) when the document carries no freight, so an
@@ -1255,7 +1259,7 @@ export class SalesDocImportService {
             row.push(freightTotal > 0 ? lineFreight : '');
             if (includeComputed) {
                 const cnfAmt = r2(amtDoc + lineFreight);
-                row.push(cnfAmt, qty ? r2(cnfAmt / qty) : 0);
+                row.push(cnfAmt, qty ? cnfAmt / qty : 0);
             }
             // Export / packing values (aligned with the appended headers).
             row.push(
@@ -1599,12 +1603,16 @@ export class SalesDocImportService {
             // ONLY for the Realization column and the freight/CNF figures,
             // which are always in the document currency.
             const amtDoc = r2(grand * (num(l.cost_exchange_rate) || 1));
-            const rateDoc = qty ? r2(amtDoc / qty) : 0;
+            // NOT r2() — a sub-cent per-unit rate (e.g. $0.00032 on a huge
+            // qty) rounds to 0.00 at 2dp and prints as a flat "$0.0000",
+            // hiding the real rate. fx(...,4) below controls the displayed
+            // decimals; keep the raw division here.
+            const rateDoc = qty ? amtDoc / qty : 0;
             // CNF (Cost + Freight) = realization amount + this line's freight
             // share, both in document currency — mirrors the worksheet.
             const lineFreight = hasFreight ? num(lineFreights[i]) : 0;
             const cnfAmt = r2(amtDoc + lineFreight);
-            const cnfRate = qty ? r2(cnfAmt / qty) : 0;
+            const cnfRate = qty ? cnfAmt / qty : 0;
 
             totals.qty += qty;
             totals.value += taxable;
@@ -1642,14 +1650,14 @@ export class SalesDocImportService {
             row[marginIdx] = srcMoney(marginAmt);
             row[grandIdx] = srcMoney(grand);
             if (hasRealization) {
-                row[rateIdx] = fx(rateDoc, 4);
+                row[rateIdx] = fx(rateDoc, 5);
                 row[amtIdx] = fx(amtDoc, 2);
             }
             if (hasFreight) {
                 row[freightIdx] = docMoney(lineFreight);
                 row[cnfAmtIdx] = docMoney(cnfAmt);
                 row[cnfRateIdx] = isForeign
-                    ? fx(cnfRate, 4)
+                    ? fx(cnfRate, 5)
                     : docMoney(cnfRate);
             }
             return row;
@@ -1675,9 +1683,9 @@ export class SalesDocImportService {
         if (hasFreight) {
             totalRow[freightIdx] = docMoney(totals.freight);
             totalRow[cnfAmtIdx] = docMoney(totals.cnf);
-            const cnfRateTot = totals.qty ? r2(totals.cnf / totals.qty) : 0;
+            const cnfRateTot = totals.qty ? totals.cnf / totals.qty : 0;
             totalRow[cnfRateIdx] = isForeign
-                ? fx(cnfRateTot, 4)
+                ? fx(cnfRateTot, 5)
                 : docMoney(cnfRateTot);
         }
 
