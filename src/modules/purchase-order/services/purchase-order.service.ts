@@ -407,6 +407,7 @@ export class PurchaseOrderService {
     ): Promise<PurchaseOrderDoc> {
         const companyId = row.company_id.toString();
         const prevAdvance = round2(num(row.advance_amount));
+        const prevAdvanceRate = round2(num((row as any).advance_exchange_rate));
 
         // FY closure: block back-dating a sales order onto a closed date.
         if ((data as any).po_date && (data as any).po_date !== row.po_date) {
@@ -471,9 +472,16 @@ export class PurchaseOrderService {
         // An SO edit otherwise has no effect on invoice(s) already generated
         // from it — advance_received / the seeded advance receipt only ever
         // synced at THAT invoice's own create/update time. Re-sync draft
-        // invoices now so a later-added/changed advance actually shows up
-        // (issued invoices are untouched — their advance is frozen).
-        if (round2(num(refreshed?.advance_amount)) !== prevAdvance) {
+        // invoices now so a later-added/changed advance (amount OR the
+        // exchange rate it was received at) actually shows up (issued
+        // invoices are untouched — their advance is frozen).
+        const advanceRateChanged =
+            round2(num((refreshed as any)?.advance_exchange_rate)) !==
+            prevAdvanceRate;
+        if (
+            round2(num(refreshed?.advance_amount)) !== prevAdvance ||
+            advanceRateChanged
+        ) {
             await this.invoiceService.resyncDraftAdvanceForSo(
                 row._id.toString(),
                 userId
