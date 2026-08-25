@@ -320,10 +320,17 @@ export class PriceListAdminController {
                 company_id: companyId,
                 product_id: productId,
             } as any,
-            { order: { effective_date: 'desc' as any } }
+            {
+                order: {
+                    effective_date: 'desc' as any,
+                    createdAt: 'desc' as any,
+                },
+            }
         );
-        // Rows are ordered effective_date desc, so the first row seen per
-        // vendor is its latest price.
+        // Rows are ordered effective_date desc (createdAt desc breaks ties —
+        // an edit that keeps the same effective_date, the common case, would
+        // otherwise sort arbitrarily against its own prior versions), so the
+        // first row seen per vendor is its latest price.
         const byVendor = new Map<string, any>();
         for (const r of rows as any[]) {
             const key = r.vendor_id?.toString();
@@ -361,10 +368,16 @@ export class PriceListAdminController {
                 company_id: companyId,
                 product_id: { $in: productIds },
             } as any,
-            { order: { effective_date: 'desc' as any } }
+            {
+                order: {
+                    effective_date: 'desc' as any,
+                    createdAt: 'desc' as any,
+                },
+            }
         );
         // Group by product → latest row per vendor (rows are effective_date desc,
-        // so the first seen per (product, vendor) is the current price).
+        // createdAt desc breaks ties between same-day edits, so the first seen
+        // per (product, vendor) is the current price).
         const perProduct = new Map<string, Map<string, any>>();
         for (const r of rows as any[]) {
             const pid = r.product_id?.toString();
