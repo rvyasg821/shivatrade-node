@@ -1585,6 +1585,7 @@ export class PoVendorService {
                 hsn_code?: string;
                 ordered_qty?: string;
                 unit_price?: string;
+                discount_pct?: string;
             }>;
             delivery_address_id?: string;
             delivery_address?: string;
@@ -1661,6 +1662,11 @@ export class PoVendorService {
         // Per-line unit-price override (INR) — operator edited the Rate column.
         // When set, it wins over the price-list / PO-line rate for that line.
         const priceOverrideByLine = new Map<string, string>();
+        // Per-line vendor discount % — operator typed on the generate-POV
+        // screen. Was parsed here into nothing and silently dropped before
+        // reaching createFromPo(), which does honour discount_pct — the
+        // override map + payload wiring below closes that gap.
+        const discountOverrideByLine = new Map<string, string>();
         for (const a of data.assignments) {
             if (!a.purchase_order_line_id || !a.vendor_id) {
                 throw new BadRequestException(
@@ -1692,6 +1698,12 @@ export class PoVendorService {
                 priceOverrideByLine.set(
                     a.purchase_order_line_id,
                     String(a.unit_price)
+                );
+            }
+            if (a.discount_pct != null && String(a.discount_pct) !== '') {
+                discountOverrideByLine.set(
+                    a.purchase_order_line_id,
+                    String(num(a.discount_pct))
                 );
             }
             const arr = byVendor.get(a.vendor_id) || [];
@@ -1851,6 +1863,7 @@ export class PoVendorService {
                             unit_price: unitPrice,
                             tax_pct: taxOverrideByLine.get(lid),
                             hsn_code: hsnOverrideByLine.get(lid),
+                            discount_pct: discountOverrideByLine.get(lid),
                             allow_over_pending: overPending || undefined,
                         };
                     })
