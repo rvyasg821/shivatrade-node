@@ -3109,6 +3109,20 @@ export class PoVendorService {
             for (const ln of lines) {
                 if (num(ln.dispatched_qty) !== 0) {
                     ln.dispatched_qty = '0';
+                    // dispatch() bills the GREATER of ordered_qty vs
+                    // dispatched_qty (to correctly bill an over-dispatch), so
+                    // an over-dispatched line's line_total can be pinned to
+                    // dispatched_qty, not ordered_qty. With dispatched_qty
+                    // back to 0, the billing basis is ordered_qty alone —
+                    // recompute so the line's pricing doesn't stay stuck at
+                    // the stale over-dispatch total.
+                    ln.line_total = String(
+                        round2(
+                            num(ln.ordered_qty) *
+                                num(ln.unit_price) *
+                                (1 - num(ln.discount_pct) / 100)
+                        )
+                    );
                     await this.povLineRepository.save(ln);
                 }
             }

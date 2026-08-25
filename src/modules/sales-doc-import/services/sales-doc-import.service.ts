@@ -120,19 +120,26 @@ function computeLineCosting(l: SalesDocExportLineDto) {
     const gross = r2(qty * price);
     const discountAmt = r2((gross * disc) / 100);
     const taxable = r2(gross - discountAmt);
-    // Expenses first — % on taxable, fixed as-is.
+    // Expenses first — % on taxable (doc currency, no convert); fixed is an
+    // absolute in the vendor (source) currency → convert source→doc with the
+    // same per-line rate as the price (mirrors the FE _helpers.js — a fixed
+    // expense used unconverted here was added as if already in the document
+    // currency, hugely inflating the exported total).
+    const lineRate = num(l.cost_exchange_rate) || 1;
     let expensesAmt = 0;
     for (const e of l.product_expenses_snapshot || []) {
         if ((e as any).type === 'percent')
             expensesAmt += (taxable * num((e as any).value)) / 100;
-        else expensesAmt += num((e as any).value);
+        else expensesAmt += num((e as any).value) * lineRate;
     }
     expensesAmt = r2(expensesAmt);
     const afterExpenses = r2(taxable + expensesAmt);
-    // Rebates on the post-expense total (FOB = taxable + expenses).
+    // Rebates on the post-expense total (FOB = taxable + expenses); fixed
+    // converted source→doc like expenses.
     let rebatesAmt = 0;
     for (const r of l.product_rebates_snapshot || []) {
-        if ((r as any).type === 'fixed') rebatesAmt += num((r as any).pct);
+        if ((r as any).type === 'fixed')
+            rebatesAmt += num((r as any).pct) * lineRate;
         else rebatesAmt += (afterExpenses * num((r as any).pct)) / 100;
     }
     rebatesAmt = r2(rebatesAmt);
