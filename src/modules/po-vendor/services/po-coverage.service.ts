@@ -151,7 +151,13 @@ export class PoCoverageService {
             if (!k) continue;
             const cur = costByPoLine.get(k) || { qty: 0, value: 0 };
             cur.qty += num(pl.ordered_qty);
-            cur.value += num(pl.ordered_qty) * num(pl.unit_price);
+            // Use line_total (qty × unit_price × (1 − discount_pct/100)), NOT
+            // qty × unit_price alone — the latter ignores any discount
+            // negotiated on the POV, so the weighted-average vendor rate (and
+            // the cost-variance badge derived from it) overstated cost by the
+            // discount amount, even showing an increase when the discounted
+            // price was actually a decrease vs the SO's costed rate.
+            cur.value += num(pl.line_total);
             costByPoLine.set(k, cur);
         }
 
