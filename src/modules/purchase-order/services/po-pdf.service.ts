@@ -437,37 +437,44 @@ function lineSellDoc(l: any): { amount: number; rate: number } {
     const r2 = (n: number) =>
         Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
     const qty = Number(l.qty) || 0;
-    const costDoc =
-        (Number(l.unit_price) || 0) * (Number(l.cost_exchange_rate) || 1);
+    const lineRate = Number(l.cost_exchange_rate) || 1;
+    const costDoc = (Number(l.unit_price) || 0) * lineRate;
     const disc = Number(l.discount_pct) || 0;
     const gross = qty * costDoc;
     const taxable = r2(gross - (gross * disc) / 100);
+    // Fixed-type expenses/rebates are absolute amounts in the VENDOR (source)
+    // currency, so they need the same source→doc conversion as the price
+    // (mirrors purchase-order.service.ts's recompute()) — a "Flat amount" ₹
+    // expense used unconverted here was being added as if it were already in
+    // the document currency, hugely inflating the printed total.
     let expenses = 0;
     for (const e of l.product_expenses_snapshot || [])
         expenses +=
             String(e?.type).toLowerCase() === 'percent'
                 ? (taxable * (Number(e?.value) || 0)) / 100
-                : Number(e?.value) || 0;
+                : (Number(e?.value) || 0) * lineRate;
     expenses = r2(expenses);
     const fobBase = taxable + expenses;
     let rebates = 0;
     for (const r of l.product_rebates_snapshot || [])
         rebates +=
             String(r?.type).toLowerCase() === 'fixed'
-                ? Number(r?.pct) || 0
+                ? (Number(r?.pct) || 0) * lineRate
                 : (fobBase * (Number(r?.pct) || 0)) / 100;
     rebates = r2(rebates);
     const marginBase = taxable + expenses - rebates;
     const margin = r2((marginBase * (Number(l.margin_pct) || 0)) / 100);
     const amount = r2(taxable + expenses - rebates + margin);
-    // Printed "Rate" is the PRE-discount per-unit price, so the PDF's own
-    // Rate/Disc.%/Amount columns are self-consistent (Amount = Rate × Qty ×
-    // (1 − Disc%)) and visibly show the customer the discount they were
-    // given, rather than a net rate with a redundant/misleading Disc.%
-    // column next to it. `amount` itself is unchanged — still the fully
-    // net (post-discount, post-expenses, post-rebates, post-margin) total.
-    const netRate = qty > 0 ? amount / qty : costDoc;
-    const rate = disc < 100 ? netRate / (1 - disc / 100) : netRate;
+    // Printed "Rate" is the plain net effective per-unit price (Amount ÷
+    // Qty) — the SAME figure the Costing Worksheet shows in its "Rate
+    // {docCur}" column. It used to be reverse-engineered as a PRE-discount
+    // rate (netRate ÷ (1 − Disc%)) so Amount = Rate × Qty × (1 − Disc%) held
+    // exactly, but that manufactured a rate that never matched the CW's own
+    // Rate column (margin/expenses/rebates dilute what "pre-discount" even
+    // means once they're folded in) — this printed Rate is informational
+    // only, Disc% is shown separately and isn't meant to reproduce Amount
+    // when multiplied against it.
+    const rate = qty > 0 ? amount / qty : costDoc;
     return { amount, rate };
 }
 
@@ -575,7 +582,7 @@ function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
                   textCell(l.part_no || '', 'c'),
                   textCell(dueOn, 'c'),
                   textCell(`${fmt(qty)} ${l.unit || ''}`.trim(), 'r'),
-                  curCell(sell.rate, sym, 4),
+                  curCell(sell.rate, sym, 5),
                   textCell(l.unit || '', 'c'),
                   textCell(disc ? `${fmt(disc)} %` : '', 'r'),
                   curCell(sell.amount, sym, 4, { bold: true }),
@@ -757,7 +764,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
           <td>${esc(l.part_no || '')}</td>
           <td class="c nowrap">${docDate(po.expected_delivery_date) || docDate(po.po_date)}</td>
           <td class="num nowrap"><b>${fmt(qty)} ${esc(l.unit || '')}</b></td>
-          <td class="num nowrap">${fmt4(rateCcy)} ${esc(sym)}</td>
+          <td class="num nowrap">${fmtRate(rateCcy)} ${esc(sym)}</td>
           <td class="c">${esc(l.unit || '')}</td>
           <td class="num">${disc ? fmt(disc) + ' %' : ''}</td>
           <td class="num nowrap"><b>${fmt4(lineTotalCcy)} ${esc(sym)}</b></td>
