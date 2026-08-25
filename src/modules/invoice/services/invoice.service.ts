@@ -66,6 +66,12 @@ const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
 const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
+// exchange_rate columns (both this payment's and the SO's advance rate) are
+// small foreign-per-₹1 numbers (e.g. 0.010870) whose meaningful digits live
+// past 2dp — round2 collapses every realistic value to "0.01", masking a
+// real rate change. Compare at the columns' own numeric(18,6) precision.
+const round6 = (n: number): number =>
+    !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 1000000) / 1000000;
 // Trim a value to fit a varchar(n) column so an over-long reference/voucher
 // snapshot degrades to a truncated string instead of a 500 (Postgres rejects
 // an over-length insert with "value too long for type character varying").
@@ -719,7 +725,7 @@ export class InvoiceService {
                     advancePay.payment_date = row.invoice_date;
                     dirty = true;
                 }
-                if (round2(num(advancePay.exchange_rate)) !== round2(Number(rate))) {
+                if (round6(num(advancePay.exchange_rate)) !== round6(Number(rate))) {
                     advancePay.exchange_rate = rate;
                     dirty = true;
                 }
