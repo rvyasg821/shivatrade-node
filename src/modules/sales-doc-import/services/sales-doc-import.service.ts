@@ -398,12 +398,19 @@ export class SalesDocImportService {
                     company_id: companyId,
                     product_id: productId,
                 } as any,
-                { order: { effective_date: 'desc' as any } },
+                {
+                    order: {
+                        effective_date: 'desc' as any,
+                        createdAt: 'desc' as any,
+                    },
+                },
             );
             // Keep the latest row per vendor. No date window: effective_date /
             // valid_until are not gating concepts here, so a future- or oddly-
             // dated row can't hide a vendor the sheet names. Rows are ordered
-            // effective_date desc, so the first seen per vendor is its latest.
+            // effective_date desc (createdAt desc breaks ties between edits
+            // that keep the same effective_date, the common case), so the
+            // first seen per vendor is its latest.
             const seen = new Set<string>();
             for (const r of allPlForProduct) {
                 const vk = r.vendor_id.toString();
@@ -967,7 +974,12 @@ export class SalesDocImportService {
 
             const pls = await this.priceListRepository.findAll(
                 { company_id: companyId, product_id: productId } as any,
-                { order: { effective_date: 'desc' as any } },
+                {
+                    order: {
+                        effective_date: 'desc' as any,
+                        createdAt: 'desc' as any,
+                    },
+                },
             );
             const activePl = pls.find(
                 (r) =>
