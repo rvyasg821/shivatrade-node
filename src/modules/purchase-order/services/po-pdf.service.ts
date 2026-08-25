@@ -465,16 +465,17 @@ function lineSellDoc(l: any): { amount: number; rate: number } {
     const marginBase = taxable + expenses - rebates;
     const margin = r2((marginBase * (Number(l.margin_pct) || 0)) / 100);
     const amount = r2(taxable + expenses - rebates + margin);
-    // Printed "Rate" is the plain net effective per-unit price (Amount ÷
-    // Qty) — the SAME figure the Costing Worksheet shows in its "Rate
-    // {docCur}" column. It used to be reverse-engineered as a PRE-discount
-    // rate (netRate ÷ (1 − Disc%)) so Amount = Rate × Qty × (1 − Disc%) held
-    // exactly, but that manufactured a rate that never matched the CW's own
-    // Rate column (margin/expenses/rebates dilute what "pre-discount" even
-    // means once they're folded in) — this printed Rate is informational
-    // only, Disc% is shown separately and isn't meant to reproduce Amount
-    // when multiplied against it.
-    const rate = qty > 0 ? amount / qty : costDoc;
+    // Printed "Rate" is reverse-engineered as the PRE-discount per-unit
+    // price, so the customer-facing Rate/Disc.%/Amount columns are
+    // self-consistent (Amount = Rate × Qty × (1 − Disc%)) — the customer can
+    // see and verify the discount they were given. This deliberately does
+    // NOT match the Costing Worksheet's own "Rate {docCur}" column (that's
+    // the net-of-everything rate, INCLUDING margin — an internal figure the
+    // customer never sees; showing that here next to Disc% would make the
+    // discount unverifiable, or misleadingly imply a further cut off an
+    // already-net price). `amount` itself is unchanged.
+    const netRate = qty > 0 ? amount / qty : costDoc;
+    const rate = disc < 100 ? netRate / (1 - disc / 100) : netRate;
     return { amount, rate };
 }
 
