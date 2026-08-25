@@ -426,7 +426,20 @@ export class PurchaseOrderService {
             row.status !== ENUM_PURCHASE_ORDER_STATUS.DRAFT && !willBeDraft;
         const isStatusOnlyChange = (() => {
             if (!isLocked) return true;
-            const allowedKeys = new Set(['status', 'internal_notes']);
+            // Advance/payment-receipt facts stay editable regardless of the
+            // SO's commercial-terms lock — they record what was actually
+            // paid and when, which can legitimately be corrected after the
+            // SO has moved past draft (mirrors internal_notes).
+            const allowedKeys = new Set([
+                'status',
+                'internal_notes',
+                'advance_amount',
+                'advance_date',
+                'advance_exchange_rate',
+                'advance_notes',
+                'advance_bank_account_id',
+                'advance_bank_name',
+            ]);
             return Object.keys(data || {}).every(
                 k =>
                     allowedKeys.has(k) ||
