@@ -1364,6 +1364,20 @@ export class SalesDocImportService {
             !!cur && cur.toUpperCase() !== 'INR' && rate > 0 && rate !== 1;
         const docCur = (cur || 'INR').toUpperCase();
         const docSym = getCurrencySymbol(docCur) || docCur;
+        // The VENDOR (source) currency — "ONE vendor currency per sales
+        // document" (§4), so every line shares the same source_currency_code.
+        // The build-up (Rate/Value/Expense/Total FOB/Rebate/Margin/Grand Total)
+        // is shown NATIVE to this currency, mirroring the on-screen worksheet's
+        // primary Rate/Value columns — NOT force-converted into the document
+        // (customer) currency, which may differ (e.g. an INR vendor on a USD
+        // sales doc). A doc-currency "Realization" column is added alongside
+        // only when the two currencies actually differ.
+        const srcCur = (
+            exportLines.find((l) => l.source_currency_code)
+                ?.source_currency_code || docCur
+        ).toUpperCase();
+        const srcSym = getCurrencySymbol(srcCur) || srcCur;
+        const hasRealization = srcCur !== docCur;
         const r2 = (n: number) =>
             Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 100) / 100 : 0;
         // Shipment freight (DOCUMENT currency), split across lines by qty — the
@@ -1381,20 +1395,28 @@ export class SalesDocImportService {
                 minimumFractionDigits: dp,
                 maximumFractionDigits: dp,
             })}`;
-        // Multi-currency: the whole build-up (value/expenses/rebates/margin/
-        // grand) is now in the DOCUMENT currency, so this formatter renders the
-        // doc symbol ($ …) for a foreign doc and ₹ for an INR doc. (Name kept
-        // for the many call sites below; it is a doc-currency formatter now.)
-        const inr = (n: number) =>
+        // Build-up (value/expenses/rebates/margin/grand) is in the VENDOR
+        // (source) currency — renders the source symbol ($ …) for a foreign
+        // vendor currency and ₹ for an INR vendor currency.
+        const srcMoney = (n: number) =>
+            srcCur === 'INR'
+                ? `₹${Number(r2(n)).toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                  })}`
+                : `${srcSym}${Number(n).toLocaleString('en-US', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                  })}`;
+        // Freight / CNF are in the DOCUMENT currency (₹ for INR docs, else the
+        // foreign symbol) — same as the worksheet's Freight / CNF columns.
+        const docMoney = (n: number) =>
             isForeign
                 ? fx(n, 2)
                 : `₹${Number(r2(n)).toLocaleString('en-IN', {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                   })}`;
-        // Freight / CNF are in the DOCUMENT currency (₹ for INR docs, else the
-        // foreign symbol) — same as the worksheet's Freight / CNF columns.
-        const docMoney = (n: number) => (isForeign ? fx(n, 2) : inr(n));
 
         // Display fields (name / part / hsn / uom) resolved from ids if omitted.
         const nameById = new Map<string, string>();
@@ -1473,7 +1495,7 @@ export class SalesDocImportService {
         const grandIdx = marginIdx + 1;
         const rateIdx = grandIdx + 1;
         const amtIdx = grandIdx + 2;
-        const realizationEnd = isForeign ? amtIdx : grandIdx;
+        const realizationEnd = hasRealization ? amtIdx : grandIdx;
         // Freight / CNF columns come after the realization group when present.
         const freightIdx = realizationEnd + 1;
         const cnfAmtIdx = realizationEnd + 2;
@@ -1497,15 +1519,15 @@ export class SalesDocImportService {
         h1[6] = 'Rate';
         h1[7] = 'Disc';
         h1[8] = 'Price after Disc';
-        // Build-up columns are in the DOCUMENT currency now (each line converted
-        // per-line), so the header names the doc currency, not a fixed ₹.
-        h1[9] = `Value (${docCur})`;
+        // Build-up columns are NATIVE to the vendor (source) currency — mirrors
+        // the on-screen worksheet's primary Rate/Value columns.
+        h1[9] = `Value (${srcCur})`;
         if (E > 0) h1[expStart] = 'Logistics FOB Cost Elements';
-        h1[totalFobIdx] = `Total FOB (${docCur})`;
+        h1[totalFobIdx] = `Total FOB (${srcCur})`;
         if (R > 0) h1[rebStart] = 'Government Benefits';
         h1[marginIdx] = 'Margin';
-        h1[grandIdx] = `Grand Total (${docCur})`;
-        if (isForeign) h1[rateIdx] = `${docCur} Realization`;
+        h1[grandIdx] = `Grand Total (${srcCur})`;
+        if (hasRealization) h1[rateIdx] = `${docCur} Realization`;
         if (hasFreight) {
             h1[freightIdx] = `Freight (${docCur})`;
             h1[cnfAmtIdx] = `CNF Amount (${docCur})`;
@@ -1515,7 +1537,7 @@ export class SalesDocImportService {
         const h2: any[] = new Array(width).fill('');
         for (let k = 0; k < E; k++) h2[expStart + k] = expenseCols[k];
         for (let k = 0; k < R; k++) h2[rebStart + k] = rebateCols[k];
-        if (isForeign) {
+        if (hasRealization) {
             h2[rateIdx] = `Rate ${docCur}`;
             h2[amtIdx] = `Amt ${docCur}`;
         }
@@ -1535,11 +1557,11 @@ export class SalesDocImportService {
         };
         const dataAoa = exportLines.map((l, i) => {
             const qty = num(l.qty);
-            // Native vendor price → DOCUMENT currency (× frozen source→doc rate;
-            // 1 for same-currency / domestic). The whole build-up below is then
-            // in the doc currency — no header × rate at the end.
-            const price =
-                num(l.unit_price) * (num(l.cost_exchange_rate) || 1);
+            // NATIVE vendor price, in the vendor (source) currency — the whole
+            // build-up below stays native (mirrors the worksheet's Rate/Value
+            // columns); it is converted to the document currency only for the
+            // separate Realization column further down.
+            const price = num(l.unit_price);
             const disc = num(l.discount_pct);
             const gross = qty * price;
             const taxable = r2(gross - (gross * disc) / 100);
@@ -1572,8 +1594,11 @@ export class SalesDocImportService {
             const afterReb = r2(totalFob - rebatesAmt);
             const marginAmt = r2((afterReb * num(l.margin_pct)) / 100);
             const grand = r2(afterReb + marginAmt);
-            // `grand` is ALREADY in the document currency — no header × rate.
-            const amtDoc = grand;
+            // `grand` is native (source/vendor currency). Convert to the
+            // document currency (× frozen source→doc rate; 1 for same-currency)
+            // ONLY for the Realization column and the freight/CNF figures,
+            // which are always in the document currency.
+            const amtDoc = r2(grand * (num(l.cost_exchange_rate) || 1));
             const rateDoc = qty ? r2(amtDoc / qty) : 0;
             // CNF (Cost + Freight) = realization amount + this line's freight
             // share, both in document currency — mirrors the worksheet.
@@ -1601,22 +1626,22 @@ export class SalesDocImportService {
             row[3] = pHsn(l);
             row[4] = qty ? qty.toLocaleString('en-IN') : '';
             row[5] = pUom(l);
-            row[6] = inr(price);
+            row[6] = srcMoney(price);
             row[7] = `${disc}%`;
-            row[8] = inr(priceDisc);
-            row[9] = inr(taxable);
+            row[8] = srcMoney(priceDisc);
+            row[9] = srcMoney(taxable);
             for (let k = 0; k < E; k++)
                 row[expStart + k] = expAmt.has(expenseCols[k])
-                    ? inr(expAmt.get(expenseCols[k])!)
+                    ? srcMoney(expAmt.get(expenseCols[k])!)
                     : '—';
-            row[totalFobIdx] = inr(totalFob);
+            row[totalFobIdx] = srcMoney(totalFob);
             for (let k = 0; k < R; k++)
                 row[rebStart + k] = rebAmt.has(rebateCols[k])
-                    ? inr(rebAmt.get(rebateCols[k])!)
+                    ? srcMoney(rebAmt.get(rebateCols[k])!)
                     : '—';
-            row[marginIdx] = inr(marginAmt);
-            row[grandIdx] = inr(grand);
-            if (isForeign) {
+            row[marginIdx] = srcMoney(marginAmt);
+            row[grandIdx] = srcMoney(grand);
+            if (hasRealization) {
                 row[rateIdx] = fx(rateDoc, 4);
                 row[amtIdx] = fx(amtDoc, 2);
             }
@@ -1634,19 +1659,19 @@ export class SalesDocImportService {
         const totalRow: any[] = new Array(width).fill('');
         totalRow[0] = 'TOTAL AMOUNT:';
         totalRow[4] = totals.qty ? totals.qty.toLocaleString('en-IN') : '';
-        totalRow[9] = inr(totals.value);
+        totalRow[9] = srcMoney(totals.value);
         for (let k = 0; k < E; k++) {
             const v = totals.exp.get(expenseCols[k]);
-            totalRow[expStart + k] = v ? inr(v) : '—';
+            totalRow[expStart + k] = v ? srcMoney(v) : '—';
         }
-        totalRow[totalFobIdx] = inr(totals.totalFob);
+        totalRow[totalFobIdx] = srcMoney(totals.totalFob);
         for (let k = 0; k < R; k++) {
             const v = totals.reb.get(rebateCols[k]);
-            totalRow[rebStart + k] = v ? inr(v) : '—';
+            totalRow[rebStart + k] = v ? srcMoney(v) : '—';
         }
-        totalRow[marginIdx] = inr(totals.margin);
-        totalRow[grandIdx] = inr(totals.grand);
-        if (isForeign) totalRow[amtIdx] = fx(totals.amt, 2);
+        totalRow[marginIdx] = srcMoney(totals.margin);
+        totalRow[grandIdx] = srcMoney(totals.grand);
+        if (hasRealization) totalRow[amtIdx] = fx(totals.amt, 2);
         if (hasFreight) {
             totalRow[freightIdx] = docMoney(totals.freight);
             totalRow[cnfAmtIdx] = docMoney(totals.cnf);
@@ -1665,7 +1690,7 @@ export class SalesDocImportService {
         banner[8] = r2(freightTotal);
 
         const noteRow: any[] = new Array(width).fill('');
-        noteRow[0] = `Grand Total (${docCur}) = Total FOB (Value + Expenses) + Margin − Rebates`;
+        noteRow[0] = `Grand Total (${srcCur}) = Total FOB (Value + Expenses) + Margin − Rebates`;
 
         const aoa: any[][] = [banner, [], h1, h2, ...dataAoa, totalRow, [], noteRow];
         const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
@@ -1690,7 +1715,7 @@ export class SalesDocImportService {
                 s: { r: headerR1, c: rebStart },
                 e: { r: headerR1, c: rebEnd },
             });
-        if (isForeign)
+        if (hasRealization)
             merges.push({
                 s: { r: headerR1, c: rateIdx },
                 e: { r: headerR1, c: amtIdx },
@@ -1747,7 +1772,7 @@ export class SalesDocImportService {
             if (R > 0 && inRange(c, rebStart, rebEnd)) return CLR.gold;
             if (c === marginIdx) return CLR.slate;
             if (c === grandIdx) return CLR.orangeDark;
-            if (isForeign && inRange(c, rateIdx, amtIdx)) return CLR.grey;
+            if (hasRealization && inRange(c, rateIdx, amtIdx)) return CLR.grey;
             if (hasFreight && inRange(c, freightIdx, cnfRateIdx)) return CLR.grey;
             return CLR.orange;
         };
@@ -1756,7 +1781,7 @@ export class SalesDocImportService {
             if (R > 0 && inRange(c, rebStart, rebEnd)) return CLR.benefit;
             if (c === marginIdx) return CLR.margin;
             if (c === grandIdx) return CLR.grandText;
-            if (isForeign && inRange(c, rateIdx, amtIdx)) return CLR.realize;
+            if (hasRealization && inRange(c, rateIdx, amtIdx)) return CLR.realize;
             if (hasFreight && inRange(c, freightIdx, cnfRateIdx)) return CLR.realize;
             return CLR.ink;
         };

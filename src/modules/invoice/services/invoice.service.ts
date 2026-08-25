@@ -37,6 +37,7 @@ import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { ImportContext } from '@common/import/import-context.interface';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
+import { computeInvoiceGrandTotal } from '../utils/grand-total.util';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 import { CurrencyService } from '@modules/currency/services/currency.service';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
@@ -1411,12 +1412,18 @@ export class InvoiceService {
         const freight = num(row.freight_charges);
         const insurance = num(row.insurance_charges);
         const other = num(row.other_charges);
-        // Keep the exact 2-decimal total: FOB + freight + insurance + other.
-        // Rounding to a whole number used to make the total disagree with its
-        // own components (67.65 + 500 + 200 shown as 768 instead of 767.65).
-        const grand_total = round2(
-            fob_value + freight + insurance + other
-        );
+        // Rounded to the nearest WHOLE currency unit — see
+        // computeInvoiceGrandTotal doc comment. Shared with invoice-pdf so
+        // the detail page, API, PDF, and Excel always agree on this figure.
+        const source = await this.loadSourcePoContext(lines as any);
+        const { grand_total, round_off } = computeInvoiceGrandTotal({
+            lines: lines as any,
+            byPoLineId: source.byPoLineId,
+            fobValue: fob_value,
+            freight,
+            insurance,
+            other,
+        });
         // INR equivalent of the document-currency grand total.
         const grand_total_inr = er > 0 ? round2(grand_total / er) : grand_total;
         const advance = num(row.advance_received);
@@ -1429,6 +1436,7 @@ export class InvoiceService {
         row.subtotal = String(subtotal_doc);
         row.fob_value = String(fob_value);
         row.grand_total = String(grand_total);
+        row.round_off = String(round_off);
         row.grand_total_inr = String(grand_total_inr);
         row.balance_receivable = String(balance);
         row.amount_in_words = numberToIndianWords(
@@ -2263,6 +2271,21 @@ export class InvoiceService {
             }
         };
         pushRef((row as any).reference_no);
+        // Every Sales Order this invoice draws lines from — for the "Sales
+        // Orders" tab on the detail page (an invoice can span several SOs).
+        // Each entry also carries THIS invoice's own billed qty/value against
+        // that SO, so the tab shows what was actually invoiced from it.
+        const sourceOrders: Array<{
+            id: string;
+            voucher_no: string;
+            status?: string;
+            po_date?: string;
+            currency_code?: string;
+            grand_total?: string;
+            customer_po_number?: string;
+            billed_qty: number;
+            billed_value: number;
+        }> = [];
         const refPoLineIds = Array.from(
             new Set(
                 (lines as any[])
@@ -2275,6 +2298,12 @@ export class InvoiceService {
                 const refPoLines = await this.poLineRepository.findAll({
                     _id: { $in: refPoLineIds },
                 } as any);
+                const poIdByPoLineId = new Map<string, string>();
+                for (const pl of refPoLines as any[])
+                    poIdByPoLineId.set(
+                        pl._id.toString(),
+                        pl.purchase_order_id?.toString()
+                    );
                 const refPoIds = Array.from(
                     new Set(
                         (refPoLines as any[])
@@ -2286,6 +2315,23 @@ export class InvoiceService {
                     const refPos = await this.poRepository.findAll({
                         _id: { $in: refPoIds },
                     } as any);
+                    const billedByPoId = new Map<
+                        string,
+                        { qty: number; value: number }
+                    >();
+                    for (const l of lines as any[]) {
+                        const poId = poIdByPoLineId.get(
+                            l.purchase_order_line_id?.toString()
+                        );
+                        if (!poId) continue;
+                        const cur = billedByPoId.get(poId) || {
+                            qty: 0,
+                            value: 0,
+                        };
+                        cur.qty += num(l.qty);
+                        cur.value += num(l.line_total);
+                        billedByPoId.set(poId, cur);
+                    }
                     (refPos as any[])
                         .slice()
                         .sort((a, b) =>
@@ -2293,7 +2339,23 @@ export class InvoiceService {
                                 String(b.voucher_no || '')
                             )
                         )
-                        .forEach((po) => pushRef(po.reference_no));
+                        .forEach((po) => {
+                            pushRef(po.reference_no);
+                            const billed = billedByPoId.get(
+                                po._id.toString()
+                            ) || { qty: 0, value: 0 };
+                            sourceOrders.push({
+                                id: po._id.toString(),
+                                voucher_no: po.voucher_no || '',
+                                status: po.status,
+                                po_date: po.po_date,
+                                currency_code: po.currency_code,
+                                grand_total: po.grand_total,
+                                customer_po_number: po.customer_po_number,
+                                billed_qty: round2(billed.qty),
+                                billed_value: round2(billed.value),
+                            });
+                        });
                 }
             } catch {
                 /* non-fatal — fall back to the invoice's own reference_no */
@@ -2301,6 +2363,7 @@ export class InvoiceService {
         }
         (dto as any).reference_nos =
             refList.join(', ') || (row as any).reference_no || undefined;
+        (dto as any).source_orders = sourceOrders;
 
         // ── Customer details for the detail-page header ─────────────────────
         // The invoice stores only customer_id (customer_snapshot is unused at

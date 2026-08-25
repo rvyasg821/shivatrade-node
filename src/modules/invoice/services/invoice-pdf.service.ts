@@ -13,6 +13,7 @@ import {
     DocCell,
     DocSection,
 } from '@common/excel-doc/excel-doc.builder';
+import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
 import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
@@ -366,16 +367,22 @@ export class InvoicePdfService {
                     const insuranceOther =
                         num(invoice.insurance_charges) +
                         num(invoice.other_charges);
+                    // Each row's Invoice Value is rounded to the nearest WHOLE
+                    // currency unit — the same convention as the SO's own
+                    // grand_total — so a fully-invoiced SO's row here shows
+                    // the EXACT figure that SO's own detail page/PDF shows
+                    // (e.g. $699, not $699.07). This is the raw billed portion
+                    // of that SO on THIS invoice (correct for a PARTIAL
+                    // invoice too, unlike using the SO's own grand_total
+                    // directly, which would only be right for a full invoice).
                     soAdvanceRows = posSorted.map((po) => {
                         const billed = billedByPoId.get(po._id.toString()) || 0;
                         const soFreight = num(po.freight_total);
                         const share =
                             totalBilled > 0 ? billed / totalBilled : 0;
-                        const invoiceValue =
-                            Math.round(
-                                (billed + soFreight + insuranceOther * share) *
-                                    100
-                            ) / 100;
+                        const invoiceValueRaw =
+                            billed + soFreight + insuranceOther * share;
+                        const invoiceValue = Math.round(invoiceValueRaw);
                         const advance =
                             Math.round(num(po.advance_amount) * 100) / 100;
                         return {
@@ -411,6 +418,46 @@ export class InvoicePdfService {
         const totalReceived =
             await this.invoicePaymentRepository.sumActiveByInvoiceId(invoiceId);
         (invoice as any).total_received = num(totalReceived);
+
+        // Grand Total is rounded to the nearest WHOLE currency unit (mirrors
+        // Quotation/Sales Order) with the difference shown as "Round Off" —
+        // recomputed live here (not trusted from the stored header row) so a
+        // PDF is always correct even for an invoice saved before this
+        // rounding rule existed, or whose freight/other charges changed via a
+        // path that didn't re-run the service's recompute().
+        {
+            const rawGrand =
+                num(invoice.fob_value) +
+                num(invoice.freight_charges) +
+                num(invoice.insurance_charges) +
+                num(invoice.other_charges);
+            // When this invoice has a resolvable per-SO breakdown, the
+            // AUTHORITATIVE total is the SUM of each SO's already-rounded row
+            // (soAdvanceRows, above) — not an independent re-round of this
+            // invoice's own raw aggregate. Rounding the whole vs. rounding-
+            // then-summing the parts can differ by ±1 unit, and the per-SO
+            // rows are what the source Sales Orders themselves display, so
+            // they win: this keeps the invoice's Grand Total in exact
+            // agreement with both the SO-wise table below AND the source
+            // SO's own detail page/PDF. Falls back to rounding the raw
+            // aggregate only when there's no resolvable source SO at all
+            // (e.g. a pure from-stock invoice).
+            const roundedGrand = soAdvanceRows.length
+                ? soAdvanceRows.reduce((s, r) => s + num(r.invoice_value), 0)
+                : Math.round(rawGrand);
+            invoice.grand_total = String(roundedGrand);
+            invoice.round_off = String(
+                Math.round((roundedGrand - rawGrand + Number.EPSILON) * 100) /
+                    100
+            );
+            // Keep "Amount in Words" in sync with the (possibly just
+            // recomputed) rounded grand_total — a stale stored string would
+            // otherwise still spell out the old, unrounded figure.
+            invoice.amount_in_words = numberToIndianWords(
+                roundedGrand,
+                invoice.currency_code || 'INR'
+            );
+        }
 
         const company: any =
             (await this.companyRepository.findOneById(companyId)) || {};
@@ -818,6 +865,12 @@ function buildInvoiceExcelSections(
     if (num(inv.insurance_charges) > 0) rows.push(sumRow('Insurance', num(inv.insurance_charges)));
     if (num(inv.other_charges) > 0) rows.push(sumRow('Other', num(inv.other_charges)));
     if (showIgst) rows.push(sumRow('Total IGST Amt. (INR)', totalIgstInr, '₹', { bold: true }));
+    // grand_total is rounded to the nearest whole currency unit (mirrors the
+    // Quotation/Sales Order convention) — this line reconciles it against the
+    // FOB + Freight + Insurance + Other rows above so the total never
+    // silently disagrees with its own listed components.
+    if (num(inv.round_off) !== 0)
+        rows.push(sumRow('Round Off', num(inv.round_off)));
     rows.push(sumRow(`TOTAL ${inv.incoterm || 'CNF'} Amount`, num(inv.grand_total), sym, { bold: true, fill: 'FDEBD8', color: 'C25E10' }));
 
     sections.push({ kind: 'table', head, rows, align: ['c', 'c', 'c', 'l', 'l', 'r', 'r', 'r'] });
@@ -861,11 +914,14 @@ function buildInvoiceExcelSections(
                 [curCell(soAdv.reduce((s, r) => s + num(r.receivable), 0), sym, 2, { bold: true }), soSpan[3]],
             ])
         );
-        // Total received across ALL non-voided receipts, and the remaining
-        // Payable (grand_total + receivable − received) — mirrors the PDF.
+        // Each row's Invoice Value/Receivable is ALREADY rounded to the
+        // nearest whole unit, so Σ tVal always equals the header's
+        // grand_total exactly — no separate Round Off row needed here.
+        // Total received across ALL non-voided receipts; Payable Amount nets
+        // it off the (rounded) total invoice value.
         const totalReceived = num(inv.total_received);
-        const totalReceivable = soAdv.reduce(
-            (s, r) => s + num(r.receivable),
+        const totalInvoiceValue = soAdv.reduce(
+            (s, r) => s + num(r.invoice_value),
             0
         );
         soRows.push(
@@ -877,7 +933,7 @@ function buildInvoiceExcelSections(
         soRows.push(
             spanned([
                 [textCell('Payable Amount', 'r', { bold: true }), 7],
-                [curCell(num(inv.grand_total) + totalReceivable - totalReceived, sym, 2, { bold: true }), 1],
+                [curCell(totalInvoiceValue - totalReceived, sym, 2, { bold: true }), 1],
             ])
         );
         sections.push({ kind: 'note', text: 'Advance Received (Sales Order-wise)', bold: true });
@@ -1394,15 +1450,20 @@ function advanceSoTable(inv: any, sym: string): string {
         </tr>`
         )
         .join('');
+    // Each row's Invoice Value/Receivable is ALREADY rounded to the nearest
+    // whole unit (see soAdvanceRows above), so Σ tVal always equals the
+    // header's grand_total exactly — no separate Round Off reconciliation
+    // needed in this table (unlike the FOB/Freight breakdown table, which
+    // sums genuinely-fractional components).
     const tVal = rows.reduce((s, r) => s + num(r.invoice_value), 0);
     const tAdv = rows.reduce((s, r) => s + num(r.advance), 0);
     const tRec = rows.reduce((s, r) => s + num(r.receivable), 0);
     // Total actually received across ALL non-voided receipts (the SO advance
-    // seed AND any later payments). Payable = grand_total + receivable − total
-    // received: the SO-wise Receivable ($0.24 the advance under-covered) is
-    // still owed and stays in the payable even after the rest is paid.
+    // seed AND any later payments). Each row's own Receivable already nets
+    // out that SO's advance from its (rounded) Invoice Value, so Σ Receivable
+    // already equals Total Invoice Value − Total Advance.
     const totalReceived = num(inv.total_received);
-    const payable = num(inv.grand_total) + tRec - totalReceived;
+    const payable = tVal - totalReceived;
     return `
     <table class="avoid-break" style="margin-top: 6px;">
         <tr><td colspan="4" class="lbl" style="background:#f0f0f0;">Advance Received (Sales Order-wise)</td></tr>
@@ -1626,6 +1687,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
         ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
         ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
         ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${num(inv.round_off) !== 0 ? `<tr><td colspan="7" class="right lbl">Round Off</td><td class="right">${num(inv.round_off) < 0 ? '− ' : '+ '}${sym}${fmt(Math.abs(num(inv.round_off)), 2)}</td></tr>` : ''}
         <tr>
             <td colspan="7" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
@@ -1771,6 +1833,7 @@ function buildExportInvoiceHtml(d: RenderData): string {
         ${num(inv.freight_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Freight</td><td class="right">${sym}${fmt(inv.freight_charges, 2)}</td></tr>` : ''}
         ${num(inv.insurance_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Insurance</td><td class="right">${sym}${fmt(inv.insurance_charges, 2)}</td></tr>` : ''}
         ${num(inv.other_charges) > 0 ? `<tr><td colspan="7" class="right lbl">Other</td><td class="right">${sym}${fmt(inv.other_charges, 2)}</td></tr>` : ''}
+        ${num(inv.round_off) !== 0 ? `<tr><td colspan="7" class="right lbl">Round Off</td><td class="right">${num(inv.round_off) < 0 ? '− ' : '+ '}${sym}${fmt(Math.abs(num(inv.round_off)), 2)}</td></tr>` : ''}
         <tr>
             <td colspan="7" class="right strong" style="background:#f0f0f0;">TOTAL ${esc(inv.incoterm) || 'CNF'} Amount</td>
             <td class="right strong" style="background:#f0f0f0;">${sym}${fmt(inv.grand_total, 2)}</td>
