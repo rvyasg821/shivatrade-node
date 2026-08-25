@@ -71,6 +71,20 @@ export class InvoiceGetResponseDto {
     /** Distinct reference numbers across every source SO + the invoice's own —
      *  a comma-joined list for multi-SO invoices (same as the PDFs). */
     reference_nos?: string;
+    /** Every Sales Order this invoice draws lines from, incl. THIS invoice's
+     *  own billed qty/value against each — powers the detail page's "Sales
+     *  Orders" tab (an invoice can span several SOs). */
+    source_orders?: Array<{
+        id: string;
+        voucher_no: string;
+        status?: string;
+        po_date?: string;
+        currency_code?: string;
+        grand_total?: string;
+        customer_po_number?: string;
+        billed_qty: number;
+        billed_value: number;
+    }>;
 
     // Destination
     country_of_destination?: string;
@@ -120,6 +134,7 @@ export class InvoiceGetResponseDto {
     insurance_charges?: string;
     other_charges?: string;
     grand_total?: string;
+    round_off?: string;
     grand_total_inr?: string;
     amount_in_words?: string;
     advance_received?: string;

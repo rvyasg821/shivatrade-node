@@ -251,9 +251,18 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     other_charges: string;
 
-    /** fob_value + freight + insurance + other. Labelled FOB/CNF/CIF per incoterm. */
+    /** fob_value + freight + insurance + other, ROUNDED to the nearest whole
+     *  currency unit — mirrors the Quotation/Sales Order convention so an
+     *  invoice's Grand Total matches its source document. Labelled
+     *  FOB/CNF/CIF per incoterm. */
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     grand_total: string;
+
+    /** Whole-unit rounding adjustment: grand_total − the raw (unrounded)
+     *  FOB + freight + insurance + other total. Shown as an explicit
+     *  "Round Off" line everywhere grand_total appears. */
+    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
+    round_off: string;
 
     /** INR-equivalent of grand_total - snapshot at issue for GSTR-1 + refund. */
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
