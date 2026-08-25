@@ -57,6 +57,12 @@ const round2 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 100) / 100;
 const round4 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 10000) / 10000;
+// advance_exchange_rate is a small foreign-per-₹1 number (e.g. 0.010870) with
+// meaningful digits well past 2dp — round2 collapses every realistic value to
+// "0.01", silently masking a real rate change. Compare at the column's own
+// numeric(18,6) precision instead.
+const round6 = (n: number): number =>
+    !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 1000000) / 1000000;
 
 /** Customer-side order reference + advance captured at SO generation (S4). */
 type CustomerOrderInput = {
@@ -407,7 +413,7 @@ export class PurchaseOrderService {
     ): Promise<PurchaseOrderDoc> {
         const companyId = row.company_id.toString();
         const prevAdvance = round2(num(row.advance_amount));
-        const prevAdvanceRate = round2(num((row as any).advance_exchange_rate));
+        const prevAdvanceRate = round6(num((row as any).advance_exchange_rate));
 
         // FY closure: block back-dating a sales order onto a closed date.
         if ((data as any).po_date && (data as any).po_date !== row.po_date) {
@@ -489,7 +495,7 @@ export class PurchaseOrderService {
         // exchange rate it was received at) actually shows up (issued
         // invoices are untouched — their advance is frozen).
         const advanceRateChanged =
-            round2(num((refreshed as any)?.advance_exchange_rate)) !==
+            round6(num((refreshed as any)?.advance_exchange_rate)) !==
             prevAdvanceRate;
         if (
             round2(num(refreshed?.advance_amount)) !== prevAdvance ||
