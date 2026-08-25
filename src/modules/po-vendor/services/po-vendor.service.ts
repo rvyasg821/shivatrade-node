@@ -3130,8 +3130,6 @@ export class PoVendorService {
         }
 
         row.status = ENUM_PO_VENDOR_STATUS.DRAFT;
-        row.internal_notes =
-            (row.internal_notes || '') + '\n[Reverted to draft]';
         await this.povRepository.save(row);
         this.logger.log(`POV reverted to draft: ${row._id}`);
         if (userId) {
