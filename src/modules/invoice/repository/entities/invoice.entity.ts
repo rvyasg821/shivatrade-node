@@ -232,6 +232,24 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 6, nullable: false, default: 1 })
     exchange_rate: string;
 
+    /** Optional customs/GST-only exchange rate — when set, the Commercial
+     *  Invoice PDF's Assessable Value / IGST-in-INR figures use THIS rate
+     *  instead of the regular `exchange_rate`. Every other conversion on the
+     *  invoice (totals, Payable Amount, Export PDF, etc.) keeps using
+     *  `exchange_rate` as-is. Blank = fall back to `exchange_rate` (no
+     *  behavior change).
+     *
+     *  CONVENTION — deliberately the OPPOSITE of `exchange_rate` above: this
+     *  is ₹-per-1-unit (a LARGE number, e.g. ~91 for USD), the way a human
+     *  naturally types a customs/bank rate — same convention as the POV
+     *  header's `exchange_rate` (see CLAUDE.md §4). `inr = doc × this`, not
+     *  `doc ÷ this`. Always go through
+     *  `invoice/utils/gst-exchange-rate.util.ts`'s `convertToInrForGst()` /
+     *  `formatGstExchangeRateForDisplay()` rather than doing the arithmetic
+     *  inline — mixing the two conventions up is an easy, silent bug. */
+    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
+    custom_exchange_rate?: string;
+
     @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false, default: 0 })
     subtotal: string;
 

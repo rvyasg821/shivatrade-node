@@ -3,6 +3,7 @@ import {
     ArrayMinSize,
     IsArray,
     IsBoolean,
+    IsDateString,
     IsIn,
     IsInt,
     IsNotEmpty,
@@ -115,6 +116,11 @@ export class PoVendorCreateRequestDto {
     @IsOptional()
     @MaxLength(120)
     invoice_number?: string;
+
+    /** Business creation date. Defaults to today (server-side) when omitted. */
+    @IsDateString()
+    @IsOptional()
+    creation_date?: string;
 
     /** Optional vendor address; defaults to the vendor's default bill-from. */
     @IsUUID()

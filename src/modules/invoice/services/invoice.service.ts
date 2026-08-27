@@ -38,6 +38,10 @@ import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.en
 import { ImportContext } from '@common/import/import-context.interface';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
 import { computeInvoiceGrandTotal } from '../utils/grand-total.util';
+import {
+    convertToInrForGst,
+    GstRateInvoice,
+} from '../utils/gst-exchange-rate.util';
 import { getCurrencySymbol } from '@modules/currency/constants/currency.symbols.constant';
 import { CurrencyService } from '@modules/currency/services/currency.service';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
@@ -431,6 +435,7 @@ export class InvoiceService {
                 data.currency_symbol ||
                 getCurrencySymbol(data.currency_code),
             exchange_rate: data.exchange_rate || '1',
+            custom_exchange_rate: data.custom_exchange_rate || null,
             discount_total: data.discount_total || '0',
             // Default freight to Σ source SOs' own freight_total (a
             // multi-SO create otherwise silently drops every SO's freight
@@ -975,7 +980,7 @@ export class InvoiceService {
         if (row.gst_route === ENUM_INVOICE_GST_ROUTE.IGST_PAID) {
             const { buckets, totalRefund } = this.buildIgstRefundBuckets(
                 lines,
-                num(row.exchange_rate)
+                row
             );
             row.igst_refund_buckets = buckets;
             row.igst_refund_amount = String(round2(totalRefund));
@@ -1938,25 +1943,26 @@ export class InvoiceService {
 
     /**
      * Buckets invoice lines by `igst_rate_pct`. For each bucket:
-     *   assessable_value_inr = Σ (taxable_amount ÷ exchange_rate)
+     *   assessable_value_inr = Σ convertToInrForGst(taxable_amount)
      *   igst_amount_inr      = assessable_value_inr × rate
      *
-     * Multi-currency: `taxable_amount` is now in the DOCUMENT currency (each
-     * cost was converted source→doc in recompute), so it is divided by the
-     * exchange_rate (doc-per-₹1) to get the INR assessable value for GSTR-1.
-     * For an INR invoice exchange_rate = 1, so this is a no-op.
+     * Multi-currency: `taxable_amount` is in the DOCUMENT currency (each cost
+     * was converted source→doc in recompute). `convertToInrForGst` picks the
+     * right operation for whichever rate is in play — divide by the invoice's
+     * own exchange_rate (doc-per-₹1), or multiply by an explicit
+     * custom_exchange_rate override (INR-per-unit) when the operator set one.
+     * For an INR invoice exchange_rate = 1, so this is a no-op either way.
      *
      * Returns the array + the total IGST refund (sum of buckets).
      */
     private buildIgstRefundBuckets(
         lines: InvoiceLineDoc[],
-        exchangeRate: number
+        inv: GstRateInvoice
     ): { buckets: any[]; totalRefund: number } {
-        const er = exchangeRate > 0 ? exchangeRate : 1;
         const grouped = new Map<string, number>(); // rate_pct → INR assessable
         for (const l of lines) {
             const rate = num(l.igst_rate_pct);
-            const taxableInr = num(l.taxable_amount) / er;
+            const taxableInr = convertToInrForGst(num(l.taxable_amount), inv);
             grouped.set(String(rate), (grouped.get(String(rate)) || 0) + taxableInr);
         }
         const buckets: any[] = [];
@@ -2927,6 +2933,7 @@ export class InvoiceService {
             name: string;
             amount_inr: string;
             qty: string;
+            uom: string;
         }>;
     }> {
         const lim = Math.max(1, Math.min(20, Number(limit) || 5));
@@ -2966,6 +2973,7 @@ export class InvoiceService {
         const products = await this.dataSource.query(
             `SELECT il.product_id AS product_id,
                     COALESCE(p.name, MAX(il.product_name), '—') AS name,
+                    COALESCE(p.unit_of_measure, '') AS uom,
                     COALESCE(SUM(
                         il.line_total / COALESCE(NULLIF(i.exchange_rate, 0), 1)
                     ), 0)::float8 AS amount_inr,
@@ -2977,7 +2985,7 @@ export class InvoiceService {
                AND i.soft_delete = false
                AND i.status <> 'cancelled'
                AND il.product_id IS NOT NULL${dateClause}
-             GROUP BY il.product_id, p.name
+             GROUP BY il.product_id, p.name, p.unit_of_measure
              ORDER BY amount_inr DESC
              LIMIT $${limIdx}`,
             params
@@ -2994,6 +3002,7 @@ export class InvoiceService {
                 name: r.name,
                 amount_inr: (Number(r.amount_inr) || 0).toFixed(2),
                 qty: String(Number(r.qty) || 0),
+                uom: r.uom || '',
             })),
         };
     }

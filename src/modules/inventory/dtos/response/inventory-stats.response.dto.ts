@@ -31,6 +31,12 @@ export class InventoryStatsResponseDto {
     @ApiProperty({ type: [InventoryCurrencyValueDto] })
     by_currency: InventoryCurrencyValueDto[];
 
+    // Grand total across ALL currencies, in INR — each row already used its
+    // own receipt-time exchange rate, so this sum is legitimate (unlike
+    // summing native by_currency values, which is never valid).
+    @ApiProperty()
+    stock_value_inr: string;
+
     // Distinct products (SKUs) currently in stock, across all currencies.
     @ApiProperty()
     product_count: number;

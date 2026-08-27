@@ -26,6 +26,17 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 120, nullable: false, default: '' })
     invoice_number: string;
 
+    /** Business creation date — user-editable, defaults to today at create
+     *  time (both standalone and generated-from-SO). Distinct from the
+     *  technical `createdAt` audit timestamp, which is DB-set and never
+     *  user-editable. */
+    @Column({
+        type: 'date',
+        nullable: false,
+        default: () => 'CURRENT_DATE',
+    })
+    creation_date: string;
+
     /** Source PO — must be `confirmed` (or `in_process`) at create time.
      *  Nullable since 2026-06: a POV can be raised standalone (no parent
      *  Sales Order). Null = standalone POV; it does not participate in any

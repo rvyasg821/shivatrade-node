@@ -1,22 +1,22 @@
 {
-    "list": "Purchase Orders retrieved successfully.",
-    "get": "Purchase Order fetched successfully.",
-    "create": "Purchase Order created successfully.",
-    "createFromQuotation": "Purchase Orders created from Quotation.",
-    "createFromPfi": "Purchase Orders created from PFI.",
-    "update": "Purchase Order updated successfully.",
-    "delete": "Purchase Order deleted successfully.",
+    "list": "Sales Orders retrieved successfully.",
+    "get": "Sales Order fetched successfully.",
+    "create": "Sales Order created successfully.",
+    "createFromQuotation": "Sales Orders created from Quotation.",
+    "createFromPfi": "Sales Orders created from PFI.",
+    "update": "Sales Order updated successfully.",
+    "delete": "Sales Order deleted successfully.",
     "previewFromPfi": "Preview from PFI loaded.",
     "previewFromQuotation": "Preview from Quotation loaded.",
-    "publicPreview": "Purchase Order preview loaded.",
+    "publicPreview": "Sales Order preview loaded.",
     "publish": "Public link generated.",
     "rotateToken": "Public link rotated. The previous URL no longer works.",
     "unpublish": "Public link revoked.",
-    "public": "Purchase Order loaded.",
-    "coverage": "PO coverage loaded.",
+    "public": "Sales Order loaded.",
+    "coverage": "SO coverage loaded.",
     "pfiCoverage": "PFI coverage loaded.",
     "quotationCoverage": "Quotation coverage loaded.",
     "error": {
-        "notFound": "Sorry, we couldn't find the requested Purchase Order."
+        "notFound": "Sorry, we couldn't find the requested Sales Order."
     }
 }

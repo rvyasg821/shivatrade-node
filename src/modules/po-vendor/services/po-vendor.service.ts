@@ -58,6 +58,7 @@ import { ENUM_TRACKING_EVENT_TYPE } from '@modules/tracking-event/enums/tracking
 import { StockLedgerService } from '@modules/inventory/services/stock-ledger.service';
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
 import { sumAdjustmentEffect } from '@modules/adjustment-note/helpers/adjustment-balance.helper';
+import { FileService } from '@common/file/services/file.service';
 
 const num = (v: any): number =>
     v === null || v === undefined || v === '' ? 0 : Number(v);
@@ -94,6 +95,7 @@ export class PoVendorService {
         private readonly dependencyCheckService: DependencyCheckService,
         private readonly companySettings: CompanySettingsService,
         private readonly toleranceGuard: ToleranceGuardService,
+        private readonly fileService: FileService,
         @InjectDatabaseConnection() private readonly dataSource: DataSource
     ) {}
 
@@ -686,6 +688,9 @@ export class PoVendorService {
             created_by: createdBy,
             voucher_no,
             invoice_number: data.invoice_number || '',
+            creation_date:
+                (data as any).creation_date ||
+                new Date().toISOString().slice(0, 10),
             purchase_order_id: purchaseOrderId,
             vendor_id: vendorId,
             vendor_address_id: vendorAddressId,
@@ -974,6 +979,9 @@ export class PoVendorService {
             created_by: createdBy,
             voucher_no,
             invoice_number: data.invoice_number || '',
+            creation_date:
+                (data as any).creation_date ||
+                new Date().toISOString().slice(0, 10),
             purchase_order_id: null,
             linked_sales_orders: linkedSalesOrders,
             vendor_id: vendorId,
@@ -1587,6 +1595,9 @@ export class PoVendorService {
                 unit_price?: string;
                 discount_pct?: string;
             }>;
+            /** Business creation date, applied to every POV spawned by this
+             *  batch. Defaults to today (server-side) when omitted. */
+            creation_date?: string;
             delivery_address_id?: string;
             delivery_address?: string;
             notes?: string;
@@ -1876,6 +1887,7 @@ export class PoVendorService {
             const body: any = {
                 vendor_id: vendorId,
                 lines: linesPayload,
+                creation_date: data.creation_date,
                 notes: data.notes,
                 internal_notes: data.internal_notes,
                 delivery_address: data.delivery_address,
@@ -2043,6 +2055,7 @@ export class PoVendorService {
             'delivery_address',
             'delivery_address_id',
             'invoice_number',
+            'creation_date',
             // Display currency + rate — draft only. Amounts stay stored in INR;
             // these just re-target how the POV renders (view / PDF).
             'currency_code',
@@ -3659,6 +3672,7 @@ export class PoVendorService {
                 vendor_contact_country_code: this.buildContactCountryCode(vc),
                 vendor_address_id: r.vendor_address_id?.toString(),
 
+                creation_date: (r as any).creation_date || undefined,
                 dispatch_date: r.dispatch_date || undefined,
                 expected_arrival_date: r.expected_arrival_date || undefined,
                 actual_arrival_date: r.actual_arrival_date || undefined,
@@ -3801,6 +3815,198 @@ export class PoVendorService {
             total += cnt;
         }
         return { total, by_status };
+    }
+
+    // ─── Line-item Import/Export (standalone create form only) ────────────
+    //
+    // Scoped ONLY to the standalone POV create form's line-items table — NOT
+    // the Generate-POV-from-SO flow (PoVendorRecoverModal/PoVendorCreateModal),
+    // which has its own per-line assignment UI driven from the source SO.
+    // Mirrors the Costing Worksheet import/export pattern (plain re-importable
+    // xlsx, client parses the upload, server only resolves/validates — nothing
+    // is persisted here, the resolved rows just populate the form's `lines`
+    // state client-side until the operator clicks Create POV).
+
+    private static readonly LINE_IMPORT_HEADER = [
+        'Product Code',
+        'Part No',
+        'HSN Code',
+        'Unit',
+        'Qty',
+        'Rate',
+        'Disc %',
+        'GST %',
+    ];
+
+    buildStandaloneLineSample(): Buffer {
+        const aoa: (string | number)[][] = [
+            PoVendorService.LINE_IMPORT_HEADER,
+            ['PRD-001', 'P001', '1001', 'Nos', 10, 100, 0, 18],
+        ];
+        return this.fileService.writeExcelFromArray(aoa as any);
+    }
+
+    async buildStandaloneLineExport(
+        companyId: string,
+        lines: Array<{
+            product_id?: string;
+            part_no?: string;
+            hsn_code?: string;
+            unit?: string;
+            qty?: string;
+            unit_price?: string;
+            discount?: string;
+            tax_pct?: string;
+        }>
+    ): Promise<Buffer> {
+        const productIds = Array.from(
+            new Set((lines || []).map((l) => l.product_id).filter(Boolean))
+        ) as string[];
+        const products = productIds.length
+            ? await this.productRepository.findAll({
+                  _id: { $in: productIds },
+                  company_id: companyId,
+              } as any)
+            : [];
+        const codeById = new Map<string, string>();
+        for (const p of products as any[]) codeById.set(p._id.toString(), p.code);
+
+        const aoa: (string | number)[][] = [PoVendorService.LINE_IMPORT_HEADER];
+        for (const l of lines || []) {
+            aoa.push([
+                (l.product_id && codeById.get(l.product_id)) || '',
+                l.part_no || '',
+                l.hsn_code || '',
+                l.unit || '',
+                num(l.qty),
+                num(l.unit_price),
+                num(l.discount),
+                num(l.tax_pct),
+            ]);
+        }
+        return this.fileService.writeExcelFromArray(aoa as any);
+    }
+
+    /**
+     * Resolves raw uploaded rows (already parsed client-side) against the
+     * product master. Only Product Code and Qty are required per row — Part
+     * No/HSN/Unit/GST% fall back to the product's own master values, and a
+     * blank Rate falls back to the selected vendor's current price-list entry
+     * for that product (mirrors the manual product-picker's auto-fill, see
+     * `onPickProduct` on the create form). Returns one resolved row per input
+     * row, in order, each carrying its own status/error so the FE can show
+     * which rows imported cleanly.
+     */
+    async resolveStandaloneLineImport(
+        companyId: string,
+        vendorId: string,
+        rows: Array<{
+            product_code?: string;
+            part_no?: string;
+            hsn_code?: string;
+            unit?: string;
+            qty?: string;
+            unit_price?: string;
+            discount_pct?: string;
+            tax_pct?: string;
+        }>
+    ): Promise<{
+        resolved: Array<{
+            status: 'ok' | 'error';
+            error?: string;
+            product_id?: string;
+            product_name?: string;
+            part_no?: string;
+            hsn_code?: string;
+            unit?: string;
+            tax_pct?: string;
+            qty?: string;
+            unit_price?: string;
+            discount?: string;
+            product_code?: string;
+        }>;
+    }> {
+        const products = await this.productRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        const productByCode = new Map<string, any>();
+        for (const p of products as any[]) {
+            const code = String(p.code || '').trim().toLowerCase();
+            if (code) productByCode.set(code, p);
+        }
+
+        const resolved = await Promise.all(
+            (rows || []).map(async (r) => {
+                const codeRaw = String(r.product_code || '').trim();
+                if (!codeRaw) {
+                    return {
+                        status: 'error' as const,
+                        error: 'Product Code is required',
+                        product_code: codeRaw,
+                    };
+                }
+                const product = productByCode.get(codeRaw.toLowerCase());
+                if (!product) {
+                    return {
+                        status: 'error' as const,
+                        error: `Product not found: ${codeRaw}`,
+                        product_code: codeRaw,
+                    };
+                }
+                const qty = num(r.qty);
+                if (qty <= 0) {
+                    return {
+                        status: 'error' as const,
+                        error: 'Qty must be greater than 0',
+                        product_code: codeRaw,
+                    };
+                }
+                // Rate is optional — blank falls back to the vendor's current
+                // price-list entry for this product (mirrors the manual
+                // product-picker's auto-fill).
+                let unitPrice = num(r.unit_price);
+                if (unitPrice <= 0 && vendorId) {
+                    let priceRow: any = null;
+                    try {
+                        priceRow = await this.priceListRepository.findCurrentPrice(
+                            companyId,
+                            vendorId,
+                            product._id.toString()
+                        );
+                    } catch {
+                        priceRow = null;
+                    }
+                    unitPrice = num(priceRow?.unit_price);
+                }
+                if (unitPrice <= 0) {
+                    return {
+                        status: 'error' as const,
+                        error: `Rate is required — ${codeRaw} not found in the vendor's price list`,
+                        product_code: codeRaw,
+                    };
+                }
+                return {
+                    status: 'ok' as const,
+                    product_id: product._id.toString(),
+                    product_name: product.name,
+                    product_code: product.code,
+                    part_no: (r.part_no || product.part_no || '').toString(),
+                    hsn_code: (r.hsn_code || product.hsn_code || '').toString(),
+                    unit: (r.unit || product.unit_of_measure || '').toString(),
+                    tax_pct: String(
+                        r.tax_pct !== undefined && r.tax_pct !== ''
+                            ? num(r.tax_pct)
+                            : num(product.tax_pct)
+                    ),
+                    qty: String(qty),
+                    unit_price: String(unitPrice),
+                    discount: String(num(r.discount_pct)),
+                };
+            })
+        );
+
+        return { resolved };
     }
 }
 
