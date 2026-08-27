@@ -327,6 +327,12 @@ export class InvoiceCreateRequestDto {
     @IsOptional()
     exchange_rate?: string;
 
+    /** Optional customs/GST-only exchange rate — see entity doc comment.
+     *  Blank/omitted falls back to `exchange_rate`. */
+    @IsNumberString()
+    @IsOptional()
+    custom_exchange_rate?: string;
+
     @IsNumberString()
     @IsOptional()
     discount_total?: string;

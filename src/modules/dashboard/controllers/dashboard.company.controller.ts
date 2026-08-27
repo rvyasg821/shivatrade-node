@@ -1,6 +1,18 @@
-import { Controller, Get, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+    Controller,
+    Get,
+    Post,
+    Body,
+    Query,
+    HttpCode,
+    HttpStatus,
+    Res,
+} from '@nestjs/common';
+import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
+import { DashboardExportService } from '../services/dashboard-export.service';
+import { DashboardExportRequestDto } from '../dtos/request/dashboard-export.request.dto';
 import { UserRepository } from '@modules/user/repository/repositories/user.repository';
 import { AttendanceReportService } from '@modules/attendance/services/attendance-report.service';
 import { AttendanceRecordRepository } from '@modules/attendance/repository/repositories/attendance-record.repository';
@@ -45,7 +57,52 @@ export class DashboardCompanyController {
         private readonly povRepository: PoVendorRepository,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
         private readonly vendorRepository: VendorRepository,
+        private readonly dashboardExportService: DashboardExportService,
     ) {}
+
+    /**
+     * WYSIWYG exports — the request body is exactly what ErpDashboard.js has
+     * already rendered on screen (KPIs/attention/counts/leaderboards); these
+     * endpoints only style/paginate it into a file, never recompute a figure.
+     */
+    @AuthJwtAccessProtected()
+    @HttpCode(HttpStatus.OK)
+    @Post('/export/excel')
+    async exportExcel(
+        @Body() body: DashboardExportRequestDto,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const { buffer, filename } =
+            this.dashboardExportService.renderExcel(body);
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buffer.length.toString());
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @HttpCode(HttpStatus.OK)
+    @Post('/export/pdf')
+    async exportPdf(
+        @Body() body: DashboardExportRequestDto,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const { buffer, filename } =
+            await this.dashboardExportService.renderPdf(body);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${filename}"`
+        );
+        res.setHeader('Content-Length', buffer.length.toString());
+        res.end(buffer);
+    }
 
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)

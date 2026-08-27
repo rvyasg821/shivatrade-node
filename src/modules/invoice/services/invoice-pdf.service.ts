@@ -14,6 +14,10 @@ import {
     DocSection,
 } from '@common/excel-doc/excel-doc.builder';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
+import {
+    convertToInrForGst,
+    formatGstExchangeRateForDisplay,
+} from '../utils/gst-exchange-rate.util';
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
 import { InvoicePaymentRepository } from '../repository/repositories/invoice-payment.repository';
@@ -657,6 +661,10 @@ function buildInvoiceExcelSections(
     const isExport = doc === 'export';
     const isLut = inv.gst_route === ENUM_INVOICE_GST_ROUTE.LUT_ZERO_RATED;
     const showIgst = !isPacking && !isExport && !isLut;
+    // `er` = the invoice's own rate — still used for Export/Packing's header
+    // display. Commercial's header rate line + Assessable-Value/IGST figures
+    // instead go through convertToInrForGst / formatGstExchangeRateForDisplay,
+    // which pick the right operation for whichever rate is actually in play.
     const er = Number(inv.exchange_rate || 0);
     const COLS = 8;
     const dash = (v: any): string => {
@@ -721,10 +729,15 @@ function buildInvoiceExcelSections(
         metaPairs.push(['Incoterm', dash(inv.incoterm)]);
         metaPairs.push(["Buyer's PO #", dash(inv.customer_po_no)]);
         metaPairs.push(['Currency', code]);
+        // Commercial doc shows the GST-effective rate (custom override when
+        // set, else the regular rate) — Export/Packing always show the
+        // invoice's own rate, since custom_exchange_rate is GST-only.
         metaPairs.push([
             'Exchange Rate',
             code === 'INR'
                 ? '₹ 1 = ₹ 1'
+                : !isExport && !isPacking
+                ? formatGstExchangeRateForDisplay(inv, sym, fmtRate)
                 : er > 0
                 ? `${sym} 1 = ₹${fmtRate(1 / er)}`
                 : '-',
@@ -825,7 +838,9 @@ function buildInvoiceExcelSections(
         if (showIgst) {
             const rate = Number(l.igst_rate_pct || 0);
             if (rate > 0)
-                totalIgstInr += (Number(l.taxable_amount || 0) / (er > 0 ? er : 1)) * (rate / 100);
+                totalIgstInr +=
+                    convertToInrForGst(Number(l.taxable_amount || 0), inv) *
+                    (rate / 100);
         }
         return pad([
             textCell(i + 1, 'c'),
@@ -1537,12 +1552,11 @@ function igstRefundBucketsForPdf(
     if (Array.isArray(inv.igst_refund_buckets) && inv.igst_refund_buckets.length)
         return { buckets: inv.igst_refund_buckets, total: num(inv.igst_refund_amount) };
     // Draft (or legacy un-frozen) → derive live, grouped by igst_rate_pct.
-    const er = num(inv.exchange_rate) > 0 ? num(inv.exchange_rate) : 1;
     const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
     const grouped = new Map<string, number>();
     for (const l of lines || []) {
         const rate = num(l.igst_rate_pct);
-        const taxableInr = num(l.taxable_amount) / er;
+        const taxableInr = convertToInrForGst(num(l.taxable_amount), inv);
         grouped.set(String(rate), (grouped.get(String(rate)) || 0) + taxableInr);
     }
     let total = 0;
@@ -1569,18 +1583,17 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
     // Per-line IGST is shown in INR (matches the refund bucket basis).
     // For LUT route IGST is 0% — we drop the two columns entirely.
     const showIgst = !isLut;
-    const er = Number(inv.exchange_rate || 0);
     // Multi-currency: line values are ALREADY in the document currency (each
     // cost was converted source→doc in recompute), so they print as-is —
-    // erMul = 1. `er` (doc-per-₹1) is used only for the INR IGST + the rate line.
+    // erMul = 1.
     const erMul = 1;
     let totalIgstInr = 0;
     const lineIgstInr = (l: any): number => {
         const rate = Number(l.igst_rate_pct || 0);
         if (!showIgst || rate <= 0) return 0;
-        // taxable_amount is in the DOCUMENT currency → ÷ er for the INR
-        // assessable value; IGST (INR) = assessable_inr × rate.
-        const taxableInr = Number(l.taxable_amount || 0) / (er > 0 ? er : 1);
+        // convertToInrForGst picks divide-by-exchange_rate vs
+        // multiply-by-custom_exchange_rate for whichever rate is in play.
+        const taxableInr = convertToInrForGst(Number(l.taxable_amount || 0), inv);
         return taxableInr * (rate / 100);
     };
     const linesHtml = (d.lines || [])
@@ -1658,7 +1671,7 @@ function buildCommercialInvoiceHtml(d: RenderData): string {
             <td><span class="lbl">Exchange Rate</span><br/>${
                 (inv.currency_code || 'INR').toUpperCase() === 'INR'
                     ? '₹1 = ₹1'
-                    : `${sym}1 = ₹${fmtRate(er > 0 ? 1 / er : 1)}`
+                    : formatGstExchangeRateForDisplay(inv, sym, fmtRate)
             }</td>
         </tr>
     </table>

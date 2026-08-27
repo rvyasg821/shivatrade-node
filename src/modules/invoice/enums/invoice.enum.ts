@@ -101,6 +101,8 @@ export const INVOICE_EDITABLE_AT_ISSUED: ReadonlyArray<string> = [
     'net_weight_kg',
     'gross_weight_kg',
     'bl_awb_no',
+    // Customs/GST-only exchange rate — see invoice.entity.ts doc comment.
+    'custom_exchange_rate',
     // Always-appendable notes
     'internal_notes',
     'notes_to_buyer',

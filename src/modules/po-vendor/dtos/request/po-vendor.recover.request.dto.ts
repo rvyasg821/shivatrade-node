@@ -215,6 +215,13 @@ export class PoVendorRecoverRequestDto {
     @Type(() => PoVendorRecoverAssignmentDto)
     assignments: PoVendorRecoverAssignmentDto[];
 
+    /** Business creation date, applied to every POV spawned by this batch.
+     *  Defaults to today (server-side) when omitted. */
+    @ApiProperty({ required: false, type: String })
+    @IsDateString()
+    @IsOptional()
+    creation_date?: string;
+
     @ApiProperty({ required: false, type: String })
     @IsOptional()
     @IsString()

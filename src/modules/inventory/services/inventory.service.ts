@@ -517,21 +517,29 @@ export class InventoryService {
              ) pr ON pr.product_id = cb.product_id
                  AND pr.ccy = cb.ccy
                  AND pr.vendor_id = cb.vendor_id
-             -- Vendor invoice number(s) that supplied this product/vendor/currency
-             -- (distinct, comma-joined — one product+vendor can span several POVs).
+             -- Vendor invoice number(s) that supplied this product/vendor/currency —
+             -- sourced from the GRN(s) actually receipted against it (the invoice
+             -- number is finalised at GRN time, not on the POV header), distinct,
+             -- comma-joined. One product+vendor can span several POVs, and one POV
+             -- line can itself span several GRNs (partial receipts), each carrying
+             -- its own invoice number.
              LEFT JOIN (
                 SELECT pvl.product_id,
                        COALESCE(pv.currency_code, 'INR') AS ccy,
                        pv.vendor_id,
-                       STRING_AGG(DISTINCT pv.invoice_number, ', '
-                           ORDER BY pv.invoice_number) AS invoice_numbers
+                       STRING_AGG(DISTINCT g.po_vendor_invoice_number, ', '
+                           ORDER BY g.po_vendor_invoice_number) AS invoice_numbers
                 FROM po_vendor_lines pvl
                 JOIN po_vendors pv ON pv._id = pvl.po_vendor_id
+                JOIN grn_lines gl  ON gl.po_vendor_line_id = pvl._id
+                JOIN grns g        ON g._id = gl.grn_id
                 WHERE pv.company_id = $1
                   AND pv.soft_delete = false
                   AND pv.status <> 'cancelled'
-                  AND pv.invoice_number IS NOT NULL
-                  AND pv.invoice_number <> ''
+                  AND g.status = 'confirmed'
+                  AND g.soft_delete = false
+                  AND g.po_vendor_invoice_number IS NOT NULL
+                  AND g.po_vendor_invoice_number <> ''
                 GROUP BY pvl.product_id, ccy, pv.vendor_id
              ) inv ON inv.product_id = cb.product_id
                  AND inv.ccy = cb.ccy
@@ -664,7 +672,167 @@ export class InventoryService {
             'INR',
         ]);
 
-        return this.fileService.writeExcelFromArray(aoa as any);
+        // ── Sheet 2: GRN-wise detail — one row per GRN line (not aggregated),
+        // so every individual receipt (and its own invoice number) is visible,
+        // not just the rolled-up per-product/vendor/currency summary above.
+        const grnRows = await this.buildGrnWiseExportRows(companyId, filters);
+        const grnAoa = this.buildGrnWiseSheetAoa(grnRows, period);
+
+        return this.fileService.writeExcelSheetsFromArray([
+            { sheetName: 'Closing Inventory', rows: aoa },
+            { sheetName: 'GRN-wise Detail', rows: grnAoa },
+        ]);
+    }
+
+    /**
+     * GRN-wise export rows — one row per (confirmed) GRN line, joined back to
+     * its GRN header (voucher/date/invoice no), source POV line (price/GST/
+     * discount/currency), and product. Honours the same filters as the
+     * Closing Inventory sheet where they apply to a GRN (search / category /
+     * vendor / currency / date range on `grn_date` / deliver-to location).
+     */
+    private async buildGrnWiseExportRows(
+        companyId: string,
+        filters: Omit<InventoryListFilters, 'limit' | 'offset'>
+    ): Promise<any[]> {
+        const p: any[] = [companyId];
+        const where: string[] = [
+            'g.company_id = $1',
+            "g.status = 'confirmed'",
+            'g.soft_delete = false',
+        ];
+
+        if (filters.date_from) {
+            p.push(filters.date_from);
+            where.push(`g.grn_date >= $${p.length}`);
+        }
+        if (filters.date_to) {
+            p.push(filters.date_to);
+            where.push(`g.grn_date <= $${p.length}`);
+        }
+        if (filters.vendor_id) {
+            p.push(filters.vendor_id);
+            where.push(`g.vendor_id = $${p.length}`);
+        }
+        if (filters.category_id) {
+            p.push(filters.category_id);
+            where.push(`p.category_id = $${p.length}`);
+        }
+        if (filters.currency_code) {
+            p.push(filters.currency_code);
+            where.push(`COALESCE(pv.currency_code, 'INR') = $${p.length}`);
+        }
+        if (filters.search) {
+            p.push(`%${filters.search}%`);
+            where.push(
+                `(p.code ILIKE $${p.length} OR p.name ILIKE $${p.length})`
+            );
+        }
+        if (filters.location_id) {
+            p.push(filters.location_id);
+            where.push(
+                `COALESCE(pv.delivery_address_id, po.delivery_address_id) = $${p.length}`
+            );
+        }
+
+        return this.dataSource.query(
+            `SELECT
+                g.voucher_no                        AS grn_voucher_no,
+                g.grn_date                           AS grn_date,
+                g.po_vendor_invoice_number            AS invoice_number,
+                pv.voucher_no                         AS pov_voucher_no,
+                v.company_name                        AS vendor_name,
+                v.vendor_code                         AS vendor_code,
+                p.code                                AS product_code,
+                p.name                                AS product_name,
+                p.part_no                             AS part_no,
+                p.hsn_code                             AS hsn_code,
+                cat.name                               AS category_name,
+                p.unit_of_measure                      AS uom,
+                COALESCE(pv.currency_code, 'INR')      AS currency_code,
+                gl.received_qty::float8                AS received_qty,
+                gl.accepted_qty::float8                AS accepted_qty,
+                gl.rejected_qty::float8                AS rejected_qty,
+                COALESCE(pvl.unit_price, 0)::float8    AS unit_price,
+                COALESCE(pvl.discount_pct, 0)::float8  AS discount_pct,
+                COALESCE(pvl.tax_pct, 0)::float8       AS tax_pct,
+                (gl.accepted_qty * COALESCE(pvl.unit_price, 0)
+                    * (1 - COALESCE(pvl.discount_pct, 0) / 100))::float8 AS taxable_value
+             FROM grn_lines gl
+             JOIN grns g              ON g._id = gl.grn_id
+             LEFT JOIN po_vendor_lines pvl ON pvl._id = gl.po_vendor_line_id
+             LEFT JOIN po_vendors pv       ON pv._id = g.po_vendor_id
+             LEFT JOIN purchase_orders po  ON po._id = pv.purchase_order_id
+             LEFT JOIN products p          ON p._id = pvl.product_id
+             LEFT JOIN categories cat      ON cat._id = p.category_id
+             LEFT JOIN vendors v           ON v._id = g.vendor_id
+             WHERE ${where.join(' AND ')}
+             ORDER BY g.grn_date ASC, g.voucher_no ASC, p.name ASC`,
+            p
+        );
+    }
+
+    private buildGrnWiseSheetAoa(rows: any[], period: string): any[][] {
+        const aoa: (string | number)[][] = [
+            ['GRN-wise Detail'],
+            [`Movement period: ${period}`],
+            [
+                'One row per GRN line (individual receipt) — not aggregated. Amount is Received (good) qty × Rate × (1 − Disc%), in the vendor currency shown.',
+            ],
+            [],
+        ];
+
+        const HEADER = [
+            'GRN No',
+            'GRN Date',
+            'Invoice No',
+            'VPO No',
+            'Vendor Name',
+            'Vendor Code',
+            'Product Code',
+            'Product',
+            'Part No',
+            'HSN Code',
+            'Category',
+            'UOM',
+            'Received Qty',
+            'Accepted Qty',
+            'Rejected Qty',
+            'Rate',
+            'Disc %',
+            'GST %',
+            'Amount',
+            'Currency',
+        ];
+        aoa.push(HEADER);
+
+        for (const r of rows) {
+            aoa.push([
+                r.grn_voucher_no || '',
+                r.grn_date ? isoToDdmmyyyy(r.grn_date) : '',
+                r.invoice_number || '',
+                r.pov_voucher_no || '',
+                r.vendor_name || '',
+                r.vendor_code || '',
+                r.product_code || '',
+                r.product_name || '',
+                r.part_no || '',
+                r.hsn_code || '',
+                r.category_name || '',
+                r.uom || '',
+                Number(r.received_qty) || 0,
+                Number(r.accepted_qty) || 0,
+                Number(r.rejected_qty) || 0,
+                Number(r.unit_price) || 0,
+                Number(r.discount_pct) || 0,
+                Number(r.tax_pct) || 0,
+                Math.round((Number(r.taxable_value) + Number.EPSILON) * 100) / 100,
+                r.currency_code || 'INR',
+            ]);
+        }
+        aoa.push([`Rows: ${rows.length}`]);
+
+        return aoa;
     }
 
     /**
@@ -696,6 +864,7 @@ export class InventoryService {
             `WITH ${ctes}
              SELECT cb.ccy                              AS currency_code,
                     COALESCE(SUM(cb.closing_value), 0)::float8 AS stock_value,
+                    COALESCE(SUM(cb.closing_value_inr), 0)::float8 AS stock_value_inr,
                     COUNT(DISTINCT cb.product_id)::int  AS product_count
              FROM combined cb
              JOIN products p ON p._id = cb.product_id
@@ -710,6 +879,13 @@ export class InventoryService {
             stock_value: String(r.stock_value ?? '0'),
             product_count: r.product_count ?? 0,
         }));
+
+        // Grand total in INR — the one legitimately summable number across
+        // currencies, since each row already used its own receipt-time rate.
+        const stockValueInr = (rows || []).reduce(
+            (sum: number, r: any) => sum + (Number(r.stock_value_inr) || 0),
+            0
+        );
 
         // Distinct products (any currency) + distinct vendors currently supplying
         // stock — computed over the same filtered layer set.
@@ -726,6 +902,7 @@ export class InventoryService {
 
         return {
             by_currency: byCurrency,
+            stock_value_inr: String(Math.round((stockValueInr + Number.EPSILON) * 100) / 100),
             product_count: counts?.[0]?.product_count ?? 0,
             vendor_count: counts?.[0]?.vendor_count ?? 0,
         };

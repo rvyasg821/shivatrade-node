@@ -39,6 +39,8 @@ import { PoVendorRepository } from '../repository/repositories/po-vendor.reposit
 import { PoVendorImportExportService } from '../services/po-vendor.import-export.service';
 import { PoVendorCreateRequestDto } from '../dtos/request/po-vendor.create.request.dto';
 import { PoVendorStandaloneCreateRequestDto } from '../dtos/request/po-vendor.standalone-create.request.dto';
+import { PoVendorLineImportResolveRequestDto } from '../dtos/request/po-vendor.line-import.request.dto';
+import { PoVendorLineExportRequestDto } from '../dtos/request/po-vendor.line-export.request.dto';
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
 import { PoVendorCancelRequestDto } from '../dtos/request/po-vendor.cancel.request.dto';
@@ -291,6 +293,65 @@ export class PoVendorAdminController {
             userId
         );
         return { data: await this.povService.mapGet(row) };
+    }
+
+    // ─── Standalone create form: line-item Import/Export ────────────────
+    // Scoped ONLY to the standalone POV create form — NOT the Generate-POV-
+    // from-SO flow (a different, per-vendor-assignment UI with no bearing
+    // here). See PoVendorService's "Line-item Import/Export" section.
+
+    @AuthJwtAccessProtected()
+    @Get('/standalone-lines/sample')
+    @ApiOperation({ summary: 'Sample Excel for the standalone POV line-items import' })
+    async standaloneLineSample(@Res() res: ExpressResponse) {
+        const buffer = this.povService.buildStandaloneLineSample();
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="pov-line-items-sample.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Post('/standalone-lines/export')
+    @ApiOperation({ summary: 'Export the standalone POV form\'s current line items to Excel' })
+    async standaloneLineExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body() body: PoVendorLineExportRequestDto,
+        @Res() res: ExpressResponse
+    ) {
+        const buffer = await this.povService.buildStandaloneLineExport(
+            companyId,
+            body.lines || []
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="pov-line-items-export.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @AuthJwtAccessProtected()
+    @Post('/standalone-lines/resolve')
+    @ApiOperation({ summary: 'Resolve uploaded (client-parsed) rows against the product master' })
+    async standaloneLineResolve(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body() body: PoVendorLineImportResolveRequestDto
+    ): Promise<IResponse<{ resolved: any[] }>> {
+        const result = await this.povService.resolveStandaloneLineImport(
+            companyId,
+            body.vendor_id || '',
+            body.rows || []
+        );
+        return { data: result };
     }
 
     // ─── List ───────────────────────────────────────────────────────────

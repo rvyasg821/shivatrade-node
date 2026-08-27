@@ -112,6 +112,11 @@ export class PoVendorStandaloneCreateRequestDto {
     @MaxLength(120)
     invoice_number?: string;
 
+    /** Business creation date. Defaults to today (server-side) when omitted. */
+    @IsDateString()
+    @IsOptional()
+    creation_date?: string;
+
     @IsUUID()
     @IsOptional()
     vendor_address_id?: string;

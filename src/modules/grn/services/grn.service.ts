@@ -965,6 +965,7 @@ export class GrnService {
             dto.vendor_name = r.vendor_id
                 ? vendorById.get(r.vendor_id.toString())?.company_name
                 : undefined;
+            dto.po_vendor_invoice_number = r.po_vendor_invoice_number || undefined;
             return dto;
         });
     }

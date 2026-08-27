@@ -127,6 +127,7 @@ export class InvoiceGetResponseDto {
     currency_code?: string;
     currency_symbol?: string;
     exchange_rate?: string;
+    custom_exchange_rate?: string;
     subtotal?: string;
     discount_total?: string;
     fob_value?: string;

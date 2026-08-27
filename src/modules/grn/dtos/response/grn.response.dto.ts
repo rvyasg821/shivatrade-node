@@ -67,6 +67,10 @@ export class GrnListResponseDto {
     @ApiProperty({ required: false }) vendor_id?: string;
     @ApiProperty({ required: false }) vendor_name?: string;
     @ApiProperty({ required: false }) grn_date?: string;
+    // Vendor's invoice number for THIS GRN — finalised at GRN time (not the
+    // POV header). A POV with multiple partial-receipt GRNs can have a
+    // different invoice number per row here.
+    @ApiProperty({ required: false }) po_vendor_invoice_number?: string;
     @ApiProperty() status: string;
     @ApiProperty({ required: false }) line_count?: number;
     // Σ good (accepted) qty across this GRN's lines — shown as "Received".

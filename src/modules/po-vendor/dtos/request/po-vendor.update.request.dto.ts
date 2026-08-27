@@ -249,6 +249,11 @@ export class PoVendorUpdateRequestDto {
     @MaxLength(120)
     invoice_number?: string;
 
+    /** Business creation date — editable on the edit form. */
+    @IsDateString()
+    @IsOptional()
+    creation_date?: string;
+
     /** Replace the vendor-charges list. When provided, fully overrides
      *  the existing snapshot — the service resolves master fields and
      *  recomputes amounts. Editable only while POV is in `draft`. */

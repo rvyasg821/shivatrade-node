@@ -89,6 +89,7 @@ export class PoVendorGetResponseDto {
     };
     @ApiProperty({ required: false, type: String }) vendor_address_id?: string;
 
+    @ApiProperty({ required: false, type: String }) creation_date?: string;
     @ApiProperty({ required: false, type: String }) dispatch_date?: string;
     @ApiProperty({ required: false, type: String }) expected_arrival_date?: string;
     @ApiProperty({ required: false, type: String }) actual_arrival_date?: string;

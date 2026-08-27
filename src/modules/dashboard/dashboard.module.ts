@@ -23,6 +23,7 @@ import { PurchaseOrderRepositoryModule } from '@modules/purchase-order/repositor
 import { PoVendorRepositoryModule } from '@modules/po-vendor/repository/po-vendor.repository.module';
 import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
+import { DashboardExportService } from './services/dashboard-export.service';
 
 @Module({
     imports: [
@@ -50,7 +51,7 @@ import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.reposi
         VendorRepositoryModule,
     ],
     controllers: [DashboardAdminController, DashboardCompanyController],
-    providers: [],
+    providers: [DashboardExportService],
     exports: [],
 })
 export class DashboardModule {}
