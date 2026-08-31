@@ -24,6 +24,16 @@ import {
     ENUM_SHIPPING_MODE,
 } from '@modules/invoice/enums/invoice.enum';
 
+export class InvoiceSoAdvanceAllocationDto {
+    @IsUUID()
+    @IsNotEmpty()
+    purchase_order_id: string;
+
+    @IsNumberString()
+    @IsOptional()
+    applied_amount?: string;
+}
+
 export class InvoiceLineDto {
     @IsUUID()
     @IsOptional()
@@ -352,6 +362,14 @@ export class InvoiceCreateRequestDto {
     @IsNumberString()
     @IsOptional()
     advance_received?: string;
+
+    // Per-source-SO advance split (see entity doc comment). Optional — when
+    // omitted, the backend defaults each source SO to its unclaimed remainder.
+    @IsArray()
+    @IsOptional()
+    @ValidateNested({ each: true })
+    @Type(() => InvoiceSoAdvanceAllocationDto)
+    so_advance_allocations?: InvoiceSoAdvanceAllocationDto[];
 
     // GST / compliance
     @IsEnum(ENUM_INVOICE_GST_ROUTE)

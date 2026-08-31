@@ -348,6 +348,17 @@ export class InvoiceService {
             (p: any) => p?.customer_address_id
         );
 
+        // Per-source-SO advance split (see entity doc comment). Imports
+        // (silent) don't carry this granularity — leave allocations null and
+        // trust the sheet's own advance_received, same as before.
+        const soAdvanceAllocations = silent
+            ? null
+            : await this.buildSoAdvanceAllocations(
+                  source.pos,
+                  undefined,
+                  (data as any).so_advance_allocations
+              );
+
         // Assign the invoice number up-front so the DRAFT already carries a
         // stable voucher (e.g. STIPL/INV/0001/2026-27). voucher_prefix always
         // resolves (falls back to the company name), so this never blocks
@@ -446,17 +457,24 @@ export class InvoiceService {
                     : String(round2(this.sumSourceFreight(source.pos))),
             insurance_charges: data.insurance_charges || '0',
             other_charges: data.other_charges || '0',
-            // Advance is AUTO-MANAGED from the source Sales Orders (client
-            // 2026-08-07): the invoice's advance = Σ advance_amount over EVERY
-            // distinct source SO its lines come from, so a multi-SO invoice
-            // aggregates all their advances (not just the first SO's). The FE
-            // value is ignored here — it's a read-only mirror of this sum.
+            // Advance = Σ applied_amount over the per-SO allocation table
+            // (client 2026-08-31 revision: was Σ EVERY source SO's FULL
+            // advance_amount unconditionally, which double-counted an
+            // advance split across multiple invoices off the same SO).
             // Import (silent) keeps the value the sheet supplied.
             advance_received: silent
                 ? data.advance_received != null && data.advance_received !== ''
                     ? data.advance_received
                     : '0'
-                : String(round2(this.sumSourceAdvances(source.pos))),
+                : String(
+                      round2(
+                          (soAdvanceAllocations || []).reduce(
+                              (s: number, a: any) => s + num(a.applied_amount),
+                              0
+                          )
+                      )
+                  ),
+            so_advance_allocations: soAdvanceAllocations,
             gst_route: data.gst_route || ENUM_INVOICE_GST_ROUTE.IGST_PAID,
             lut_no: data.lut_no !== undefined ? data.lut_no : ctx.lut_no,
             lut_date: data.lut_date !== undefined ? data.lut_date : ctx.lut_date,
@@ -550,9 +568,12 @@ export class InvoiceService {
             // Everything editable.
             const lines = data.lines;
             const { lines: _omit, ...header } = data as any;
-            // Advance is auto-managed from the source SOs (recomputed in the
-            // lines block below) — never let the FE set it directly.
+            // Advance is auto-managed from the source SOs' per-SO allocation
+            // table (recomputed below, alongside so_advance_allocations
+            // itself) — never let the FE set advance_received directly.
             delete header.advance_received;
+            const providedAllocations = header.so_advance_allocations;
+            delete header.so_advance_allocations;
             // Not a real column — consumed explicitly below, in the lines
             // block, alongside the tolerance recompute.
             const wantsOverride = !!header.override;
@@ -621,12 +642,26 @@ export class InvoiceService {
                     source.byPoLineId,
                     row.currency_code
                 );
-                // Auto-manage the advance: Σ advance_amount over EVERY distinct
-                // source SO now on the invoice — so adding lines from another SO
-                // aggregates its advance too. Persist before recompute (which
-                // reads advance_received to derive the balance).
+                // Auto-manage the advance: Σ applied_amount over the per-SO
+                // allocation table, now recomputed for EVERY distinct source
+                // SO on the invoice (adding lines from another SO brings its
+                // own default-remaining allocation in). Explicit allocations
+                // (operator-edited, or carried over from a prior save) stay
+                // sticky — see buildSoAdvanceAllocations. Persist before
+                // recompute (which reads advance_received for the balance).
+                const allocations = await this.buildSoAdvanceAllocations(
+                    source.pos,
+                    row._id.toString(),
+                    providedAllocations
+                );
+                (row as any).so_advance_allocations = allocations;
                 row.advance_received = String(
-                    round2(this.sumSourceAdvances(source.pos))
+                    round2(
+                        allocations.reduce(
+                            (s: number, a: any) => s + num(a.applied_amount),
+                            0
+                        )
+                    )
                 );
                 // Qty/price tolerance (§8.1) — recomputed on every line edit;
                 // saving still succeeds when held (only issue() blocks).
@@ -643,6 +678,31 @@ export class InvoiceService {
                         : null;
                 row.tolerance_override_at =
                     tolerance.hold && wantsOverride ? new Date() : null;
+                await this.invoiceRepository.save(row);
+            } else if (providedAllocations) {
+                // Header-only save that still edits the Advance table (Step 3
+                // touched without touching Items) — recompute against the
+                // invoice's EXISTING lines' source SOs.
+                const curLines = await this.invoiceLineRepository.findByInvoiceId(
+                    row._id.toString()
+                );
+                const curSource = await this.loadSourcePoContext(
+                    curLines as any
+                );
+                const allocations = await this.buildSoAdvanceAllocations(
+                    curSource.pos,
+                    row._id.toString(),
+                    providedAllocations
+                );
+                (row as any).so_advance_allocations = allocations;
+                row.advance_received = String(
+                    round2(
+                        allocations.reduce(
+                            (s: number, a: any) => s + num(a.applied_amount),
+                            0
+                        )
+                    )
+                );
                 await this.invoiceRepository.save(row);
             }
             await this.recompute(row._id.toString());
@@ -1425,11 +1485,9 @@ export class InvoiceService {
         const other = num(row.other_charges);
         // Rounded to the nearest WHOLE currency unit — see
         // computeInvoiceGrandTotal doc comment. Shared with invoice-pdf so
-        // the detail page, API, PDF, and Excel always agree on this figure.
-        const source = await this.loadSourcePoContext(lines as any);
+        // the detail page, API, PDF, and Excel always agree on this figure
+        // (and, by construction, with the Step 3 editor's own live preview).
         const { grand_total, round_off } = computeInvoiceGrandTotal({
-            lines: lines as any,
-            byPoLineId: source.byPoLineId,
             fobValue: fob_value,
             freight,
             insurance,
@@ -1717,17 +1775,125 @@ export class InvoiceService {
     // ─── Multi-SO source resolution + invariant ─────────────────────────
 
     /**
-     * Σ advance_amount over the DISTINCT source Sales Orders — the auto-managed
-     * invoice advance. `source.pos` from loadSourcePoContext is already distinct
-     * by SO, so a multi-SO invoice sums each SO's advance exactly once.
+     * How much of a given source SO's advance is already applied on OTHER
+     * live invoices (any status except cancelled/soft-deleted), excluding
+     * `excludeInvoiceId` (the invoice being saved right now). Mirrors
+     * `resyncDraftAdvanceForSo`'s "match by line, not just header PO id" —
+     * a multi-SO invoice's header only names its primary source SO, so an
+     * invoice carrying a LINE from this SO (added via "Add lines from SO")
+     * must be counted too.
      */
-    private sumSourceAdvances(pos: any[]): number {
-        return (pos || []).reduce((s, p) => s + num(p?.advance_amount), 0);
+    private async otherAppliedForSo(
+        soId: string,
+        excludeInvoiceId?: string
+    ): Promise<number> {
+        const soLines = await this.poLineRepository.findAll({
+            purchase_order_id: soId,
+        } as any);
+        const soLineIds = (soLines as any[]).map((l) => l._id.toString());
+        const invoiceIdsFromLines = soLineIds.length
+            ? new Set(
+                  (
+                      (await this.invoiceLineRepository.findAll({
+                          purchase_order_line_id: { $in: soLineIds },
+                      } as any)) as any[]
+                  ).map((l) => l.invoice_id?.toString())
+              )
+            : new Set<string>();
+        const headerInvoices = (await this.invoiceRepository.findAll({
+            purchase_order_id: soId,
+            soft_delete: false,
+        } as any)) as any[];
+        const lineInvoices = invoiceIdsFromLines.size
+            ? ((await this.invoiceRepository.findAll({
+                  _id: { $in: Array.from(invoiceIdsFromLines) },
+                  soft_delete: false,
+              } as any)) as any[])
+            : [];
+        const byId = new Map<string, any>();
+        for (const inv of [...headerInvoices, ...lineInvoices]) {
+            const id = inv._id.toString();
+            if (excludeInvoiceId && id === excludeInvoiceId) continue;
+            if (inv.status === ENUM_INVOICE_STATUS.CANCELLED) continue;
+            byId.set(id, inv);
+        }
+        let sum = 0;
+        for (const inv of byId.values()) {
+            const allocs: any[] = Array.isArray(inv.so_advance_allocations)
+                ? inv.so_advance_allocations
+                : [];
+            const row = allocs.find((a) => a?.purchase_order_id === soId);
+            if (row) sum += num(row.applied_amount);
+        }
+        return round2(sum);
+    }
+
+    /**
+     * Resolve the per-source-SO advance allocation for an invoice. Any SO id
+     * present in `provided` (the FE's editable table, or a prior save) is
+     * respected VERBATIM — allocations are sticky, never silently re-derived
+     * once explicitly set (client-approved: an operator can over-allocate
+     * past what's "left", it just shows a negative Remaining Advance). Every
+     * OTHER source SO (never touched before) defaults to its currently
+     * unclaimed remainder, clamped at 0.
+     */
+    private async buildSoAdvanceAllocations(
+        pos: any[],
+        invoiceId: string | undefined,
+        provided?: Array<{ purchase_order_id?: string; applied_amount?: string }>
+    ): Promise<Array<{ purchase_order_id: string; applied_amount: string }>> {
+        const providedById = new Map<string, number>();
+        for (const a of provided || []) {
+            if (a?.purchase_order_id) {
+                providedById.set(a.purchase_order_id, num(a.applied_amount));
+            }
+        }
+        const out: Array<{ purchase_order_id: string; applied_amount: string }> =
+            [];
+        for (const p of pos) {
+            const soId = p._id.toString();
+            if (providedById.has(soId)) {
+                out.push({
+                    purchase_order_id: soId,
+                    applied_amount: String(round2(providedById.get(soId)!)),
+                });
+                continue;
+            }
+            // Default (no explicit allocation seen yet): the SO's FULL
+            // original advance — the operator manually reduces it when
+            // deliberately splitting the advance across invoices (client
+            // call, 2026-08-31). Not clamped against otherAppliedForSo here;
+            // that figure only drives the FE's informational "Remaining
+            // Advance" column.
+            out.push({
+                purchase_order_id: soId,
+                applied_amount: String(round2(num(p.advance_amount))),
+            });
+        }
+        return out;
+    }
+
+    /**
+     * Advance-remaining preview for the FE's Sales-Order-wise Advance table —
+     * used both by the multi-SO picker (before an invoice exists) and by the
+     * "Generate from SO" single-source flow. Not invoice-scoped.
+     */
+    async getSoAdvanceRemaining(
+        soId: string
+    ): Promise<{ purchase_order_id: string; advance_amount: string; remaining_advance: string }> {
+        const po = await this.poRepository.findOneById(soId);
+        const advanceAmount = round2(num((po as any)?.advance_amount));
+        const otherApplied = await this.otherAppliedForSo(soId, undefined);
+        return {
+            purchase_order_id: soId,
+            advance_amount: String(advanceAmount),
+            remaining_advance: String(round2(advanceAmount - otherApplied)),
+        };
     }
 
     /**
      * Σ freight_total over the DISTINCT source Sales Orders — same
-     * single-count-per-SO shape as `sumSourceAdvances`. Used to seed
+     * single-count-per-SO shape as `buildSoAdvanceAllocations`. Used to seed
      * freight_charges at create, and to detect a newly-added SO's own
      * freight contribution when lines are edited (see `update()`).
      */
@@ -1737,10 +1903,10 @@ export class InvoiceService {
 
     /**
      * Document-currency-per-₹1 at the moment the advance was received, from the
-     * first source SO that actually carries an advance — matches
-     * `sumSourceAdvances`' single-total simplification (one seeded receipt
-     * row for a multi-SO invoice, so one rate). Falls back to the invoice's
-     * own header rate (in `syncDraftAdvanceReceipt`) when no source SO has a
+     * first source SO that actually carries an advance — matches the
+     * single-receipt-per-invoice simplification (one seeded receipt row for
+     * a multi-SO invoice, so one rate). Falls back to the invoice's own
+     * header rate (in `syncDraftAdvanceReceipt`) when no source SO has a
      * real rate (domestic advance, or the SO predates this field).
      */
     private sourceAdvanceRate(pos: any[]): number | undefined {
@@ -1826,10 +1992,15 @@ export class InvoiceService {
      * invoice already generated from this Sales Order. Called when the SO's
      * own `advance_amount` changes AFTER invoice(s) already exist — an SO
      * edit otherwise has no effect on invoices already created from it
-     * (`sumSourceAdvances`/`syncDraftAdvanceReceipt` only ever ran at that
-     * invoice's own create/update time). Non-draft invoices are left alone:
+     * (`buildSoAdvanceAllocations`/`syncDraftAdvanceReceipt` only ever ran at
+     * that invoice's own create/update time). Non-draft invoices are left alone:
      * their advance is frozen once issued, same rule `syncDraftAdvanceReceipt`
-     * already enforces on its own.
+     * already enforces on its own. CAVEAT: once an invoice has an explicit
+     * per-SO allocation for this SO (true for essentially every invoice past
+     * its first save — allocations are sticky, see buildSoAdvanceAllocations),
+     * this resync is a no-op for it; the SO's corrected advance_amount only
+     * reaches a NEW allocation the operator adds later. That's intentional —
+     * a manually-applied amount must not silently shift under an operator.
      */
     async resyncDraftAdvanceForSo(
         soId: string,
@@ -1875,9 +2046,32 @@ export class InvoiceService {
                 row._id.toString()
             );
             const source = await this.loadSourcePoContext(lines as any);
-            const advanceReceived = round2(this.sumSourceAdvances(source.pos));
-            if (round2(num(row.advance_received)) !== advanceReceived) {
+            // Preserve any allocation already explicitly set on this invoice
+            // (sticky, per buildSoAdvanceAllocations) — only a source SO with
+            // no prior allocation here picks up a fresh default remainder.
+            const priorAllocations = Array.isArray(
+                (row as any).so_advance_allocations
+            )
+                ? (row as any).so_advance_allocations
+                : [];
+            const allocations = await this.buildSoAdvanceAllocations(
+                source.pos,
+                row._id.toString(),
+                priorAllocations
+            );
+            const advanceReceived = round2(
+                allocations.reduce(
+                    (s: number, a: any) => s + num(a.applied_amount),
+                    0
+                )
+            );
+            if (
+                round2(num(row.advance_received)) !== advanceReceived ||
+                JSON.stringify((row as any).so_advance_allocations || null) !==
+                    JSON.stringify(allocations)
+            ) {
                 row.advance_received = String(advanceReceived);
+                (row as any).so_advance_allocations = allocations;
                 await this.invoiceRepository.save(row);
             }
             await this.syncDraftAdvanceReceipt(
@@ -2414,6 +2608,50 @@ export class InvoiceService {
             /* non-fatal — header simply omits the customer details */
         }
 
+        // Sales-Order-wise Advance table (edit-mode hydration): one row per
+        // distinct source SO with its original advance_amount, this
+        // invoice's applied allocation, and what's left over for other
+        // invoices — drives the FE's 4-column Advance section directly, no
+        // separate fetch needed.
+        try {
+            const source = await this.loadSourcePoContext(lines as any);
+            if (source.pos.length) {
+                const allocById = new Map<string, number>(
+                    (Array.isArray((row as any).so_advance_allocations)
+                        ? (row as any).so_advance_allocations
+                        : []
+                    ).map((a: any) => [a.purchase_order_id, num(a.applied_amount)])
+                );
+                const soAdvanceSummary = [];
+                for (const p of source.pos) {
+                    const soId = p._id.toString();
+                    // No stored entry for this SO (a legacy invoice saved
+                    // before per-SO allocations existed, so_advance_allocations
+                    // is null) → default the SAME way a brand-new invoice
+                    // would: the SO's full original advance, not 0.
+                    const applied = allocById.has(soId)
+                        ? allocById.get(soId)!
+                        : round2(num(p.advance_amount));
+                    const otherApplied = await this.otherAppliedForSo(
+                        soId,
+                        row._id.toString()
+                    );
+                    soAdvanceSummary.push({
+                        purchase_order_id: soId,
+                        voucher_no: p.voucher_no,
+                        advance_amount: String(round2(num(p.advance_amount))),
+                        applied_amount: String(round2(applied)),
+                        remaining_advance: String(
+                            round2(num(p.advance_amount) - otherApplied - applied)
+                        ),
+                    });
+                }
+                (dto as any).so_advance_summary = soAdvanceSummary;
+            }
+        } catch {
+            /* non-fatal — Advance table falls back to the single field */
+        }
+
         return dto;
     }
 
@@ -2638,12 +2876,31 @@ export class InvoiceService {
         for (const po of active) {
             const lines = await this.getAddablePoLines(po._id.toString());
             if (!lines.length) continue;
+            // Currently-unclaimed remainder of this SO's advance — what a
+            // NEW invoice off this SO defaults to applying (other live
+            // invoices already off this SO may have claimed part of it).
+            const otherApplied = await this.otherAppliedForSo(
+                po._id.toString(),
+                undefined
+            );
             groups.push({
                 po_id: po._id.toString(),
                 po_voucher_no: po.voucher_no,
-                // The SO's advance — the FE sums it across the picked SOs so the
-                // invoice's auto-managed advance previews correctly before save.
+                // The SO's ORIGINAL advance — kept for reference; the FE's
+                // per-SO Advance table should default to remaining_advance,
+                // not this, when seeding the editable "Advance to Apply".
                 advance_amount: String(po.advance_amount ?? '0'),
+                remaining_advance: String(
+                    round2(num(po.advance_amount) - otherApplied)
+                ),
+                // The SO's own freight — a multi-SO invoice built from this
+                // picker must SUM every picked SO's freight_total into the
+                // invoice's header freight_charges (not just the primary
+                // SO's), else the per-SO "Invoice Value" breakdown on the
+                // PDF/Excel (billed + this SO's prorated share of the
+                // invoice's ACTUAL freight) comes out short of what that
+                // SO's own detail page/PDF shows for its full order value.
+                freight_total: String(po.freight_total ?? '0'),
                 quotation_id: po.quotation_id?.toString() || null,
                 quotation_voucher_no: po.quotation_id
                     ? qVoucherById.get(po.quotation_id.toString()) || null

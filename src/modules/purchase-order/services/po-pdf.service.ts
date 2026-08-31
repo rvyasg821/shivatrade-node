@@ -334,8 +334,11 @@ export class PoPdfService {
         // Native model: line_total is already in the document currency, so the
         // total prints as-is (no × exchange_rate).
         const rate = 1;
+        // Whole-unit Round Off convention (matches the printed Grand Total /
+        // the detail page's Costing Breakdown round_off) — words must spell
+        // out the SAME figure that's printed, not the raw pre-round sum.
         const amountInWords = numberToIndianWords(
-            Math.round(linesInrTotal * rate * 100) / 100,
+            Math.round(linesInrTotal * rate),
             po.currency_code || 'INR'
         );
 
@@ -625,6 +628,28 @@ function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
             ])
         );
     }
+    // Same whole-unit Round Off convention as the HTML PDF / purchase-order
+    // recompute() — the raw Σlines+freight is rounded to the nearest whole
+    // unit, matching the header's stored grand_total shown on the detail page.
+    const rawGrandTotal = fobTotal + freightTotal;
+    const roundedGrandTotal = Math.round(rawGrandTotal);
+    const roundOff = roundedGrandTotal - rawGrandTotal;
+    if (Math.abs(roundOff) > 0.001) {
+        rows.push(
+            pad([
+                textCell(''),
+                textCell('Round Off', 'r'),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                textCell(''),
+                curCell(roundOff, sym, 4),
+            ])
+        );
+    }
     rows.push(
         pad([
             textCell(''),
@@ -636,7 +661,7 @@ function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
             textCell(''),
             textCell(''),
             textCell(''),
-            curCell(fobTotal + freightTotal, sym, 2, {
+            curCell(roundedGrandTotal, sym, 2, {
                 bold: true,
                 fill: 'FDEBD8',
                 color: 'C25E10',
@@ -708,7 +733,12 @@ function buildPoHtml(ctx: PoPdfContext): string {
     const rawFobCcy = fobTotal * rate;
     const freightCcy = freightTotal * rate;
     const rawGrandTotalCcy = inrTotal * rate;
-    const grandTotalCcy = rawGrandTotalCcy;
+    // Same whole-unit Round Off convention as purchase-order.service.ts's
+    // recompute() (grand_total = Math.round(raw)) — the detail page's Costing
+    // Breakdown card shows this Round Off line + rounded Grand Total, so the
+    // PDF/Excel must match it instead of printing the raw, un-rounded sum.
+    const grandTotalCcy = Math.round(rawGrandTotalCcy);
+    const roundOffCcy = grandTotalCcy - rawGrandTotalCcy;
 
     // Header exchange_rate (sales-doc convention: doc-currency per ₹1, e.g.
     // 0.0105 for USD). Used ONLY for the printed "Exchange Rate" line — line
@@ -919,6 +949,16 @@ function buildPoHtml(ctx: PoPdfContext): string {
       <td class="num">Freight</td>
       <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
       <td class="num nowrap">${fmt4(freightCcy)} ${esc(sym)}</td>
+    </tr>`
+            : ''
+    }
+    ${
+        Math.abs(roundOffCcy) > 0.001
+            ? `<tr>
+      <td></td>
+      <td class="num">Round Off</td>
+      <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+      <td class="num nowrap">${roundOffCcy > 0 ? '+' : ''}${fmt4(roundOffCcy)} ${esc(sym)}</td>
     </tr>`
             : ''
     }

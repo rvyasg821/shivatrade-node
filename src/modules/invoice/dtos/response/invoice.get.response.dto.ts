@@ -139,6 +139,21 @@ export class InvoiceGetResponseDto {
     grand_total_inr?: string;
     amount_in_words?: string;
     advance_received?: string;
+    /** Per-source-SO advance split — see invoice.entity.ts doc comment. */
+    so_advance_allocations?: Array<{
+        purchase_order_id: string;
+        applied_amount: string;
+    }>;
+    /** Computed (not stored): one row per source SO for the FE's 4-column
+     *  Advance table — original advance, this invoice's applied portion, and
+     *  what's left over for other invoices off the same SO. */
+    so_advance_summary?: Array<{
+        purchase_order_id: string;
+        voucher_no?: string;
+        advance_amount: string;
+        applied_amount: string;
+        remaining_advance: string;
+    }>;
     /** Net effect of linked Adjustment Notes (positive = receivable reduced). */
     adjustment_total?: string;
     balance_receivable?: string;
