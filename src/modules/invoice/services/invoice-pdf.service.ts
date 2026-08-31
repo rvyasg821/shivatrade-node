@@ -15,6 +15,10 @@ import {
 } from '@common/excel-doc/excel-doc.builder';
 import { numberToIndianWords } from '@common/utils/amount-in-words';
 import {
+    computeInvoiceGrandTotal,
+    computeInvoiceSoShares,
+} from '../utils/grand-total.util';
+import {
     convertToInrForGst,
     formatGstExchangeRateForDisplay,
 } from '../utils/gst-exchange-rate.util';
@@ -255,6 +259,35 @@ export class InvoicePdfService {
             invoiceId
         );
 
+        // Grand Total is rounded to the nearest WHOLE currency unit (mirrors
+        // Quotation/Sales Order) with the difference shown as "Round Off" —
+        // recomputed live here via the SAME shared util invoice.service.ts's
+        // recompute() uses (not trusted from the stored header row) so a PDF
+        // is always correct even for an invoice saved before this rounding
+        // rule existed, or whose freight/other charges changed via a path
+        // that didn't re-run the service's recompute(). This also keeps it
+        // in lockstep with the Step 3 editor's own live preview — computed
+        // FIRST here (before the per-SO breakdown below) precisely so that
+        // breakdown can be reconciled TO this figure, never the reverse.
+        {
+            const { grand_total: roundedGrand, round_off } =
+                computeInvoiceGrandTotal({
+                    fobValue: num(invoice.fob_value),
+                    freight: num(invoice.freight_charges),
+                    insurance: num(invoice.insurance_charges),
+                    other: num(invoice.other_charges),
+                });
+            invoice.grand_total = String(roundedGrand);
+            invoice.round_off = String(round_off);
+            // Keep "Amount in Words" in sync with the (possibly just
+            // recomputed) rounded grand_total — a stale stored string would
+            // otherwise still spell out the old, unrounded figure.
+            invoice.amount_in_words = numberToIndianWords(
+                roundedGrand,
+                invoice.currency_code || 'INR'
+            );
+        }
+
         // Multi-SO reference numbers: an invoice can draw lines from several
         // Sales Orders, each with its own manual `reference_no`. Resolve the
         // distinct set (via each line's purchase_order_line_id → SO) and merge
@@ -282,6 +315,20 @@ export class InvoicePdfService {
             advance: number;
             receivable: number;
         }> = [];
+        // Fed to computeInvoiceSoShares below, for the SO-wise breakdown
+        // table (grand-total.util.ts: a SO billed in full on this invoice
+        // reuses its own already-rounded grand_total verbatim).
+        const byPoLineIdForGrandTotal = new Map<
+            string,
+            {
+                po: {
+                    _id: string;
+                    subtotal?: any;
+                    grand_total?: any;
+                    freight_total?: any;
+                };
+            }
+        >();
         const poLineIds = Array.from(
             new Set(
                 (lines as any[])
@@ -331,72 +378,79 @@ export class InvoicePdfService {
                     );
                     posSorted.forEach((po) => pushRef(po.reference_no));
 
-                    // Bill value per SO = Σ line_total of its invoice lines.
+                    // poLine → its SO's id (+ subtotal/grand_total/
+                    // freight_total, fed to computeInvoiceSoShares below).
                     const poIdByLineId = new Map<string, string>();
-                    for (const pl of poLines as any[])
-                        poIdByLineId.set(
-                            pl._id.toString(),
-                            pl.purchase_order_id?.toString()
-                        );
-                    const billedByPoId = new Map<string, number>();
-                    for (const l of lines as any[]) {
-                        const pid = poIdByLineId.get(
-                            l.purchase_order_line_id?.toString()
-                        );
-                        if (!pid) continue;
-                        billedByPoId.set(
-                            pid,
-                            (billedByPoId.get(pid) || 0) + num(l.line_total)
-                        );
+                    for (const pl of poLines as any[]) {
+                        const lineId = pl._id.toString();
+                        const poId = pl.purchase_order_id?.toString();
+                        poIdByLineId.set(lineId, poId);
+                        if (poId) {
+                            const srcPo = poById.get(poId);
+                            byPoLineIdForGrandTotal.set(lineId, {
+                                po: {
+                                    _id: poId,
+                                    subtotal: srcPo?.subtotal,
+                                    freight_total: srcPo?.freight_total,
+                                    grand_total: srcPo?.grand_total,
+                                },
+                            });
+                        }
                     }
-                    // `billedByPoId` is only Σline_total (Net + Margin) — the
-                    // rest of each SO's own true total is its OWN
-                    // freight_total (a per-shipment charge, looked up
-                    // directly per SO — never pro-rated from the invoice's
-                    // combined header figure, which can include OTHER SOs'
-                    // freight too, or be stale on an invoice saved before
-                    // this fix, and would misattribute/corrupt the number).
-                    // Insurance/other charges have no per-SO source field,
-                    // so those (rare, usually 0) are still pro-rated by
-                    // billed share. Deliberately NO forced reconciliation to
-                    // header grand_total here — each row is the SO's own
-                    // honest total; if the header itself is wrong (e.g. a
-                    // pre-existing invoice not yet re-saved through the
-                    // freight_charges auto-sum fix), that's a header problem
-                    // to fix by re-saving, not something to paper over by
-                    // corrupting one SO's row to force-fit the total.
-                    const totalBilled = Array.from(
-                        billedByPoId.values()
-                    ).reduce((s, v) => s + v, 0);
-                    const insuranceOther =
-                        num(invoice.insurance_charges) +
-                        num(invoice.other_charges);
-                    // Each row's Invoice Value is rounded to the nearest WHOLE
-                    // currency unit — the same convention as the SO's own
-                    // grand_total — so a fully-invoiced SO's row here shows
-                    // the EXACT figure that SO's own detail page/PDF shows
-                    // (e.g. $699, not $699.07). This is the raw billed portion
-                    // of that SO on THIS invoice (correct for a PARTIAL
-                    // invoice too, unlike using the SO's own grand_total
-                    // directly, which would only be right for a full invoice).
-                    soAdvanceRows = posSorted.map((po) => {
-                        const billed = billedByPoId.get(po._id.toString()) || 0;
-                        const soFreight = num(po.freight_total);
-                        const share =
-                            totalBilled > 0 ? billed / totalBilled : 0;
-                        const invoiceValueRaw =
-                            billed + soFreight + insuranceOther * share;
-                        const invoiceValue = Math.round(invoiceValueRaw);
-                        const advance =
-                            Math.round(num(po.advance_amount) * 100) / 100;
-                        return {
-                            sales_order: po.voucher_no || '',
-                            invoice_value: invoiceValue,
-                            advance,
-                            receivable:
-                                Math.round((invoiceValue - advance) * 100) / 100,
-                        };
+                    // A SO billed IN FULL on this invoice shows its own
+                    // already-rounded grand_total verbatim — the customer's
+                    // advance against that SO and this invoice's value for
+                    // it are the SAME real number, not a recomputed one that
+                    // can drift by a dollar. Only a genuinely partial slice
+                    // of a SO gets a fresh (single-rounded) calculation. See
+                    // grand-total.util.ts.
+                    const shares = computeInvoiceSoShares({
+                        lines: lines as any,
+                        byPoLineId: byPoLineIdForGrandTotal,
+                        freight: num(invoice.freight_charges),
+                        insurance: num(invoice.insurance_charges),
+                        other: num(invoice.other_charges),
                     });
+                    const invoiceValueBySoId = new Map<string, number>(
+                        shares.map((r) => [r.poId, r.invoiceValue])
+                    );
+                    // The applied portion of each SO's advance actually
+                    // claimed by THIS invoice (per-SO allocation, see the
+                    // entity doc comment) — not the SO's whole advance_amount,
+                    // which double-counts an advance split across multiple
+                    // invoices off the same SO. Falls back to the SO's full
+                    // advance_amount for a legacy invoice saved before
+                    // allocations existed (so_advance_allocations is null).
+                    const allocById = new Map<string, number>(
+                        Array.isArray((invoice as any).so_advance_allocations)
+                            ? (invoice as any).so_advance_allocations.map(
+                                  (a: any) => [
+                                      a.purchase_order_id,
+                                      num(a.applied_amount),
+                                  ]
+                              )
+                            : []
+                    );
+                    soAdvanceRows = posSorted
+                        .filter((po) => invoiceValueBySoId.has(po._id.toString()))
+                        .map((po) => {
+                            const soId = po._id.toString();
+                            const invoiceValue =
+                                invoiceValueBySoId.get(soId) || 0;
+                            const advance = allocById.has(soId)
+                                ? Math.round(allocById.get(soId)! * 100) / 100
+                                : Math.round(num(po.advance_amount) * 100) /
+                                  100;
+                            return {
+                                sales_order: po.voucher_no || '',
+                                invoice_value: invoiceValue,
+                                advance,
+                                receivable:
+                                    Math.round(
+                                        (invoiceValue - advance) * 100
+                                    ) / 100,
+                            };
+                        });
                 }
             } catch {
                 /* non-fatal — fall back to the invoice's own reference_no */
@@ -422,46 +476,6 @@ export class InvoicePdfService {
         const totalReceived =
             await this.invoicePaymentRepository.sumActiveByInvoiceId(invoiceId);
         (invoice as any).total_received = num(totalReceived);
-
-        // Grand Total is rounded to the nearest WHOLE currency unit (mirrors
-        // Quotation/Sales Order) with the difference shown as "Round Off" —
-        // recomputed live here (not trusted from the stored header row) so a
-        // PDF is always correct even for an invoice saved before this
-        // rounding rule existed, or whose freight/other charges changed via a
-        // path that didn't re-run the service's recompute().
-        {
-            const rawGrand =
-                num(invoice.fob_value) +
-                num(invoice.freight_charges) +
-                num(invoice.insurance_charges) +
-                num(invoice.other_charges);
-            // When this invoice has a resolvable per-SO breakdown, the
-            // AUTHORITATIVE total is the SUM of each SO's already-rounded row
-            // (soAdvanceRows, above) — not an independent re-round of this
-            // invoice's own raw aggregate. Rounding the whole vs. rounding-
-            // then-summing the parts can differ by ±1 unit, and the per-SO
-            // rows are what the source Sales Orders themselves display, so
-            // they win: this keeps the invoice's Grand Total in exact
-            // agreement with both the SO-wise table below AND the source
-            // SO's own detail page/PDF. Falls back to rounding the raw
-            // aggregate only when there's no resolvable source SO at all
-            // (e.g. a pure from-stock invoice).
-            const roundedGrand = soAdvanceRows.length
-                ? soAdvanceRows.reduce((s, r) => s + num(r.invoice_value), 0)
-                : Math.round(rawGrand);
-            invoice.grand_total = String(roundedGrand);
-            invoice.round_off = String(
-                Math.round((roundedGrand - rawGrand + Number.EPSILON) * 100) /
-                    100
-            );
-            // Keep "Amount in Words" in sync with the (possibly just
-            // recomputed) rounded grand_total — a stale stored string would
-            // otherwise still spell out the old, unrounded figure.
-            invoice.amount_in_words = numberToIndianWords(
-                roundedGrand,
-                invoice.currency_code || 'INR'
-            );
-        }
 
         const company: any =
             (await this.companyRepository.findOneById(companyId)) || {};

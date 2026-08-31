@@ -389,6 +389,16 @@ export class InvoiceAdminController {
         return { data };
     }
 
+    @Response('invoice.so-advance-remaining')
+    @AuthJwtAccessProtected()
+    @Get('/so-advance-remaining/:soId')
+    async getSoAdvanceRemaining(
+        @Param('soId') soId: string
+    ): Promise<IResponse<any>> {
+        const data = await this.invoiceService.getSoAdvanceRemaining(soId);
+        return { data };
+    }
+
     @Response('invoice.get')
     @AuthJwtAccessProtected()
     @Get('/get/:invoiceId')

@@ -10,6 +10,7 @@
     "leaderboard": "Sales leaderboard loaded.",
     "po-addable": "Addable Sales Order lines loaded.",
     "customer-invoiceable": "Invoiceable Sales Orders loaded.",
+    "so-advance-remaining": "Sales Order advance remainder loaded.",
     "payment": {
         "list": "Payments retrieved successfully.",
         "create": "Payment recorded successfully.",

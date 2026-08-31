@@ -293,6 +293,29 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     advance_received: string;
 
     /**
+     * Per-source-SO advance allocation: how much of EACH source Sales Order's
+     * advance_amount is actually applied to THIS invoice. `advance_received`
+     * above = Σ applied_amount over this array. Lets an operator split one
+     * SO's advance across multiple invoices (e.g. SO advance $200 but this
+     * invoice only covers half the SO's qty — apply $100 here, leave $100 for
+     * the next invoice off the same SO) instead of the old behavior of always
+     * claiming a source SO's ENTIRE advance on every invoice that touches it
+     * (which double-counted the same advance across a split SO). Defaults to
+     * each SO's currently-unclaimed remainder (advance_amount minus what
+     * OTHER live invoices from that SO have already applied); once a row is
+     * explicitly set (by the operator or a prior save) it's respected as-is,
+     * even past what's "left" (client-approved: over-allocating is allowed,
+     * it just prints a negative Remaining Advance rather than being blocked).
+     * Shape: Array<{ purchase_order_id: string; applied_amount: string }>.
+     * DRAFT-only — frozen once the invoice is issued, same as advance_received.
+     */
+    @Column({ type: 'jsonb', nullable: true })
+    so_advance_allocations?: Array<{
+        purchase_order_id: string;
+        applied_amount: string;
+    }> | null;
+
+    /**
      * Net effect of the Adjustment Notes linked to this invoice, as a POSITIVE
      * number meaning "the receivable is reduced by this much" (a customer
      * Credit note reduces, a Debit note increases → negative). Derived from
