@@ -61,7 +61,9 @@ export class MessageService implements IMessageService {
         for (const error of errors) {
             let property = error.property;
 
-            const constraints: string[] = Object.keys(error.constraints ?? []);
+            let constraintMessages: Record<string, string> =
+                error.constraints ?? {};
+            const constraints: string[] = Object.keys(constraintMessages);
             if (constraints.length === 0) {
                 let children: ValidationError[] = error.children ?? [];
                 let lastConstraint: Record<string, string> = {};
@@ -74,10 +76,34 @@ export class MessageService implements IMessageService {
                     children = children[0].children;
                 }
 
-                constraints.push(...Object.keys(lastConstraint ?? []));
+                constraintMessages = lastConstraint ?? {};
+                constraints.push(...Object.keys(constraintMessages));
             }
 
             for (const constraint of constraints) {
+                // `matches` (@Matches) is a generic, MULTI-PURPOSE decorator —
+                // reused across many unrelated DTOs (currency codes, PAN,
+                // GSTIN, OTP digits, shift start/end time, phone) each with
+                // their OWN `message` option — unlike `isNotEmpty`/`isUUID`/
+                // etc., which have one universal meaning app-wide and are
+                // fine to phrase generically. A single generic
+                // `request.matches` i18n string can never be right for all
+                // of them, and it was wrongly hardcoded to a copy-pasted
+                // password-strength message (languages/*/request.json's
+                // "matches" key) — every @Matches failure anywhere in the
+                // app (not just this one field) showed that same wrong
+                // message. Every @Matches() call site already supplies its
+                // own message, so use the decorator-resolved one (already
+                // sitting in constraintMessages[constraint]) instead of the
+                // generic i18n lookup.
+                if (constraint === 'matches' && constraintMessages[constraint]) {
+                    messages.push({
+                        property,
+                        message: constraintMessages[constraint],
+                    });
+                    continue;
+                }
+
                 const message = this.setMessage(`request.${constraint}`, {
                     customLanguage: options?.customLanguage,
                     properties: {

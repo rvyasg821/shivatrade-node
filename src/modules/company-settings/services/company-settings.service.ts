@@ -5,6 +5,25 @@ import { HelperEncryptionService } from '@common/helper/services/helper.encrypti
 
 const SENSITIVE_FIELDS = ['smtp_password', 'sms_api_key', 'sms_api_secret', 'whatsapp_api_key', 'whatsapp_api_secret'];
 
+/**
+ * These two fields are documented (and built, per the FE's own comments —
+ * TOLERANCE_THREE_WAY_MATCH_PLAN.md §12.5) as COMPANY-WIDE ONLY — there is no
+ * concept of a per-location tolerance policy or FY-closure cutoff. They are
+ * always read from the company-defaults row (location_id: null) by
+ * ToleranceGuardService.limitPctFor() and assertPostingDateOpen() below, so
+ * they must always be WRITTEN there too, regardless of which location is
+ * currently selected in the UI when an operator saves Settings — otherwise
+ * a save silently lands on a location-scoped row nothing ever reads, and
+ * the whole three-way-match / FY-closure gate looks configured but has zero
+ * real effect. (Real bug found via a full test pass: GRN qty tolerance was
+ * configured through the Settings UI, which always attaches the currently
+ * selected location, and the GRN confirm endpoint never saw it.)
+ */
+const COMPANY_WIDE_ONLY_FIELDS: Array<keyof CompanySettingsEntity> = [
+    'tolerance_config',
+    'books_closed_upto',
+];
+
 @Injectable()
 export class CompanySettingsService {
     private readonly encKey: string;
@@ -64,6 +83,20 @@ export class CompanySettingsService {
         return settings as CompanySettingsEntity;
     }
 
+    /** Overwrites the company-wide-only fields on `row` with the company
+     *  defaults' values, in place — so a location-scoped row never displays
+     *  (or resaves) a stale/orphaned copy of a field that's actually
+     *  enforced from the defaults row alone. */
+    private overlayCompanyWideFields(
+        row: CompanySettingsEntity,
+        defaults: CompanySettingsEntity
+    ): CompanySettingsEntity {
+        for (const field of COMPANY_WIDE_ONLY_FIELDS) {
+            (row as any)[field] = (defaults as any)[field];
+        }
+        return row;
+    }
+
     async getOrCreate(companyId: string, locationId?: string): Promise<CompanySettingsEntity & { is_inherited?: boolean }> {
         if (!locationId) {
             const defaults = await this.getCompanyDefaults(companyId);
@@ -71,13 +104,14 @@ export class CompanySettingsService {
             return defaults as CompanySettingsEntity & { is_inherited: boolean };
         }
 
+        const defaults = await this.getCompanyDefaults(companyId);
         const locationSettings = await this.settingsRepository.findOne({ company_id: companyId, location_id: locationId });
         if (locationSettings) {
             (locationSettings as any).is_inherited = false;
+            this.overlayCompanyWideFields(locationSettings, defaults);
             return locationSettings as CompanySettingsEntity & { is_inherited: boolean };
         }
 
-        const defaults = await this.getCompanyDefaults(companyId);
         (defaults as any).is_inherited = true;
         return defaults as CompanySettingsEntity & { is_inherited: boolean };
     }
@@ -91,21 +125,57 @@ export class CompanySettingsService {
             encrypted.books_closed_upto = null;
         }
 
+        // Company-wide-only fields (tolerance_config, books_closed_upto) are
+        // pulled out of the payload and ALWAYS written to the company-defaults
+        // row, never a location-scoped one — see COMPANY_WIDE_ONLY_FIELDS doc
+        // comment. Everything else in `encrypted` still follows `locationId`
+        // as before.
+        const companyWide: Record<string, any> = {};
+        for (const field of COMPANY_WIDE_ONLY_FIELDS) {
+            if (field in encrypted) {
+                companyWide[field] = encrypted[field];
+                delete encrypted[field];
+            }
+        }
+        let defaults: CompanySettingsEntity | undefined;
+        if (Object.keys(companyWide).length) {
+            defaults = await this.getCompanyDefaults(companyId);
+            defaults = (await this.settingsRepository.update(
+                defaults,
+                companyWide
+            )) as CompanySettingsEntity;
+        }
+
         if (!locationId) {
-            const defaults = await this.getCompanyDefaults(companyId);
-            return this.settingsRepository.update(defaults, encrypted) as Promise<CompanySettingsEntity>;
+            if (!Object.keys(encrypted).length) return defaults || this.getCompanyDefaults(companyId);
+            const base = defaults || (await this.getCompanyDefaults(companyId));
+            return this.settingsRepository.update(base, encrypted) as Promise<CompanySettingsEntity>;
         }
 
         let locationSettings = await this.settingsRepository.findOne({ company_id: companyId, location_id: locationId });
+        let result: CompanySettingsEntity;
         if (locationSettings) {
-            return this.settingsRepository.update(locationSettings, encrypted) as Promise<CompanySettingsEntity>;
+            result = Object.keys(encrypted).length
+                ? ((await this.settingsRepository.update(
+                      locationSettings,
+                      encrypted
+                  )) as CompanySettingsEntity)
+                : locationSettings;
+        } else {
+            result = (await this.settingsRepository.create({
+                company_id: companyId,
+                location_id: locationId,
+                ...encrypted,
+            })) as CompanySettingsEntity;
         }
-
-        return this.settingsRepository.create({
-            company_id: companyId,
-            location_id: locationId,
-            ...encrypted,
-        }) as Promise<CompanySettingsEntity>;
+        // The response reflects what's actually enforced — overlay the
+        // just-saved (or pre-existing) company-wide fields rather than
+        // whatever this location row happens to still be carrying.
+        this.overlayCompanyWideFields(
+            result,
+            defaults || (await this.getCompanyDefaults(companyId))
+        );
+        return result;
     }
 
     async deleteLocationOverride(companyId: string, locationId: string): Promise<CompanySettingsEntity> {

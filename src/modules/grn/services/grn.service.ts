@@ -28,7 +28,6 @@ import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/p
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { ENUM_PO_VENDOR_STATUS } from '@modules/po-vendor/enums/po-vendor.enum';
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
-import { PurchaseOrderLineRepository } from '@modules/purchase-order/repository/repositories/purchase-order-line.repository';
 import { ToleranceGuardService } from '@modules/tolerance-guard/services/tolerance-guard.service';
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
@@ -84,7 +83,6 @@ export class GrnService {
         private readonly stockLedger: StockLedgerService,
         private readonly dependencyCheckService: DependencyCheckService,
         private readonly companySettings: CompanySettingsService,
-        private readonly poLineRepository: PurchaseOrderLineRepository,
         private readonly toleranceGuard: ToleranceGuardService
     ) {}
 
@@ -379,6 +377,19 @@ export class GrnService {
 
             let orderedQtyByPovLine = new Map<string, number>();
             if (checkTolerance) {
+                // Baseline = the Vendor PO's OWN ordered_qty — this is a
+                // vendor-side (three-way-match) check: what we told the
+                // vendor to send vs what actually arrived. Previously this
+                // chained through povLine.purchase_order_line_id → the
+                // CUSTOMER Sales Order's own line qty instead, which (a) is
+                // the wrong baseline conceptually (a customer's order qty is
+                // not what governs a GRN's vendor-receipt tolerance), and
+                // (b) is simply absent on a STANDALONE POV (no source SO),
+                // silently no-opping the entire qty tolerance gate for any
+                // standalone POV's GRN — found via a full test pass; the
+                // gate never held even with an extreme (~-50%) deviation and
+                // tolerance_config actively set. po_vendor_line.ordered_qty
+                // exists directly on every POV line regardless of source.
                 const povLineIds = Array.from(
                     new Set(
                         lines
@@ -391,34 +402,12 @@ export class GrnService {
                           _id: In(povLineIds),
                       } as any)
                     : [];
-                const poLineIdByPovLine = new Map<string, string>(
-                    (povLines as any[])
-                        .filter((pl) => pl.purchase_order_line_id)
-                        .map((pl) => [
-                            pl._id.toString(),
-                            pl.purchase_order_line_id.toString(),
-                        ])
-                );
-                const poLineIds = Array.from(
-                    new Set(poLineIdByPovLine.values())
-                );
-                const poLines = poLineIds.length
-                    ? await this.poLineRepository.findAll({
-                          _id: In(poLineIds),
-                      } as any)
-                    : [];
-                // NOTE: purchase_order_line's qty column is `qty`, NOT
-                // `ordered_qty` (that field name only exists on po_vendor_line).
-                const orderedQtyByPoLine = new Map<string, number>(
-                    (poLines as any[]).map((pl) => [
+                orderedQtyByPovLine = new Map<string, number>(
+                    (povLines as any[]).map((pl) => [
                         pl._id.toString(),
-                        num(pl.qty),
+                        num(pl.ordered_qty),
                     ])
                 );
-                for (const [povLineId, poLineId] of poLineIdByPovLine) {
-                    const oq = orderedQtyByPoLine.get(poLineId);
-                    if (oq !== undefined) orderedQtyByPovLine.set(povLineId, oq);
-                }
             }
             const heldLines: string[] = [];
 

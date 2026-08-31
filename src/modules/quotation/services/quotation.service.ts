@@ -588,8 +588,33 @@ export class QuotationService {
         // converted TO. (Multi-currency plan §6.5.)
         docCurrencyCode: string = 'INR'
     ): Promise<void> {
+        if (!lines?.length) {
+            await this.quotationLineRepository.deleteByQuotationId(quotationId);
+            return;
+        }
+        // Validate EVERY line before touching the DB — the DTO only checks
+        // `qty`/`discount_pct` are numeric strings (@IsNumberString can't
+        // enforce a numeric range on a string field), so a negative qty or
+        // a >100% discount previously saved successfully and silently
+        // produced a negative line_total/grand_total (found via a full test
+        // pass). Checked up front, not inside the write loop below, so a
+        // bad line further down the array can't leave the quotation with
+        // its old lines already deleted and only some new ones inserted.
+        lines.forEach((l, i) => {
+            const qtyNum = Number(l.qty);
+            if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+                throw new BadRequestException(
+                    `Line ${i + 1}: qty must be greater than 0.`
+                );
+            }
+            const discountNum = Number(l.discount_pct ?? 0);
+            if (!Number.isFinite(discountNum) || discountNum < 0 || discountNum > 100) {
+                throw new BadRequestException(
+                    `Line ${i + 1}: discount_pct must be between 0 and 100.`
+                );
+            }
+        });
         await this.quotationLineRepository.deleteByQuotationId(quotationId);
-        if (!lines?.length) return;
 
         // Multi-currency: each line's cost is in its VENDOR's currency (source).
         // Resolve the vendor currency per line and freeze the source→document

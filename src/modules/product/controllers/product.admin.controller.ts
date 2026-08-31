@@ -418,8 +418,21 @@ export class ProductAdminController {
         @Body('hsn_code') hsnCode: string
     ) {
         const product = await this.productService.findOneById(productId);
-        const value = (hsnCode ?? '').trim();
-        await this.productService.update(product, { hsn_code: value } as any);
+        // A caller (a script, a retry, stale FE state) that omits hsn_code
+        // must NOT wipe the product's own value — only an EXPLICIT non-empty
+        // hsn_code is treated as an edit-and-apply. Omitted/blank means
+        // "apply what's already saved on the product", read from the DB,
+        // never trusted from the request body when it's a value that
+        // already exists there. Found via a full test pass: calling this
+        // endpoint with no body blanked the product's HSN AND cascaded the
+        // blank onto every linked document line.
+        const value =
+            hsnCode != null && hsnCode.trim() !== ''
+                ? hsnCode.trim()
+                : (product as any).hsn_code || '';
+        if (value !== (product as any).hsn_code) {
+            await this.productService.update(product, { hsn_code: value } as any);
+        }
         const result = await this.hsnPropagationService.propagate(
             companyId,
             productId,
