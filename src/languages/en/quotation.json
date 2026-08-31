@@ -1,0 +1,8 @@
+{
+    "list": "Quotations retrieved successfully.",
+    "get": "Quotation fetched successfully.",
+    "create": "Quotation created successfully.",
+    "update": "Quotation updated successfully.",
+    "delete": "Quotation deleted successfully.",
+    "stats": "Quotation stats retrieved successfully."
+}

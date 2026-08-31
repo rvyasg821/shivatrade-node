@@ -536,6 +536,19 @@ export class PoVendorService {
                     `Line ordered_qty must be > 0 (line ${ln.purchase_order_line_id}).`
                 );
             }
+            // discount_pct was never range-checked on this generate-from-SO
+            // path (only ordered_qty was) — an operator-edited discount
+            // outside 0-100 silently produced a negative line_total (found
+            // via a full test pass; same gap already fixed on standalone
+            // create/Quotation/Sales Order).
+            if ((ln as any).discount_pct != null && (ln as any).discount_pct !== '') {
+                const disc = num((ln as any).discount_pct);
+                if (disc < 0 || disc > 100) {
+                    throw new BadRequestException(
+                        `Line discount_pct must be between 0 and 100 (line ${ln.purchase_order_line_id}).`
+                    );
+                }
+            }
             const avail = pending.get(ln.purchase_order_line_id) || 0;
             // `allow_over_pending` is set only when the operator deliberately
             // adjusted the quantity above the SO's pending on the Generate-POV
@@ -888,6 +901,19 @@ export class PoVendorService {
                 throw new BadRequestException(
                     'Each line ordered_qty must be > 0.'
                 );
+            }
+            // discount_pct was only range-checked on a later line EDIT
+            // (update()'s line_edits path below), never at create — a
+            // standalone POV could be created with e.g. discount_pct=150,
+            // producing a negative line_total (same gap already found and
+            // fixed on Quotation/Sales Order via a full test pass).
+            if ((ln as any).discount_pct != null && (ln as any).discount_pct !== '') {
+                const discNum = num((ln as any).discount_pct);
+                if (discNum < 0 || discNum > 100) {
+                    throw new BadRequestException(
+                        `Product ${ln.product_id}: discount_pct must be between 0 and 100.`
+                    );
+                }
             }
             // Guard: the product must be in the SELECTED VENDOR's price list —
             // a POV line can only reference a product the vendor actually

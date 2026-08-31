@@ -645,6 +645,29 @@ export class PurchaseOrderService {
                 .filter((v): v is string => !!v)
         );
 
+        // Validate EVERY line before any DB write below (delete/save/create)
+        // — the DTO only checks `qty`/`discount_pct` are numeric strings
+        // (@IsNumberString can't enforce a numeric range on a string field),
+        // so a negative qty or a >100% discount previously saved
+        // successfully and silently produced a negative line_total/
+        // grand_total on a Sales Order (same gap already found and fixed on
+        // Quotation via a full test pass — Sales Orders share the identical
+        // DTO shape and had the identical gap).
+        resolvedLines.forEach((l: any, i: number) => {
+            const qtyNum = Number(l.qty);
+            if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+                throw new BadRequestException(
+                    `Line ${i + 1}: qty must be greater than 0.`
+                );
+            }
+            const discountNum = Number(l.discount_pct ?? 0);
+            if (!Number.isFinite(discountNum) || discountNum < 0 || discountNum > 100) {
+                throw new BadRequestException(
+                    `Line ${i + 1}: discount_pct must be between 0 and 100.`
+                );
+            }
+        });
+
         // Reject removal of any PO line still referenced by a POV line.
         const toRemove = (existing as any[]).filter(
             e => !incomingIds.has(e._id.toString())
