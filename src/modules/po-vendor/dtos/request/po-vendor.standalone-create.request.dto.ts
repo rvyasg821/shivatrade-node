@@ -117,6 +117,21 @@ export class PoVendorStandaloneCreateRequestDto {
     @IsOptional()
     creation_date?: string;
 
+    /**
+     * The date goods were actually dispatched — normally only ever set by
+     * the separate `/dispatch` action once a draft POV is confirmed. Only
+     * the bulk-import path (silent mode) is allowed to set this directly at
+     * create time, since a historical backfill row lands straight in
+     * `dispatched`/`closed` status with no live dispatch step to go through
+     * — and every date-scoped report (Purchase Order Status, GST Balance,
+     * Purchase/Stock Turnover) keys off this field, falling back to
+     * `createdAt` (i.e. today) when it's null. See
+     * Docs/Build-Plans/BULK_HISTORICAL_DATA_IMPORT_PLAN.md.
+     */
+    @IsDateString()
+    @IsOptional()
+    dispatch_date?: string;
+
     @IsUUID()
     @IsOptional()
     vendor_address_id?: string;

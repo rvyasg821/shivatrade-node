@@ -11,6 +11,7 @@ import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repo
 import { PoVendorPaymentRepository } from '../repository/repositories/po-vendor-payment.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { ENUM_PO_VENDOR_STATUS } from '../enums/po-vendor.enum';
+import { GrnService } from '@modules/grn/services/grn.service';
 import {
     parseDateCell,
     pickSheet,
@@ -27,6 +28,7 @@ const HEADER_HEADERS = [
     'voucher_no',
     'vendor_code',
     'so_voucher_no',
+    'dispatch_date',
     'deliver_to',
     'dispatched_through',
     'payment_terms',
@@ -90,6 +92,7 @@ export interface VpoImportDoc {
     rowNum: number;
     vendor_id?: string;
     purchase_order_id?: string;
+    dispatch_date?: string;
     delivery_address_id?: string;
     delivery_address?: string;
     dispatched_through?: string;
@@ -121,7 +124,8 @@ export class PoVendorImportExportService {
         private readonly locationRepository: LocationRepository,
         private readonly purchaseOrderRepository: PurchaseOrderRepository,
         private readonly povPaymentRepository: PoVendorPaymentRepository,
-        private readonly companyBankAccountRepository: CompanyBankAccountRepository
+        private readonly companyBankAccountRepository: CompanyBankAccountRepository,
+        private readonly grnService: GrnService
     ) {}
 
     generateSampleExcel(): Buffer {
@@ -129,6 +133,7 @@ export class PoVendorImportExportService {
             voucher_no: 'STIPL/VPO/0001/2026-27',
             vendor_code: 'VND-0001',
             so_voucher_no: '',
+            dispatch_date: '20/04/2026',
             deliver_to: '',
             dispatched_through: 'By Road',
             payment_terms: '50% ADVANCE & 50% AT DISPATCH',
@@ -404,6 +409,28 @@ export class PoVendorImportExportService {
                     );
             }
 
+            // dispatch_date — required once status lands DISPATCHED/CLOSED
+            // (see the DTO doc comment on `PoVendorStandaloneCreateRequestDto
+            // .dispatch_date`); every date-scoped report keys off this
+            // field, so a historical row without one would silently read as
+            // "today" everywhere.
+            const dispatchDateRaw = getRaw(raw, 'dispatch_date');
+            const dispatch_date = dispatchDateRaw
+                ? parseDateCell(dispatchDateRaw) || undefined
+                : undefined;
+            if (dispatchDateRaw && !dispatch_date) {
+                errors.push(`dispatch_date "${dispatchDateRaw}" could not be parsed`);
+            }
+            if (
+                (status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+                    status === ENUM_PO_VENDOR_STATUS.CLOSED) &&
+                !dispatch_date
+            ) {
+                errors.push(
+                    'dispatch_date is required when status is dispatched or closed'
+                );
+            }
+
             // advance (optional)
             let advance:
                 | { payment_date?: string; amount: string; notes?: string }
@@ -440,6 +467,7 @@ export class PoVendorImportExportService {
                 rowNum,
                 vendor_id,
                 purchase_order_id,
+                dispatch_date,
                 delivery_address_id,
                 delivery_address,
                 dispatched_through: get(raw, 'dispatched_through') || undefined,
@@ -500,6 +528,7 @@ export class PoVendorImportExportService {
                     companyId,
                     {
                         vendor_id: doc.vendor_id,
+                        dispatch_date: doc.dispatch_date,
                         delivery_address_id: doc.delivery_address_id,
                         delivery_address: doc.delivery_address,
                         dispatched_through: doc.dispatched_through,
@@ -549,6 +578,52 @@ export class PoVendorImportExportService {
                     }
                 }
                 created++;
+
+                // Historical-import mode: a dispatched/closed VPO means the
+                // goods have already arrived in the real books, so auto-raise
+                // + confirm its GRN too (client-confirmed default — see
+                // Docs/Build-Plans/BULK_HISTORICAL_DATA_IMPORT_PLAN.md):
+                // full remaining qty accepted, none rejected, exactly what
+                // `createFromPov` already defaults to for a freshly-dispatched
+                // POV with no prior GRNs. A draft VPO has nothing dispatched
+                // yet, so no GRN is raised for it.
+                if (
+                    createdPov &&
+                    (doc.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+                        doc.status === ENUM_PO_VENDOR_STATUS.CLOSED)
+                ) {
+                    try {
+                        const grn = await this.grnService.createFromPov(
+                            companyId,
+                            (createdPov as any)._id.toString(),
+                            // Same historical date as the POV's own dispatch
+                            // — createFromPov's own fallback
+                            // (actual_arrival_date || today) has no
+                            // historical value to fall back to here.
+                            { grn_date: doc.dispatch_date },
+                            userId,
+                            { silent: true }
+                        );
+                        await this.grnService.update(
+                            companyId,
+                            grn._id.toString(),
+                            {
+                                internal_notes:
+                                    'Auto-raised from VPO import (historical backfill) — full dispatched qty accepted.',
+                                status: 'confirmed' as any,
+                            } as any,
+                            userId
+                        );
+                    } catch (grnErr: any) {
+                        this.logger.error(
+                            `VPO ${doc.voucher_no}: auto GRN creation failed — ${grnErr?.message}`
+                        );
+                        errors.push({
+                            row: doc.rowNum,
+                            message: `VPO created, but auto GRN creation failed: ${grnErr?.message || 'unknown error'}`,
+                        });
+                    }
+                }
             } catch (err: any) {
                 this.logger.error(
                     `VPO import ${doc.voucher_no} failed: ${err?.message}`
@@ -603,6 +678,7 @@ export class PoVendorImportExportService {
                 vendor_code: vendorCodeById.get(p.vendor_id?.toString()) || '',
                 so_voucher_no:
                     soVoucherById.get(p.purchase_order_id?.toString()) || '',
+                dispatch_date: isoDate(p.dispatch_date),
                 deliver_to:
                     locNameById.get(p.delivery_address_id?.toString()) ||
                     p.delivery_address ||

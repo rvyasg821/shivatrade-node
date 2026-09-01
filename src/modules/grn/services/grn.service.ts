@@ -36,6 +36,7 @@ import { CompanyAddressRepository } from '@modules/company/repository/repositori
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { VoucherService } from '@common/voucher/services/voucher.service';
+import { ImportContext } from '@common/import/import-context.interface';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
 import {
@@ -198,8 +199,10 @@ export class GrnService {
         companyId: string,
         povId: string,
         dto: GrnCreateFromPovDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<GrnDoc> {
+        const silent = !!ctx?.silent;
         const pov: any = await this.povRepository.findOne({
             _id: povId,
             company_id: companyId,
@@ -248,23 +251,33 @@ export class GrnService {
             : null;
 
         const prefix = await this.resolveCompanyPrefix(companyId);
-        const voucher_no = await this.voucherService.getNext(
-            companyId,
-            ENUM_VOUCHER_DOC_TYPE.GRN,
-            prefix
-        );
-
-        // Resolve the effective GRN date, then enforce FY closure on it (not
-        // just the raw DTO, since it can fall back to the POV date / today).
+        // Resolve the effective GRN date first — assignVoucher needs it to
+        // back-date the FY bucket when an explicit historical voucher_no is
+        // supplied (import mode only; a live create never sets ctx.voucher_no).
         const grnDate =
             dto.grn_date ||
             pov.actual_arrival_date ||
             new Date().toISOString().slice(0, 10);
-        await this.companySettings.assertPostingDateOpen(
+        const voucher_no = await this.voucherService.assignVoucher(
             companyId,
-            grnDate,
-            'GRN'
+            ENUM_VOUCHER_DOC_TYPE.GRN,
+            prefix,
+            {
+                explicit: ctx?.voucher_no,
+                asOfDate: ctx?.voucher_no ? new Date(grnDate) : undefined,
+            }
         );
+
+        // FY closure: a historical backfill import explicitly bypasses this
+        // (silent) the same way createStandalone does for VPO — see
+        // Docs/Build-Plans/BULK_HISTORICAL_DATA_IMPORT_PLAN.md §6.1.
+        if (!silent) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                grnDate,
+                'GRN'
+            );
+        }
 
         const grn = await this.grnRepository.create({
             company_id: companyId,

@@ -25,6 +25,10 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
 // Stock ledger — Generate POV reads on-hand for In Stock / To Procure.
 import { InventoryModule } from '@modules/inventory/inventory.module';
 import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/repository/adjustment-note.repository.module';
+// Historical-import mode auto-creates + confirms a GRN for every dispatched
+// VPO row (client-confirmed: full remaining qty accepted) — see
+// PoVendorImportExportService.importVpos().
+import { GrnModule } from '@modules/grn/grn.module';
 
 /**
  * POV (PO Vendor) module — Phase 5: admin controller wired in.
@@ -51,6 +55,9 @@ import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/reposit
         // Linked Adjustment Notes move balance_payable — repository only, so
         // there is no cycle with AdjustmentNoteModule (which imports this one).
         AdjustmentNoteRepositoryModule,
+        // GrnModule imports PoVendorRepositoryModule only (not this module),
+        // so importing it here is not circular.
+        GrnModule,
     ],
     providers: [
         PoVendorService,
