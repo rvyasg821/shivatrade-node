@@ -1132,6 +1132,43 @@ export class InventoryService {
         return { rows, total };
     }
 
+    // ─── One-time correction: existing stock_movements rows predating the
+    // `movement_date` column got the DB default (today, the deploy date) —
+    // this backfills them from their source document's own real date.
+    // Idempotent (only rewrites rows that actually differ); safe to re-run.
+    async backfillMovementDates(
+        companyId: string
+    ): Promise<{ grnRowsFixed: number; invoiceRowsFixed: number }> {
+        const grnResult = await this.dataSource.query(
+            `UPDATE stock_movements sm
+             SET movement_date = g.grn_date::date
+             FROM grns g
+             WHERE sm.company_id = $1
+               AND sm.source_type = 'grn'
+               AND sm.source_id = g._id
+               AND sm.movement_date IS DISTINCT FROM g.grn_date::date
+             RETURNING sm._id`,
+            [companyId]
+        );
+        const invoiceResult = await this.dataSource.query(
+            `UPDATE stock_movements sm
+             SET movement_date = i.invoice_date::date
+             FROM invoices i
+             WHERE sm.company_id = $1
+               AND sm.source_type = 'invoice'
+               AND sm.source_id = i._id
+               AND sm.movement_date IS DISTINCT FROM i.invoice_date::date
+             RETURNING sm._id`,
+            [companyId]
+        );
+        return {
+            grnRowsFixed: Array.isArray(grnResult) ? grnResult.length : 0,
+            invoiceRowsFixed: Array.isArray(invoiceResult)
+                ? invoiceResult.length
+                : 0,
+        };
+    }
+
     // ─── Movement history for one product (with running balance) ────────
     async movementHistory(
         companyId: string,

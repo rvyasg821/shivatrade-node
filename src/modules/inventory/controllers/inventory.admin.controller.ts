@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Response as ExpressResponse } from 'express';
 
@@ -26,6 +26,29 @@ import { InventoryStatsResponseDto } from '../dtos/response/inventory-stats.resp
 @Controller({ version: '1', path: '/admin/inventory' })
 export class InventoryAdminController {
     constructor(private readonly inventoryService: InventoryService) {}
+
+    /**
+     * ONE-TIME correction: existing stock_movements rows that predate the
+     * `movement_date` column got the DB migration default (today) instead of
+     * their source GRN/Invoice's real date — see StockMovementEntity's doc
+     * comment. Idempotent; safe to call more than once. Remove this endpoint
+     * once the historical-import backfill is done — it's a cleanup tool, not
+     * a feature.
+     */
+    @AuthJwtAccessProtected()
+    @Post('/backfill-movement-dates')
+    async backfillMovementDates(
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
+        const result = await this.inventoryService.backfillMovementDates(
+            companyId
+        );
+        return {
+            statusCode: 200,
+            message: `Backfilled ${result.grnRowsFixed} GRN rows, ${result.invoiceRowsFixed} invoice rows`,
+            data: result,
+        };
+    }
 
     /**
      * Received-goods register. One row per CLOSED POV line with
