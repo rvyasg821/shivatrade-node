@@ -3557,7 +3557,12 @@ export class ReportsService {
             partyLabel: string;
             coverCountLabel: string;
             note: string;
-        }
+        },
+        lineRows?: Array<{
+            doc_no: string;
+            party_name: string | null;
+            currency_code: string;
+        } & DocStatusLineBreakdownRowDto>
     ): Buffer {
         const statusLabel: Record<string, string> = {
             open: 'Open',
@@ -3620,7 +3625,56 @@ export class ReportsService {
             [],
             totalRow,
         ];
-        return this.fileService.writeExcelFromArray(aoa);
+
+        if (!lineRows) {
+            return this.fileService.writeExcelFromArray(aoa);
+        }
+
+        // Per-line detail — same Rate/Pending Amount shown in the drill-down
+        // drawer, one row per order line across every doc in this export
+        // (native document currency, not ₹-normalised — mirrors the drawer).
+        const lineHeader = [
+            cfg.docNoLabel,
+            cfg.partyLabel,
+            'Currency',
+            'Product',
+            'Product Code',
+            'HSN',
+            'Unit',
+            'Status',
+            'Ordered Qty',
+            'Covered Qty',
+            'Pending Qty',
+            'Rate',
+            'Pending Amt',
+        ];
+        const lineBody = lineRows.map((l) => [
+            l.doc_no,
+            l.party_name || '',
+            l.currency_code,
+            l.product_name,
+            l.product_code || '',
+            l.hsn_code || '',
+            l.unit || '',
+            statusLabel[l.status] || l.status,
+            l.ordered_qty,
+            l.covered_qty,
+            l.pending_qty,
+            l.rate ?? '',
+            l.pending_amount,
+        ]);
+        const lineAoa: (string | number)[][] = [
+            [`${cfg.title} — Line Items — ${result.period_label}`],
+            [`Rate/Amount are in each document's own currency, not ₹-normalised.`],
+            [],
+            lineHeader,
+            ...lineBody,
+        ];
+
+        return this.fileService.writeExcelSheetsFromArray([
+            { sheetName: 'Summary', rows: aoa },
+            { sheetName: 'Line Items', rows: lineAoa },
+        ]);
     }
 
     // ── Sales Order Status ───────────────────────────────────────────────
@@ -3804,7 +3858,16 @@ export class ReportsService {
                     pol.hsn_code                               AS hsn_code,
                     pol.unit                                  AS unit,
                     COALESCE(pol.qty, 0)::float8              AS ordered_qty,
-                    COALESCE(cov.covered_qty, 0)::float8      AS covered_qty
+                    COALESCE(cov.covered_qty, 0)::float8      AS covered_qty,
+                    -- SO per-unit selling rate — same formula as
+                    -- salesOrderStatusBreakdown's order_rate, native SO currency.
+                    (CASE
+                        WHEN COALESCE(pol.qty, 0) = 0 THEN NULL
+                        ELSE (COALESCE(pol.taxable, 0)
+                              + COALESCE(pol.product_expenses_amount, 0)
+                              - COALESCE(pol.product_rebates_amount, 0)
+                              + COALESCE(pol.margin_amount, 0)) / pol.qty
+                     END)::float8                             AS rate
              FROM purchase_order_lines pol
              LEFT JOIN products p ON p._id = pol.product_id
              LEFT JOIN (
@@ -3839,13 +3902,34 @@ export class ReportsService {
             page: 1,
             perPage: 100000,
         });
-        return this.docStatusExcel(result, {
-            title: 'Sales Order Status',
-            docNoLabel: 'SO No',
-            partyLabel: 'Customer',
-            coverCountLabel: 'Invoices',
-            note: `Coverage by ${query.invoice_type || 'export'} invoices; values are ₹-normalised.`,
-        });
+        const lineRows = (
+            await Promise.all(
+                result.rows.map(async (r) => {
+                    const lines = await this.salesOrderStatusLineBreakdown(
+                        companyId,
+                        r.doc_id,
+                        query.invoice_type
+                    );
+                    return lines.map((l) => ({
+                        doc_no: r.doc_no,
+                        party_name: r.party_name,
+                        currency_code: r.currency_code,
+                        ...l,
+                    }));
+                })
+            )
+        ).flat();
+        return this.docStatusExcel(
+            result,
+            {
+                title: 'Sales Order Status',
+                docNoLabel: 'SO No',
+                partyLabel: 'Customer',
+                coverCountLabel: 'Invoices',
+                note: `Coverage by ${query.invoice_type || 'export'} invoices; values are ₹-normalised.`,
+            },
+            lineRows
+        );
     }
 
     // ── Purchase Order (Vendor PO) Status ────────────────────────────────
@@ -4060,7 +4144,11 @@ export class ReportsService {
                     COALESCE(pol.hsn_code, pr.hsn_code)        AS hsn_code,
                     pol.unit                                   AS unit,
                     COALESCE(pol.ordered_qty, 0)::float8       AS ordered_qty,
-                    COALESCE(cov.covered_qty, 0)::float8       AS covered_qty
+                    COALESCE(cov.covered_qty, 0)::float8       AS covered_qty,
+                    -- Same formula as purchaseOrderStatusBreakdown's order_rate.
+                    (COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                    )::float8                                  AS rate
              FROM po_vendor_lines pol
              LEFT JOIN products pr ON pr._id = pol.product_id
              LEFT JOIN (
@@ -4092,13 +4180,34 @@ export class ReportsService {
             page: 1,
             perPage: 100000,
         });
-        return this.docStatusExcel(result, {
-            title: 'Purchase Order Status',
-            docNoLabel: 'PO No',
-            partyLabel: 'Vendor',
-            coverCountLabel: 'GRNs',
-            note: `Coverage by ${query.grn_scope || 'confirmed'} GRNs; values are ₹-normalised at the POV rate.`,
-        });
+        const lineRows = (
+            await Promise.all(
+                result.rows.map(async (r) => {
+                    const lines = await this.purchaseOrderStatusLineBreakdown(
+                        companyId,
+                        r.doc_id,
+                        query.grn_scope
+                    );
+                    return lines.map((l) => ({
+                        doc_no: r.doc_no,
+                        party_name: r.party_name,
+                        currency_code: r.currency_code,
+                        ...l,
+                    }));
+                })
+            )
+        ).flat();
+        return this.docStatusExcel(
+            result,
+            {
+                title: 'Purchase Order Status',
+                docNoLabel: 'PO No',
+                partyLabel: 'Vendor',
+                coverCountLabel: 'GRNs',
+                note: `Coverage by ${query.grn_scope || 'confirmed'} GRNs; values are ₹-normalised at the POV rate.`,
+            },
+            lineRows
+        );
     }
 
     // ── Stock Turnover Ratio ─────────────────────────────────────────────
@@ -5298,6 +5407,7 @@ function mapDocStatusLineBreakdown(
                 : coveredQty + DOC_STATUS_EPS >= orderedQty
                 ? 'closed'
                 : 'partial';
+        const rate = r.rate != null ? r2(n(r.rate)) : null;
         return {
             line_id: r.line_id,
             product_id: r.product_id ?? null,
@@ -5308,6 +5418,8 @@ function mapDocStatusLineBreakdown(
             ordered_qty: r2(orderedQty),
             covered_qty: r2(coveredQty),
             pending_qty: pendingQty,
+            rate,
+            pending_amount: r2(pendingQty * (rate || 0)),
             status,
         };
     });

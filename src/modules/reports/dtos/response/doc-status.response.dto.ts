@@ -104,6 +104,11 @@ export class DocStatusLineBreakdownRowDto {
     ordered_qty: number;
     covered_qty: number;
     pending_qty: number;
+    /** Per-unit selling (SO) / vendor cost (POV) rate, native document currency —
+     *  same formula as `DocStatusBreakdownRowDto.order_rate`. */
+    rate: number | null;
+    /** pending_qty × rate, native document currency. */
+    pending_amount: number;
     /** open | partial | closed — same classification as the doc-level status. */
     status: 'open' | 'partial' | 'closed';
 }
