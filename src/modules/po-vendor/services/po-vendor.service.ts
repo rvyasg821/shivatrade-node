@@ -1008,6 +1008,11 @@ export class PoVendorService {
             creation_date:
                 (data as any).creation_date ||
                 new Date().toISOString().slice(0, 10),
+            // Only import mode (silent) may set this directly — see the DTO
+            // doc comment on `dispatch_date`. A live create never sends it
+            // (undefined), so normal POVs still start with no dispatch_date
+            // until the real Dispatch action sets one.
+            dispatch_date: silent ? (data as any).dispatch_date || null : null,
             purchase_order_id: null,
             linked_sales_orders: linkedSalesOrders,
             vendor_id: vendorId,
@@ -1026,6 +1031,17 @@ export class PoVendorService {
         } as any);
 
         // ── Lines (own snapshot; purchase_order_line_id = null) ────────
+        // A historical-import row that already lands DISPATCHED/CLOSED (see
+        // ctx.status above) has, by definition, already shipped its full
+        // ordered qty in the real books — there was no live Dispatch step to
+        // record a (possibly partial) dispatched_qty, so default it to the
+        // full ordered_qty rather than leaving it at 0 (which would make
+        // every line read as "nothing dispatched yet" and block any GRN
+        // from ever being raised against it). A live/normal create always
+        // starts DRAFT (ctx undefined) and is unaffected.
+        const importDispatchedInFull =
+            ctx?.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+            ctx?.status === ENUM_PO_VENDOR_STATUS.CLOSED;
         let seq = 0;
         for (const ln of data.lines) {
             seq += 1;
@@ -1045,7 +1061,7 @@ export class PoVendorService {
                 unit_price: String(ln.unit_price),
                 ordered_qty: String(ordered),
                 discount_pct: String(num((ln as any).discount_pct)),
-                dispatched_qty: '0',
+                dispatched_qty: importDispatchedInFull ? String(ordered) : '0',
                 received_qty: '0',
                 line_total: String(
                     round2(
