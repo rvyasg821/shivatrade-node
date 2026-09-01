@@ -63,6 +63,30 @@ export class PoVendorAdminController {
         private readonly creatorScope: CreatorScopeService
     ) {}
 
+    /**
+     * ONE-TIME correction for the GST-slab-snapping approximation on
+     * historical import — see PoVendorService.backfillLineTaxPct doc
+     * comment. Body: [{voucher_no, tax_pct}]. Idempotent; safe to call more
+     * than once. Remove once the historical-import backfill is done — it's
+     * a cleanup tool, not a feature.
+     */
+    @AuthJwtAccessProtected()
+    @Post('/backfill-line-tax-pct')
+    async backfillLineTaxPct(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body() rates: { voucher_no: string; tax_pct: number }[]
+    ) {
+        const result = await this.povService.backfillLineTaxPct(
+            companyId,
+            rates
+        );
+        return {
+            statusCode: 200,
+            message: `Backfilled ${result.ordersFixed} orders, ${result.linesFixed} lines`,
+            data: result,
+        };
+    }
+
     @AuthJwtAccessProtected()
     @Get('/sample-excel')
     @ApiOperation({ summary: 'Download sample Excel for VPO import (3 sheets)' })

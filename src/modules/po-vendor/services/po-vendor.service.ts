@@ -112,6 +112,50 @@ export class PoVendorService {
     }
 
     /**
+     * ONE-TIME correction: the historical-import path had no per-line GST
+     * amount in the source data, only a blended per-voucher rate — the
+     * first pass approximated it by snapping to the nearest standard GST
+     * slab (0/5/12/18/28), which systematically over-charged several
+     * vouchers whose real blended rate (e.g. 13.75%, 11.03%) rounded UP to
+     * the next slab. This re-applies the EXACT rate (already computed
+     * client-side from the source file's real Input IGST/CGST/SGST amounts,
+     * no slab-snapping) to every line of the matching voucher. `order_value`
+     * / `gst_inr` are computed live from `line.tax_pct` on every read (see
+     * the list/get mapper) — no separate recompute/freeze step needed here,
+     * unlike Invoice/SO. Idempotent; safe to re-run.
+     */
+    async backfillLineTaxPct(
+        companyId: string,
+        rates: { voucher_no: string; tax_pct: number }[]
+    ): Promise<{ ordersFixed: number; linesFixed: number }> {
+        let ordersFixed = 0;
+        let linesFixed = 0;
+        for (const { voucher_no, tax_pct } of rates) {
+            const po: any = await this.povRepository.findOne({
+                company_id: companyId,
+                voucher_no,
+                soft_delete: false,
+            } as any);
+            if (!po) continue;
+            const lines = await this.povLineRepository.findAll({
+                po_vendor_id: po._id.toString(),
+            } as any);
+            let changed = false;
+            for (const l of lines as any[]) {
+                const newPct = String(tax_pct);
+                if (String(num(l.tax_pct)) !== String(tax_pct)) {
+                    l.tax_pct = newPct;
+                    await this.povLineRepository.save(l);
+                    linesFixed++;
+                    changed = true;
+                }
+            }
+            if (changed) ordersFixed++;
+        }
+        return { ordersFixed, linesFixed };
+    }
+
+    /**
      * Delete policy: block if any GRN / Debit-Note references this POV;
      * otherwise only a DRAFT may be deleted (a dispatched POV must be
      * cancelled), and it is HARD-deleted with its lines + payments.
