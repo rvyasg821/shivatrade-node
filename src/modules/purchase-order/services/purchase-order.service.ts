@@ -845,6 +845,49 @@ export class PurchaseOrderService {
      * and are fetched via source_pfi_line_id / source_quotation_line_id so
      * the source remains the single source of truth.
      */
+    /**
+     * ONE-TIME correction: same bug/fix as InvoiceService.backfillSourceCurrency
+     * — the bulk-import path (before its fix) never set a per-line
+     * `source_currency_code`, which defaulted to 'INR' and made `recompute()`
+     * apply an unwanted live INR→doc-currency conversion (~0.01) on top of an
+     * already-correct unit_price for foreign-currency Sales Orders. Corrects
+     * the line fields then re-runs the same `recompute()` every other
+     * mutation already uses — idempotent, safe to re-run.
+     */
+    async backfillSourceCurrency(
+        companyId: string
+    ): Promise<{ ordersFixed: number; linesFixed: number }> {
+        const orders = (await this.poRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any)) as any[];
+        let ordersFixed = 0;
+        let linesFixed = 0;
+        for (const po of orders) {
+            const docCur = (po.currency_code || 'INR').toUpperCase();
+            if (docCur === 'INR') continue;
+            const lines = await this.poLineRepository.findAll({
+                purchase_order_id: po._id.toString(),
+            } as any);
+            let changed = false;
+            for (const l of lines as any[]) {
+                const src = (l.source_currency_code || 'INR').toUpperCase();
+                if (src === 'INR' && num(l.cost_exchange_rate) !== 1) {
+                    l.source_currency_code = docCur;
+                    l.cost_exchange_rate = '1';
+                    await this.poLineRepository.save(l);
+                    linesFixed++;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                await this.recompute(po._id.toString(), companyId);
+                ordersFixed++;
+            }
+        }
+        return { ordersFixed, linesFixed };
+    }
+
     private async recompute(poId: string, companyId: string): Promise<void> {
         const header = await this.poRepository.findOneById(poId);
         if (!header) return;

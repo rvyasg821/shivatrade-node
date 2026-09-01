@@ -1419,6 +1419,50 @@ export class InvoiceService {
     // ─── Recompute totals ───────────────────────────────────────────────
 
     /**
+     * ONE-TIME correction: the bulk-import path (before its fix) never set a
+     * per-line `source_currency_code`, which defaulted to 'INR' — for a
+     * foreign-currency invoice this made `recompute()` treat the line as
+     * needing an INR→doc-currency conversion it didn't need, applying a
+     * live cross-currency rate (~0.01) on top of an already-correct
+     * unit_price and shrinking every amount ~100x. Corrects the line fields
+     * then re-runs the same `recompute()` every other mutation already uses
+     * — idempotent, safe to re-run, no new pricing logic invented.
+     */
+    async backfillSourceCurrency(
+        companyId: string
+    ): Promise<{ invoicesFixed: number; linesFixed: number }> {
+        const invoices = (await this.invoiceRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any)) as any[];
+        let invoicesFixed = 0;
+        let linesFixed = 0;
+        for (const inv of invoices) {
+            const docCur = (inv.currency_code || 'INR').toUpperCase();
+            if (docCur === 'INR') continue;
+            const lines = await this.invoiceLineRepository.findByInvoiceId(
+                inv._id.toString()
+            );
+            let changed = false;
+            for (const l of lines as any[]) {
+                const src = (l.source_currency_code || 'INR').toUpperCase();
+                if (src === 'INR' && num(l.cost_exchange_rate) !== 1) {
+                    l.source_currency_code = docCur;
+                    l.cost_exchange_rate = '1';
+                    await this.invoiceLineRepository.save(l);
+                    linesFixed++;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                await this.recompute(inv._id.toString());
+                invoicesFixed++;
+            }
+        }
+        return { invoicesFixed, linesFixed };
+    }
+
+    /**
      * Recompute all derived monetary fields from the current line set + header
      * inputs. Idempotent - safe to call after any mutation. Writes back to DB.
      */
