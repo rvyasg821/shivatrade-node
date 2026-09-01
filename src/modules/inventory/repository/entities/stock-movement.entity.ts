@@ -32,6 +32,20 @@ export class StockMovementEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
     qty: string;
 
+    // The BUSINESS date this movement actually happened (GRN's grn_date /
+    // invoice's invoice_date) — distinct from `createdAt` (real row-insert
+    // time). Every period-scoped stock report (FIFO CTEs, Stock Turnover,
+    // Inventory Aging) must filter/order on this, not `createdAt`, or a
+    // backfilled historical movement (imported today, dated months ago)
+    // reads as happening "today". Defaults to today in `StockLedgerService
+    // .post()` for a live (non-backfill) movement.
+    // A DB-level default (not just the app-level default in
+    // StockLedgerService.post()) so `synchronize: true` can add this NOT NULL
+    // column to a table that already has rows without failing the ALTER TABLE.
+    @Index()
+    @Column({ type: 'date', nullable: false, default: () => 'CURRENT_DATE' })
+    movement_date: string;
+
     @Column({ type: 'varchar', length: 30, nullable: false })
     movement_type: ENUM_STOCK_MOVEMENT_TYPE;
 

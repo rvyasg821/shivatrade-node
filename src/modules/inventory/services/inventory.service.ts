@@ -238,7 +238,7 @@ export class InventoryService {
             -- EXCLUDED: a GRN reversal posts a negative 'grn' row, but layers
             -- above already come from POV received_qty, so counting a reversal
             -- as outward would double-reduce the stock.
-            SELECT sm.product_id, sm.qty::numeric AS qty, sm."createdAt" AS mv_at
+            SELECT sm.product_id, sm.qty::numeric AS qty, sm.movement_date::timestamptz AS mv_at
             FROM stock_movements sm
             WHERE sm.company_id = $1 AND sm.deleted = false AND sm.qty < 0
               AND sm.source_type <> 'grn'
@@ -1123,7 +1123,7 @@ export class InventoryService {
                 p.unit_of_measure AS uom,
                 c.name            AS category_name,
                 COALESCE(SUM(sm.qty), 0)::float8 AS on_hand,
-                MAX(sm."createdAt")              AS last_movement
+                MAX(sm.movement_date)             AS last_movement
              ${fromGroup}
              ORDER BY ${orderCol} ${orderDir}, p.code ASC
              LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
@@ -1153,7 +1153,7 @@ export class InventoryService {
                 sm.source_id        AS source_id,
                 sm.source_voucher_no AS source_voucher_no,
                 sm.notes            AS notes,
-                sm."createdAt"      AS created_at,
+                sm.movement_date    AS created_at,
                 -- For a GRN receipt, surface the Vendor PO it was received
                 -- against + that POV's vendor, so the ledger shows where the
                 -- stock came from (GRN → VPO → vendor).
@@ -1166,7 +1166,7 @@ export class InventoryService {
              LEFT JOIN vendors v ON v._id = g.vendor_id
              WHERE sm.company_id = $1 AND sm.deleted = false
                AND sm.product_id = $2 ${locClause}
-             ORDER BY sm."createdAt" ASC, sm._id ASC`,
+             ORDER BY sm.movement_date ASC, sm."createdAt" ASC, sm._id ASC`,
             params
         );
 

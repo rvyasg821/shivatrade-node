@@ -25,6 +25,11 @@ export interface StockMovementInput {
     source_voucher_no?: string;
     notes?: string;
     created_by?: string;
+    /** The document's own business date (GRN's grn_date / invoice's
+     *  invoice_date) — defaults to today when omitted (a live movement's
+     *  business date IS today). A historical-import posting must pass this
+     *  explicitly so period-scoped reports place it in the right period. */
+    movement_date?: string;
 }
 
 /**
@@ -59,6 +64,8 @@ export class StockLedgerService {
             source_voucher_no: m.source_voucher_no ?? null,
             notes: m.notes ?? null,
             createdBy: m.created_by ?? null,
+            movement_date:
+                m.movement_date || new Date().toISOString().slice(0, 10),
         } as any);
     }
 
@@ -74,7 +81,8 @@ export class StockLedgerService {
         sourceId: string,
         reversalType: ENUM_STOCK_MOVEMENT_TYPE,
         reason?: string,
-        userId?: string
+        userId?: string,
+        movementDate?: string
     ): Promise<void> {
         const movements = await this.movementRepository.findBySource(
             sourceType,
@@ -97,6 +105,7 @@ export class StockLedgerService {
                 source_voucher_no: mv.source_voucher_no,
                 notes: reason,
                 created_by: userId,
+                movement_date: movementDate,
             });
         }
     }

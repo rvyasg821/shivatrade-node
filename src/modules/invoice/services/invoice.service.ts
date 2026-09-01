@@ -1105,10 +1105,14 @@ export class InvoiceService {
         await this.invoiceRepository.save(row);
 
         // ── Goods Out — deduct stock now that the invoice is ISSUED ─────────
-        // Skipped in import mode (see the pre-issue note above).
+        // Posted with the invoice's own business date (not "today") so a
+        // historical-import invoice lands in the right period on period-scoped
+        // stock reports — see StockMovementEntity.movement_date. The pre-issue
+        // stock-availability GATE above still skips in import mode (current
+        // on-hand mid-batch doesn't reflect the rest of the historical import
+        // yet); only that gate, not this posting, needs the silent bypass.
         try {
             for (const l of lines as any[]) {
-                if (importCtx?.silent) break;
                 const q = num(l.qty);
                 if (!l.product_id || q <= 0) continue;
                 await this.stockLedger.post(stockCompanyId, {
@@ -1121,6 +1125,7 @@ export class InvoiceService {
                     source_line_id: l._id.toString(),
                     source_voucher_no: row.voucher_no,
                     created_by: userId,
+                    movement_date: row.invoice_date,
                 });
             }
         } catch (e: any) {
