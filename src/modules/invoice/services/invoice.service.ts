@@ -1430,13 +1430,14 @@ export class InvoiceService {
      */
     async backfillSourceCurrency(
         companyId: string
-    ): Promise<{ invoicesFixed: number; linesFixed: number }> {
+    ): Promise<{ invoicesFixed: number; linesFixed: number; igstBucketsFixed: number }> {
         const invoices = (await this.invoiceRepository.findAll({
             company_id: companyId,
             soft_delete: false,
         } as any)) as any[];
         let invoicesFixed = 0;
         let linesFixed = 0;
+        let igstBucketsFixed = 0;
         for (const inv of invoices) {
             const docCur = (inv.currency_code || 'INR').toUpperCase();
             if (docCur === 'INR') continue;
@@ -1458,8 +1459,36 @@ export class InvoiceService {
                 await this.recompute(inv._id.toString());
                 invoicesFixed++;
             }
+            // The IGST-refund box on the PDF reads a snapshot frozen at
+            // ISSUE time (igst_refund_buckets/igst_refund_amount), not a
+            // live recompute — so even after recompute() fixes
+            // taxable_amount/grand_total_inr, an already-issued invoice's
+            // PDF kept showing the stale pre-fix figures. Re-freeze it here
+            // from the now-correct line data, same formula issue() uses.
+            // Unconditional (not gated on `changed` above) so a re-run
+            // still fixes invoices whose lines were already corrected by an
+            // earlier call to this method.
+            if (inv.gst_route === ENUM_INVOICE_GST_ROUTE.IGST_PAID) {
+                const freshLines = changed
+                    ? await this.invoiceLineRepository.findByInvoiceId(
+                          inv._id.toString()
+                      )
+                    : lines;
+                const { buckets, totalRefund } = this.buildIgstRefundBuckets(
+                    freshLines as any,
+                    inv
+                );
+                const newAmount = String(round2(totalRefund));
+                const oldAmount = String(inv.igst_refund_amount ?? '');
+                if (newAmount !== oldAmount) {
+                    inv.igst_refund_buckets = buckets;
+                    inv.igst_refund_amount = newAmount;
+                    await this.invoiceRepository.save(inv);
+                    igstBucketsFixed++;
+                }
+            }
         }
-        return { invoicesFixed, linesFixed };
+        return { invoicesFixed, linesFixed, igstBucketsFixed };
     }
 
     /**

@@ -90,7 +90,7 @@ export class InvoiceAdminController {
         );
         return {
             statusCode: 200,
-            message: `Backfilled ${result.invoicesFixed} invoices, ${result.linesFixed} lines`,
+            message: `Backfilled ${result.invoicesFixed} invoices, ${result.linesFixed} lines, ${result.igstBucketsFixed} IGST-refund snapshots`,
             data: result,
         };
     }
