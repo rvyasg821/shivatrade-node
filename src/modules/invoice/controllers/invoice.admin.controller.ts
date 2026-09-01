@@ -74,6 +74,27 @@ export class InvoiceAdminController {
         private readonly creatorScope: CreatorScopeService
     ) {}
 
+    /**
+     * ONE-TIME correction for the source_currency_code import bug — see
+     * InvoiceService.backfillSourceCurrency doc comment. Idempotent; safe
+     * to call more than once. Remove once the historical-import backfill
+     * is done — it's a cleanup tool, not a feature.
+     */
+    @AuthJwtAccessProtected()
+    @Post('/backfill-source-currency')
+    async backfillSourceCurrency(
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
+        const result = await this.invoiceService.backfillSourceCurrency(
+            companyId
+        );
+        return {
+            statusCode: 200,
+            message: `Backfilled ${result.invoicesFixed} invoices, ${result.linesFixed} lines`,
+            data: result,
+        };
+    }
+
     @AuthJwtAccessProtected()
     @Get('/sample-excel')
     async downloadSampleExcel(
