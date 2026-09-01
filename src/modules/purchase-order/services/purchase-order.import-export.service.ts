@@ -472,6 +472,17 @@ export class PurchaseOrderImportExportService {
                     source_quotation_line_id: qMap.get(l.product_id),
                 }));
             }
+            // Import sheets never carry a per-line source (vendor) currency —
+            // default to the SO's own document currency so the create path's
+            // `sourceCode === docCur` check takes the safe 1:1 path instead of
+            // falling through to a live cross-currency rate lookup (e.g.
+            // INR→USD, ~0.01) as an unwanted extra conversion on top of an
+            // already-correct unit_price. Same bug/fix as the Invoice import.
+            lines = lines.map((l) => ({
+                ...l,
+                source_currency_code:
+                    (l as any).source_currency_code || currency_code,
+            }));
 
             const alreadyExists = !!voucher_no && existingVouchers.has(vkey);
             let docStatus: SoImportDoc['status'];
@@ -588,6 +599,8 @@ export class PurchaseOrderImportExportService {
                             qty: l.qty,
                             unit: l.unit,
                             unit_price: l.unit_price,
+                            source_currency_code: (l as any)
+                                .source_currency_code,
                             discount_pct: l.discount_pct,
                             tax_pct: l.tax_pct,
                             margin_pct: l.margin_pct,

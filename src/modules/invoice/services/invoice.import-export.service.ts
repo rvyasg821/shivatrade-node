@@ -577,6 +577,13 @@ export class InvoiceImportExportService {
                 ...l,
                 purchase_order_line_id:
                     soLineByProduct.get(l._productId) || undefined,
+                // Import sheets never carry a per-line source (vendor) currency
+                // — default to the invoice's own document currency so
+                // writeLines()'s `sourceCode === docCur` check takes the safe
+                // 1:1 path instead of falling through to a live cross-currency
+                // rate lookup (e.g. INR→USD, ~0.01) as an unwanted extra
+                // conversion on top of an already-correct unit_price.
+                source_currency_code: l.source_currency_code || currency_code,
             }));
 
             const alreadyExists = !!voucher_no && existingVouchers.has(vkey);
