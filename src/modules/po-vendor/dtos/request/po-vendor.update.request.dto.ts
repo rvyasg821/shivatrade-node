@@ -195,6 +195,19 @@ export class PoVendorUpdateRequestDto {
     @IsOptional()
     expected_arrival_date?: string;
 
+    /**
+     * When the goods actually arrived — drives the FIFO receipt-layer date
+     * on every inventory report (see StockMovementEntity.movement_date doc
+     * comment; POV.actual_arrival_date plays the equivalent role on the
+     * inward/receipt side). A correction field, not part of the normal
+     * dispatch workflow, so it stays editable at every non-draft status
+     * (see dispatchedEditable/terminalEditable below) rather than being
+     * locked once the POV closes.
+     */
+    @IsDateString()
+    @IsOptional()
+    actual_arrival_date?: string;
+
     @IsString()
     @IsOptional()
     @MaxLength(150)

@@ -4313,9 +4313,9 @@ export class ReportsService {
              ) sold ON sold.product_id = p._id
              LEFT JOIN (
                  SELECT product_id,
-                        SUM(CASE WHEN "createdAt" < $2::date
+                        SUM(CASE WHEN movement_date < $2::date
                                  THEN qty::numeric ELSE 0 END) AS opening,
-                        SUM(CASE WHEN "createdAt" < ($3::date + INTERVAL '1 day')
+                        SUM(CASE WHEN movement_date < ($3::date + INTERVAL '1 day')
                                  THEN qty::numeric ELSE 0 END) AS closing
                  FROM stock_movements
                  WHERE company_id = $1 AND deleted = false
@@ -4899,10 +4899,10 @@ export class ReportsService {
         const ohRaw: any[] = metaById.size
             ? await this.dataSource.query(
                   `SELECT product_id,
-                          SUM(CASE WHEN "createdAt" < ($2::date + INTERVAL '1 day')
+                          SUM(CASE WHEN movement_date < ($2::date + INTERVAL '1 day')
                                    THEN qty::numeric ELSE 0 END) AS closing,
                           SUM(CASE WHEN qty::numeric < 0
-                                    AND "createdAt" < ($2::date + INTERVAL '1 day')
+                                    AND movement_date < ($2::date + INTERVAL '1 day')
                                    THEN -qty::numeric ELSE 0 END) AS out_qty
                    FROM stock_movements
                    WHERE company_id = $1 AND deleted = false
@@ -5235,7 +5235,7 @@ export class ReportsService {
         // Closing on-hand from the stock ledger (matches the aging report).
         const ohRaw = await this.dataSource.query(
             `SELECT COALESCE(SUM(CASE
-                        WHEN "createdAt" < ($2::date + INTERVAL '1 day')
+                        WHEN movement_date < ($2::date + INTERVAL '1 day')
                         THEN qty::numeric ELSE 0 END), 0)::float8 AS closing
              FROM stock_movements
              WHERE company_id = $1 AND deleted = false AND product_id = $3`,

@@ -551,7 +551,8 @@ export class GrnService {
                     grnId,
                     ENUM_STOCK_MOVEMENT_TYPE.GRN_REVERSAL,
                     'resync on confirm/edit',
-                    userId
+                    userId,
+                    grn.grn_date
                 );
                 const locationId = povId
                     ? (await this.povRepository.findOneById(povId) as any)
@@ -571,6 +572,7 @@ export class GrnService {
                             source_line_id: l._id.toString(),
                             source_voucher_no: grn.voucher_no,
                             created_by: userId,
+                            movement_date: grn.grn_date,
                         });
                     }
                 }
@@ -581,7 +583,8 @@ export class GrnService {
                     grnId,
                     ENUM_STOCK_MOVEMENT_TYPE.GRN_REVERSAL,
                     'GRN no longer confirmed',
-                    userId
+                    userId,
+                    grn.grn_date
                 );
             }
         } catch (e: any) {

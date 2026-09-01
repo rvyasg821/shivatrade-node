@@ -1013,6 +1013,15 @@ export class PoVendorService {
             // (undefined), so normal POVs still start with no dispatch_date
             // until the real Dispatch action sets one.
             dispatch_date: silent ? (data as any).dispatch_date || null : null,
+            // Drives the FIFO receipt-layer date on every inventory report
+            // (inventory.service.ts FIFO_CTES) — defaults to dispatch_date
+            // since a historical backfill has no separately-recorded arrival
+            // date. Same import-only gate as dispatch_date above.
+            actual_arrival_date: silent
+                ? (data as any).actual_arrival_date ||
+                  (data as any).dispatch_date ||
+                  null
+                : null,
             purchase_order_id: null,
             linked_sales_orders: linkedSalesOrders,
             vendor_id: vendorId,
@@ -2137,6 +2146,7 @@ export class PoVendorService {
             // frozen) and blocks the whole thing once a GRN exists.
             'line_edits',
             'expected_arrival_date',
+            'actual_arrival_date',
             'transporter_name',
             'vehicle_no',
             'lr_no',
@@ -2153,6 +2163,11 @@ export class PoVendorService {
             'internal_notes',
             'linked_sales_order_ids',
             'status',
+            // Correction field, not a workflow field — see the DTO doc
+            // comment. Must stay patchable after the POV closes so a
+            // historical import (or a data-entry fix) can set the real
+            // receipt date without reopening the document.
+            'actual_arrival_date',
         ]);
 
         const allowed =
