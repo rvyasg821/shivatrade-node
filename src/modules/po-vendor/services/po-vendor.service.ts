@@ -112,47 +112,44 @@ export class PoVendorService {
     }
 
     /**
-     * ONE-TIME correction: the historical-import path had no per-line GST
-     * amount in the source data, only a blended per-voucher rate — the
-     * first pass approximated it by snapping to the nearest standard GST
-     * slab (0/5/12/18/28), which systematically over-charged several
-     * vouchers whose real blended rate (e.g. 13.75%, 11.03%) rounded UP to
-     * the next slab. This re-applies the EXACT rate (already computed
-     * client-side from the source file's real Input IGST/CGST/SGST amounts,
-     * no slab-snapping) to every line of the matching voucher. `order_value`
-     * / `gst_inr` are computed live from `line.tax_pct` on every read (see
-     * the list/get mapper) — no separate recompute/freeze step needed here,
-     * unlike Invoice/SO. Idempotent; safe to re-run.
+     * Import-driven update: when a historical-import Excel is re-uploaded
+     * for a voucher_no that already exists (e.g. a corrected file with the
+     * exact per-line GST% from the source books, replacing an earlier
+     * approximation), PoVendorImportExportService.importVpos() calls this
+     * for each 'valid_update' row instead of creating a duplicate or
+     * silently skipping. Updates ONLY tax_pct per line, matched by
+     * product_id — never qty/rate/status, which stay skip-protected.
+     * `order_value`/`gst_inr` are computed live from `line.tax_pct` on
+     * every read, so no recompute/freeze step is needed here (unlike
+     * Invoice). Idempotent; a line whose rate already matches is untouched.
      */
-    async backfillLineTaxPct(
-        companyId: string,
-        rates: { voucher_no: string; tax_pct: number }[]
-    ): Promise<{ ordersFixed: number; linesFixed: number }> {
-        let ordersFixed = 0;
-        let linesFixed = 0;
-        for (const { voucher_no, tax_pct } of rates) {
-            const po: any = await this.povRepository.findOne({
-                company_id: companyId,
-                voucher_no,
-                soft_delete: false,
-            } as any);
-            if (!po) continue;
-            const lines = await this.povLineRepository.findAll({
-                po_vendor_id: po._id.toString(),
-            } as any);
-            let changed = false;
-            for (const l of lines as any[]) {
-                const newPct = String(tax_pct);
-                if (String(num(l.tax_pct)) !== String(tax_pct)) {
-                    l.tax_pct = newPct;
-                    await this.povLineRepository.save(l);
-                    linesFixed++;
-                    changed = true;
-                }
-            }
-            if (changed) ordersFixed++;
+    async updateLineTaxRates(
+        povId: string,
+        rates: { product_id: string; tax_pct?: string }[]
+    ): Promise<number> {
+        const lines = await this.povLineRepository.findAll({
+            po_vendor_id: povId,
+        } as any);
+        const byProduct = new Map<string, any[]>();
+        for (const l of lines as any[]) {
+            const pid = l.product_id?.toString();
+            if (!pid) continue;
+            if (!byProduct.has(pid)) byProduct.set(pid, []);
+            byProduct.get(pid).push(l);
         }
-        return { ordersFixed, linesFixed };
+        let linesFixed = 0;
+        for (const r of rates) {
+            if (r.tax_pct === undefined) continue;
+            const candidates = byProduct.get(r.product_id);
+            const l = candidates?.shift();
+            if (!l) continue;
+            if (String(num(l.tax_pct)) !== String(num(r.tax_pct))) {
+                l.tax_pct = r.tax_pct;
+                await this.povLineRepository.save(l);
+                linesFixed++;
+            }
+        }
+        return linesFixed;
     }
 
     /**

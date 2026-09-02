@@ -146,7 +146,7 @@ export interface InvoiceImportDoc {
     lines: any[];
     banks: any[];
     target_status: ENUM_INVOICE_STATUS;
-    docStatus: 'valid_new' | 'skip' | 'error';
+    docStatus: 'valid_new' | 'valid_update' | 'skip' | 'error';
     errors: string[];
     warnings: string[];
 }
@@ -586,10 +586,17 @@ export class InvoiceImportExportService {
                 source_currency_code: l.source_currency_code || currency_code,
             }));
 
+            // A re-import of an already-existing voucher_no is treated as a
+            // TAX-RATE UPDATE (e.g. a corrected file with the exact
+            // per-line GST%/IGST% from the source books) rather than
+            // skipped outright — see InvoiceService.updateLineTaxRates.
+            // Only tax_pct/igst_rate_pct are ever touched this way;
+            // qty/price/status stay whatever they already are on the live
+            // record.
             const alreadyExists = !!voucher_no && existingVouchers.has(vkey);
             let docStatus: InvoiceImportDoc['docStatus'];
             if (errors.length) docStatus = 'error';
-            else if (alreadyExists) docStatus = 'skip';
+            else if (alreadyExists) docStatus = 'valid_update';
             else docStatus = 'valid_new';
 
             // Assemble the create payload (header).
@@ -670,7 +677,8 @@ export class InvoiceImportExportService {
         const summary = {
             total: docs.length,
             valid_new: docs.filter((d) => d.docStatus === 'valid_new').length,
-            valid_update: 0,
+            valid_update: docs.filter((d) => d.docStatus === 'valid_update')
+                .length,
             skipped: docs.filter((d) => d.docStatus === 'skip').length,
             errors: docs.filter((d) => d.docStatus === 'error').length,
             warnings: docs.reduce((n, d) => n + d.warnings.length, 0),
@@ -692,10 +700,12 @@ export class InvoiceImportExportService {
         userId: string
     ): Promise<{
         created: number;
+        updated: number;
         skipped: number;
         errors: { row: number; message: string }[];
     }> {
         let created = 0;
+        let updated = 0;
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
@@ -710,6 +720,40 @@ export class InvoiceImportExportService {
         for (const doc of docs) {
             if (doc.docStatus === 'skip') {
                 skipped++;
+                continue;
+            }
+            if (doc.docStatus === 'valid_update') {
+                try {
+                    const existing: any = await this.invoiceRepository.findOne(
+                        {
+                            company_id: companyId,
+                            voucher_no: doc.voucher_no,
+                            soft_delete: false,
+                        } as any
+                    );
+                    if (!existing) {
+                        skipped++;
+                        continue;
+                    }
+                    const fixed = await this.invoiceService.updateLineTaxRates(
+                        existing._id.toString(),
+                        doc.lines.map((l: any) => ({
+                            product_id: l._productId || l.product_id,
+                            tax_pct: l.tax_pct,
+                            igst_rate_pct: l.igst_rate_pct,
+                        }))
+                    );
+                    if (fixed > 0) updated++;
+                    else skipped++;
+                } catch (err: any) {
+                    this.logger.error(
+                        `Invoice tax-rate update ${doc.voucher_no} failed: ${err?.message}`
+                    );
+                    errors.push({
+                        row: doc.rowNum,
+                        message: err?.message || 'Update failed',
+                    });
+                }
                 continue;
             }
             if (doc.docStatus !== 'valid_new') continue;
@@ -761,7 +805,7 @@ export class InvoiceImportExportService {
                 });
             }
         }
-        return { created, skipped, errors };
+        return { created, updated, skipped, errors };
     }
 
     /** Export invoices to the same 4-sheet shape. */
