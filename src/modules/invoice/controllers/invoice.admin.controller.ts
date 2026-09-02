@@ -171,7 +171,7 @@ export class InvoiceAdminController {
         );
         return {
             statusCode: 200,
-            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            message: `Import complete: ${result.created} created, ${result.updated} tax-rate updated, ${result.skipped} skipped`,
             data: { summary, ...result },
         };
     }

@@ -104,7 +104,7 @@ export interface VpoImportDoc {
     status: ENUM_PO_VENDOR_STATUS;
     lines: VpoLine[];
     charges: VpoCharge[];
-    docStatus: 'valid_new' | 'skip' | 'error';
+    docStatus: 'valid_new' | 'valid_update' | 'skip' | 'error';
     errors: string[];
     warnings: string[];
 }
@@ -456,10 +456,16 @@ export class PoVendorImportExportService {
                     'No line items found for this voucher_no in the "LineItems" sheet'
                 );
 
+            // A re-import of an already-existing voucher_no is treated as a
+            // TAX-RATE UPDATE (e.g. a corrected file with the exact per-line
+            // GST% from the source books) rather than skipped outright —
+            // see PoVendorService.updateLineTaxRates. Only tax_pct is ever
+            // touched this way; qty/rate/status stay whatever they already
+            // are on the live record.
             const alreadyExists = !!voucher_no && existingVouchers.has(vkey);
             let docStatus: VpoImportDoc['docStatus'];
             if (errors.length) docStatus = 'error';
-            else if (alreadyExists) docStatus = 'skip';
+            else if (alreadyExists) docStatus = 'valid_update';
             else docStatus = 'valid_new';
 
             docs.push({
@@ -495,7 +501,8 @@ export class PoVendorImportExportService {
         const summary = {
             total: docs.length,
             valid_new: docs.filter((d) => d.docStatus === 'valid_new').length,
-            valid_update: 0,
+            valid_update: docs.filter((d) => d.docStatus === 'valid_update')
+                .length,
             skipped: docs.filter((d) => d.docStatus === 'skip').length,
             errors: docs.filter((d) => d.docStatus === 'error').length,
             warnings: docs.reduce((n, d) => n + d.warnings.length, 0),
@@ -510,16 +517,49 @@ export class PoVendorImportExportService {
         userId: string
     ): Promise<{
         created: number;
+        updated: number;
         skipped: number;
         errors: { row: number; message: string }[];
     }> {
         let created = 0;
+        let updated = 0;
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
         for (const doc of docs) {
             if (doc.docStatus === 'skip') {
                 skipped++;
+                continue;
+            }
+            if (doc.docStatus === 'valid_update') {
+                try {
+                    const existing: any = await this.povRepository.findOne({
+                        company_id: companyId,
+                        voucher_no: doc.voucher_no,
+                        soft_delete: false,
+                    } as any);
+                    if (!existing) {
+                        skipped++;
+                        continue;
+                    }
+                    const fixed = await this.povService.updateLineTaxRates(
+                        existing._id.toString(),
+                        doc.lines.map((l) => ({
+                            product_id: l.product_id,
+                            tax_pct: l.tax_pct,
+                        }))
+                    );
+                    if (fixed > 0) updated++;
+                    else skipped++;
+                } catch (err: any) {
+                    this.logger.error(
+                        `VPO tax-rate update ${doc.voucher_no} failed: ${err?.message}`
+                    );
+                    errors.push({
+                        row: doc.rowNum,
+                        message: err?.message || 'Update failed',
+                    });
+                }
                 continue;
             }
             if (doc.docStatus !== 'valid_new') continue;
@@ -634,7 +674,7 @@ export class PoVendorImportExportService {
                 });
             }
         }
-        return { created, skipped, errors };
+        return { created, updated, skipped, errors };
     }
 
     /** Export VPOs to the same 3-sheet shape. */

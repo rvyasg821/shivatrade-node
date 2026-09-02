@@ -1492,6 +1492,76 @@ export class InvoiceService {
     }
 
     /**
+     * Import-driven update: when a historical-import Excel is re-uploaded
+     * for a voucher_no that already exists (e.g. a corrected file with the
+     * exact per-line GST%/IGST% from the source books, replacing an
+     * earlier approximation), InvoiceImportExportService.importInvoices()
+     * calls this for each 'valid_update' row instead of creating a
+     * duplicate or silently skipping. Updates ONLY tax_pct/igst_rate_pct
+     * per line, matched by product_id — never qty/price/status. Re-runs
+     * `recompute()` and re-freezes the IGST-refund snapshot the same way
+     * `backfillSourceCurrency` does, so the PDF box stays in sync.
+     * Idempotent; a line whose rates already match is untouched.
+     */
+    async updateLineTaxRates(
+        invoiceId: string,
+        rates: { product_id: string; tax_pct?: string; igst_rate_pct?: string }[]
+    ): Promise<number> {
+        const inv: any = await this.invoiceRepository.findOneById(invoiceId);
+        if (!inv) return 0;
+        const lines = await this.invoiceLineRepository.findByInvoiceId(
+            invoiceId
+        );
+        const byProduct = new Map<string, any[]>();
+        for (const l of lines as any[]) {
+            const pid = l.product_id?.toString();
+            if (!pid) continue;
+            if (!byProduct.has(pid)) byProduct.set(pid, []);
+            byProduct.get(pid).push(l);
+        }
+        let linesFixed = 0;
+        for (const r of rates) {
+            const candidates = byProduct.get(r.product_id);
+            const l = candidates?.shift();
+            if (!l) continue;
+            let lineChanged = false;
+            if (
+                r.tax_pct !== undefined &&
+                String(num(l.tax_pct)) !== String(num(r.tax_pct))
+            ) {
+                l.tax_pct = r.tax_pct;
+                lineChanged = true;
+            }
+            if (
+                r.igst_rate_pct !== undefined &&
+                String(num(l.igst_rate_pct)) !== String(num(r.igst_rate_pct))
+            ) {
+                l.igst_rate_pct = r.igst_rate_pct;
+                lineChanged = true;
+            }
+            if (lineChanged) {
+                await this.invoiceLineRepository.save(l);
+                linesFixed++;
+            }
+        }
+        if (linesFixed === 0) return 0;
+        await this.recompute(invoiceId);
+        if (inv.gst_route === ENUM_INVOICE_GST_ROUTE.IGST_PAID) {
+            const freshLines = await this.invoiceLineRepository.findByInvoiceId(
+                invoiceId
+            );
+            const { buckets, totalRefund } = this.buildIgstRefundBuckets(
+                freshLines as any,
+                inv
+            );
+            inv.igst_refund_buckets = buckets;
+            inv.igst_refund_amount = String(round2(totalRefund));
+            await this.invoiceRepository.save(inv);
+        }
+        return linesFixed;
+    }
+
+    /**
      * Recompute all derived monetary fields from the current line set + header
      * inputs. Idempotent - safe to call after any mutation. Writes back to DB.
      */
