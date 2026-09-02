@@ -370,8 +370,16 @@ export class PoVendorPdfService {
             if (!gstApplies) break; // foreign-currency POV → no GST buckets
             const pid = (l as any).product_id?.toString();
             const lineTotal = Number((l as any).line_total) || 0;
+            // A line's own tax_pct wins even when it's explicitly 0% (e.g. a
+            // GST-exempt overseas purchase) — only fall back to the product
+            // master when the line never had a rate set at all.
+            const lineTaxRaw = (l as any).tax_pct;
             const rate =
-                Number((l as any).tax_pct) || taxByProduct.get(pid) || 0;
+                lineTaxRaw !== null &&
+                lineTaxRaw !== undefined &&
+                lineTaxRaw !== ''
+                    ? Number(lineTaxRaw) || 0
+                    : taxByProduct.get(pid) || 0;
             if (rate <= 0) continue;
             const taxable = lineTotal;
             const gst = (taxable * rate) / 100;
