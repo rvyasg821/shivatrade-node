@@ -1009,7 +1009,7 @@ export class PoVendorService {
                 // Live path keeps numbering by "today" (unchanged); only import
                 // buckets the voucher into the historical doc's FY.
                 asOfDate: ctx?.voucher_no
-                    ? (data as any).dispatch_date
+                    ? new Date((data as any).dispatch_date)
                     : undefined,
             }
         );

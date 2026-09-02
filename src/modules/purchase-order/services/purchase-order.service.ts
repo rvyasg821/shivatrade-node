@@ -327,7 +327,7 @@ export class PurchaseOrderService {
                 explicit: ctx?.voucher_no,
                 // Live path keeps numbering by "today" (unchanged); only import
                 // buckets the voucher into the historical doc's FY.
-                asOfDate: ctx?.voucher_no ? (data.po_date as any) : undefined,
+                asOfDate: ctx?.voucher_no ? new Date(data.po_date) : undefined,
             }
         );
 
