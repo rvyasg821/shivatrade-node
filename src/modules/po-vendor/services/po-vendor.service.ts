@@ -3696,14 +3696,23 @@ export class PoVendorService {
             let gstInr = 0;
             if (gstApplies) {
                 for (const l of linesRaw) {
-                    // Line's own tax_pct wins (standalone POVs set GST per line);
-                    // fall back to the product master — same rule as the POV PDF.
+                    // Line's own tax_pct wins (standalone POVs set GST per line),
+                    // even when it's explicitly 0% (e.g. a GST-exempt overseas
+                    // purchase) — only fall back to the product master when the
+                    // line never had a rate set at all. Same rule as the POV PDF.
+                    const lineTaxRaw = (l as any).tax_pct;
                     const taxPct =
-                        num((l as any).tax_pct) ||
-                        num(
-                            (productMap.get(l.product_id?.toString()) as any)
-                                ?.tax_pct
-                        );
+                        lineTaxRaw !== null &&
+                        lineTaxRaw !== undefined &&
+                        lineTaxRaw !== ''
+                            ? num(lineTaxRaw)
+                            : num(
+                                  (
+                                      productMap.get(
+                                          l.product_id?.toString()
+                                      ) as any
+                                  )?.tax_pct
+                              );
                     gstInr += (num(l.line_total) * taxPct) / 100; // goods GST
                 }
             }
