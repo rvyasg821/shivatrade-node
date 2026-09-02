@@ -46,6 +46,13 @@ export class RequestModule {
                             transform: true,
                             skipUndefinedProperties: false,
                             forbidUnknownValues: true,
+                            // Silently strips any property not declared on the
+                            // target DTO (e.g. company_id, soft_delete) before
+                            // it reaches an Object.assign-style update — see
+                            // SECURITY_HARDENING_PLAN.md B2. Not
+                            // forbidNonWhitelisted: that 400s on any extra
+                            // field and needs its own FE-payload audit first.
+                            whitelist: true,
                             errorHttpStatusCode:
                                 HttpStatus.UNPROCESSABLE_ENTITY,
                             exceptionFactory: async (

@@ -88,6 +88,7 @@ export class LeadService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -97,7 +98,7 @@ export class LeadService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const row = await this.findOneById(id);
+                const row = await this.findOneById(id, companyId);
                 await this.deleteWithGuard(row);
                 deleted.push(id);
             } catch (e: any) {
@@ -234,9 +235,13 @@ export class LeadService {
 
     async findOneById(
         leadId: string,
+        companyId: string,
         options?: IDatabaseFindOneOptions
     ): Promise<LeadDoc> {
-        const lead = await this.leadRepository.findOneById(leadId, options);
+        const lead = await this.leadRepository.findOne(
+            { _id: leadId, company_id: companyId } as any,
+            options
+        );
         if (!lead) throw new NotFoundException('Lead not found');
         return lead;
     }

@@ -316,9 +316,10 @@ export class VendorAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:vendorId')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('vendorId') vendorId: string
     ): Promise<IResponse<VendorGetResponseDto>> {
-        const vendor = await this.vendorService.findOneById(vendorId);
+        const vendor = await this.vendorService.findOneById(vendorId, companyId);
         const data = await this.vendorService.mapGetWithRelations(vendor);
         return { data };
     }
@@ -327,10 +328,11 @@ export class VendorAdminController {
     @AuthJwtAccessProtected()
     @Put('/update/:vendorId')
     async update(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('vendorId') vendorId: string,
         @Body() body: VendorUpdateRequestDto
     ): Promise<IResponse<VendorGetResponseDto>> {
-        const vendor = await this.vendorService.findOneById(vendorId);
+        const vendor = await this.vendorService.findOneById(vendorId, companyId);
         const updated = await this.vendorService.update(vendor, body);
         const data = await this.vendorService.mapGetWithRelations(updated);
         return { data };
@@ -341,9 +343,10 @@ export class VendorAdminController {
     @Delete('/delete/:vendorId')
     async delete(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('vendorId') vendorId: string
     ): Promise<void> {
-        const vendor = await this.vendorService.findOneById(vendorId);
+        const vendor = await this.vendorService.findOneById(vendorId, companyId);
         await this.vendorService.softDelete(vendor, userId);
     }
 
@@ -352,13 +355,14 @@ export class VendorAdminController {
     @Post('/delete-many')
     async deleteMany(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.vendorService.deleteMany(ids, userId);
+        const data = await this.vendorService.deleteMany(ids, companyId, userId);
         return { data };
     }
 }

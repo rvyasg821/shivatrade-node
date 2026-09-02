@@ -648,6 +648,7 @@ export class EmployeeImportExportService {
                         role: row.data.role,
                         companyId,
                         roleLevel: row.data.roleLevel,
+                        must_reset_password: true,
                     };
 
                     const user = await this.userService.create(userData, passwordHash, ENUM_USER_SIGN_UP_FROM.ADMIN);

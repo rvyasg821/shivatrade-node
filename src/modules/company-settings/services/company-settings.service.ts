@@ -33,7 +33,19 @@ export class CompanySettingsService {
         private readonly settingsRepository: CompanySettingsRepository,
         private readonly encryptionService: HelperEncryptionService,
     ) {
-        const secret = process.env.AUTH_JWT_ACCESS_TOKEN_SECRET || 'default-secret-key-for-encryption!!';
+        // Fail closed, not open — a dedicated key with no fallback. Never
+        // reuse AUTH_JWT_ACCESS_TOKEN_SECRET here: rotating the JWT signing
+        // secret would silently break decryption of stored SMTP/SMS/WhatsApp
+        // secrets. See SECURITY_HARDENING_PLAN.md B1. Existing encrypted
+        // data must be migrated first — run `migrate:settings-encryption-key`
+        // (src/migration/commands/migrate-settings-encryption-key.command.ts)
+        // before deploying this.
+        const secret = process.env.SETTINGS_ENCRYPTION_KEY;
+        if (!secret) {
+            throw new Error(
+                'SETTINGS_ENCRYPTION_KEY is not set. This is required to encrypt/decrypt stored company settings secrets (SMTP/SMS/WhatsApp) — refusing to start with no key.'
+            );
+        }
         this.encKey = secret.substring(0, 32).padEnd(32, '0');
         this.encIv = secret.substring(0, 16).padEnd(16, '0');
     }

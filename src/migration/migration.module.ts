@@ -51,6 +51,7 @@ import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.reposi
 import { RebateRepositoryModule } from '@modules/rebate/repository/rebate.repository.module';
 import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 import { PortMasterModule } from '@modules/port-master/port-master.module';
+import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 
 // Repository modules (no controllers)
 import { UserRepositoryModule } from '@modules/user/repository/user.repository.module';
@@ -94,6 +95,7 @@ import { EmailModule } from '@modules/email/email.module';
 import configs from '@config';
 // Commands
 import { MigrateToolsWidgetsSettingsCommand } from './commands/migrate-tools-widgets-settings.command';
+import { MigrateSettingsEncryptionKeyCommand } from './commands/migrate-settings-encryption-key.command';
 import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
 
 @Module({
@@ -158,6 +160,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
         RoleModule,
         forwardRef(() => UserModule),
         PortMasterModule,
+        CompanySettingsRepositoryModule,
 
         ToolDeletionModule
     ],
@@ -205,6 +208,7 @@ import { ToolDeletionModule } from '@modules/tools/tool-deletion.module';
 
         // Tools widgets and settings migration
         MigrateToolsWidgetsSettingsCommand,
+        MigrateSettingsEncryptionKeyCommand,
     ],
     exports: [],
 })

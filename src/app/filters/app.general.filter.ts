@@ -7,8 +7,8 @@ import {
     InternalServerErrorException,
     Logger,
 } from '@nestjs/common';
-import { appendFileSync, existsSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join, dirname } from 'path';
 import { HttpArgumentsHost } from '@nestjs/common/interfaces';
 import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost } from '@nestjs/core';
@@ -98,6 +98,14 @@ export class AppGeneralFilter implements ExceptionFilter {
 
             try {
                 const logFilePath = join(process.cwd(), 'src/errorLogs/log.txt');
+
+                // The directory is gitignored, so it never exists on a fresh
+                // clone/deploy — every write silently failed until now (only
+                // the catch below's console.error showed it, easy to miss).
+                const logDir = dirname(logFilePath);
+                if (!existsSync(logDir)) {
+                    mkdirSync(logDir, { recursive: true });
+                }
 
                 // Check if file exists, if not create it
                 if (!existsSync(logFilePath)) {

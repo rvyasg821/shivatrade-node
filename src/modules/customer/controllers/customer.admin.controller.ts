@@ -289,9 +289,10 @@ export class CustomerAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:customerId')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('customerId') customerId: string
     ): Promise<IResponse<CustomerGetResponseDto>> {
-        const customer = await this.customerService.findOneById(customerId);
+        const customer = await this.customerService.findOneById(customerId, companyId);
         const data = await this.customerService.mapGetWithRelations(customer);
         return { data };
     }
@@ -300,10 +301,11 @@ export class CustomerAdminController {
     @AuthJwtAccessProtected()
     @Put('/update/:customerId')
     async update(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('customerId') customerId: string,
         @Body() body: CustomerUpdateRequestDto
     ): Promise<IResponse<CustomerGetResponseDto>> {
-        const customer = await this.customerService.findOneById(customerId);
+        const customer = await this.customerService.findOneById(customerId, companyId);
         const updated = await this.customerService.update(customer, body);
         const data = await this.customerService.mapGetWithRelations(updated);
         return { data };
@@ -314,9 +316,10 @@ export class CustomerAdminController {
     @Delete('/delete/:customerId')
     async delete(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('customerId') customerId: string
     ): Promise<void> {
-        const customer = await this.customerService.findOneById(customerId);
+        const customer = await this.customerService.findOneById(customerId, companyId);
         await this.customerService.softDelete(customer, userId);
     }
 
@@ -325,13 +328,14 @@ export class CustomerAdminController {
     @Post('/delete-many')
     async deleteMany(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.customerService.deleteMany(ids, userId);
+        const data = await this.customerService.deleteMany(ids, companyId, userId);
         return { data };
     }
 }

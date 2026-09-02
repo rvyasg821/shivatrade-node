@@ -843,7 +843,7 @@ export class InvoiceService {
      * Lets the UI list exactly what leaves stock and disable the Issue button
      * when any product is short — before hitting the server-side guard.
      */
-    async issuePreview(invoiceId: string): Promise<{
+    async issuePreview(invoiceId: string, companyId: string): Promise<{
         lines: Array<{
             product_id: string;
             product_name: string;
@@ -855,7 +855,7 @@ export class InvoiceService {
         }>;
         has_shortage: boolean;
     }> {
-        const row = await this.findOneById(invoiceId);
+        const row = await this.findOneById(invoiceId, companyId);
         const lines = await this.invoiceLineRepository.findByInvoiceId(
             row._id.toString()
         );
@@ -1377,8 +1377,11 @@ export class InvoiceService {
 
     // ─── Find ───────────────────────────────────────────────────────────
 
-    async findOneById(invoiceId: string): Promise<InvoiceDoc> {
-        const row = await this.invoiceRepository.findOneById(invoiceId);
+    async findOneById(invoiceId: string, companyId: string): Promise<InvoiceDoc> {
+        const row = await this.invoiceRepository.findOne({
+            _id: invoiceId,
+            company_id: companyId,
+        } as any);
         if (!row || row.soft_delete) {
             throw new NotFoundException('Invoice not found');
         }
@@ -1397,6 +1400,7 @@ export class InvoiceService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -1406,7 +1410,7 @@ export class InvoiceService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const row = await this.findOneById(id);
+                const row = await this.findOneById(id, companyId);
                 await this.softDelete(row);
                 deleted.push(id);
             } catch (e: any) {

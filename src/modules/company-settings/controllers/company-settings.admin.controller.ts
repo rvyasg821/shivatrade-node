@@ -75,9 +75,12 @@ export class CompanySettingsAdminController {
         }
 
         const ext = path.extname(file.originalname).toLowerCase();
-        const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.webp'];
+        // SVG dropped (SECURITY_HARDENING_PLAN.md C3) — an SVG can embed
+        // <script>/event-handler XSS, and extension-only validation can't
+        // catch that. PNG/JPG/WebP are safe raster formats.
+        const allowed = ['.png', '.jpg', '.jpeg', '.webp'];
         if (!allowed.includes(ext)) {
-            return { statusCode: 400, message: 'Only PNG, JPG, SVG, and WebP files are allowed' };
+            return { statusCode: 400, message: 'Only PNG, JPG, and WebP files are allowed' };
         }
 
         // Generate unique filename

@@ -104,9 +104,16 @@ export class AppHttpFilter implements ExceptionFilter {
             properties: messageProperties,
         });
 
-        // Include error stack in response for error status codes
+        // Include error stack in response for error status codes — only when
+        // debug mode is explicitly enabled (DEBUG_ENABLE=true), never by
+        // default in a prod-like config. See SECURITY_HARDENING_PLAN.md A2.
         let errorStack: string | undefined;
-        if (statusHttp >= 400 && exception instanceof Error && exception.stack) {
+        if (
+            this.configService.get<boolean>('debug.enable') &&
+            statusHttp >= 400 &&
+            exception instanceof Error &&
+            exception.stack
+        ) {
             errorStack = exception.stack;
         }
 

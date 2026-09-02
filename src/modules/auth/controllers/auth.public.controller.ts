@@ -192,6 +192,8 @@ export class AuthPublicController {
                                 tenantId: null,
                                 userType: ENUM_USER_TYPE.ADMIN,
                                 isSystemUser: isReallySystemUser,
+                                must_reset_password: !!(userData as IUserDoc)
+                                    .must_reset_password,
                             },
                         },
                     };
@@ -346,6 +348,8 @@ export class AuthPublicController {
                             hasActiveSubscription: hasActiveSubscription,
                             // Frontend uses this to redirect Company Admin to the upgrade page
                             subscription_inactive: subscriptionInactive,
+                            must_reset_password: !!(userData as IUserDoc)
+                                .must_reset_password,
                         },
                     };
 
@@ -506,6 +510,8 @@ export class AuthPublicController {
                             company: tenantCompanyData,
                             isSystemUser: false,
                             hasActiveSubscription: false,
+                            must_reset_password: !!(userData as IUserDoc)
+                                .must_reset_password,
                         },
                     };
 

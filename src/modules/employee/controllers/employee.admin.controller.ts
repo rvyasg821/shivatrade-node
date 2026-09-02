@@ -217,6 +217,9 @@ export class EmployeeAdminController {
             role: resolvedRole._id.toString(),
             companyId: companyId,
             roleLevel: resolvedRole.level,
+            // Only the predictable fixed default forces a reset — an admin who
+            // set a custom password chose it deliberately.
+            must_reset_password: !body.password,
         };
 
         // Create user with Employee role

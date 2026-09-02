@@ -185,6 +185,7 @@ export class PoVendorService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -194,7 +195,7 @@ export class PoVendorService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const row = await this.findOneById(id);
+                const row = await this.findOneById(id, companyId);
                 await this.deleteWithGuard(row);
                 deleted.push(id);
             } catch (e: any) {
@@ -2056,9 +2057,10 @@ export class PoVendorService {
 
     // ─── Read ───────────────────────────────────────────────────────────
 
-    async findOneById(id: string): Promise<PoVendorDoc> {
+    async findOneById(id: string, companyId: string): Promise<PoVendorDoc> {
         const row = await this.povRepository.findOne({
             _id: id,
+            company_id: companyId,
             soft_delete: false,
         } as any);
         if (!row) throw new NotFoundException('POV not found');

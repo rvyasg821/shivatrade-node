@@ -279,8 +279,9 @@ export class UserService implements IUserService {
             city,
             state,
             postcode,
-            country
-        }: UserCreateRequestDto,
+            country,
+            must_reset_password
+        }: UserCreateRequestDto & { must_reset_password?: boolean },
         { passwordExpired, passwordHash, salt, passwordCreated }: IAuthPassword,
         signUpFrom: ENUM_USER_SIGN_UP_FROM,
         options?: IDatabaseCreateOptions
@@ -301,6 +302,7 @@ export class UserService implements IUserService {
             create.passwordExpired = passwordExpired;
             create.passwordCreated = passwordCreated;
             create.passwordAttempt = 0;
+            create.must_reset_password = !!must_reset_password;
             create.signUpDate = this.helperDateService.create();
             create.signUpFrom = signUpFrom;
             create.companyId = companyId;
@@ -455,7 +457,12 @@ export class UserService implements IUserService {
         repository.passwordCreated = passwordCreated;
         repository.salt = salt;
         repository.passwordAttempt = 0;
+        repository.must_reset_password = false;
 
+        // The base repository's save() restores select:false columns
+        // (password/salt) that TypeORM would otherwise strip from its
+        // return value — callers here (passwordHistoryService) read
+        // `user.password` right after this call.
         return this.userRepository.save(repository, options);
     }
 

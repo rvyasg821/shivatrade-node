@@ -63,6 +63,7 @@ export class UserRepository extends DatabaseObjectIdRepositoryBase<
                 companyId: true,
                 location_id: true,
                 deleted: true,
+                passwordAttempt: true,
             } as any,
         });
     }

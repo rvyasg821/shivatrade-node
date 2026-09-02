@@ -70,6 +70,14 @@ export class UserEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'int', nullable: false, default: 0 })
     passwordAttempt: number;
 
+    // Forces a change-password screen on next login instead of granting a
+    // normal session — set true wherever a login is auto-provisioned with
+    // the fixed default password (SECURITY_HARDENING_PLAN.md B4). Distinct
+    // from `passwordExpired` (a time-based N-day expiry). Default `false` so
+    // normal signups / admin-set passwords are unaffected.
+    @Column({ type: 'boolean', nullable: false, default: false })
+    must_reset_password: boolean;
+
     @Column({ type: 'timestamptz', nullable: false })
     signUpDate: Date;
 

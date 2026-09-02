@@ -131,6 +131,7 @@ export class QuotationService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -140,7 +141,7 @@ export class QuotationService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const row = await this.findOneById(id);
+                const row = await this.findOneById(id, companyId);
                 await this.deleteWithGuard(row);
                 deleted.push(id);
             } catch (e: any) {
@@ -395,9 +396,10 @@ export class QuotationService {
         return this.quotationRepository.findOneById(header._id.toString());
     }
 
-    async findOneById(id: string): Promise<QuotationDoc> {
+    async findOneById(id: string, companyId: string): Promise<QuotationDoc> {
         const row = await this.quotationRepository.findOne({
             _id: id,
+            company_id: companyId,
             soft_delete: false,
         } as any);
         if (!row) throw new NotFoundException('Quotation not found');
@@ -1419,14 +1421,14 @@ export class QuotationService {
     // ── Client-facing PDF — mirrors the Sales Order PDF layout (letterhead,
     // seller/buyer grid, line table, grand total, signatory, page footer). ──
     async generatePdf(
-        id: string
+        id: string,
+        companyId: string
     ): Promise<{ buffer: Buffer; filename: string }> {
-        const row = await this.findOneById(id);
+        const row = await this.findOneById(id, companyId);
         const data = await this.mapPublic(row);
         const full = await this.mapGet(row);
 
         // Seller GSTIN + authorised signatory — same hydration as the SO PDF.
-        const companyId = (row as any).company_id?.toString();
         let companyGstin = '';
         let signatory = '';
         let footerAddress = '';
@@ -1515,9 +1517,10 @@ export class QuotationService {
 
     /** Styled Quotation Excel — mirrors generatePdf, reuses mapPublic/mapGet. */
     async generateExcel(
-        id: string
+        id: string,
+        companyId: string
     ): Promise<{ buffer: Buffer; filename: string }> {
-        const row = await this.findOneById(id);
+        const row = await this.findOneById(id, companyId);
         const q = await this.mapPublic(row);
         const full = await this.mapGet(row);
         const referenceNo = (full as any).reference_no || '';

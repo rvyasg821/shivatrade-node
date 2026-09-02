@@ -130,7 +130,7 @@ export class AuthSharedController {
         // @Res({ passthrough: true }) res: ExpressResponse
     ): Promise<void> {
         // All users are in the central database
-        {
+        try {
             let user =
                 await this.userService.findOneByIdWithPassword(userFromPayload);
 
@@ -204,6 +204,19 @@ export class AuthSharedController {
 
             // // res.status(200).json({ success: true, statusCode: 200, message: "Password changed successfully." })
             // return;
+        } catch (err: unknown) {
+            if (
+                err instanceof BadRequestException ||
+                err instanceof ForbiddenException ||
+                err instanceof UnauthorizedException
+            ) {
+                throw err;
+            }
+            throw new InternalServerErrorException({
+                statusCode: ENUM_APP_STATUS_CODE_ERROR.UNKNOWN,
+                message: 'http.serverError.internalServerError',
+                _error: err,
+            });
         }
     }
 }

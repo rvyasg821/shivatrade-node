@@ -219,8 +219,11 @@ export class PriceListService {
         } as any);
     }
 
-    async findOneById(id: string): Promise<PriceListDoc> {
-        const row = await this.priceListRepository.findOneById(id);
+    async findOneById(id: string, companyId: string): Promise<PriceListDoc> {
+        const row = await this.priceListRepository.findOne({
+            _id: id,
+            company_id: companyId,
+        } as any);
         if (!row) throw new NotFoundException('Price list entry not found');
         return row;
     }
@@ -265,7 +268,8 @@ export class PriceListService {
      * ids actually deleted and the ones skipped with a reason.
      */
     async deleteMany(
-        ids: string[]
+        ids: string[],
+        companyId: string
     ): Promise<{
         deleted: string[];
         skipped: Array<{ id: string; reason: string }>;
@@ -274,7 +278,7 @@ export class PriceListService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const row = await this.findOneById(id);
+                const row = await this.findOneById(id, companyId);
                 await this.hardDelete(row);
                 deleted.push(id);
             } catch (e: any) {

@@ -90,11 +90,22 @@ export class AuthAdminController {
 
             // await this.databaseService.commitTransaction(session);
 
-            await this.nodemailerService.sendEmail(
-                user.email,
-                'Your Password updated',
-                `Hi ${user?.name}\nYour password is ${passwordString} Expired At ${password.passwordExpired}.\n\nThank you,\n${APP_NAME}`
-            );
+            // Best-effort — the password reset itself already succeeded
+            // above; a failed notification email (e.g. SMTP unavailable)
+            // must not report the whole request as failed. Matches the
+            // same non-fatal pattern already used in the self-service
+            // change-password flow.
+            try {
+                await this.nodemailerService.sendEmail(
+                    user.email,
+                    'Your Password updated',
+                    `Hi ${user?.name}\nYour password is ${passwordString} Expired At ${password.passwordExpired}.\n\nThank you,\n${APP_NAME}`
+                );
+            } catch (emailErr) {
+                console.warn(
+                    `Password reset succeeded but notification email failed for ${user.email}: ${emailErr?.message}`
+                );
+            }
 
             return;
         } catch (err: unknown) {
