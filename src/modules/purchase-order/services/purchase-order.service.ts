@@ -412,7 +412,10 @@ export class PurchaseOrderService {
         row: PurchaseOrderDoc,
         data: PurchaseOrderUpdateRequestDto,
         userId?: string
-    ): Promise<PurchaseOrderDoc> {
+    ): Promise<{
+        po: PurchaseOrderDoc;
+        rateOverrides: Array<{ claimed: number; applied: number }>;
+    }> {
         const companyId = row.company_id.toString();
         const prevAdvance = round2(num(row.advance_amount));
         const prevAdvanceRate = round6(num((row as any).advance_exchange_rate));
@@ -476,8 +479,9 @@ export class PurchaseOrderService {
         Object.assign(row, scalar);
         await this.poRepository.save(row);
 
+        let rateOverrides: Array<{ claimed: number; applied: number }> = [];
         if (Array.isArray(lines)) {
-            await this.replaceLines(
+            rateOverrides = await this.replaceLines(
                 companyId,
                 row._id.toString(),
                 lines,
@@ -510,7 +514,7 @@ export class PurchaseOrderService {
         }
 
         this.logger.log(`PO updated: ${row._id}`);
-        return refreshed;
+        return { po: refreshed, rateOverrides };
     }
 
     private assertStatusTransitionAllowed(
@@ -588,7 +592,8 @@ export class PurchaseOrderService {
         // The document (customer) currency — the target each line's cost is
         // converted TO. (Multi-currency plan §6.5.)
         docCurrencyCode: string = 'INR'
-    ): Promise<void> {
+    ): Promise<Array<{ claimed: number; applied: number }>> {
+        const rateOverrides: Array<{ claimed: number; applied: number }> = [];
         const existing = await this.poLineRepository.findAll({
             purchase_order_id: poId,
         } as any);
@@ -759,12 +764,32 @@ export class PurchaseOrderService {
             // Same-currency lines always convert 1:1 — never trust a client
             // value here (this is exactly how INR-doc/INR-source lines ended
             // up frozen with an unrelated currency's rate).
-            const costRate =
-                sourceCode === docCur
-                    ? '1'
-                    : l.cost_exchange_rate != null && l.cost_exchange_rate !== ''
-                      ? await validatedRate(sourceCode, String(l.cost_exchange_rate))
-                      : String(await rateForSource(sourceCode));
+            let costRate: string;
+            if (sourceCode === docCur) {
+                costRate = '1';
+            } else if (
+                l.cost_exchange_rate != null &&
+                l.cost_exchange_rate !== ''
+            ) {
+                costRate = await validatedRate(
+                    sourceCode,
+                    String(l.cost_exchange_rate)
+                );
+                const claimedNum = Number(l.cost_exchange_rate);
+                const appliedNum = Number(costRate);
+                if (
+                    Number.isFinite(claimedNum) &&
+                    claimedNum > 0 &&
+                    Math.abs(claimedNum - appliedNum) / appliedNum > 1e-9
+                ) {
+                    rateOverrides.push({
+                        claimed: claimedNum,
+                        applied: appliedNum,
+                    });
+                }
+            } else {
+                costRate = String(await rateForSource(sourceCode));
+            }
             const payload: any = {
                 company_id: companyId,
                 purchase_order_id: poId,
@@ -819,6 +844,7 @@ export class PurchaseOrderService {
                 await this.poLineRepository.create(payload);
             }
         }
+        return rateOverrides;
     }
 
     // ─── Costing engine ─────────────────────────────────────────────────

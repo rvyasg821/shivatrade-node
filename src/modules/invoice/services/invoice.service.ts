@@ -550,7 +550,11 @@ export class InvoiceService {
         row: InvoiceDoc,
         data: InvoiceUpdateRequestDto,
         userId?: string
-    ): Promise<InvoiceDoc> {
+    ): Promise<{
+        invoice: InvoiceDoc;
+        rateOverrides: Array<{ claimed: number; applied: number }>;
+    }> {
+        let rateOverrides: Array<{ claimed: number; applied: number }> = [];
         if (row.status === ENUM_INVOICE_STATUS.CANCELLED) {
             throw new BadRequestException('Cancelled invoice cannot be updated.');
         }
@@ -635,7 +639,7 @@ export class InvoiceService {
                 await this.invoiceLineRepository.deleteByInvoiceId(
                     row._id.toString()
                 );
-                await this.writeLines(
+                rateOverrides = await this.writeLines(
                     row._id.toString(),
                     row.company_id.toString(),
                     lines,
@@ -730,7 +734,12 @@ export class InvoiceService {
                 );
             }
 
-            return this.invoiceRepository.findOneById(row._id.toString());
+            return {
+                invoice: await this.invoiceRepository.findOneById(
+                    row._id.toString()
+                ),
+                rateOverrides,
+            };
         }
 
         // ISSUED / PARTIALLY_PAID / PAID - only whitelisted header fields editable.
@@ -748,7 +757,12 @@ export class InvoiceService {
         Object.assign(row, whitelisted);
         await this.invoiceRepository.save(row);
         await this.recompute(row._id.toString());
-        return this.invoiceRepository.findOneById(row._id.toString());
+        return {
+            invoice: await this.invoiceRepository.findOneById(
+                row._id.toString()
+            ),
+            rateOverrides,
+        };
     }
 
     /**
@@ -2342,7 +2356,8 @@ export class InvoiceService {
         // each line's source→document cost_exchange_rate against the
         // Currency master rather than trusting the payload blindly.
         docCurrencyCode?: string
-    ): Promise<void> {
+    ): Promise<Array<{ claimed: number; applied: number }>> {
+        const rateOverrides: Array<{ claimed: number; applied: number }> = [];
         const docCur = (docCurrencyCode || 'INR').toUpperCase();
         const rateCache = new Map<string, number>();
         const rateForSource = async (src: string): Promise<number> => {
@@ -2500,12 +2515,29 @@ export class InvoiceService {
             const claimedRate =
                 (l as any).cost_exchange_rate ??
                 (cost as any)?.cost_exchange_rate;
-            const costExchangeRate =
-                sourceCode === docCur
-                    ? '1'
-                    : claimedRate != null && claimedRate !== ''
-                      ? await validatedRate(sourceCode, String(claimedRate))
-                      : String(await rateForSource(sourceCode));
+            let costExchangeRate: string;
+            if (sourceCode === docCur) {
+                costExchangeRate = '1';
+            } else if (claimedRate != null && claimedRate !== '') {
+                costExchangeRate = await validatedRate(
+                    sourceCode,
+                    String(claimedRate)
+                );
+                const claimedNum = Number(claimedRate);
+                const appliedNum = Number(costExchangeRate);
+                if (
+                    Number.isFinite(claimedNum) &&
+                    claimedNum > 0 &&
+                    Math.abs(claimedNum - appliedNum) / appliedNum > 1e-9
+                ) {
+                    rateOverrides.push({
+                        claimed: claimedNum,
+                        applied: appliedNum,
+                    });
+                }
+            } else {
+                costExchangeRate = String(await rateForSource(sourceCode));
+            }
             await this.invoiceLineRepository.create({
                 invoice_id: invoiceId,
                 company_id: companyId,
@@ -2545,6 +2577,7 @@ export class InvoiceService {
                 quotation_voucher_no: src?.quotationVoucherNo ?? null,
             } as any);
         }
+        return rateOverrides;
     }
 
     // ─── Mappers ────────────────────────────────────────────────────────

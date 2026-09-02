@@ -302,8 +302,24 @@ export class PurchaseOrderAdminController {
         @AuthJwtPayload('companyId') companyId: string
     ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
         const row = await this.poService.findOneById(id, companyId);
-        const updated = await this.poService.update(row, body, userId);
-        return { data: await this.poService.mapGet(updated) };
+        const { po, rateOverrides } = await this.poService.update(
+            row,
+            body,
+            userId
+        );
+        const data: any = await this.poService.mapGet(po);
+        if (rateOverrides.length) {
+            // cost_exchange_rate is stored source→doc; the worksheet box shows
+            // its inverse (doc→source, e.g. "1 USD = 95.09 INR") — invert back
+            // here so the warning quotes the number the user actually typed.
+            const { claimed, applied } = rateOverrides[0];
+            const claimedDisplay =
+                claimed > 0 ? (1 / claimed).toFixed(2) : claimed;
+            const appliedDisplay =
+                applied > 0 ? (1 / applied).toFixed(2) : applied;
+            data.rate_override_warning = `Exchange rate ${claimedDisplay} is too far from the current market rate — kept at ${appliedDisplay}. Update the Currency Master if this is a genuine rate change.`;
+        }
+        return { data };
     }
 
     @Response('purchaseOrder.delete')

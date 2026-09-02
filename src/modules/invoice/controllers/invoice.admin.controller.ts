@@ -442,8 +442,23 @@ export class InvoiceAdminController {
         @Body() body: InvoiceUpdateRequestDto
     ): Promise<IResponse<InvoiceGetResponseDto>> {
         const row = await this.invoiceService.findOneById(invoiceId, companyId);
-        const updated = await this.invoiceService.update(row, body, userId);
-        const data = await this.invoiceService.mapGet(updated);
+        const { invoice, rateOverrides } = await this.invoiceService.update(
+            row,
+            body,
+            userId
+        );
+        const data: any = await this.invoiceService.mapGet(invoice);
+        if (rateOverrides.length) {
+            // cost_exchange_rate is stored source→doc; the worksheet box shows
+            // its inverse (doc→source, e.g. "1 USD = 95.09 INR") — invert back
+            // here so the warning quotes the number the user actually typed.
+            const { claimed, applied } = rateOverrides[0];
+            const claimedDisplay =
+                claimed > 0 ? (1 / claimed).toFixed(2) : claimed;
+            const appliedDisplay =
+                applied > 0 ? (1 / applied).toFixed(2) : applied;
+            data.rate_override_warning = `Exchange rate ${claimedDisplay} is too far from the current market rate — kept at ${appliedDisplay}. Update the Currency Master if this is a genuine rate change.`;
+        }
         return { data };
     }
 

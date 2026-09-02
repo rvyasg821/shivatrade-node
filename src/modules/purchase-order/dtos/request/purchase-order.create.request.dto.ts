@@ -77,6 +77,16 @@ export class PurchaseOrderLineCreateDto {
     @IsNotEmpty()
     unit_price: string;
 
+    /** Multi-currency: native currency of unit_price (vendor/source) + frozen
+     *  source→document rate (cost_doc = unit_price × cost_exchange_rate). */
+    @IsString()
+    @IsOptional()
+    source_currency_code?: string;
+
+    @IsNumberString({}, { message: 'cost_exchange_rate must be a numeric string' })
+    @IsOptional()
+    cost_exchange_rate?: string;
+
     @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
     @IsOptional()
     discount_pct?: string;
