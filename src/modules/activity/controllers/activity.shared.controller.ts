@@ -39,7 +39,7 @@ export class ActivitySharedController {
     async list(
         @AuthJwtPayload('user', RequestRequiredPipe, UserParsePipe)
         user: UserDoc,
-        @PaginationQuery()
+        @PaginationQuery({ availableSearch: ['description'] })
         { _search, _limit, _offset, _order }: PaginationListDto
     ): Promise<IResponsePaging<ActivityListResponseDto>> {
         const find: Record<string, any> = {

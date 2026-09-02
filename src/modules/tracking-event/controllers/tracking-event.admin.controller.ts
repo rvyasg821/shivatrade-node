@@ -63,13 +63,14 @@ export class TrackingEventAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
-        @PaginationQuery() { _search, _limit, _offset }: PaginationListDto,
+        @PaginationQuery() { _limit, _offset }: PaginationListDto,
         @Query('po_vendor_id') poVendorId?: string,
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('vendor_id') vendorId?: string,
         @Query('event_type') eventType?: string,
         @Query('date_from') dateFrom?: string,
-        @Query('date_to') dateTo?: string
+        @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<TrackingEventGetResponseDto>> {
         const perPage = _limit;
         const page = _offset && _limit ? Math.floor(_offset / _limit) + 1 : 1;
@@ -81,7 +82,7 @@ export class TrackingEventAdminController {
             eventType,
             dateFrom,
             dateTo,
-            search: _search as any,
+            search: searchRaw?.trim() as any,
             page,
             perPage,
         });

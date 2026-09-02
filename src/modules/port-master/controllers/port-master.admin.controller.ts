@@ -55,10 +55,11 @@ export class PortMasterAdminController {
     @AuthJwtAccessProtected()
     @Get('/list')
     async list(
-        @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
+        @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
         @Query('country_code') countryCode?: string,
         @Query('type') type?: string,
-        @Query('is_active') isActive?: string
+        @Query('is_active') isActive?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<PortMasterResponseDto>> {
         const find: any = { soft_delete: false };
 
@@ -67,10 +68,11 @@ export class PortMasterAdminController {
         if (isActive === 'true') find.is_active = true;
         else if (isActive === 'false') find.is_active = false;
 
-        if (_search) {
+        const searchTerm = searchRaw?.trim();
+        if (searchTerm) {
             find.$or = [
-                { code: { $regex: _search, $options: 'i' } },
-                { name: { $regex: _search, $options: 'i' } },
+                { code: { $regex: searchTerm, $options: 'i' } },
+                { name: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

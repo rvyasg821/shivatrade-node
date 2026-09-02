@@ -371,12 +371,13 @@ export class PoVendorAdminController {
         @AuthJwtPayload('assignedLocations') assignedLocations: string[],
         @AuthJwtPayload('locationId') locationId: string,
         @PaginationQuery()
-        { _search, _limit, _offset, _order }: PaginationListDto,
+        { _limit, _offset, _order }: PaginationListDto,
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('vendor_id') vendorId?: string,
         @Query('status') status?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
+        @Query('search') searchRaw?: string,
         @Query('created_by') createdBy?: string
     ): Promise<IResponsePaging<PoVendorGetResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
@@ -390,11 +391,12 @@ export class PoVendorAdminController {
             find.dispatch_date = { $lte: dateTo };
         }
 
-        if (_search) {
+        const searchTerm = searchRaw?.trim();
+        if (searchTerm) {
             find.$or = [
-                { voucher_no: { $regex: _search, $options: 'i' } },
-                { lr_no: { $regex: _search, $options: 'i' } },
-                { eway_bill_no: { $regex: _search, $options: 'i' } },
+                { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { lr_no: { $regex: searchTerm, $options: 'i' } },
+                { eway_bill_no: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

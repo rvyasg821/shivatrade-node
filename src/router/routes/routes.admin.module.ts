@@ -116,7 +116,8 @@ import { NotificationModule } from '@modules/notification/notification.module';
 import { NotificationAdminController } from '@modules/notification/controllers/notification.admin.controller';
 import { MessageLogAdminController } from '@modules/message-log/controllers/message-log.admin.controller';
 import { PayrollModule } from '@modules/payroll/payroll.module';
-import { PayrollAdminController } from '@modules/payroll/controllers/payroll.admin.controller';
+// Payroll hidden (client request) — controller un-registered, hide-only.
+// import { PayrollAdminController } from '@modules/payroll/controllers/payroll.admin.controller';
 
 @Module({
     controllers: [
@@ -217,8 +218,8 @@ import { PayrollAdminController } from '@modules/payroll/controllers/payroll.adm
         // Message Log controller
         MessageLogAdminController,
 
-        // Payroll controller
-        PayrollAdminController,
+        // Payroll controller — hidden (client request)
+        // PayrollAdminController,
 
         // Quotation controller
         QuotationAdminController,

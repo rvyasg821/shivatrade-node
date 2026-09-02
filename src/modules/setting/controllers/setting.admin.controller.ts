@@ -45,7 +45,7 @@ export class SettingAdminController {
     @AuthJwtAccessProtected()
     @Get('/list')
     async list(
-        @PaginationQuery()
+        @PaginationQuery({ availableSearch: ['key', 'description'] })
         { _search, _limit, _offset, _order }: PaginationListDto
     ): Promise<IResponsePaging<SettingFeatureListResponseDto>> {
         const find: Record<string, any> = {

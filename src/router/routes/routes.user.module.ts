@@ -18,7 +18,8 @@ import { ShiftModule } from '@modules/shift/shift.module';
 import { ShiftEmployeeController } from '@modules/shift/controllers/shift.employee.controller';
 import { SubscriptionModule } from '@modules/subscription/subscription.module';
 import { PayrollModule } from '@modules/payroll/payroll.module';
-import { PayrollEmployeeController } from '@modules/payroll/controllers/payroll.employee.controller';
+// Payroll hidden (client request) — controller un-registered, hide-only.
+// import { PayrollEmployeeController } from '@modules/payroll/controllers/payroll.employee.controller';
 
 // User routes module - Tenant-specific endpoints removed
 // All user management now handled through central database via admin/shared routes
@@ -29,7 +30,7 @@ import { PayrollEmployeeController } from '@modules/payroll/controllers/payroll.
         LeaveEmployeeController,
         AttendanceEmployeeController,
         ShiftEmployeeController,
-        PayrollEmployeeController,
+        // PayrollEmployeeController, — hidden (client request)
     ],
     providers: [],
     exports: [],

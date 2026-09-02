@@ -128,6 +128,7 @@ export class PaymentAdminController {
     async list(
         @PaginationQuery({
             availableOrderBy: PAYMENT_DEFAULT_AVAILABLE_ORDER_BY,
+            availableSearch: ['charge_id', 'full_inv_number'],
         })
         { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('user_id') userId?: string,

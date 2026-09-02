@@ -49,7 +49,7 @@ export class SessionAdminController {
     @Get('/list')
     async list(
         @Param('user', RequestRequiredPipe, UserParsePipe) user: UserDoc,
-        @PaginationQuery()
+        @PaginationQuery({ availableSearch: ['ip', 'hostname', 'userAgent'] })
         { _search, _limit, _offset, _order }: PaginationListDto
     ): Promise<IResponsePaging<SessionListResponseDto>> {
         const find: Record<string, any> = {
