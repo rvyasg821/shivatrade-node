@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import verifyAppleToken from 'verify-apple-id-token';
 import { LoginTicket, OAuth2Client, TokenPayload } from 'google-auth-library';
@@ -27,6 +27,7 @@ import { AuthLoginResponseDto } from '@modules/auth/dtos/response/auth.login.res
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { ENUM_USER_TYPE } from '@common/enums/user-type.enum';
 import { UserService } from '@modules/user/services/user.service';
+import { ENUM_USER_STATUS_CODE_ERROR } from '@modules/user/enums/user.status-code.enum';
 import { ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR } from '@modules/auth/enums/auth.unified.status-code.enum';
 import { SYSTEM_USER_DEFAULT_PERMISSIONS } from '@modules/role/constants/system-users.permissions copy';
 import { RoleService } from '@modules/role/services/role.service';
@@ -456,9 +457,35 @@ export class AuthService implements IAuthService {
                 });
             }
 
+            // Brute-force lockout (SECURITY_HARDENING_PLAN.md C1) — the
+            // `passwordAttempt`/`maxAttempt` fields + config already existed
+            // but were never checked on this path. Locked out once the
+            // counter reaches maxAttempt; unlocks via the existing
+            // admin-reset-password flow (already calls resetPasswordAttempt)
+            // or a normal successful login (reset below).
+            if (
+                this.passwordAttempt &&
+                (user as any).passwordAttempt >= this.passwordMaxAttempt
+            ) {
+                this.logger.warn(`Account locked (too many attempts): ${email}`);
+                this.recordAuthEvent(ENUM_AUDIT_ACTION.LOGIN_FAILED, {
+                    email: user.email || email,
+                    userId: String(user._id),
+                    companyId: (user as any).companyId || undefined,
+                    reason: 'account_locked',
+                });
+                throw new ForbiddenException({
+                    statusCode: ENUM_USER_STATUS_CODE_ERROR.PASSWORD_ATTEMPT_MAX,
+                    message: 'auth.error.passwordAttemptMax',
+                });
+            }
+
             const isValidPassword = this.validateUser(password, user.password);
             if (!isValidPassword) {
                 this.logger.warn(`Invalid credentials for: ${email}`);
+                if (this.passwordAttempt) {
+                    await this.userService.increasePasswordAttempt(user);
+                }
                 this.recordAuthEvent(ENUM_AUDIT_ACTION.LOGIN_FAILED, {
                     email: user.email || email,
                     userId: String(user._id),
@@ -469,6 +496,10 @@ export class AuthService implements IAuthService {
                     statusCode: ENUM_UNIFIED_AUTH_STATUS_CODE_ERROR.SHARED_USER_INVALID_CREDENTIALS,
                     message: 'Invalid credentials',
                 });
+            }
+
+            if (this.passwordAttempt && (user as any).passwordAttempt > 0) {
+                await this.userService.resetPasswordAttempt(user);
             }
 
             // Derive userType from role
@@ -510,7 +541,11 @@ export class AuthService implements IAuthService {
                 tenantId: null,
             };
         } catch (error) {
-            if (error instanceof NotFoundException || error instanceof BadRequestException) {
+            if (
+                error instanceof NotFoundException ||
+                error instanceof BadRequestException ||
+                error instanceof ForbiddenException
+            ) {
                 throw error;
             }
             this.logger.error(`Authentication failed for ${email}:`, error?.message);

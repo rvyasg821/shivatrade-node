@@ -285,9 +285,10 @@ export class PurchaseOrderAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:id')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
-        const row = await this.poService.findOneById(id);
+        const row = await this.poService.findOneById(id, companyId);
         return { data: await this.poService.mapGet(row) };
     }
 
@@ -297,9 +298,10 @@ export class PurchaseOrderAdminController {
     async update(
         @Param('id') id: string,
         @Body() body: PurchaseOrderUpdateRequestDto,
-        @AuthJwtPayload('user') userId: string
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
-        const row = await this.poService.findOneById(id);
+        const row = await this.poService.findOneById(id, companyId);
         const updated = await this.poService.update(row, body, userId);
         return { data: await this.poService.mapGet(updated) };
     }
@@ -307,8 +309,11 @@ export class PurchaseOrderAdminController {
     @Response('purchaseOrder.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
-    async delete(@Param('id') id: string): Promise<IResponse<null>> {
-        const row = await this.poService.findOneById(id);
+    async delete(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<null>> {
+        const row = await this.poService.findOneById(id, companyId);
         await this.poService.deleteWithGuard(row);
         return { data: null };
     }
@@ -318,13 +323,14 @@ export class PurchaseOrderAdminController {
     @Post('/delete-many')
     async deleteMany(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.poService.deleteMany(ids, userId);
+        const data = await this.poService.deleteMany(ids, companyId, userId);
         return { data };
     }
 
@@ -443,7 +449,7 @@ export class PurchaseOrderAdminController {
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const row = await this.poService.findOneById(id);
+        const row = await this.poService.findOneById(id, companyId);
         const dto = await this.poService.mapGet(row);
         const buf = await this.poPdfService.render(dto, companyId);
         const filename = this.poPdfService.buildFilename(dto);
@@ -464,7 +470,7 @@ export class PurchaseOrderAdminController {
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const row = await this.poService.findOneById(id);
+        const row = await this.poService.findOneById(id, companyId);
         const dto = await this.poService.mapGet(row);
         const { buffer, filename } = await this.poPdfService.renderExcel(
             dto,

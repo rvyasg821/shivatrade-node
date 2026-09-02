@@ -492,9 +492,10 @@ export class PoVendorAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:id')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         return { data: await this.povService.mapGet(row) };
     }
 
@@ -507,7 +508,7 @@ export class PoVendorAdminController {
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const dto = await this.povService.mapGet(row);
         const buf = await this.povPdfService.render(dto, companyId);
         const filename = this.povPdfService.buildFilename(dto);
@@ -529,7 +530,7 @@ export class PoVendorAdminController {
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const dto = await this.povService.mapGet(row);
         const { buffer, filename } = await this.povPdfService.renderExcel(
             dto,
@@ -554,10 +555,11 @@ export class PoVendorAdminController {
     @Put('/update/:id')
     async update(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Body() body: PoVendorUpdateRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const updated = await this.povService.update(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
     }
@@ -569,10 +571,11 @@ export class PoVendorAdminController {
     @Post('/:id/dispatch')
     async dispatch(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Body() body: PoVendorDispatchRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const updated = await this.povService.dispatch(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
     }
@@ -583,10 +586,11 @@ export class PoVendorAdminController {
     @Put('/:id/dispatch')
     async editDispatch(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Body() body: PoVendorDispatchRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const updated = await this.povService.editDispatch(row, body, userId);
         return { data: await this.povService.mapGet(updated) };
     }
@@ -598,10 +602,11 @@ export class PoVendorAdminController {
     @Post('/:id/cancel')
     async cancel(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Body() body: PoVendorCancelRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const updated = await this.povService.cancel(row, body?.reason, userId);
         return { data: await this.povService.mapGet(updated) };
     }
@@ -617,9 +622,10 @@ export class PoVendorAdminController {
     @Post('/:id/balance')
     async createBalance(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const created = await this.povService.createBalance(row, userId);
         return { data: await this.povService.mapGet(created) };
     }
@@ -631,9 +637,10 @@ export class PoVendorAdminController {
     @Post('/:id/revert-draft')
     async revertDraft(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         const updated = await this.povService.revertToDraft(row, userId);
         return { data: await this.povService.mapGet(updated) };
     }
@@ -645,12 +652,13 @@ export class PoVendorAdminController {
     @Post('/payments/:id')
     async recordPayment(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Body() body: PoVendorPaymentCreateRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        const row = await this.povService.findOneById(id);
+        const row = await this.povService.findOneById(id, companyId);
         await this.povService.recordPayment(row, body, userId);
-        const fresh = await this.povService.findOneById(id);
+        const fresh = await this.povService.findOneById(id, companyId);
         return { data: await this.povService.mapGet(fresh) };
     }
 
@@ -659,13 +667,14 @@ export class PoVendorAdminController {
     @Post('/payments/:id/void/:paymentId')
     async voidPayment(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Param('paymentId') paymentId: string,
         @Body() body: PoVendorPaymentVoidRequestDto
     ): Promise<IResponse<PoVendorGetResponseDto>> {
-        await this.povService.findOneById(id);
+        await this.povService.findOneById(id, companyId);
         await this.povService.voidPayment(id, paymentId, userId, body?.reason);
-        const fresh = await this.povService.findOneById(id);
+        const fresh = await this.povService.findOneById(id, companyId);
         return { data: await this.povService.mapGet(fresh) };
     }
 
@@ -678,10 +687,7 @@ export class PoVendorAdminController {
         @Param('paymentId') paymentId: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const row = await this.povService.findOneById(id);
-        if (row.company_id.toString() !== companyId) {
-            throw new NotFoundException('Vendor PO not found');
-        }
+        const row = await this.povService.findOneById(id, companyId);
         const dto = await this.povService.mapGet(row);
         const payment = (dto.payments || []).find((p) => p._id === paymentId);
         if (!payment) throw new NotFoundException('Payment not found');
@@ -709,10 +715,7 @@ export class PoVendorAdminController {
         @Param('paymentId') paymentId: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
-        const row = await this.povService.findOneById(id);
-        if (row.company_id.toString() !== companyId) {
-            throw new NotFoundException('Vendor PO not found');
-        }
+        const row = await this.povService.findOneById(id, companyId);
         const dto = await this.povService.mapGet(row);
         const payment = (dto.payments || []).find((p) => p._id === paymentId);
         if (!payment) throw new NotFoundException('Payment not found');
@@ -738,8 +741,11 @@ export class PoVendorAdminController {
     @Response('poVendor.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
-    async delete(@Param('id') id: string): Promise<IResponse<null>> {
-        const row = await this.povService.findOneById(id);
+    async delete(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<null>> {
+        const row = await this.povService.findOneById(id, companyId);
         await this.povService.deleteWithGuard(row);
         return { data: null };
     }
@@ -750,7 +756,8 @@ export class PoVendorAdminController {
     @Post('/delete-many')
     async deleteMany(
         @Body() body: { ids: string[] },
-        @AuthJwtPayload('user') userId: string
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<
         IResponse<{
             deleted: string[];
@@ -761,7 +768,7 @@ export class PoVendorAdminController {
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.povService.deleteMany(ids, userId);
+        const data = await this.povService.deleteMany(ids, companyId, userId);
         return { data };
     }
 }

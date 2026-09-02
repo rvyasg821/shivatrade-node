@@ -699,6 +699,9 @@ export class CompanyAdminController {
                     roleLevel: companyAdminRole.level,
                     selected_country: (body as any).selected_country,
                     timezone: (body as any).timezone,
+                    // Only the predictable fixed default forces a reset — a
+                    // custom password was chosen deliberately.
+                    must_reset_password: !(body as any).password,
                 },
                 passwordHash,
                 ENUM_USER_SIGN_UP_FROM.ADMIN,

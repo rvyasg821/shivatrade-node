@@ -32,10 +32,11 @@ export class LeadActivityAdminController {
     @AuthJwtAccessProtected()
     @Get('/:leadId/activity')
     async list(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string
     ): Promise<IResponse<LeadActivityGetResponseDto[]>> {
         // Validates lead exists + tenancy bouncer.
-        await this.leadService.findOneById(leadId);
+        await this.leadService.findOneById(leadId, companyId);
         const data = await this.activityService.list(leadId);
         return { data };
     }
@@ -49,7 +50,7 @@ export class LeadActivityAdminController {
         @Param('leadId') leadId: string,
         @Body() body: LeadActivityCreateRequestDto
     ): Promise<IResponse<LeadActivityGetResponseDto>> {
-        await this.leadService.findOneById(leadId);
+        await this.leadService.findOneById(leadId, companyId);
         const row = await this.activityService.addNote(
             companyId,
             leadId,
@@ -66,12 +67,13 @@ export class LeadActivityAdminController {
     @Put('/:leadId/activity/:activityId')
     async update(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string,
         @Param('activityId') activityId: string,
         @Body() body: LeadActivityCreateRequestDto
     ): Promise<IResponse<LeadActivityGetResponseDto>> {
-        await this.leadService.findOneById(leadId);
-        await this.activityService.updateNote(activityId, body.body, userId);
+        await this.leadService.findOneById(leadId, companyId);
+        await this.activityService.updateNote(activityId, leadId, body.body, userId);
         const rows = await this.activityService.list(leadId);
         const updated = rows.find((r) => r._id === activityId);
         return { data: updated as LeadActivityGetResponseDto };
@@ -82,10 +84,11 @@ export class LeadActivityAdminController {
     @Delete('/:leadId/activity/:activityId')
     async remove(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string,
         @Param('activityId') activityId: string
     ): Promise<void> {
-        await this.leadService.findOneById(leadId);
-        await this.activityService.deleteNote(activityId, userId);
+        await this.leadService.findOneById(leadId, companyId);
+        await this.activityService.deleteNote(activityId, leadId, userId);
     }
 }

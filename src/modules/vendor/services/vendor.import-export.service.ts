@@ -1048,7 +1048,7 @@ export class VendorImportExportService {
             try {
                 if (existingId) {
                     const vendor =
-                        await this.vendorService.findOneById(existingId);
+                        await this.vendorService.findOneById(existingId, companyId);
                     await this.vendorService.update(vendor, {
                         ...scalar,
                         ...(await this.mergedChildren(
@@ -1087,7 +1087,7 @@ export class VendorImportExportService {
 
         for (const vendorId of addressOnlyVendorIds) {
             try {
-                const vendor = await this.vendorService.findOneById(vendorId);
+                const vendor = await this.vendorService.findOneById(vendorId, companyId);
                 const mine = okAddresses
                     .filter((r) => r.data._targetVendorId === vendorId)
                     .map((r) => strip(r.data));

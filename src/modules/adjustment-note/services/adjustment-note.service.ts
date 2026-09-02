@@ -412,12 +412,11 @@ export class AdjustmentNoteService {
         userId: string,
         reason?: string
     ): Promise<void> {
-        const note: any = await this.repo.findOneById(id);
-        if (
-            !note ||
-            note.soft_delete ||
-            note.company_id?.toString() !== companyId
-        ) {
+        const note: any = await this.repo.findOne({
+            _id: id,
+            company_id: companyId,
+        } as any);
+        if (!note || note.soft_delete) {
             throw new NotFoundException('Adjustment note not found.');
         }
         if (note.voided_at) {

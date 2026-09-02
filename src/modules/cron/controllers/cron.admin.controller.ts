@@ -7,6 +7,7 @@ import {
     HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
 import { SubscriptionCronService } from '../services/subscription-cron.service';
 import { SubscriptionService } from '@modules/subscription/services/subscription.service';
 import { UserService } from '@modules/user/services/user.service';
@@ -33,6 +34,7 @@ export class CronAdminController {
     /**
      * Get cron job status and schedule information
      */
+    @AuthJwtAccessProtected()
     @Get('/status')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Get cron jobs status and schedule' })
@@ -78,6 +80,7 @@ export class CronAdminController {
     /**
      * Preview subscriptions due for recurring payment today (dry-run)
      */
+    @AuthJwtAccessProtected()
     @Get('/recurring-payments/preview')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Preview subscriptions due for recurring payment today' })
@@ -128,6 +131,7 @@ export class CronAdminController {
     /**
      * Preview expiring subscriptions (within 7 days)
      */
+    @AuthJwtAccessProtected()
     @Get('/expiring-subscriptions/preview')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Preview subscriptions expiring within 7 days' })
@@ -167,6 +171,7 @@ export class CronAdminController {
     /**
      * Preview expired trial subscriptions
      */
+    @AuthJwtAccessProtected()
     @Get('/expired-trials/preview')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Preview expired trial subscriptions' })
@@ -204,6 +209,7 @@ export class CronAdminController {
     /**
      * Preview pending provisioning subscriptions
      */
+    @AuthJwtAccessProtected()
     @Get('/pending-provisioning/preview')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Preview subscriptions with pending provisioning' })
@@ -241,6 +247,7 @@ export class CronAdminController {
     /**
      * Manually trigger recurring payment cron (with optional dry-run)
      */
+    @AuthJwtAccessProtected()
     @Post('/recurring-payments/run')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Manually trigger recurring payment processing' })
@@ -272,6 +279,7 @@ export class CronAdminController {
     /**
      * Manually trigger subscription check cron (with optional dry-run)
      */
+    @AuthJwtAccessProtected()
     @Post('/subscription-check/run')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Manually trigger subscription check (expiring + trials)' })
@@ -315,6 +323,7 @@ export class CronAdminController {
     /**
      * Manually trigger provisioning cron (with optional dry-run)
      */
+    @AuthJwtAccessProtected()
     @Post('/provisioning/run')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Manually trigger subscription provisioning' })
@@ -345,6 +354,7 @@ export class CronAdminController {
     /**
      * Update a subscription's next_date for testing
      */
+    @AuthJwtAccessProtected()
     @Post('/test/set-next-date-today')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Set a subscription next_date to today for testing' })
@@ -388,6 +398,7 @@ export class CronAdminController {
     /**
      * Get dashboard summary for admin panel
      */
+    @AuthJwtAccessProtected()
     @Get('/dashboard')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Get cron dashboard summary for admin panel' })

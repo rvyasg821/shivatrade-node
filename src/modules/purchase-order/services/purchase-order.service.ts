@@ -142,6 +142,7 @@ export class PurchaseOrderService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -151,7 +152,7 @@ export class PurchaseOrderService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const row = await this.findOneById(id);
+                const row = await this.findOneById(id, companyId);
                 await this.deleteWithGuard(row);
                 deleted.push(id);
             } catch (e: any) {
@@ -397,9 +398,10 @@ export class PurchaseOrderService {
         return this.poRepository.findOneById(header._id.toString());
     }
 
-    async findOneById(id: string): Promise<PurchaseOrderDoc> {
+    async findOneById(id: string, companyId: string): Promise<PurchaseOrderDoc> {
         const row = await this.poRepository.findOne({
             _id: id,
+            company_id: companyId,
             soft_delete: false,
         } as any);
         if (!row) throw new NotFoundException('Purchase Order not found');

@@ -132,6 +132,7 @@ export class VendorService {
                 companyId,
                 status: ENUM_USER_STATUS.ACTIVE,
                 roleLevel: vendorRole.level,
+                must_reset_password: true,
             } as any,
             passwordData,
             ENUM_USER_SIGN_UP_FROM.ADMIN
@@ -352,9 +353,13 @@ export class VendorService {
 
     async findOneById(
         vendorId: string,
+        companyId: string,
         options?: IDatabaseFindOneOptions
     ): Promise<VendorDoc> {
-        const vendor = await this.vendorRepository.findOneById(vendorId, options);
+        const vendor = await this.vendorRepository.findOne(
+            { _id: vendorId, company_id: companyId } as any,
+            options
+        );
         if (!vendor) {
             throw new NotFoundException('Vendor not found');
         }
@@ -639,6 +644,7 @@ export class VendorService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -648,7 +654,7 @@ export class VendorService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const vendor = await this.findOneById(id);
+                const vendor = await this.findOneById(id, companyId);
                 await this.softDelete(vendor, deletedBy);
                 deleted.push(id);
             } catch (e: any) {

@@ -12,6 +12,7 @@ import {
     Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { AuthJwtAccessProtected } from '@modules/auth/decorators/auth.jwt.decorator';
 import {
     PaginationQuery,
 } from '@common/pagination/decorators/pagination.decorator';
@@ -72,10 +73,7 @@ export class PlanAdminController {
 
     @PlanAdminListDoc()
     @ResponsePaging('plan.list')
-    // @Permission('plan', 'can_read')
-    // @UseGuards(PermissionGuard)
-    // @AuthJwtAccessProtected()
-    // @UserProtected()
+    @AuthJwtAccessProtected()
     @Get('/list')
     async list(
         @PaginationQuery({
@@ -122,6 +120,7 @@ export class PlanAdminController {
 
     @PlanAdminGetDoc()
     @Response('plan.get')
+    @AuthJwtAccessProtected()
     @Get('/:plan')
     async get(
         @Param('plan', RequestRequiredPipe, PlanParsePipe) plan: PlanDoc
@@ -138,6 +137,7 @@ export class PlanAdminController {
 
     @PlanAdminCreateDoc()
     @Response('plan.create')
+    @AuthJwtAccessProtected()
     @Post('/create')
     async create(
         @Body() body: PlanCreateRequestDto
@@ -156,6 +156,7 @@ export class PlanAdminController {
 
     @PlanAdminUpdateDoc()
     @Response('plan.update')
+    @AuthJwtAccessProtected()
     @Put('/:plan')
     async update(
         @Param('plan', RequestRequiredPipe, PlanParsePipe) plan: PlanDoc,
@@ -178,6 +179,7 @@ export class PlanAdminController {
 
     @PlanAdminUpdateStatusDoc()
     @Response('plan.updateStatus')
+    @AuthJwtAccessProtected()
     @Patch('/:plan/status')
     async updateStatus(
         @Param('plan', RequestRequiredPipe, PlanParsePipe) plan: PlanDoc,
@@ -195,6 +197,7 @@ export class PlanAdminController {
 
     @PlanAdminSetDefaultDoc()
     @Response('plan.setDefault')
+    @AuthJwtAccessProtected()
     @Patch('/:plan/set-default')
     async setDefault(
         @Param('plan', RequestRequiredPipe, PlanParsePipe) plan: PlanDoc
@@ -214,6 +217,7 @@ export class PlanAdminController {
 
     @PlanAdminUpdateDisplayOrderDoc()
     @Response('plan.updateDisplayOrder')
+    @AuthJwtAccessProtected()
     @Put('/display-order')
     @HttpCode(HttpStatus.NO_CONTENT)
     async updateDisplayOrder(
@@ -224,6 +228,7 @@ export class PlanAdminController {
 
     @PlanAdminDeleteDoc()
     @Response('plan.delete')
+    @AuthJwtAccessProtected()
     @Delete('/:plan')
     async delete(
         @Param('plan', RequestRequiredPipe, PlanParsePipe) plan: PlanDoc
@@ -237,6 +242,7 @@ export class PlanAdminController {
 
     @PlanAdminAnalyticsDoc()
     @ResponsePaging('plan.analytics')
+    @AuthJwtAccessProtected()
     @Get('/analytics/overview')
     async analyticsOverview(): Promise<IResponse<Record<string, any>>> {
         const totalPlans = await this.planService.getTotal();

@@ -105,11 +105,16 @@ export class LeadActivityService {
      */
     async updateNote(
         activityId: string,
+        leadId: string,
         body: string,
         userId: string
     ): Promise<LeadActivityDoc> {
         const row = await this.activityRepository.findOneById(activityId);
-        if (!row || (row as any).soft_delete) {
+        if (
+            !row ||
+            (row as any).soft_delete ||
+            row.lead_id?.toString() !== leadId
+        ) {
             throw new NotFoundException('Activity not found');
         }
         if (row.type !== ENUM_LEAD_ACTIVITY_TYPE.NOTE) {
@@ -129,9 +134,17 @@ export class LeadActivityService {
     /**
      * Soft-delete a note. Same author-only / NOTE-only rule.
      */
-    async deleteNote(activityId: string, userId: string): Promise<void> {
+    async deleteNote(
+        activityId: string,
+        leadId: string,
+        userId: string
+    ): Promise<void> {
         const row = await this.activityRepository.findOneById(activityId);
-        if (!row || (row as any).soft_delete) {
+        if (
+            !row ||
+            (row as any).soft_delete ||
+            row.lead_id?.toString() !== leadId
+        ) {
             throw new NotFoundException('Activity not found');
         }
         if (row.type !== ENUM_LEAD_ACTIVITY_TYPE.NOTE) {

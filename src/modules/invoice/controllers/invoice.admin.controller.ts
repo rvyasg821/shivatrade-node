@@ -424,9 +424,10 @@ export class InvoiceAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:invoiceId')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string
     ): Promise<IResponse<InvoiceGetResponseDto>> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         const data = await this.invoiceService.mapGet(row);
         return { data };
     }
@@ -436,10 +437,11 @@ export class InvoiceAdminController {
     @Put('/update/:invoiceId')
     async update(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string,
         @Body() body: InvoiceUpdateRequestDto
     ): Promise<IResponse<InvoiceGetResponseDto>> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         const updated = await this.invoiceService.update(row, body, userId);
         const data = await this.invoiceService.mapGet(updated);
         return { data };
@@ -452,9 +454,10 @@ export class InvoiceAdminController {
     @AuthJwtAccessProtected()
     @Get('/issue-preview/:invoiceId')
     async issuePreview(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string
     ): Promise<IResponse<any>> {
-        const data = await this.invoiceService.issuePreview(invoiceId);
+        const data = await this.invoiceService.issuePreview(invoiceId, companyId);
         return { data };
     }
 
@@ -463,9 +466,10 @@ export class InvoiceAdminController {
     @Post('/issue/:invoiceId')
     async issue(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string
     ): Promise<IResponse<InvoiceGetResponseDto>> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         const updated = await this.invoiceService.issue(row, userId);
         const data = await this.invoiceService.mapGet(updated);
         return { data };
@@ -476,10 +480,11 @@ export class InvoiceAdminController {
     @Post('/cancel/:invoiceId')
     async cancel(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string,
         @Body() body: InvoiceCancelRequestDto
     ): Promise<IResponse<InvoiceGetResponseDto>> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         const updated = await this.invoiceService.cancel(row, body.reason, userId);
         const data = await this.invoiceService.mapGet(updated);
         return { data };
@@ -488,8 +493,11 @@ export class InvoiceAdminController {
     @Response('invoice.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:invoiceId')
-    async softDelete(@Param('invoiceId') invoiceId: string): Promise<void> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+    async softDelete(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('invoiceId') invoiceId: string
+    ): Promise<void> {
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         await this.invoiceService.softDelete(row);
     }
 
@@ -498,13 +506,14 @@ export class InvoiceAdminController {
     @Post('/delete-many')
     async deleteMany(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.invoiceService.deleteMany(ids, userId);
+        const data = await this.invoiceService.deleteMany(ids, companyId, userId);
         return { data };
     }
 
@@ -514,9 +523,10 @@ export class InvoiceAdminController {
     @AuthJwtAccessProtected()
     @Get('/payments/:invoiceId')
     async listPayments(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string
     ): Promise<IResponse<any[]>> {
-        await this.invoiceService.findOneById(invoiceId); // 404 guard
+        await this.invoiceService.findOneById(invoiceId, companyId); // 404 guard
         const data = await this.invoiceService.listPaymentsForInvoice(invoiceId);
         return { data };
     }
@@ -526,12 +536,13 @@ export class InvoiceAdminController {
     @Post('/payments/:invoiceId')
     async recordPayment(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string,
         @Body() body: InvoicePaymentCreateRequestDto
     ): Promise<IResponse<InvoiceGetResponseDto>> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         await this.invoiceService.recordPayment(row, body, userId);
-        const fresh = await this.invoiceService.findOneById(invoiceId);
+        const fresh = await this.invoiceService.findOneById(invoiceId, companyId);
         const data = await this.invoiceService.mapGet(fresh);
         return { data };
     }
@@ -541,13 +552,14 @@ export class InvoiceAdminController {
     @Post('/payments/:invoiceId/void/:paymentId')
     async voidPayment(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string,
         @Param('paymentId') paymentId: string,
         @Body() body: InvoicePaymentVoidRequestDto
     ): Promise<IResponse<InvoiceGetResponseDto>> {
-        await this.invoiceService.findOneById(invoiceId);
+        await this.invoiceService.findOneById(invoiceId, companyId);
         await this.invoiceService.voidPayment(paymentId, userId, body.reason);
-        const fresh = await this.invoiceService.findOneById(invoiceId);
+        const fresh = await this.invoiceService.findOneById(invoiceId, companyId);
         const data = await this.invoiceService.mapGet(fresh);
         return { data };
     }
@@ -740,9 +752,10 @@ export class InvoiceAdminController {
     @AuthJwtAccessProtected()
     @Get('/event/:invoiceId')
     async listEvents(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('invoiceId') invoiceId: string
     ): Promise<IResponse<any[]>> {
-        await this.invoiceService.findOneById(invoiceId); // 404 guard
+        await this.invoiceService.findOneById(invoiceId, companyId); // 404 guard
         const data = await this.invoiceEventService.listForInvoice(invoiceId);
         return { data };
     }
@@ -759,7 +772,7 @@ export class InvoiceAdminController {
         @Body() body: InvoiceEventCreateRequestDto,
         @UploadedFile() file?: Express.Multer.File
     ): Promise<IResponse<any>> {
-        const row = await this.invoiceService.findOneById(invoiceId);
+        const row = await this.invoiceService.findOneById(invoiceId, companyId);
         let attachmentUrl: string | undefined;
         if (file && file.buffer && file.originalname) {
             const ext = (file.originalname.split('.').pop() || '').toLowerCase();

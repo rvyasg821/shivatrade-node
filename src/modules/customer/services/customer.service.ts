@@ -115,6 +115,7 @@ export class CustomerService {
                 companyId,
                 status: ENUM_USER_STATUS.ACTIVE,
                 roleLevel: customerRole.level,
+                must_reset_password: true,
             } as any,
             passwordData,
             ENUM_USER_SIGN_UP_FROM.ADMIN
@@ -331,9 +332,13 @@ export class CustomerService {
 
     async findOneById(
         customerId: string,
+        companyId: string,
         options?: IDatabaseFindOneOptions
     ): Promise<CustomerDoc> {
-        const customer = await this.customerRepository.findOneById(customerId, options);
+        const customer = await this.customerRepository.findOne(
+            { _id: customerId, company_id: companyId } as any,
+            options
+        );
         if (!customer) {
             throw new NotFoundException('Customer not found');
         }
@@ -530,6 +535,7 @@ export class CustomerService {
      */
     async deleteMany(
         ids: string[],
+        companyId: string,
         deletedBy?: string
     ): Promise<{
         deleted: string[];
@@ -539,7 +545,7 @@ export class CustomerService {
         const skipped: Array<{ id: string; reason: string }> = [];
         for (const id of ids) {
             try {
-                const customer = await this.findOneById(id);
+                const customer = await this.findOneById(id, companyId);
                 await this.softDelete(customer, deletedBy);
                 deleted.push(id);
             } catch (e: any) {

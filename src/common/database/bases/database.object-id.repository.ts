@@ -537,7 +537,11 @@ export class DatabaseObjectIdRepositoryBase<
             throw new Error('Find criteria must be a non-empty object');
         }
 
-        // Extract $set, $inc, $unset from MongoDB-style update
+        // Extract $set, $unset from MongoDB-style update ($inc is handled
+        // separately below — it needs the entity's current value, which
+        // isn't available inside _extractUpdateData; that helper silently
+        // dropped a bare {$inc: {...}} payload entirely before this fix,
+        // since it only special-cased $inc when $set was also present).
         const updateData = this._extractUpdateData(data);
 
         const entity = await this.findOne<Entity>(find, {
@@ -549,12 +553,20 @@ export class DatabaseObjectIdRepositoryBase<
 
         const now = new Date();
         Object.assign(entity, updateData);
+        if (data?.$inc && typeof data.$inc === 'object') {
+            for (const [field, incrementBy] of Object.entries(data.$inc)) {
+                const current = Number((entity as any)[field]) || 0;
+                (entity as any)[field] = current + Number(incrementBy);
+            }
+        }
         (entity as any).updatedAt = now;
         if (options?.actionBy) {
             (entity as any).updatedBy = options.actionBy;
         }
 
-        return this._repository.save(entity);
+        const snapshot = { ...(entity as any) };
+        const saved = await this._repository.save(entity);
+        return this._restoreHiddenColumns(snapshot, saved) as any;
     }
 
     async upsert(
@@ -649,7 +661,34 @@ export class DatabaseObjectIdRepositoryBase<
             }
         }
 
-        return this._repository.save(entity);
+        // Snapshot BEFORE calling save() — TypeORM's own post-save reload
+        // can mutate select:false columns (e.g. User.password/salt) to
+        // undefined on this SAME entity object, not just on what it
+        // returns, so reading `entity` afterward is not a safe source.
+        const snapshot = { ...(entity as any) };
+        const saved = await this._repository.save(entity);
+        return this._restoreHiddenColumns(snapshot, saved);
+    }
+
+    /**
+     * TypeORM strips `select: false` columns (e.g. User.password/salt) from
+     * the object `.save()` returns, even when the caller explicitly set them
+     * on the input entity right before the call — every save() of a
+     * partial/hidden-column entity silently lost those fields from its
+     * return value, breaking any immediate downstream read (e.g.
+     * password-history logging right after a password change). Restores
+     * whatever the caller explicitly had, generically, for any entity.
+     */
+    private _restoreHiddenColumns<T>(input: T, saved: T): T {
+        for (const key of Object.keys(input as any)) {
+            if (
+                (saved as any)[key] === undefined &&
+                (input as any)[key] !== undefined
+            ) {
+                (saved as any)[key] = (input as any)[key];
+            }
+        }
+        return saved;
     }
 
     async join<T>(

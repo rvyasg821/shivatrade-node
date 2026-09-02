@@ -245,9 +245,10 @@ export class QuotationAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:id')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string
     ): Promise<IResponse<QuotationGetResponseDto>> {
-        const row = await this.quotationService.findOneById(id);
+        const row = await this.quotationService.findOneById(id, companyId);
         return { data: await this.quotationService.mapGet(row) };
     }
 
@@ -255,10 +256,11 @@ export class QuotationAdminController {
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Body() body: QuotationUpdateRequestDto
     ): Promise<IResponse<QuotationGetResponseDto>> {
-        const row = await this.quotationService.findOneById(id);
+        const row = await this.quotationService.findOneById(id, companyId);
         const updated = await this.quotationService.update(row, body);
         return { data: await this.quotationService.mapGet(updated) };
     }
@@ -266,8 +268,11 @@ export class QuotationAdminController {
     @Response('quotation.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
-    async delete(@Param('id') id: string): Promise<IResponse<null>> {
-        const row = await this.quotationService.findOneById(id);
+    async delete(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<null>> {
+        const row = await this.quotationService.findOneById(id, companyId);
         await this.quotationService.deleteWithGuard(row);
         return { data: null };
     }
@@ -277,13 +282,14 @@ export class QuotationAdminController {
     @Post('/delete-many')
     async deleteMany(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.quotationService.deleteMany(ids, userId);
+        const data = await this.quotationService.deleteMany(ids, companyId, userId);
         return { data };
     }
 
@@ -292,11 +298,12 @@ export class QuotationAdminController {
     @AuthJwtAccessProtected()
     @Get('/:id/pdf')
     async pdf(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
         const { buffer, filename } =
-            await this.quotationService.generatePdf(id);
+            await this.quotationService.generatePdf(id, companyId);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader(
             'Content-Disposition',
@@ -309,11 +316,12 @@ export class QuotationAdminController {
     @AuthJwtAccessProtected()
     @Get('/:id/excel')
     async excel(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('id') id: string,
         @Res() res: ExpressResponse
     ): Promise<void> {
         const { buffer, filename } =
-            await this.quotationService.generateExcel(id);
+            await this.quotationService.generateExcel(id, companyId);
         res.setHeader(
             'Content-Type',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

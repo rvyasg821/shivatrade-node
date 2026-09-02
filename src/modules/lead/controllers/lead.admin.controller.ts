@@ -240,9 +240,10 @@ export class LeadAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:leadId')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string
     ): Promise<IResponse<LeadGetResponseDto>> {
-        const lead = await this.leadService.findOneById(leadId);
+        const lead = await this.leadService.findOneById(leadId, companyId);
         const data = await this.leadService.mapGetWithRelations(lead);
         return { data };
     }
@@ -252,10 +253,11 @@ export class LeadAdminController {
     @Put('/update/:leadId')
     async update(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string,
         @Body() body: LeadUpdateRequestDto
     ): Promise<IResponse<LeadGetResponseDto>> {
-        const lead = await this.leadService.findOneById(leadId);
+        const lead = await this.leadService.findOneById(leadId, companyId);
         const updated = await this.leadService.update(lead, body, userId);
         const data = await this.leadService.mapGetWithRelations(updated);
         return { data };
@@ -266,9 +268,10 @@ export class LeadAdminController {
     @Delete('/delete/:leadId')
     async delete(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string
     ): Promise<void> {
-        const lead = await this.leadService.findOneById(leadId);
+        const lead = await this.leadService.findOneById(leadId, companyId);
         await this.leadService.deleteWithGuard(lead);
     }
 
@@ -277,13 +280,14 @@ export class LeadAdminController {
     @Post('/delete-many')
     async deleteMany(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.leadService.deleteMany(ids, userId);
+        const data = await this.leadService.deleteMany(ids, companyId, userId);
         return { data };
     }
 
@@ -292,9 +296,10 @@ export class LeadAdminController {
     @Post('/convert/:leadId')
     async convert(
         @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('leadId') leadId: string
     ): Promise<IResponse<LeadGetResponseDto>> {
-        const lead = await this.leadService.findOneById(leadId);
+        const lead = await this.leadService.findOneById(leadId, companyId);
         const { lead: updated } = await this.leadService.convertToCustomer(
             lead,
             userId

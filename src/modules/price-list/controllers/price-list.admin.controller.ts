@@ -537,9 +537,10 @@ export class PriceListAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:priceListId')
     async get(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('priceListId') id: string
     ): Promise<IResponse<PriceListGetResponseDto>> {
-        const row = await this.priceListService.findOneById(id);
+        const row = await this.priceListService.findOneById(id, companyId);
         return { data: await this.priceListService.mapGet(row) };
     }
 
@@ -547,10 +548,11 @@ export class PriceListAdminController {
     @AuthJwtAccessProtected()
     @Put('/update/:priceListId')
     async update(
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('priceListId') id: string,
         @Body() body: PriceListUpdateRequestDto
     ): Promise<IResponse<PriceListGetResponseDto>> {
-        const row = await this.priceListService.findOneById(id);
+        const row = await this.priceListService.findOneById(id, companyId);
         const updated = await this.priceListService.update(row, body);
         return { data: await this.priceListService.mapGet(updated) };
     }
@@ -558,8 +560,11 @@ export class PriceListAdminController {
     @Response('priceList.delete')
     @AuthJwtAccessProtected()
     @Delete('/delete/:priceListId')
-    async delete(@Param('priceListId') id: string): Promise<void> {
-        const row = await this.priceListService.findOneById(id);
+    async delete(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('priceListId') id: string
+    ): Promise<void> {
+        const row = await this.priceListService.findOneById(id, companyId);
         await this.priceListService.hardDelete(row);
     }
 
@@ -567,13 +572,14 @@ export class PriceListAdminController {
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { ids: string[] }
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
             throw new BadRequestException('ids array is required');
         }
-        const data = await this.priceListService.deleteMany(ids);
+        const data = await this.priceListService.deleteMany(ids, companyId);
         return { data };
     }
 }
