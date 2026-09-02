@@ -72,8 +72,9 @@ export class LocationAdminController {
     @Get('/list')
     async list(
         @AuthJwtPayload('companyId') companyId: string,
-        @PaginationQuery() { _search, _limit, _offset, _order }: PaginationListDto,
-        @Query('status') status?: string
+        @PaginationQuery() { _limit, _offset, _order }: PaginationListDto,
+        @Query('status') status?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<LocationListResponseDto>> {
         const find: any = {
             soft_delete: false,
@@ -92,11 +93,12 @@ export class LocationAdminController {
         }
 
         // Add search if provided
-        if (_search) {
+        const searchTerm = searchRaw?.trim();
+        if (searchTerm) {
             find.$or = [
-                { location_name: { $regex: _search, $options: 'i' } },
-                { location_code: { $regex: _search, $options: 'i' } },
-                { city: { $regex: _search, $options: 'i' } },
+                { location_name: { $regex: searchTerm, $options: 'i' } },
+                { location_code: { $regex: searchTerm, $options: 'i' } },
+                { city: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

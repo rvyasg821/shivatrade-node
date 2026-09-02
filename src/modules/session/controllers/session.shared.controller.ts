@@ -50,7 +50,7 @@ export class SessionSharedController {
     @Get('/list')
     async list(
         @AuthJwtPayload('user') user: string,
-        @PaginationQuery()
+        @PaginationQuery({ availableSearch: ['ip', 'hostname', 'userAgent'] })
         { _search, _limit, _offset, _order }: PaginationListDto
     ): Promise<IResponsePaging<SessionListResponseDto>> {
         const find: Record<string, any> = {

@@ -36,11 +36,9 @@ export class PasswordHistorySharedController {
     async list(
         @AuthJwtPayload('user') user: string,
         @PaginationQuery()
-        { _search, _limit, _offset, _order }: PaginationListDto
+        { _limit, _offset, _order }: PaginationListDto
     ): Promise<IResponsePaging<PasswordHistoryListResponseDto>> {
-        const find: Record<string, any> = {
-            ..._search,
-        };
+        const find: Record<string, any> = {};
 
         const passwordHistories: IPasswordHistoryDoc[] =
             await this.passwordHistoryService.findAllByUser(user, find, {

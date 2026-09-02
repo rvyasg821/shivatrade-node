@@ -65,7 +65,7 @@ export class CardAdminController {
     @ApiBearerAuth('accessToken')
     @Get('/list')
     async list(
-        @PaginationQuery()
+        @PaginationQuery({ availableSearch: ['holder_name', 'last4'] })
         { _search, _limit, _offset, _order }: PaginationListDto,
         @Query('user_id') userId?: string,
         @Query('gateway') gateway?: string,
