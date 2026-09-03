@@ -1,0 +1,8 @@
+{
+    "list": "Rebates retrieved successfully.",
+    "get": "Rebate details fetched successfully.",
+    "create": "Rebate created successfully.",
+    "update": "Rebate updated successfully.",
+    "delete": "Rebate deleted successfully.",
+    "dropdown": "Rebates dropdown loaded."
+}

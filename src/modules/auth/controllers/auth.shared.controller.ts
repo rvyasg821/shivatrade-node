@@ -150,26 +150,6 @@ export class AuthSharedController {
             await this.userService.resetPasswordAttempt(user);
 
             const password = this.authService.createPassword(body.newPassword);
-            // const checkPassword = await this.passwordHistoryService.findOneUsedByUser(
-            //     user._id,
-            //     body.newPassword
-            // );
-            // if (checkPassword) {
-            //     const passwordPeriod = await this.passwordHistoryService.getPasswordPeriod();
-            //     throw new BadRequestException({
-            //         statusCode: ENUM_USER_STATUS_CODE_ERROR.PASSWORD_MUST_NEW,
-            //         message: 'auth.error.passwordMustNew',
-            //         _metadata: {
-            //             customProperty: {
-            //                 messageProperties: {
-            //                     period: passwordPeriod,
-            //                 },
-            //             },
-            //         },
-            //     });
-            // }
-
-            // const session: ClientSession = await this.databaseService.createTransaction();
 
             user = await this.userService.updatePassword(user, password);
 

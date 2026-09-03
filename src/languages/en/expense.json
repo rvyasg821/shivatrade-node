@@ -1,0 +1,8 @@
+{
+    "list": "Expenses retrieved successfully.",
+    "get": "Expense details fetched successfully.",
+    "create": "Expense created successfully.",
+    "update": "Expense updated successfully.",
+    "delete": "Expense deleted successfully.",
+    "dropdown": "Expenses dropdown loaded."
+}
