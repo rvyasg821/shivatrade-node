@@ -3892,6 +3892,66 @@ export class ReportsService {
         return mapDocStatusLineBreakdown(raw);
     }
 
+    /** Same rows as `salesOrderStatusLineBreakdown`, batched across MANY SOs
+     *  in one query (`purchase_order_id = ANY(...)`) instead of one query per
+     *  SO — used only by `salesOrderStatusExcel`, which previously fired one
+     *  query per row in the export. */
+    private async salesOrderStatusLineBreakdownBatch(
+        companyId: string,
+        soIds: string[],
+        invoiceType?: string
+    ): Promise<Map<string, DocStatusLineBreakdownRowDto[]>> {
+        const byDoc = new Map<string, DocStatusLineBreakdownRowDto[]>();
+        if (!soIds.length) return byDoc;
+        const typeRaw = (invoiceType || 'export').toLowerCase();
+        const invType = typeRaw === 'all' ? null : typeRaw;
+        const raw: any[] = await this.dataSource.query(
+            `SELECT pol.purchase_order_id                     AS so_id,
+                    pol._id                                   AS line_id,
+                    pol.product_id                            AS product_id,
+                    COALESCE(p.name, pol.description, '—')    AS product_name,
+                    p.code                                    AS product_code,
+                    pol.hsn_code                               AS hsn_code,
+                    pol.unit                                  AS unit,
+                    COALESCE(pol.qty, 0)::float8              AS ordered_qty,
+                    COALESCE(cov.covered_qty, 0)::float8      AS covered_qty,
+                    (CASE
+                        WHEN COALESCE(pol.qty, 0) = 0 THEN NULL
+                        ELSE (COALESCE(pol.taxable, 0)
+                              + COALESCE(pol.product_expenses_amount, 0)
+                              - COALESCE(pol.product_rebates_amount, 0)
+                              + COALESCE(pol.margin_amount, 0)) / pol.qty
+                     END)::float8                             AS rate
+             FROM purchase_order_lines pol
+             LEFT JOIN products p ON p._id = pol.product_id
+             LEFT JOIN (
+                 SELECT il.purchase_order_line_id AS line_id,
+                        SUM(COALESCE(il.qty, 0))  AS covered_qty
+                 FROM invoice_lines il
+                 JOIN invoices i
+                     ON i._id = il.invoice_id
+                    AND i.soft_delete = false
+                    AND i.status <> 'cancelled'
+                    AND ($3::text IS NULL OR i.invoice_type = $3)
+                 WHERE il.company_id = $1 AND il.soft_delete = false
+                 GROUP BY il.purchase_order_line_id
+             ) cov ON cov.line_id = pol._id
+             WHERE pol.purchase_order_id = ANY($2::uuid[])
+             ORDER BY pol.purchase_order_id, pol.seq`,
+            [companyId, soIds, invType]
+        );
+        const grouped = new Map<string, any[]>();
+        for (const r of raw) {
+            const key = r.so_id;
+            if (!grouped.has(key)) grouped.set(key, []);
+            grouped.get(key).push(r);
+        }
+        for (const [soId, rawRows] of grouped) {
+            byDoc.set(soId, mapDocStatusLineBreakdown(rawRows));
+        }
+        return byDoc;
+    }
+
     /** The Sales Order Status list as an .xlsx Buffer. */
     async salesOrderStatusExcel(
         companyId: string,
@@ -3902,23 +3962,19 @@ export class ReportsService {
             page: 1,
             perPage: 100000,
         });
-        const lineRows = (
-            await Promise.all(
-                result.rows.map(async (r) => {
-                    const lines = await this.salesOrderStatusLineBreakdown(
-                        companyId,
-                        r.doc_id,
-                        query.invoice_type
-                    );
-                    return lines.map((l) => ({
-                        doc_no: r.doc_no,
-                        party_name: r.party_name,
-                        currency_code: r.currency_code,
-                        ...l,
-                    }));
-                })
-            )
-        ).flat();
+        const linesByDoc = await this.salesOrderStatusLineBreakdownBatch(
+            companyId,
+            result.rows.map((r) => r.doc_id),
+            query.invoice_type
+        );
+        const lineRows = result.rows.flatMap((r) =>
+            (linesByDoc.get(r.doc_id) || []).map((l) => ({
+                doc_no: r.doc_no,
+                party_name: r.party_name,
+                currency_code: r.currency_code,
+                ...l,
+            }))
+        );
         return this.docStatusExcel(
             result,
             {
@@ -4170,6 +4226,64 @@ export class ReportsService {
         return mapDocStatusLineBreakdown(raw);
     }
 
+    /** Same rows as `purchaseOrderStatusLineBreakdown`, batched across MANY
+     *  POVs in one query (`po_vendor_id = ANY(...)`) instead of one query per
+     *  POV — used only by `purchaseOrderStatusExcel`, which previously fired
+     *  one query per row in the export. */
+    private async purchaseOrderStatusLineBreakdownBatch(
+        companyId: string,
+        povIds: string[],
+        grnScope?: string
+    ): Promise<Map<string, DocStatusLineBreakdownRowDto[]>> {
+        const byDoc = new Map<string, DocStatusLineBreakdownRowDto[]>();
+        if (!povIds.length) return byDoc;
+        const scope =
+            (grnScope || 'confirmed').toLowerCase() === 'all'
+                ? 'all'
+                : 'confirmed';
+        const raw: any[] = await this.dataSource.query(
+            `SELECT pol.po_vendor_id                           AS pov_id,
+                    pol._id                                    AS line_id,
+                    pol.product_id                             AS product_id,
+                    COALESCE(pr.name, pol.description, '—')    AS product_name,
+                    pr.code                                    AS product_code,
+                    COALESCE(pol.hsn_code, pr.hsn_code)        AS hsn_code,
+                    pol.unit                                   AS unit,
+                    COALESCE(pol.ordered_qty, 0)::float8       AS ordered_qty,
+                    COALESCE(cov.covered_qty, 0)::float8       AS covered_qty,
+                    (COALESCE(pol.unit_price, 0)
+                       * (1 - COALESCE(pol.discount_pct, 0) / 100)
+                    )::float8                                  AS rate
+             FROM po_vendor_lines pol
+             LEFT JOIN products pr ON pr._id = pol.product_id
+             LEFT JOIN (
+                 SELECT gl.po_vendor_line_id AS line_id,
+                        SUM(COALESCE(gl.accepted_qty, 0)) AS covered_qty
+                 FROM grn_lines gl
+                 JOIN grns g
+                     ON g._id = gl.grn_id
+                    AND g.soft_delete = false
+                    AND g.status <> 'cancelled'
+                    AND ($3::text = 'all' OR g.status = $3)
+                 WHERE gl.company_id = $1 AND gl.soft_delete = false
+                 GROUP BY gl.po_vendor_line_id
+             ) cov ON cov.line_id = pol._id
+             WHERE pol.po_vendor_id = ANY($2::uuid[])
+             ORDER BY pol.po_vendor_id, pol.seq`,
+            [companyId, povIds, scope]
+        );
+        const grouped = new Map<string, any[]>();
+        for (const r of raw) {
+            const key = r.pov_id;
+            if (!grouped.has(key)) grouped.set(key, []);
+            grouped.get(key).push(r);
+        }
+        for (const [povId, rawRows] of grouped) {
+            byDoc.set(povId, mapDocStatusLineBreakdown(rawRows));
+        }
+        return byDoc;
+    }
+
     /** The Purchase Order Status list as an .xlsx Buffer. */
     async purchaseOrderStatusExcel(
         companyId: string,
@@ -4180,23 +4294,19 @@ export class ReportsService {
             page: 1,
             perPage: 100000,
         });
-        const lineRows = (
-            await Promise.all(
-                result.rows.map(async (r) => {
-                    const lines = await this.purchaseOrderStatusLineBreakdown(
-                        companyId,
-                        r.doc_id,
-                        query.grn_scope
-                    );
-                    return lines.map((l) => ({
-                        doc_no: r.doc_no,
-                        party_name: r.party_name,
-                        currency_code: r.currency_code,
-                        ...l,
-                    }));
-                })
-            )
-        ).flat();
+        const linesByDoc = await this.purchaseOrderStatusLineBreakdownBatch(
+            companyId,
+            result.rows.map((r) => r.doc_id),
+            query.grn_scope
+        );
+        const lineRows = result.rows.flatMap((r) =>
+            (linesByDoc.get(r.doc_id) || []).map((l) => ({
+                doc_no: r.doc_no,
+                party_name: r.party_name,
+                currency_code: r.currency_code,
+                ...l,
+            }))
+        );
         return this.docStatusExcel(
             result,
             {

@@ -2,8 +2,12 @@ import {
     Injectable,
     InternalServerErrorException,
     Logger,
+    OnModuleDestroy,
 } from '@nestjs/common';
 import puppeteer from 'puppeteer';
+
+type PuppeteerBrowser = Awaited<ReturnType<typeof puppeteer.launch>>;
+type PuppeteerPage = Awaited<ReturnType<PuppeteerBrowser['newPage']>>;
 
 export interface PdfRenderOptions {
     format?: 'A4' | 'Letter';
@@ -27,22 +31,47 @@ export interface PdfRenderOptions {
  * Generic Puppeteer wrapper. Reusable for PFI, Commercial Invoice,
  * Packing List, PO PDFs.
  *
- * v1: one browser per request. Acceptable cold start ~500ms. Switch to a
- * singleton browser pool later if throughput becomes an issue.
+ * Singleton browser: one Chromium process shared across requests (launched
+ * lazily on first use, relaunched if it crashes/disconnects), each request
+ * only pays for a `newPage()`/`page.close()`. Avoids a ~500ms-1s+ cold start
+ * per PDF that a launch-per-request approach paid every time.
  */
 @Injectable()
-export class PdfService {
+export class PdfService implements OnModuleDestroy {
     private readonly logger = new Logger(PdfService.name);
+    private browserPromise: Promise<PuppeteerBrowser> | null = null;
+
+    /** Returns the shared browser, launching it on first use or relaunching
+     *  it if the previous instance crashed/disconnected. */
+    private async getBrowser(): Promise<PuppeteerBrowser> {
+        if (this.browserPromise) {
+            const browser = await this.browserPromise;
+            if (browser.connected) return browser;
+            this.browserPromise = null;
+        }
+        this.browserPromise = puppeteer.launch(this.launchOptions());
+        return this.browserPromise;
+    }
+
+    async onModuleDestroy(): Promise<void> {
+        if (!this.browserPromise) return;
+        try {
+            const browser = await this.browserPromise;
+            await browser.close();
+        } catch {
+            // ignore close errors on shutdown
+        }
+    }
 
     /** Render the given HTML string into a PDF. */
     async generateFromHtml(
         html: string,
         options: PdfRenderOptions = {}
     ): Promise<Buffer> {
-        let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+        let page: PuppeteerPage | null = null;
         try {
-            browser = await puppeteer.launch(this.launchOptions());
-            const page = await browser.newPage();
+            const browser = await this.getBrowser();
+            page = await browser.newPage();
             await page.setContent(html, {
                 waitUntil: 'networkidle0' as any,
                 timeout: 30000,
@@ -68,9 +97,9 @@ export class PdfService {
                 'Failed to generate PDF document'
             );
         } finally {
-            if (browser) {
+            if (page) {
                 try {
-                    await browser.close();
+                    await page.close();
                 } catch {
                     // ignore close errors
                 }
@@ -87,10 +116,10 @@ export class PdfService {
         url: string,
         options: PdfRenderOptions = {}
     ): Promise<Buffer> {
-        let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+        let page: PuppeteerPage | null = null;
         try {
-            browser = await puppeteer.launch(this.launchOptions());
-            const page = await browser.newPage();
+            const browser = await this.getBrowser();
+            page = await browser.newPage();
             await page.goto(url, {
                 waitUntil: 'networkidle0',
                 timeout: 30000,
@@ -116,9 +145,9 @@ export class PdfService {
                 'Failed to generate PDF document'
             );
         } finally {
-            if (browser) {
+            if (page) {
                 try {
-                    await browser.close();
+                    await page.close();
                 } catch {
                     // ignore close errors
                 }
