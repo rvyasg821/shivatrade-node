@@ -86,6 +86,15 @@ import { PdfModule } from '@common/pdf/pdf.module';
                             port: configService.get<number>(
                                 'redis.cached.port'
                             ),
+                            // Bounds how long a (re)connect attempt can hang —
+                            // without this, an idle-dropped connection (e.g. a
+                            // shared VPS's firewall/NAT reaping it between
+                            // requests) has no cap, so the FIRST cache call
+                            // after the drop hangs until the caller's own
+                            // request-level timeout instead of failing fast.
+                            connectTimeout: 5000,
+                            reconnectStrategy: (retries: number) =>
+                                Math.min(retries * 200, 3000),
                         },
                         username: configService.get<string>(
                             'redis.cached.username'
