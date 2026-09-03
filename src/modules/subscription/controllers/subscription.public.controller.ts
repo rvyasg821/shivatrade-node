@@ -388,22 +388,6 @@ export class SubscriptionPublicController {
                     body.tools || [],
                     { locations: body.locations || 1 }
                 );
-            // const trialSubscription =
-            //     body.withProvisioning !== false
-            //         ? await this.subscriptionService.createTrialSubscriptionWithProvisioning(
-            //             // user._id.toString(),
-            //             body.user_id,
-            //             body.planId,
-            //             body.trial_days || 7,
-            //             body.tools || []
-            //         )
-            //         : await this.subscriptionService.createTrialSubscription(
-            //             // user._id.toString(),
-            //             body.user_id,
-            //             body.planId,
-            //             body.trial_days || 7,
-            //             body.tools || []
-            //         );
 
             // Get the current provisioning status with populated plan
             const subscriptionWithStatus =

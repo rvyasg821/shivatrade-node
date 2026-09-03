@@ -293,15 +293,6 @@ export class DashboardCompanyController {
                     link: '/apps/contracts/templates', done: hasContractTemplates,
                 });
             }
-            if (hasTool('hrm-compliance')) {
-                const complianceCfg = mapped.compliance_config;
-                items.push({
-                    key: 'compliance_settings', label: 'Compliance Settings',
-                    description: 'Configure visa & RTW reminders and notification preferences',
-                    link: '/apps/compliance', done: !!complianceCfg?.visa_reminder_1st_days,
-                });
-            }
-
             // Always last
             items.push({
                 key: 'employees', label: 'Add Employees',
