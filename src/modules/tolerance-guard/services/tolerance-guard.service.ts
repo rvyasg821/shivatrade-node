@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { GrnRepository } from '@modules/grn/repository/repositories/grn.repository';
@@ -43,19 +45,41 @@ export interface ToleranceCheckResult {
  * or the company hasn't opted into this check yet (matches
  * `assertPostingDateOpen`'s "no cutoff configured = never blocks" precedent).
  */
+const TOLERANCE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — short enough that a
+// missed invalidation point self-heals quickly; long enough to fully absorb
+// the per-line N+1 (a single Issue/Confirm request loops in milliseconds).
+const toleranceCacheKey = (companyId: string) => `tolerance-cfg:${companyId}`;
+
 @Injectable()
 export class ToleranceGuardService {
     constructor(
+        @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
         private readonly companySettings: CompanySettingsService,
         private readonly povLineRepository: PoVendorLineRepository,
         private readonly grnRepository: GrnRepository,
         private readonly grnLineRepository: GrnLineRepository
     ) {}
 
+    /** Company settings only carries ONE `tolerance_config` bag (company-wide,
+     *  never per-location — see CompanySettingsService's own doc comment), so
+     *  caching it here is safe: nothing else reads/writes this specific field
+     *  through a path this cache doesn't also see invalidated (§ invalidate
+     *  below, called from the settings-update controller). */
     private async limitPctFor(companyId: string, kind: ToleranceKind): Promise<number> {
-        const settings = await this.companySettings.getCompanyDefaults(companyId);
-        const cfg = (settings as any)?.tolerance_config || {};
+        const cacheKey = toleranceCacheKey(companyId);
+        let cfg = await this.cacheManager.get<Record<string, any>>(cacheKey);
+        if (!cfg) {
+            const settings = await this.companySettings.getCompanyDefaults(companyId);
+            cfg = (settings as any)?.tolerance_config || {};
+            await this.cacheManager.set(cacheKey, cfg, TOLERANCE_CACHE_TTL_MS);
+        }
         return num(cfg[CONFIG_KEY[kind]]);
+    }
+
+    /** Call after any write to `company_settings.tolerance_config` so the
+     *  next check reads the new % immediately instead of waiting out the TTL. */
+    async invalidateCache(companyId: string): Promise<void> {
+        await this.cacheManager.del(toleranceCacheKey(companyId));
     }
 
     private buildResult(

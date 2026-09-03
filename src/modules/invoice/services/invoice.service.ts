@@ -1891,17 +1891,19 @@ export class InvoiceService {
             }
         }
 
+        // Hoisted out of the loop below — was re-fetched once per PO line
+        // (same invoice's own lines never change mid-loop).
+        const excludeSelfLines = excludeInvoiceId
+            ? await this.invoiceLineRepository.findByInvoiceId(excludeInvoiceId)
+            : null;
+
         const reasons: string[] = [];
         for (const [poLineId, reqQty] of reqByPoLine) {
             const alreadyInvoiced =
                 await this.invoiceRepository.sumQtyByPoLineId(poLineId);
             let selfPrev = 0;
-            if (excludeInvoiceId) {
-                const selfLines =
-                    await this.invoiceLineRepository.findByInvoiceId(
-                        excludeInvoiceId
-                    );
-                selfPrev = selfLines
+            if (excludeSelfLines) {
+                selfPrev = excludeSelfLines
                     .filter(
                         (l) => l.purchase_order_line_id?.toString() === poLineId
                     )

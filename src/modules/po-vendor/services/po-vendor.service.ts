@@ -2456,6 +2456,25 @@ export class PoVendorService {
             let qtyChanges = 0;
             // Price tolerance vs the source PO line (TOLERANCE_THREE_WAY_MATCH_PLAN.md §7.2).
             // Held lines are flagged, not blocked — see the NOTE after the loop.
+            // Batched once up front — was previously a `findOneById` per
+            // price-edited line inside the loop below.
+            const priceEditPoLineIds = Array.from(
+                new Set(
+                    lineEdits
+                        .filter(p => p.unit_price != null && p.unit_price !== '')
+                        .map(p => byId.get(String(p._id))?.purchase_order_line_id)
+                        .filter(Boolean)
+                )
+            ) as string[];
+            const poLineByIdForPriceCheck = priceEditPoLineIds.length
+                ? new Map<string, any>(
+                      (
+                          (await this.poLineRepository.findAll({
+                              _id: { $in: priceEditPoLineIds },
+                          } as any)) as any[]
+                      ).map(pl => [pl._id.toString(), pl])
+                  )
+                : new Map<string, any>();
             for (const patch of lineEdits) {
                 const line = byId.get(String(patch._id));
                 // Refuse a line id from a different POV rather than silently
@@ -2497,8 +2516,8 @@ export class PoVendorService {
                     // to compare against on a standalone POV (no source PO
                     // line) — exempt, same as the GRN qty check.
                     if (line.purchase_order_line_id) {
-                        const poLine = await this.poLineRepository.findOneById(
-                            line.purchase_order_line_id
+                        const poLine = poLineByIdForPriceCheck.get(
+                            String(line.purchase_order_line_id)
                         );
                         const result = poLine
                             ? await this.toleranceGuard.checkPriceTolerance(

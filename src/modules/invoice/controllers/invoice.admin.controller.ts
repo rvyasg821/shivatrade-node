@@ -288,7 +288,8 @@ export class InvoiceAdminController {
         @Query('purchase_order_id') purchaseOrderId?: string,
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
-        @Query('created_by') createdBy?: string
+        @Query('created_by') createdBy?: string,
+        @Query('search') searchRaw?: string
     ): Promise<IResponsePaging<InvoiceListResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
         // status may be a single value or a CSV (tile clicks send
@@ -302,10 +303,17 @@ export class InvoiceAdminController {
             if (dateFrom) (find.invoice_date as any).$gte = dateFrom;
             if (dateTo) (find.invoice_date as any).$lte = dateTo;
         }
-        if (_search) {
+        // `_search` (from @PaginationQuery) only populates when this endpoint
+        // configures `availableSearch`, which it doesn't — so it was always
+        // undefined and this filter never actually ran. `search` is the plain
+        // query param the frontend list page sends (same pattern already
+        // working on quotations/purchase-orders' list endpoints).
+        const searchTerm = searchRaw?.trim() || (typeof _search === 'string' ? _search : '');
+        if (searchTerm) {
             find.$or = [
-                { voucher_no: { $regex: _search, $options: 'i' } },
-                { purchase_order_voucher_no: { $regex: _search, $options: 'i' } },
+                { voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { purchase_order_voucher_no: { $regex: searchTerm, $options: 'i' } },
+                { reference_no: { $regex: searchTerm, $options: 'i' } },
             ];
         }
 

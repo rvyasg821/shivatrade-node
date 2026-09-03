@@ -10,6 +10,7 @@ import { CompanySettingsRequestDto } from '../dtos/request/company-settings.requ
 import { NodemailerService, CompanySmtpConfig } from '@modules/email/services/nodemailer.service';
 import { CompanyService } from '@modules/company/services/company.service';
 import { UserService } from '@modules/user/services/user.service';
+import { ToleranceGuardService } from '@modules/tolerance-guard/services/tolerance-guard.service';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -24,6 +25,7 @@ export class CompanySettingsAdminController {
         private readonly nodemailerService: NodemailerService,
         private readonly companyService: CompanyService,
         private readonly userService: UserService,
+        private readonly toleranceGuard: ToleranceGuardService,
     ) {
         // Ensure logo upload directory exists
         if (!fs.existsSync(this.logoUploadDir)) {
@@ -58,6 +60,12 @@ export class CompanySettingsAdminController {
         @Body() body: CompanySettingsRequestDto,
     ) {
         const s = await this.settingsService.update(companyId, body as any, locationId);
+        // tolerance_config is company-wide-only (always written regardless of
+        // locationId — see CompanySettingsService's own doc comment), so the
+        // cache always needs clearing here whenever it's part of the payload.
+        if ('tolerance_config' in (body as any)) {
+            await this.toleranceGuard.invalidateCache(companyId);
+        }
         return { statusCode: 200, message: 'Settings updated', data: this.settingsService.mapGet(s) };
     }
 
