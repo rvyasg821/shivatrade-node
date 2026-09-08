@@ -125,6 +125,42 @@ export function resolveBillTo(
     };
 }
 
+const CONSIGNEE_NO = new Set(['no', 'n', 'false', '0']);
+const CONSIGNEE_YES = new Set(['yes', 'y', 'true', '1', 'same', 'same as buyer']);
+
+/**
+ * Parse the shared "consignee_same_as_buyer" / "consignee_name" /
+ * "consignee_address" trio (Quotation, Sales Order, and Invoice import
+ * sheets all use this exact convention): typing "no" (or any recognised
+ * negative) or filling in a consignee name/address means "distinct from the
+ * buyer"; anything else — including a blank flag cell — means "same as
+ * buyer" and no snapshot is stored (the create/PDF path already falls back
+ * to the buyer's own details when consignee_snapshot is absent).
+ */
+export function resolveConsignee(
+    sameAsBuyerRaw: string,
+    consigneeName: string,
+    consigneeAddress: string
+): { consignee_same_as_buyer: boolean; consignee_snapshot?: any; warning?: string } {
+    const flag = (sameAsBuyerRaw || '').trim().toLowerCase();
+    if (CONSIGNEE_NO.has(flag) || consigneeName || consigneeAddress) {
+        return {
+            consignee_same_as_buyer: false,
+            consignee_snapshot: {
+                name: consigneeName || undefined,
+                address_line1: consigneeAddress || undefined,
+            },
+        };
+    }
+    if (flag && !CONSIGNEE_YES.has(flag)) {
+        return {
+            consignee_same_as_buyer: true,
+            warning: `consignee_same_as_buyer "${sameAsBuyerRaw}" not understood — treated as yes`,
+        };
+    }
+    return { consignee_same_as_buyer: true };
+}
+
 export interface ResolvedRebate {
     rebate_id: string | null;
     code: string;

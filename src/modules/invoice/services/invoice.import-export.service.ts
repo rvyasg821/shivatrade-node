@@ -25,6 +25,7 @@ import {
     parseDateCell,
     pickSheet,
     resolveBillTo,
+    resolveConsignee,
     formatAddressText,
     buildCostingCodeColumns,
 } from '@common/import/sales-doc-two-sheet.helper';
@@ -41,54 +42,70 @@ import {
 // snapshotted). port_of_loading is read from the file when given, else falls
 // back to the company profile default (same free-text-snapshot pattern as
 // port_of_discharge — no port-master id resolution on import).
+// Column order below mirrors the Invoice add form's own step order
+// (Step 1 Parties → Step 2 Invoice Details → Step 3 Items & Charges →
+// Step 4 Tax & Notes), so filling the sheet reads the same way as filling
+// the form — voucher_no / so_voucher_no / quotation_voucher_no lead since
+// they're the document's identity + linkage, ahead of every step. `status`
+// is import-only (no form equivalent) and trails at the very end.
 const HEADER_HEADERS = [
+    // Identity / linkage
     'voucher_no',
-    'invoice_type',
-    'invoice_date',
-    'due_date',
-    'customer_po_no',
     'so_voucher_no',
     'quotation_voucher_no',
+    // Step 1 — Parties
     'customer_name',
     'bill_to_address',
+    'consignee_same_as_buyer',
     'consignee_name',
     'consignee_address',
     'notify_party_name',
     'notify_party_address',
+    // Step 2 — Invoice Details
+    'invoice_type',
+    'invoice_date',
+    'due_date',
+    'customer_po_no',
+    'reference_no',
     'country_of_destination',
     'country_of_origin',
     'currency_code',
     'exchange_rate',
+    'incoterm',
+    'payment_terms',
+    // Step 3 — Items & Charges (Shipment + header totals; line items are
+    // their own sheet)
+    'mode',
+    'shipping_bill_type',
+    'bl_awb_no',
+    'shipping_bill_no',
+    'shipping_bill_date',
+    'custom_exchange_rate',
+    'pre_carriage_by',
+    'place_of_receipt',
+    'port_of_loading',
+    'port_of_discharge',
+    'place_of_delivery',
+    'total_packages',
+    'net_weight_kg',
+    'gross_weight_kg',
     'discount_total',
     'freight_charges',
     'insurance_charges',
     'other_charges',
     'advance_received',
+    // Step 4 — Tax & Notes
     'gst_route',
     'lut_no',
     'lut_date',
-    'incoterm',
-    'payment_terms',
-    'delivery_terms',
     'end_use_code',
     'preferential_agreement',
-    'mode',
-    'shipping_bill_type',
-    'shipping_bill_no',
-    'shipping_bill_date',
-    'port_of_loading',
-    'port_of_discharge',
-    'pre_carriage_by',
-    'place_of_receipt',
-    'place_of_delivery',
-    'total_packages',
-    'net_weight_kg',
-    'gross_weight_kg',
-    'bl_awb_no',
+    'delivery_terms',
     'notes_to_buyer',
     'internal_notes',
     'declaration_text',
     'terms',
+    // Import-only control (no form equivalent)
     'status',
 ];
 const LINE_FIXED = [
@@ -198,6 +215,7 @@ export class InvoiceImportExportService {
             invoice_type: 'export',
             invoice_date: '20/04/2026',
             customer_name: 'Orient Global Trading LLC',
+            consignee_same_as_buyer: 'yes',
             country_of_destination: 'United Arab Emirates',
             country_of_origin: 'India',
             currency_code: 'USD',
@@ -490,6 +508,21 @@ export class InvoiceImportExportService {
                 }
             }
 
+            // custom_exchange_rate: GST/Assessable-Value-only override, ₹
+            // per 1 unit of the invoice currency — stored AS-IS (not
+            // inverted like exchange_rate above). Optional; blank = use the
+            // invoice's own exchange_rate for GST too.
+            const customErInput = cell(raw, 'custom_exchange_rate');
+            let custom_exchange_rate: string | undefined;
+            if (customErInput) {
+                const cr = Number(customErInput);
+                if (!Number.isFinite(cr) || cr <= 0)
+                    errors.push(
+                        'custom_exchange_rate must be a positive number (₹ per 1 unit of the invoice currency)'
+                    );
+                else custom_exchange_rate = customErInput;
+            }
+
             // Customer (required).
             const customerName = cell(raw, 'customer_name');
             let customer: any;
@@ -609,14 +642,25 @@ export class InvoiceImportExportService {
                 invoice_date: dateIso || '',
                 due_date: parseDateCell(cellRawOf(raw, 'due_date')) || undefined,
                 customer_po_no: cell(raw, 'customer_po_no') || undefined,
+                reference_no: cell(raw, 'reference_no') || undefined,
                 purchase_order_id,
                 quotation_id,
                 customer_id,
                 customer_address_id,
-                consignee_snapshot: this.snap(
-                    cell(raw, 'consignee_name'),
-                    cell(raw, 'consignee_address')
-                ),
+                // Invoice has no `consignee_same_as_buyer` column (unlike
+                // Quotation/SO) — the flag only decides whether a snapshot is
+                // stored; when it resolves to "same as buyer" the snapshot
+                // stays undefined and the PDF/create path falls back to the
+                // buyer's own details, same as leaving these cells blank.
+                consignee_snapshot: (() => {
+                    const resolved = resolveConsignee(
+                        cell(raw, 'consignee_same_as_buyer'),
+                        cell(raw, 'consignee_name'),
+                        cell(raw, 'consignee_address')
+                    );
+                    if (resolved.warning) warnings.push(resolved.warning);
+                    return resolved.consignee_snapshot;
+                })(),
                 notify_party_snapshot: this.snap(
                     cell(raw, 'notify_party_name'),
                     cell(raw, 'notify_party_address')
@@ -626,6 +670,7 @@ export class InvoiceImportExportService {
                 country_of_origin: cell(raw, 'country_of_origin') || undefined,
                 currency_code,
                 exchange_rate: stored_er,
+                custom_exchange_rate,
                 discount_total: cell(raw, 'discount_total') || undefined,
                 freight_charges: cell(raw, 'freight_charges') || undefined,
                 insurance_charges: cell(raw, 'insurance_charges') || undefined,
@@ -885,11 +930,18 @@ export class InvoiceImportExportService {
                 invoice_date: isoDate(iv.invoice_date),
                 due_date: isoDate(iv.due_date),
                 customer_po_no: iv.customer_po_no || '',
+                reference_no: iv.reference_no || '',
                 so_voucher_no:
                     soVoucherById.get(iv.purchase_order_id?.toString()) || '',
                 customer_name: custNameById.get(iv.customer_id?.toString()) || '',
                 bill_to_address:
                     addrById.get(iv.customer_address_id?.toString()) || '',
+                // Invoice has no stored flag column — derived here purely
+                // for round-trip consistency with the Quotation/SO exports.
+                consignee_same_as_buyer:
+                    iv.consignee_snapshot?.name || iv.consignee_snapshot?.address_line1
+                        ? 'no'
+                        : 'yes',
                 consignee_name: iv.consignee_snapshot?.name || '',
                 consignee_address: iv.consignee_snapshot?.address_line1 || '',
                 notify_party_name: iv.notify_party_snapshot?.name || '',
@@ -899,6 +951,9 @@ export class InvoiceImportExportService {
                 country_of_origin: iv.country_of_origin || '',
                 currency_code: iv.currency_code || '',
                 exchange_rate: invRate(iv.exchange_rate),
+                // Stored/exported AS-IS (not inverted) — unlike exchange_rate,
+                // custom_exchange_rate is already ₹-per-1-unit in the DB.
+                custom_exchange_rate: iv.custom_exchange_rate || '',
                 discount_total: iv.discount_total || '',
                 freight_charges: iv.freight_charges || '',
                 insurance_charges: iv.insurance_charges || '',
