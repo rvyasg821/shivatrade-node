@@ -11,6 +11,7 @@ import { QuotationRepository } from '@modules/quotation/repository/repositories/
 import { QuotationLineRepository } from '@modules/quotation/repository/repositories/quotation-line.repository';
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
+import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { ENUM_PURCHASE_ORDER_STATUS } from '../enums/purchase-order.enum';
 import {
     parseDateCell,
@@ -30,7 +31,15 @@ import {
 // customer_po_number, expected_delivery_date, dispatched_through, remarks,
 // advance_*, and quotation_voucher_no (source link). Each line is tied to the
 // matching source quotation line (source_quotation_line_id) when a quotation is
-// linked. Bill-to mismatch → per-document error (policy A). Idempotent skip.
+// linked. Bill-to mismatch → per-document error (policy A).
+//
+// Re-import of an EXISTING voucher_no is NOT skipped for the advance_* fields
+// — those are receipt facts that can legitimately arrive/get corrected after
+// the SO was first created (mirrors the "advance stays editable on a locked
+// SO" rule in purchase-order.service.ts's update()). Nothing else about the
+// SO (customer, lines, terms, etc.) is ever touched on a re-import — only
+// advance_amount / advance_date / advance_exchange_rate /
+// advance_bank_account_no / advance_notes.
 const HEADER_HEADERS = [
     'voucher_no',
     'po_date',
@@ -53,6 +62,8 @@ const HEADER_HEADERS = [
     'remarks',
     'advance_amount',
     'advance_date',
+    'advance_exchange_rate',
+    'advance_bank_account_no',
     'advance_notes',
     'status',
 ];
@@ -78,6 +89,9 @@ interface SoHeader {
     remarks?: string;
     advance_amount?: string;
     advance_date?: string;
+    advance_exchange_rate?: string;
+    advance_bank_account_id?: string;
+    advance_bank_name?: string;
     advance_notes?: string;
     status: ENUM_PURCHASE_ORDER_STATUS;
 }
@@ -87,7 +101,9 @@ export interface SoImportDoc {
     rowNum: number;
     header: SoHeader;
     lines: ResolvedDocLine[];
-    status: 'valid_new' | 'skip' | 'error';
+    status: 'valid_new' | 'valid_update' | 'skip' | 'error';
+    // Existing SO's _id — set only when status === 'valid_update'.
+    existingId?: string;
     errors: string[];
     warnings: string[];
 }
@@ -110,7 +126,8 @@ export class PurchaseOrderImportExportService {
         private readonly quotationRepository: QuotationRepository,
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly rebateRepository: RebateRepository,
-        private readonly expenseRepository: ExpenseRepository
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly companyBankAccountRepository: CompanyBankAccountRepository
     ) {}
 
     async generateSampleExcel(companyId: string): Promise<Buffer> {
@@ -270,9 +287,27 @@ export class PurchaseOrderImportExportService {
             company_id: companyId,
             soft_delete: false,
         } as any)) as any[];
-        const existingVouchers = new Set<string>(
-            existingSo.map((s) => (s.voucher_no || '').trim().toLowerCase())
+        const existingSoByVoucher = new Map<string, any>();
+        for (const s of existingSo)
+            if (s.voucher_no)
+                existingSoByVoucher.set(
+                    (s.voucher_no || '').trim().toLowerCase(),
+                    s
+                );
+
+        // For advance_bank_account_no — matched by account NUMBER (not bank
+        // name), since one company can hold multiple accounts at the same
+        // bank; the account number is the actual unique identifier.
+        const companyBankAccounts = await this.companyBankAccountRepository.findByCompanyId(
+            companyId
         );
+        const bankAccountByNumber = new Map<string, any>();
+        for (const b of companyBankAccounts as any[])
+            if (b.account_number)
+                bankAccountByNumber.set(
+                    String(b.account_number).trim().toLowerCase(),
+                    b
+                );
 
         const parsedLines = parseLineItemsSheet(lineRows as any, {
             productByCode,
@@ -480,10 +515,50 @@ export class PurchaseOrderImportExportService {
                     (l as any).source_currency_code || currency_code,
             }));
 
-            const alreadyExists = !!voucher_no && existingVouchers.has(vkey);
+            // advance_exchange_rate — same "₹ per 1 <ccy>" human convention
+            // as the SO's own exchange_rate, stored inverted (foreign-per-₹1).
+            // Defaults to '1' (matches the entity default for a domestic /
+            // same-currency SO) when the cell is blank.
+            const advExRawInput = get(raw, 'advance_exchange_rate');
+            let advance_exchange_rate: string | undefined;
+            if (!advExRawInput) {
+                advance_exchange_rate = '1';
+            } else {
+                const aer = Number(advExRawInput);
+                if (!Number.isFinite(aer) || aer <= 0)
+                    errors.push(
+                        'advance_exchange_rate must be a positive number (₹ per 1 unit of currency)'
+                    );
+                else advance_exchange_rate = String(1 / aer);
+            }
+
+            // advance_bank_account_no — matched by account NUMBER against the
+            // company's saved bank accounts. Unmatched is a soft warning, not
+            // an error: the advance amount/date still import, just without a
+            // linked bank record.
+            const advBankNoRaw = get(raw, 'advance_bank_account_no');
+            let advance_bank_account_id: string | undefined;
+            let advance_bank_name: string | undefined;
+            if (advBankNoRaw) {
+                const match = bankAccountByNumber.get(
+                    advBankNoRaw.trim().toLowerCase()
+                );
+                if (match) {
+                    advance_bank_account_id = match._id.toString();
+                    advance_bank_name = match.bank_name || undefined;
+                } else {
+                    warnings.push(
+                        `advance_bank_account_no "${advBankNoRaw}" not found among the company's saved bank accounts — advance amount still imports, just without a linked bank record`
+                    );
+                }
+            }
+
+            const existingRow = voucher_no
+                ? existingSoByVoucher.get(vkey)
+                : undefined;
             let docStatus: SoImportDoc['status'];
             if (errors.length) docStatus = 'error';
-            else if (alreadyExists) docStatus = 'skip';
+            else if (existingRow) docStatus = 'valid_update';
             else docStatus = 'valid_new';
 
             docs.push({
@@ -515,11 +590,15 @@ export class PurchaseOrderImportExportService {
                     advance_amount: get(raw, 'advance_amount') || undefined,
                     advance_date:
                         parseDateCell(getRaw(raw, 'advance_date')) || undefined,
+                    advance_exchange_rate,
+                    advance_bank_account_id,
+                    advance_bank_name,
                     advance_notes: get(raw, 'advance_notes') || undefined,
                     status,
                 },
                 lines,
                 status: docStatus,
+                existingId: existingRow?._id?.toString(),
                 errors,
                 warnings,
             });
@@ -535,7 +614,8 @@ export class PurchaseOrderImportExportService {
         const summary = {
             total: docs.length,
             valid_new: docs.filter((d) => d.status === 'valid_new').length,
-            valid_update: 0,
+            valid_update: docs.filter((d) => d.status === 'valid_update')
+                .length,
             skipped: docs.filter((d) => d.status === 'skip').length,
             errors: docs.filter((d) => d.status === 'error').length,
             warnings: docs.reduce((n, d) => n + d.warnings.length, 0),
@@ -550,16 +630,52 @@ export class PurchaseOrderImportExportService {
         userId: string
     ): Promise<{
         created: number;
+        updated: number;
         skipped: number;
         errors: { row: number; message: string }[];
     }> {
         let created = 0;
+        let updated = 0;
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
         for (const doc of docs) {
             if (doc.status === 'skip') {
                 skipped++;
+                continue;
+            }
+            if (doc.status === 'valid_update') {
+                const h = doc.header;
+                try {
+                    if (!doc.existingId)
+                        throw new Error('Missing existing SO id');
+                    const row = await this.poService.findOneById(
+                        doc.existingId,
+                        companyId
+                    );
+                    await this.poService.update(
+                        row,
+                        {
+                            advance_amount: h.advance_amount,
+                            advance_date: h.advance_date,
+                            advance_exchange_rate: h.advance_exchange_rate,
+                            advance_bank_account_id:
+                                h.advance_bank_account_id,
+                            advance_bank_name: h.advance_bank_name,
+                            advance_notes: h.advance_notes,
+                        } as any,
+                        userId
+                    );
+                    updated++;
+                } catch (err: any) {
+                    this.logger.error(
+                        `Sales Order advance update ${doc.voucher_no} failed: ${err?.message}`
+                    );
+                    errors.push({
+                        row: doc.rowNum,
+                        message: err?.message || 'Advance update failed',
+                    });
+                }
                 continue;
             }
             if (doc.status !== 'valid_new') continue;
@@ -633,7 +749,7 @@ export class PurchaseOrderImportExportService {
                 });
             }
         }
-        return { created, skipped, errors };
+        return { created, updated, skipped, errors };
     }
 
     /** Export Sales Orders to the same two-sheet shape. */
@@ -671,6 +787,13 @@ export class PurchaseOrderImportExportService {
         )) as any[];
         for (const a of allAddrs)
             addrById.set(a._id.toString(), formatAddressText(a));
+
+        const companyBankAccounts = await this.companyBankAccountRepository.findByCompanyId(
+            companyId
+        );
+        const bankAccountById = new Map<string, string>();
+        for (const b of companyBankAccounts as any[])
+            bankAccountById.set(b._id.toString(), b.account_number || '');
 
         const [rebateMasters, expenseMasters] = await Promise.all([
             this.rebateRepository.findAll({
@@ -725,6 +848,13 @@ export class PurchaseOrderImportExportService {
                 remarks: so.remarks || '',
                 advance_amount: so.advance_amount || '',
                 advance_date: isoDate(so.advance_date),
+                // Export as ₹ per 1 <currency> (inverse of the stored rate) —
+                // same human convention as the header exchange_rate.
+                advance_exchange_rate: invRate(so.advance_exchange_rate),
+                advance_bank_account_no:
+                    bankAccountById.get(
+                        so.advance_bank_account_id?.toString()
+                    ) || '',
                 advance_notes: so.advance_notes || '',
                 status: so.status || '',
             });
