@@ -144,13 +144,12 @@ export class MigrationTradeDataSeed {
 
     // ─────────────────────────────────────────────────────────────────
     // trade:wipe-docs
-    //   Narrow wipe — only the transactional sales/procurement documents +
-    //   customers. KEEPS vendors, products, categories and masters
+    //   Narrow wipe — only the transactional sales/procurement documents.
+    //   KEEPS customers, vendors, products, categories and masters
     //   (currencies / exchange rates / expenses / rebates) intact.
     //   Deletes: leads, RFQs, quotations, sales orders, invoices, vendor POs,
-    //   GRNs, debit notes, adjustment notes, their tracking events, and
-    //   customers (+ the auto-created customer login users). Also clears the
-    //   stock_movements
+    //   GRNs, debit notes, adjustment notes, and their tracking events. Also
+    //   clears the stock_movements
     //   ledger so on-hand / Coverage "In Stock" resets to zero.
     //   PFI is intentionally NOT touched (retired / hide-only).
     //   Also clears voucher_sequences so document numbering restarts fresh.
@@ -158,7 +157,7 @@ export class MigrationTradeDataSeed {
     @Command({
         command: 'trade:wipe-docs [company]',
         describe:
-            'Delete sales docs (leads, rfq, quotation, sales orders, invoices), vendor POs, GRN, debit notes + customers — keeps vendors/products/masters. Optional [company] uuid scopes to one tenant.',
+            'Delete sales docs (leads, rfq, quotation, sales orders, invoices), vendor POs, GRN, debit notes — keeps customers/vendors/products/masters. Optional [company] uuid scopes to one tenant.',
     })
     async wipeDocs(
         @Positional({
@@ -177,18 +176,6 @@ export class MigrationTradeDataSeed {
         );
 
         await this.dataSource.transaction(async mgr => {
-            // Capture auto-created customer login users BEFORE deleting contacts.
-            const customerUsers: Array<{ user_id: string }> = await mgr.query(
-                `SELECT DISTINCT user_id FROM customer_contacts
-                 WHERE user_id IS NOT NULL AND ${scope}`
-            );
-            const customerUserIds = customerUsers
-                .map(r => r.user_id)
-                .filter(Boolean);
-            this.logger.log(
-                `  Found ${customerUserIds.length} customer-linked users to clean up`
-            );
-
             // ── Adjustment Notes (off-doc customer/vendor ledger postings) ──
             this.logger.log('━━━ Adjustment Notes ━━━');
             await this.del(mgr, 'adjustment_notes', scope);
@@ -246,30 +233,9 @@ export class MigrationTradeDataSeed {
             await this.del(mgr, 'lead_lines', scope);
             await this.del(mgr, 'leads', scope);
 
-            // ── Customers ──
-            this.logger.log('━━━ Customers ━━━');
-            await this.del(mgr, 'customer_addresses', scope);
-            await this.del(mgr, 'customer_contacts', scope);
-            await this.del(mgr, 'customers', scope);
-
             // ── Document numbering — reset so new docs start fresh ──
             this.logger.log('━━━ Voucher sequences ━━━');
             await this.del(mgr, 'voucher_sequences', scope);
-
-            // ── Auto-created customer login users ──
-            if (customerUserIds.length) {
-                this.logger.log('━━━ Auto-created customer users ━━━');
-                const placeholders = customerUserIds
-                    .map((_, i) => `$${i + 1}`)
-                    .join(',');
-                const r = await mgr.query(
-                    `DELETE FROM users WHERE _id IN (${placeholders})`,
-                    customerUserIds
-                );
-                this.logger.log(
-                    `  ✅ users (auto-created): ${r?.[1] ?? customerUserIds.length}`
-                );
-            }
         });
 
         this.logger.log('✅ Trade docs wipe complete');
