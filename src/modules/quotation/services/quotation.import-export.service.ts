@@ -15,6 +15,7 @@ import {
     parseDateCell,
     parseLineItemsSheet,
     resolveBillTo,
+    resolveConsignee,
     formatAddressText,
     pickSheet,
     LINE_ITEM_FIXED_HEADERS,
@@ -40,6 +41,7 @@ const HEADER_HEADERS = [
     'currency_code',
     'exchange_rate',
     'valid_until',
+    'reference_no',
     'payment_terms',
     'delivery_terms',
     'delivery_location',
@@ -61,6 +63,7 @@ interface QuotationHeader {
     currency_code: string;
     exchange_rate?: string;
     valid_until?: string;
+    reference_no?: string;
     payment_terms?: string;
     delivery_terms?: string;
     delivery_location?: string;
@@ -79,9 +82,6 @@ export interface QuotationImportDoc {
     errors: string[];
     warnings: string[];
 }
-
-const YES = new Set(['yes', 'y', 'true', '1', 'same', 'same as buyer']);
-const NO = new Set(['no', 'n', 'false', '0']);
 
 @Injectable()
 export class QuotationImportExportService {
@@ -117,26 +117,29 @@ export class QuotationImportExportService {
             expenseMasters as any[]
         );
 
-        const headers: Record<string, any> = {
+        // Column order comes from HEADER_HEADERS (seeded first so every
+        // column exists even without a sample value) — do not hardcode the
+        // order here again, or it silently drifts out of sync with the
+        // array whenever one is reordered/extended and the other isn't.
+        const headers: Record<string, any> = {};
+        for (const h of HEADER_HEADERS) headers[h] = '';
+        Object.assign(headers, {
             voucher_no: 'STIPL/QT0001/2026-27',
             quotation_date: '15/04/2026',
             customer_name: 'Orient Global Trading LLC',
-            bill_to_address: '',
             consignee_same_as_buyer: 'yes',
-            consignee_name: '',
-            consignee_address: '',
             currency_code: 'USD',
             exchange_rate: '83', // ₹ per 1 USD (human-friendly, like the UI)
             valid_until: '15/05/2026',
+            reference_no: 'STIPL/LD/0001/2026-27',
             payment_terms: '100% advance',
             delivery_terms: 'FOB',
-            delivery_location: '',
             lead_voucher_no: 'STIPL/RQ/0001/2026-27',
             freight_total: '50', // in the quote's currency (USD)
             notes_to_client: 'Prices valid 30 days',
             internal_notes: 'Backfilled from paper quote',
             status: 'sent',
-        };
+        });
         // One example line; each rebate/expense code is its own column (value =
         // the per-line amount/percent). First of each is pre-filled as a hint.
         const line1: Record<string, any> = {
@@ -335,22 +338,14 @@ export class QuotationImportExportService {
             }
 
             // Consignee — same-as-buyer default; else snapshot from the sheet.
-            const cSameRaw = get(raw, 'consignee_same_as_buyer').toLowerCase();
-            const consigneeName = get(raw, 'consignee_name');
-            const consigneeAddress = get(raw, 'consignee_address');
-            let consignee_same_as_buyer = true;
-            let consignee_snapshot: any;
-            if (NO.has(cSameRaw) || consigneeName || consigneeAddress) {
-                consignee_same_as_buyer = false;
-                consignee_snapshot = {
-                    name: consigneeName || undefined,
-                    address_line1: consigneeAddress || undefined,
-                };
-            } else if (cSameRaw && !YES.has(cSameRaw)) {
-                warnings.push(
-                    `consignee_same_as_buyer "${cSameRaw}" not understood — treated as yes`
-                );
-            }
+            const consigneeResolved = resolveConsignee(
+                get(raw, 'consignee_same_as_buyer'),
+                get(raw, 'consignee_name'),
+                get(raw, 'consignee_address')
+            );
+            const consignee_same_as_buyer = consigneeResolved.consignee_same_as_buyer;
+            const consignee_snapshot = consigneeResolved.consignee_snapshot;
+            if (consigneeResolved.warning) warnings.push(consigneeResolved.warning);
 
             // Optional source lead.
             let lead_id: string | undefined;
@@ -439,6 +434,7 @@ export class QuotationImportExportService {
                     exchange_rate: stored_er,
                     valid_until:
                         parseDateCell(getRaw(raw, 'valid_until')) || undefined,
+                    reference_no: get(raw, 'reference_no') || undefined,
                     payment_terms: get(raw, 'payment_terms') || undefined,
                     delivery_terms: get(raw, 'delivery_terms') || undefined,
                     delivery_location:
@@ -504,6 +500,7 @@ export class QuotationImportExportService {
                         consignee_snapshot: h.consignee_snapshot,
                         quotation_date: h.quotation_date,
                         valid_until: h.valid_until,
+                        reference_no: h.reference_no,
                         currency_code: h.currency_code,
                         exchange_rate: h.exchange_rate,
                         freight_total: h.freight_total,
@@ -628,6 +625,7 @@ export class QuotationImportExportService {
                 // Export as ₹ per 1 <currency> (inverse of the stored rate).
                 exchange_rate: invRate(q.exchange_rate),
                 valid_until: isoDate(q.valid_until),
+                reference_no: q.reference_no || '',
                 payment_terms: q.payment_terms || '',
                 delivery_terms: q.delivery_terms || '',
                 delivery_location: q.delivery_location || '',
