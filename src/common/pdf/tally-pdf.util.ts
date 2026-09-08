@@ -99,6 +99,22 @@ export const docDate = (v?: string | null | Date): string => {
     return '';
 };
 
+/** Human label for the shared Sea-FCL/Sea-LCL/Air/Air Courier mode codes
+ * (same values as `ENUM_SHIPPING_MODE` and the FE's `SHIPPING_MODE_OPTIONS`).
+ * Sales Order's "Dispatched Through" and Invoice's "Mode" both store these
+ * codes; anything not matching a known code (e.g. an older SO's retired
+ * free-text value like "By Sea") is printed as-is. */
+export const shipmentModeLabel = (v?: string | null): string => {
+    const labels: Record<string, string> = {
+        sea_fcl: 'Sea - FCL',
+        sea_lcl: 'Sea - LCL',
+        air: 'Air',
+        air_courier: 'Air Courier',
+    };
+    if (!v) return '';
+    return labels[v] || v;
+};
+
 /** Multi-line address block from structured parts (blank parts skipped). */
 export function joinAddress(a: {
     address_line1?: string;

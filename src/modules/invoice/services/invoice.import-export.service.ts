@@ -38,7 +38,9 @@ import {
 // invoice imports WITHOUT its Sales Order. Preserves voucher_no; runs SILENT;
 // idempotent-skip. When status ≥ issued the importer CREATES a draft then calls
 // issue() in import mode (voucher preserved, stock NOT moved, grand_total_inr
-// snapshotted). port_of_loading comes from the company profile.
+// snapshotted). port_of_loading is read from the file when given, else falls
+// back to the company profile default (same free-text-snapshot pattern as
+// port_of_discharge — no port-master id resolution on import).
 const HEADER_HEADERS = [
     'voucher_no',
     'invoice_type',
@@ -74,6 +76,7 @@ const HEADER_HEADERS = [
     'shipping_bill_type',
     'shipping_bill_no',
     'shipping_bill_date',
+    'port_of_loading',
     'port_of_discharge',
     'pre_carriage_by',
     'place_of_receipt',
@@ -203,6 +206,7 @@ export class InvoiceImportExportService {
             incoterm: 'FOB',
             mode: 'sea_fcl',
             shipping_bill_type: 'rodtep',
+            port_of_loading: 'Mundra',
             port_of_discharge: 'Jebel Ali',
             status: 'issued',
         });
@@ -642,6 +646,9 @@ export class InvoiceImportExportService {
                 shipping_bill_date:
                     parseDateCell(cellRawOf(raw, 'shipping_bill_date')) ||
                     undefined,
+                port_of_loading_snapshot: cell(raw, 'port_of_loading')
+                    ? { name: cell(raw, 'port_of_loading') }
+                    : undefined,
                 port_of_discharge_snapshot: cell(raw, 'port_of_discharge')
                     ? { name: cell(raw, 'port_of_discharge') }
                     : undefined,
@@ -709,12 +716,14 @@ export class InvoiceImportExportService {
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
-        // port_of_loading comes from the company profile (default).
+        // port_of_loading: use the file's value when the row provided one,
+        // else fall back to the company profile default.
         const company: any = await this.companyRepository
             .findOneById(companyId)
             .catch(() => null);
-        const polId = company?.default_port_of_loading_id || undefined;
-        const polSnap = company?.default_port_of_loading_snapshot || undefined;
+        const defaultPolId = company?.default_port_of_loading_id || undefined;
+        const defaultPolSnap =
+            company?.default_port_of_loading_snapshot || undefined;
 
         const importCtx: ImportContext = { silent: true };
         for (const doc of docs) {
@@ -758,10 +767,13 @@ export class InvoiceImportExportService {
             }
             if (doc.docStatus !== 'valid_new') continue;
             try {
+                const hasFilePol = !!doc.header.port_of_loading_snapshot;
                 const payload = {
                     ...doc.header,
-                    port_of_loading_id: polId,
-                    port_of_loading_snapshot: polSnap,
+                    port_of_loading_id: hasFilePol ? undefined : defaultPolId,
+                    port_of_loading_snapshot: hasFilePol
+                        ? doc.header.port_of_loading_snapshot
+                        : defaultPolSnap,
                     lines: doc.lines.map((l) => {
                         const { _productId, ...line } = l;
                         return line;
@@ -904,6 +916,7 @@ export class InvoiceImportExportService {
                 shipping_bill_type: iv.shipping_bill_type || '',
                 shipping_bill_no: iv.shipping_bill_no || '',
                 shipping_bill_date: isoDate(iv.shipping_bill_date),
+                port_of_loading: iv.port_of_loading_snapshot?.name || '',
                 port_of_discharge: iv.port_of_discharge_snapshot?.name || '',
                 pre_carriage_by: iv.pre_carriage_by || '',
                 place_of_receipt: iv.place_of_receipt || '',

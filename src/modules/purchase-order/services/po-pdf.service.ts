@@ -24,6 +24,7 @@ import {
     fmtRate,
     docDate,
     joinAddress,
+    shipmentModeLabel,
     buildTallyFooterTemplate as buildFooterTemplate,
 } from '@common/pdf/tally-pdf.util';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
@@ -537,7 +538,10 @@ function buildPoExcelSections(ctx: PoPdfContext): DocSection[] {
         (po as any).customer_po_number || po.voucher_no || '-',
     ]);
     metaPairs.push(['Other References', otherRef || '-']);
-    metaPairs.push(['Dispatched through', (po as any).dispatched_through || '-']);
+    metaPairs.push([
+        'Dispatched through',
+        shipmentModeLabel((po as any).dispatched_through) || '-',
+    ]);
     metaPairs.push(['Destination', consigneeCountry || '-']);
     metaPairs.push(['Country', consigneeCountry || '-']);
     metaPairs.push(['Terms of Delivery', po.delivery_terms || '-']);
@@ -899,7 +903,7 @@ function buildPoHtml(ctx: PoPdfContext): string {
           <td class="meta">${meta('Other References', otherRef)}</td>
         </tr>
         <tr>
-          <td class="meta">${meta('Dispatched through', (po as any).dispatched_through)}</td>
+          <td class="meta">${meta('Dispatched through', shipmentModeLabel((po as any).dispatched_through))}</td>
           <td class="meta">${meta('Destination', consigneeCountry)}</td>
         </tr>
         <tr>

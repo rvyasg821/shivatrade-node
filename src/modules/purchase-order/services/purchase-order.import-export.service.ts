@@ -144,7 +144,9 @@ export class PurchaseOrderImportExportService {
             customer_po_number: 'PO-778',
             payment_terms: '100% advance',
             delivery_terms: 'FOB',
-            dispatched_through: 'Sea',
+            // sea_fcl / sea_lcl / air / air_courier — same codes as the FE
+            // dropdown and the Invoice's Mode field, so it carries forward.
+            dispatched_through: 'sea_fcl',
             freight_total: '50', // in the SO's currency (USD)
             internal_notes: 'Backfilled from paper SO',
             remarks: '1 100% advance along with PO.\n2 Partial shipment allowed.',
