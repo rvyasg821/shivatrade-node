@@ -59,6 +59,7 @@ interface QuotationHeader {
     customer_address_id?: string;
     consignee_same_as_buyer: boolean;
     consignee_snapshot?: any;
+    consignee_id?: string;
     lead_id?: string;
     currency_code: string;
     exchange_rate?: string;
@@ -341,10 +342,12 @@ export class QuotationImportExportService {
             const consigneeResolved = resolveConsignee(
                 get(raw, 'consignee_same_as_buyer'),
                 get(raw, 'consignee_name'),
-                get(raw, 'consignee_address')
+                get(raw, 'consignee_address'),
+                customerByName
             );
             const consignee_same_as_buyer = consigneeResolved.consignee_same_as_buyer;
             const consignee_snapshot = consigneeResolved.consignee_snapshot;
+            const consignee_id = consigneeResolved.consignee_id;
             if (consigneeResolved.warning) warnings.push(consigneeResolved.warning);
 
             // Optional source lead.
@@ -429,6 +432,7 @@ export class QuotationImportExportService {
                     customer_address_id,
                     consignee_same_as_buyer,
                     consignee_snapshot,
+                    consignee_id,
                     lead_id,
                     currency_code,
                     exchange_rate: stored_er,
@@ -498,6 +502,7 @@ export class QuotationImportExportService {
                         customer_address_id: h.customer_address_id,
                         consignee_same_as_buyer: h.consignee_same_as_buyer,
                         consignee_snapshot: h.consignee_snapshot,
+                        consignee_id: h.consignee_id,
                         quotation_date: h.quotation_date,
                         valid_until: h.valid_until,
                         reference_no: h.reference_no,

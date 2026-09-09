@@ -140,16 +140,33 @@ const CONSIGNEE_YES = new Set(['yes', 'y', 'true', '1', 'same', 'same as buyer']
 export function resolveConsignee(
     sameAsBuyerRaw: string,
     consigneeName: string,
-    consigneeAddress: string
-): { consignee_same_as_buyer: boolean; consignee_snapshot?: any; warning?: string } {
+    consigneeAddress: string,
+    // Optional: the same customer-name → record map the header customer_name
+    // lookup already builds. When the consignee's name matches an existing
+    // Customer record, we also set consignee_id — the Edit form's Consignee
+    // picker is an EntitySearchSelect bound to a real customer id, so a
+    // snapshot-only consignee (the only thing this function used to return)
+    // displays correctly on the PDF but shows blank there. The snapshot is
+    // still kept either way so the PDF/unmatched case keep working.
+    customerByName?: Map<string, any>
+): {
+    consignee_same_as_buyer: boolean;
+    consignee_snapshot?: any;
+    consignee_id?: string;
+    warning?: string;
+} {
     const flag = (sameAsBuyerRaw || '').trim().toLowerCase();
     if (CONSIGNEE_NO.has(flag) || consigneeName || consigneeAddress) {
+        const match = consigneeName
+            ? customerByName?.get(consigneeName.trim().toLowerCase())
+            : undefined;
         return {
             consignee_same_as_buyer: false,
             consignee_snapshot: {
                 name: consigneeName || undefined,
                 address_line1: consigneeAddress || undefined,
             },
+            consignee_id: match ? match._id.toString() : undefined,
         };
     }
     if (flag && !CONSIGNEE_YES.has(flag)) {
@@ -251,7 +268,13 @@ export function parseLineItemsSheet(
         if (!byVoucher.has(vkey)) byVoucher.set(vkey, []);
 
         const productCode = cell(raw, 'product_code');
-        if (!productCode) continue;
+        if (!productCode) {
+            // Previously silently dropped — a blank code vanished the whole
+            // line with no error, surfacing only as a misleading top-level
+            // "no line items found" on the voucher. Always flag it instead.
+            pushErr(vkey, `LineItems row ${rowNum}: product_code is required`);
+            continue;
+        }
         const product = maps.productByCode.get(productCode.toLowerCase());
         if (!product) {
             pushErr(

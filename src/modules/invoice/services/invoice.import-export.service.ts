@@ -636,6 +636,14 @@ export class InvoiceImportExportService {
             else if (alreadyExists) docStatus = 'valid_update';
             else docStatus = 'valid_new';
 
+            const consigneeResolved = resolveConsignee(
+                cell(raw, 'consignee_same_as_buyer'),
+                cell(raw, 'consignee_name'),
+                cell(raw, 'consignee_address'),
+                customerByName
+            );
+            if (consigneeResolved.warning) warnings.push(consigneeResolved.warning);
+
             // Assemble the create payload (header).
             const header: any = {
                 invoice_type: invoice_type || undefined,
@@ -652,15 +660,8 @@ export class InvoiceImportExportService {
                 // stored; when it resolves to "same as buyer" the snapshot
                 // stays undefined and the PDF/create path falls back to the
                 // buyer's own details, same as leaving these cells blank.
-                consignee_snapshot: (() => {
-                    const resolved = resolveConsignee(
-                        cell(raw, 'consignee_same_as_buyer'),
-                        cell(raw, 'consignee_name'),
-                        cell(raw, 'consignee_address')
-                    );
-                    if (resolved.warning) warnings.push(resolved.warning);
-                    return resolved.consignee_snapshot;
-                })(),
+                consignee_snapshot: consigneeResolved.consignee_snapshot,
+                consignee_id: consigneeResolved.consignee_id,
                 notify_party_snapshot: this.snap(
                     cell(raw, 'notify_party_name'),
                     cell(raw, 'notify_party_address')
