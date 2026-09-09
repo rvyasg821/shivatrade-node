@@ -75,6 +75,7 @@ interface SoHeader {
     customer_address_id?: string;
     consignee_same_as_buyer: boolean;
     consignee_snapshot?: any;
+    consignee_id?: string;
     quotation_id?: string;
     currency_code: string;
     exchange_rate?: string;
@@ -424,10 +425,12 @@ export class PurchaseOrderImportExportService {
             const consigneeResolved = resolveConsignee(
                 get(raw, 'consignee_same_as_buyer'),
                 get(raw, 'consignee_name'),
-                get(raw, 'consignee_address')
+                get(raw, 'consignee_address'),
+                customerByName
             );
             const consignee_same_as_buyer = consigneeResolved.consignee_same_as_buyer;
             const consignee_snapshot = consigneeResolved.consignee_snapshot;
+            const consignee_id = consigneeResolved.consignee_id;
             if (consigneeResolved.warning) warnings.push(consigneeResolved.warning);
 
             // currency / exchange — sheet wins, else inherit the quotation.
@@ -571,6 +574,7 @@ export class PurchaseOrderImportExportService {
                     customer_address_id,
                     consignee_same_as_buyer,
                     consignee_snapshot,
+                    consignee_id,
                     quotation_id,
                     currency_code,
                     exchange_rate: stored_er,
@@ -688,6 +692,7 @@ export class PurchaseOrderImportExportService {
                         customer_address_id: h.customer_address_id,
                         consignee_same_as_buyer: h.consignee_same_as_buyer,
                         consignee_snapshot: h.consignee_snapshot,
+                        consignee_id: h.consignee_id,
                         quotation_id: h.quotation_id,
                         po_date: h.po_date,
                         expected_delivery_date: h.expected_delivery_date,
