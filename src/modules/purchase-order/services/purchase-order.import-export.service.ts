@@ -35,13 +35,22 @@ import {
 // matching source quotation line (source_quotation_line_id) when a quotation is
 // linked. Bill-to mismatch → per-document error (policy A).
 //
-// Re-import of an EXISTING voucher_no is NOT skipped for the advance_* fields
-// — those are receipt facts that can legitimately arrive/get corrected after
-// the SO was first created (mirrors the "advance stays editable on a locked
-// SO" rule in purchase-order.service.ts's update()). Nothing else about the
-// SO (customer, lines, terms, etc.) is ever touched on a re-import — only
-// advance_amount / advance_date / advance_exchange_rate /
-// advance_bank_account_no / advance_notes.
+// Re-import of an EXISTING voucher_no is a FULL update (2026-09-09): every
+// header field AND every line item is replaced from the sheet, not just the
+// advance_* facts. Lines are matched to existing lines by product_id
+// (replaceLines()'s own matching) — safe because voucher+product_code is a
+// verified-unique pair in the client's real data; a duplicate product on one
+// voucher would make the match ambiguous. A locked (non-draft) SO is
+// reverted to draft, updated, then re-locked to whatever status the sheet
+// specifies, all with `exactTotal: true` so a historical import's total
+// matches the client's own books exactly rather than getting the usual
+// whole-currency-unit rounding (see recompute()'s `exactTotal` param).
+// Downstream documents (POV/GRN/Invoice) already generated off a line are
+// NOT specially protected here beyond replaceLines()'s existing guard
+// (removing a POV-referenced line is blocked) — an edit to that line's
+// price/qty that keeps the same product WILL succeed and can leave the
+// downstream document disagreeing with its source SO. Accepted trade-off,
+// not a bug — see 2026-09-09 chat log.
 const HEADER_HEADERS = [
     'voucher_no',
     'po_date',
@@ -664,13 +673,36 @@ export class PurchaseOrderImportExportService {
                 try {
                     if (!doc.existingId)
                         throw new Error('Missing existing SO id');
-                    const row = await this.poService.findOneById(
+                    let row = await this.poService.findOneById(
                         doc.existingId,
                         companyId
                     );
+                    // Full re-import update: every header field + lines get
+                    // replaced from the sheet (not just advance facts).
+                    // Requires the SO to be unlocked first — a locked
+                    // (non-draft) record only accepts the advance-fields
+                    // subset (see update()'s allowedKeys) — so this is ONE
+                    // call reverting to draft AND applying every other
+                    // field/line change together, then a second call
+                    // re-applies whatever status the sheet specifies.
+                    // `lines` matches existing lines by product_id
+                    // (replaceLines()) — safe because voucher+product_code
+                    // is a verified-unique pair in this data (2026-09-09).
                     await this.poService.update(
                         row,
                         {
+                            status: ENUM_PURCHASE_ORDER_STATUS.DRAFT,
+                            customer_id: h.customer_id,
+                            customer_address_id: h.customer_address_id,
+                            consignee_same_as_buyer:
+                                h.consignee_same_as_buyer,
+                            consignee_snapshot: h.consignee_snapshot,
+                            consignee_id: h.consignee_id,
+                            quotation_id: h.quotation_id,
+                            po_date: h.po_date,
+                            expected_delivery_date: h.expected_delivery_date,
+                            customer_po_number: h.customer_po_number,
+                            reference_no: h.reference_no,
                             advance_amount: h.advance_amount,
                             advance_date: h.advance_date,
                             advance_exchange_rate: h.advance_exchange_rate,
@@ -678,17 +710,59 @@ export class PurchaseOrderImportExportService {
                                 h.advance_bank_account_id,
                             advance_bank_name: h.advance_bank_name,
                             advance_notes: h.advance_notes,
+                            currency_code: h.currency_code,
+                            exchange_rate: h.exchange_rate,
+                            freight_total: h.freight_total,
+                            payment_terms: h.payment_terms,
+                            delivery_terms: h.delivery_terms,
+                            dispatched_through: h.dispatched_through,
+                            internal_notes: h.internal_notes,
+                            remarks: h.remarks,
+                            lines: doc.lines.map((l) => ({
+                                product_id: l.product_id,
+                                vendor_id: l.vendor_id,
+                                source_quotation_line_id: (l as any)
+                                    .source_quotation_line_id,
+                                qty: l.qty,
+                                unit: l.unit,
+                                unit_price: l.unit_price,
+                                source_currency_code: (l as any)
+                                    .source_currency_code,
+                                discount_pct: l.discount_pct,
+                                tax_pct: l.tax_pct,
+                                margin_pct: l.margin_pct,
+                                part_no: l.part_no,
+                                hsn_code: l.hs_code,
+                                description: l.description,
+                                customer_reference: l.customer_reference,
+                                net_weight_kg: l.net_weight_kg,
+                                gross_weight_kg: l.gross_weight_kg,
+                                package_count: l.package_count,
+                                product_rebates_snapshot:
+                                    l.product_rebates_snapshot,
+                                product_expenses_snapshot:
+                                    l.product_expenses_snapshot,
+                            })),
                         } as any,
+                        userId
+                    );
+                    row = await this.poService.findOneById(
+                        doc.existingId,
+                        companyId
+                    );
+                    await this.poService.update(
+                        row,
+                        { status: h.status, exactTotal: true } as any,
                         userId
                     );
                     updated++;
                 } catch (err: any) {
                     this.logger.error(
-                        `Sales Order advance update ${doc.voucher_no} failed: ${err?.message}`
+                        `Sales Order update ${doc.voucher_no} failed: ${err?.message}`
                     );
                     errors.push({
                         row: doc.rowNum,
-                        message: err?.message || 'Advance update failed',
+                        message: err?.message || 'Update failed',
                     });
                 }
                 continue;
@@ -752,6 +826,7 @@ export class PurchaseOrderImportExportService {
                         voucher_no: doc.voucher_no,
                         status: h.status,
                         silent: true,
+                        exactTotal: true,
                     }
                 );
                 created++;

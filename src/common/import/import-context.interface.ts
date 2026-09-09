@@ -18,6 +18,15 @@ export interface ImportContext {
      * login-user provisioning, uniqueness emails, notification hooks.
      */
     silent?: boolean;
+
+    /**
+     * Skip the whole-currency-unit rounding a live create/update normally
+     * applies to the grand total (see PurchaseOrderService.recompute's
+     * `exactTotal` param) — a historical import wants the document to match
+     * the client's own books exactly, not rounded like a fresh commercial
+     * document. Currently only honoured by Sales Order create/update.
+     */
+    exactTotal?: boolean;
 }
 
 /** Convenience guard — true when a create call is running in import mode. */

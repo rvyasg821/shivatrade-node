@@ -392,7 +392,7 @@ export class PurchaseOrderService {
             data.lines,
             header.currency_code
         );
-        await this.recompute(header._id.toString(), companyId);
+        await this.recompute(header._id.toString(), companyId, !!ctx?.exactTotal);
 
         this.logger.log(`PO created: ${header._id} (${voucher_no})`);
         return this.poRepository.findOneById(header._id.toString());
