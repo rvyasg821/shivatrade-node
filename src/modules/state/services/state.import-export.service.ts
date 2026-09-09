@@ -17,6 +17,8 @@ import { ENUM_STATE_STATUS } from '../enums/state.enum';
 import { CountryRepository } from '@modules/country/repository/repositories/country.repository';
 import { CountryDoc } from '@modules/country/repository/entities/country.entity';
 import { ENUM_COUNTRY_STATUS } from '@modules/country/enums/country.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * State Excel import/export.
@@ -66,7 +68,9 @@ export class StateImportExportService {
         private readonly fileService: FileService,
         private readonly stateService: StateService,
         private readonly stateRepository: StateRepository,
-        private readonly countryRepository: CountryRepository
+        private readonly countryRepository: CountryRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -289,7 +293,13 @@ export class StateImportExportService {
                         status: row.data.status,
                     } as any),
             },
-            this.logger
+            this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'StateEntity',
+                label: 'State import',
+            }
         );
     }
 }

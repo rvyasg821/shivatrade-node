@@ -23,6 +23,7 @@ import { RfqRepositoryModule } from '@modules/rfq/repository/rfq.repository.modu
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -42,6 +43,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         PurchaseOrderRepositoryModule,
         RfqRepositoryModule,
         CompanySettingsRepositoryModule,
+        TrackingModule,
     ],
     providers: [QuotationService, QuotationImportExportService],
     exports: [

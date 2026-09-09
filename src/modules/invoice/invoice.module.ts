@@ -24,6 +24,7 @@ import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/reposit
 // Stock ledger (Goods Out) — invoice issue/cancel post sale_out / sale_reversal.
 import { InventoryModule } from '@modules/inventory/inventory.module';
 import { CurrencyModule } from '@modules/currency/currency.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 /**
  * Phase 1 - Export Commercial Invoice.
@@ -54,6 +55,7 @@ import { CurrencyModule } from '@modules/currency/currency.module';
         // there is no cycle with AdjustmentNoteModule (which imports this one).
         AdjustmentNoteRepositoryModule,
         CurrencyModule,
+        TrackingModule,
     ],
     providers: [
         InvoiceService,

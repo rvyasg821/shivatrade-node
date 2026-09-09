@@ -8,9 +8,10 @@ import { UserModule } from '@modules/user/user.module';
 import { RoleModule } from '@modules/role/role.module';
 import { AuthModule } from '@modules/auth/auth.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
-    imports: [CustomerRepositoryModule, UserModule, RoleModule, AuthModule, DependencyCheckModule, CreatorScopeModule],
+    imports: [CustomerRepositoryModule, UserModule, RoleModule, AuthModule, DependencyCheckModule, CreatorScopeModule, TrackingModule],
     providers: [CustomerService, CustomerImportExportService],
     exports: [
         CustomerRepositoryModule,

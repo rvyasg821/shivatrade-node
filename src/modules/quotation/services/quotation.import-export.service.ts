@@ -11,6 +11,8 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { ENUM_QUOTATION_STATUS } from '../enums/quotation.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import {
     parseDateCell,
     parseLineItemsSheet,
@@ -99,7 +101,9 @@ export class QuotationImportExportService {
         private readonly productRepository: ProductRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly rebateRepository: RebateRepository,
-        private readonly expenseRepository: ExpenseRepository
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     async generateSampleExcel(companyId: string): Promise<Buffer> {
@@ -486,6 +490,8 @@ export class QuotationImportExportService {
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
+        this.requestContext.suppressAudit();
+
         for (const doc of docs) {
             if (doc.status === 'skip') {
                 skipped++;
@@ -555,6 +561,17 @@ export class QuotationImportExportService {
                 });
             }
         }
+
+        if (created) {
+            this.auditLogService.recordSummary({
+                entity_name: 'QuotationEntity',
+                entity_label: `Quotation import — ${created} quotation(s)`,
+                summary: { created, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, skipped, errors };
     }
 

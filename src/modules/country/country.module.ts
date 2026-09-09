@@ -7,6 +7,7 @@ import { FileModule } from '@common/file/file.module';
 import { CountryAdminController } from '@modules/country/controllers/country.admin.controller';
 import { StateRepositoryModule } from '@modules/state/repository/state.repository.module';
 import { CityRepositoryModule } from '@modules/city/repository/city.repository.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 /**
  * The state/city REPOSITORY modules are imported for the delete guard — the
@@ -32,6 +33,7 @@ import { CityRepositoryModule } from '@modules/city/repository/city.repository.m
         StateRepositoryModule,
         CityRepositoryModule,
         FileModule.forRoot(),
+        TrackingModule,
     ],
 })
 export class CountryModule {}

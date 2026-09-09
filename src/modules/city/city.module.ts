@@ -7,6 +7,7 @@ import { FileModule } from '@common/file/file.module';
 import { CityAdminController } from './controllers/city.admin.controller';
 import { StateModule } from '@modules/state/state.module';
 import { CountryRepositoryModule } from '@modules/country/repository/country.repository.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 /**
  * Imports StateModule (for StateSeedService, so the seed chain runs in order)
@@ -19,6 +20,7 @@ import { CountryRepositoryModule } from '@modules/country/repository/country.rep
         StateModule,
         CountryRepositoryModule,
         FileModule.forRoot(),
+        TrackingModule,
     ],
     providers: [CityService, CitySeedService, CityImportExportService],
     exports: [CityRepositoryModule, CityService, CityImportExportService],

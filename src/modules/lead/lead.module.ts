@@ -15,6 +15,7 @@ import { CompanyRepositoryModule } from '@modules/company/repository/company.rep
 import { QuotationRepositoryModule } from '@modules/quotation/repository/quotation.repository.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -28,6 +29,7 @@ import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module'
         QuotationRepositoryModule,
         DependencyCheckModule,
         CreatorScopeModule,
+        TrackingModule,
     ],
     providers: [LeadService, LeadImportExportService, LeadActivityService],
     exports: [

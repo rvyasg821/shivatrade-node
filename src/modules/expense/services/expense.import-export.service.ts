@@ -13,6 +13,8 @@ import {
 import { ExpenseService } from './expense.service';
 import { ExpenseRepository } from '../repository/repositories/expense.repository';
 import { ENUM_EXPENSE_STATUS, ENUM_EXPENSE_TYPE } from '../enums/expense.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * Expense Excel import/export — mirror of the Rebate importer. An expense is a
@@ -63,7 +65,9 @@ export class ExpenseImportExportService {
     constructor(
         private readonly fileService: FileService,
         private readonly expenseService: ExpenseService,
-        private readonly expenseRepository: ExpenseRepository
+        private readonly expenseRepository: ExpenseRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -268,7 +272,15 @@ export class ExpenseImportExportService {
                         userId
                     ),
             },
-            this.logger
+            this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'ExpenseEntity',
+                label: 'Expense import',
+                companyId,
+                userId,
+            }
         );
     }
 }

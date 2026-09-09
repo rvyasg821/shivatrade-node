@@ -17,6 +17,7 @@ import { DocumentModule } from '@modules/document/document.module';
 import { ContractModule } from '@modules/contract/contract.module';
 import { CompanyModule } from '@modules/company/company.module';
 import { SessionModule } from '@modules/session/session.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -34,6 +35,7 @@ import { SessionModule } from '@modules/session/session.module';
         forwardRef(() => ContractModule),
         forwardRef(() => CompanyModule),
         SessionModule,
+        TrackingModule,
     ],
     providers: [
         EmployeeService,

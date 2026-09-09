@@ -9,6 +9,8 @@ import { CompanySettingsService } from '@modules/company-settings/services/compa
 import { CompanyLookupService } from '@modules/company-lookup/services/company-lookup.service';
 import { ENUM_USER_SIGN_UP_FROM } from '@modules/user/enums/user.enum';
 import { EnhancedEmailService } from '@modules/email/services/enhanced-email.service';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 const CSV_HEADERS = [
     // Basic
@@ -84,6 +86,8 @@ export class EmployeeImportExportService {
         private readonly companySettingsService: CompanySettingsService,
         private readonly companyLookupService: CompanyLookupService,
         private readonly emailService: EnhancedEmailService,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService,
     ) {}
 
     /**
@@ -588,6 +592,8 @@ export class EmployeeImportExportService {
         let updated = 0;
         const errors: { row: number; message: string }[] = [];
 
+        this.requestContext.suppressAudit();
+
         for (const row of rows) {
             if (row.status === 'error') continue;
 
@@ -690,6 +696,16 @@ export class EmployeeImportExportService {
                 this.logger.error(`Import row ${row.rowNum} failed: ${err.message}`);
                 errors.push({ row: row.rowNum, message: err.message });
             }
+        }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'EmployeeEntity',
+                entity_label: `Employee import — ${created + updated} employee(s)`,
+                summary: { created, updated, failed: errors.length },
+                company_id: companyId,
+                user_id: adminUserId,
+            });
         }
 
         return { created, updated, errors };

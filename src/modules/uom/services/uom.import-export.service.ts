@@ -13,6 +13,8 @@ import {
 import { UomService } from './uom.service';
 import { UomRepository } from '../repository/repositories/uom.repository';
 import { ENUM_UOM_STATUS } from '../enums/uom.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * UOM Excel import/export — same shape as the Category one, with two
@@ -76,7 +78,9 @@ export class UomImportExportService {
     constructor(
         private readonly fileService: FileService,
         private readonly uomService: UomService,
-        private readonly uomRepository: UomRepository
+        private readonly uomRepository: UomRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -269,7 +273,13 @@ export class UomImportExportService {
                         status: row.data.status,
                     }),
             },
-            this.logger
+            this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'UomEntity',
+                label: 'UOM import',
+            }
         );
     }
 }

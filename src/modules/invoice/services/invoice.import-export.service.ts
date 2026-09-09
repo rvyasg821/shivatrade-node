@@ -13,6 +13,8 @@ import { QuotationRepository } from '@modules/quotation/repository/repositories/
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { CompanyRepository } from '@modules/company/repository/repositories/company.repository';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import {
     ENUM_INVOICE_STATUS,
     ENUM_INVOICE_TYPE,
@@ -189,7 +191,9 @@ export class InvoiceImportExportService {
         private readonly quotationRepository: QuotationRepository,
         private readonly rebateRepository: RebateRepository,
         private readonly expenseRepository: ExpenseRepository,
-        private readonly companyRepository: CompanyRepository
+        private readonly companyRepository: CompanyRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     async generateSampleExcel(companyId: string): Promise<Buffer> {
@@ -772,6 +776,7 @@ export class InvoiceImportExportService {
             company?.default_port_of_loading_snapshot || undefined;
 
         const importCtx: ImportContext = { silent: true };
+        this.requestContext.suppressAudit();
         for (const doc of docs) {
             if (doc.docStatus === 'skip') {
                 skipped++;
@@ -863,6 +868,17 @@ export class InvoiceImportExportService {
                 });
             }
         }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'InvoiceEntity',
+                entity_label: `Invoice import — ${created + updated} invoice(s)`,
+                summary: { created, updated, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, updated, skipped, errors };
     }
 
@@ -1234,6 +1250,7 @@ export class InvoiceImportExportService {
         let created = 0;
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
+        this.requestContext.suppressAudit();
         for (const r of rows) {
             if (r.status === 'skip') {
                 skipped++;
@@ -1263,6 +1280,17 @@ export class InvoiceImportExportService {
                 });
             }
         }
+
+        if (created) {
+            this.auditLogService.recordSummary({
+                entity_name: 'InvoicePaymentEntity',
+                entity_label: `Receipt import — ${created} receipt(s)`,
+                summary: { created, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, skipped, errors };
     }
 

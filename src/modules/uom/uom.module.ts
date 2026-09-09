@@ -6,6 +6,7 @@ import { UomImportExportService } from './services/uom.import-export.service';
 import { FileModule } from '@common/file/file.module';
 import { UomAdminController } from './controllers/uom.admin.controller';
 import { ProductRepositoryModule } from '@modules/product/repository/product.repository.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 /**
  * Imports the product REPOSITORY (not ProductModule) for the delete guard and
@@ -13,7 +14,12 @@ import { ProductRepositoryModule } from '@modules/product/repository/product.rep
  * going through the repository is what keeps that from becoming a cycle.
  */
 @Module({
-    imports: [UomRepositoryModule, ProductRepositoryModule, FileModule.forRoot()],
+    imports: [
+        UomRepositoryModule,
+        ProductRepositoryModule,
+        FileModule.forRoot(),
+        TrackingModule,
+    ],
     providers: [UomService, UomSeedService, UomImportExportService],
     exports: [UomRepositoryModule, UomService, UomImportExportService],
     controllers: [UomAdminController],

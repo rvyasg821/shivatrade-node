@@ -12,6 +12,8 @@ import { PoVendorPaymentRepository } from '../repository/repositories/po-vendor-
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
 import { ENUM_PO_VENDOR_STATUS } from '../enums/po-vendor.enum';
 import { GrnService } from '@modules/grn/services/grn.service';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import {
     parseDateCell,
     pickSheet,
@@ -125,7 +127,9 @@ export class PoVendorImportExportService {
         private readonly purchaseOrderRepository: PurchaseOrderRepository,
         private readonly povPaymentRepository: PoVendorPaymentRepository,
         private readonly companyBankAccountRepository: CompanyBankAccountRepository,
-        private readonly grnService: GrnService
+        private readonly grnService: GrnService,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     generateSampleExcel(): Buffer {
@@ -526,6 +530,8 @@ export class PoVendorImportExportService {
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
+        this.requestContext.suppressAudit();
+
         for (const doc of docs) {
             if (doc.docStatus === 'skip') {
                 skipped++;
@@ -674,6 +680,17 @@ export class PoVendorImportExportService {
                 });
             }
         }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'PoVendorEntity',
+                entity_label: `Vendor PO import — ${created + updated} order(s)`,
+                summary: { created, updated, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, updated, skipped, errors };
     }
 
@@ -943,6 +960,7 @@ export class PoVendorImportExportService {
         let created = 0;
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
+        this.requestContext.suppressAudit();
         for (const r of rows) {
             if (r.status === 'skip') {
                 skipped++;
@@ -973,6 +991,17 @@ export class PoVendorImportExportService {
                 });
             }
         }
+
+        if (created) {
+            this.auditLogService.recordSummary({
+                entity_name: 'PoVendorPaymentEntity',
+                entity_label: `Vendor payment import — ${created} payment(s)`,
+                summary: { created, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, skipped, errors };
     }
 

@@ -8,6 +8,8 @@ import {
     ENUM_CUSTOMER_STATUS,
     ENUM_CUSTOMER_ADDRESS_TYPE,
 } from '../enums/customer.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 // Customer import mirrors the Vendor importer (company + primary contact +
 // bill-to / ship-to address) with the export-business extras: iec, currency,
@@ -106,7 +108,9 @@ export class CustomerImportExportService {
         private readonly customerService: CustomerService,
         private readonly customerRepository: CustomerRepository,
         private readonly contactRepository: CustomerContactRepository,
-        private readonly addressRepository: CustomerAddressRepository
+        private readonly addressRepository: CustomerAddressRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel — the columns with two filled example rows. */
@@ -302,6 +306,8 @@ export class CustomerImportExportService {
             );
         }
 
+        this.requestContext.suppressAudit();
+
         for (const row of rows) {
             const d = row.data;
             try {
@@ -330,6 +336,16 @@ export class CustomerImportExportService {
                     message: err?.message || 'Import failed',
                 });
             }
+        }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'CustomerEntity',
+                entity_label: `Customer import — ${created + updated} customer(s)`,
+                summary: { created, updated, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
         }
 
         return { created, updated, errors };

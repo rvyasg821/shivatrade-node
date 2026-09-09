@@ -29,6 +29,7 @@ import { AdjustmentNoteRepositoryModule } from '@modules/adjustment-note/reposit
 // VPO row (client-confirmed: full remaining qty accepted) — see
 // PoVendorImportExportService.importVpos().
 import { GrnModule } from '@modules/grn/grn.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 /**
  * POV (PO Vendor) module — Phase 5: admin controller wired in.
@@ -58,6 +59,7 @@ import { GrnModule } from '@modules/grn/grn.module';
         // GrnModule imports PoVendorRepositoryModule only (not this module),
         // so importing it here is not circular.
         GrnModule,
+        TrackingModule,
     ],
     providers: [
         PoVendorService,

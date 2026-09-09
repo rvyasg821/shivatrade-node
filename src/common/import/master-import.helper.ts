@@ -2,6 +2,8 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { FileService } from '@common/file/services/file.service';
 import { IFile } from '@common/file/interfaces/file.interface';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * The parts every master importer repeats.
@@ -256,11 +258,28 @@ export async function runMasterImport<T>(
         create: (row: MasterImportRow<T>) => Promise<unknown>;
         update: (row: MasterImportRow<T>, existingId: string) => Promise<unknown>;
     },
-    logger: Logger
+    logger: Logger,
+    // Optional — when the master's entity is on AuditSubscriber's allowlist,
+    // pass this so the loop below writes ONE audit row for the whole import
+    // instead of one per record (the subscriber would otherwise fire once per
+    // create/update, burying every other change in a 500-row import). Omit
+    // entirely for a master whose entity isn't allowlisted (e.g.
+    // VendorCategoryMasterEntity) — nothing to suppress there.
+    audit?: {
+        auditLogService: AuditLogService;
+        requestContext: RequestContextService;
+        entityName: string;
+        /** e.g. "Category import" — combined with the row count for the feed. */
+        label: string;
+        companyId?: string;
+        userId?: string;
+    }
 ): Promise<MasterImportResult> {
     let created = 0;
     let updated = 0;
     const errors: { row: number; message: string }[] = [];
+
+    audit?.requestContext.suppressAudit();
 
     for (const row of rows) {
         if (row.status === 'error') continue;
@@ -277,6 +296,16 @@ export async function runMasterImport<T>(
             logger.error(`Import row ${row.rowNum} failed: ${err.message}`);
             errors.push({ row: row.rowNum, message: err.message });
         }
+    }
+
+    if (audit && (created || updated)) {
+        audit.auditLogService.recordSummary({
+            entity_name: audit.entityName,
+            entity_label: `${audit.label} — ${created + updated} record(s)`,
+            summary: { created, updated, failed: errors.length },
+            company_id: audit.companyId,
+            user_id: audit.userId,
+        });
     }
 
     return { created, updated, errors };

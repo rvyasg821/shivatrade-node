@@ -111,6 +111,12 @@ export class AuditSubscriber implements EntitySubscriberInterface {
     private skip(entityName: string): boolean {
         if (TRACKING_OWN_ENTITIES.has(entityName)) return true;
         if (!isTrackingEnabled()) return true;
+        // A bulk importer called requestContext.suppressAudit() — it writes
+        // ONE summary row itself (AuditLogService.recordSummary()) instead of
+        // one per record. Same reasoning as the PriceListEntity exclusion
+        // below, but request-scoped so normal single-record saves of the same
+        // entity type still audit as usual.
+        if (this.requestContext.isAuditSuppressed()) return true;
         return !AUDIT_ENTITY_ALLOWLIST.has(entityName);
     }
 

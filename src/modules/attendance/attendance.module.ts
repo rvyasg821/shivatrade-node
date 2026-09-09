@@ -13,6 +13,7 @@ import { AttendanceService } from './services/attendance.service';
 import { AttendanceReportService } from './services/attendance-report.service';
 import { AttendanceCronService } from './services/attendance-cron.service';
 import { AttendanceImportExportService } from './services/attendance.import-export.service';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -24,6 +25,7 @@ import { AttendanceImportExportService } from './services/attendance.import-expo
         forwardRef(() => UserModule),
         forwardRef(() => RoleModule),
         HolidayCalendarModule,
+        TrackingModule,
     ],
     providers: [
         AttendanceSettingsService,

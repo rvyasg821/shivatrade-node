@@ -13,6 +13,8 @@ import {
 import { RebateService } from './rebate.service';
 import { RebateRepository } from '../repository/repositories/rebate.repository';
 import { ENUM_REBATE_STATUS, ENUM_REBATE_TYPE } from '../enums/rebate.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * Rebate Excel import/export — same shape as the Category one, on the shared
@@ -64,7 +66,9 @@ export class RebateImportExportService {
     constructor(
         private readonly fileService: FileService,
         private readonly rebateService: RebateService,
-        private readonly rebateRepository: RebateRepository
+        private readonly rebateRepository: RebateRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -261,7 +265,15 @@ export class RebateImportExportService {
                         userId
                     ),
             },
-            this.logger
+            this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'RebateEntity',
+                label: 'Rebate import',
+                companyId,
+                userId,
+            }
         );
     }
 }
