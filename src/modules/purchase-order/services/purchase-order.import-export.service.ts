@@ -925,10 +925,6 @@ export class PurchaseOrderImportExportService {
                     net_weight_kg: ln.net_weight_kg ?? '',
                     gross_weight_kg: ln.gross_weight_kg ?? '',
                     package_count: ln.package_count ?? '',
-                    // Display-only trailing column (see header note above) —
-                    // the line's own stored total (qty × unit_price, net of
-                    // any discount), not recomputed here.
-                    line_total: ln.line_total ?? '',
                 };
                 const rebByCode = new Map<string, any>();
                 for (const r of ln.product_rebates_snapshot || [])
@@ -941,6 +937,14 @@ export class PurchaseOrderImportExportService {
                         c.kind === 'rebate'
                             ? rebByCode.get(c.code) ?? ''
                             : expByCode.get(c.code) ?? '';
+                // Display-only trailing column (see header note above) —
+                // the line's own stored FINAL net total: taxable
+                // (qty × unit_price − discount) + expenses − rebates +
+                // margin (see recompute()'s lineNet calc). Placed AFTER the
+                // rebate/expense code columns above so the reading order
+                // matches the calculation order — the inputs, then the
+                // total they produce — not recomputed here.
+                row.line_total = ln.line_total ?? '';
                 lineData.push(row);
             }
         }
