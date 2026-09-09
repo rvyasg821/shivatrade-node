@@ -450,6 +450,9 @@ export class PurchaseOrderService {
                 'advance_notes',
                 'advance_bank_account_id',
                 'advance_bank_name',
+                // Transient recompute instruction, not a commercial term —
+                // see PurchaseOrderUpdateRequestDto.exactTotal doc comment.
+                'exactTotal',
             ]);
             return Object.keys(data || {}).every(
                 k =>
@@ -475,7 +478,7 @@ export class PurchaseOrderService {
             (data as any).vendor_address_id = null;
         }
 
-        const { lines, ...scalar } = data as any;
+        const { lines, exactTotal, ...scalar } = data as any;
         Object.assign(row, scalar);
         await this.poRepository.save(row);
 
@@ -489,7 +492,7 @@ export class PurchaseOrderService {
             );
         }
 
-        await this.recompute(row._id.toString(), companyId);
+        await this.recompute(row._id.toString(), companyId, !!exactTotal);
         const refreshed = await this.poRepository.findOneById(
             row._id.toString()
         );
@@ -916,7 +919,18 @@ export class PurchaseOrderService {
         return { ordersFixed, linesFixed };
     }
 
-    private async recompute(poId: string, companyId: string): Promise<void> {
+    // `exactTotal` skips the whole-currency-unit rounding for this ONE
+    // recompute call — never persisted, no entity column. Exists solely for
+    // the one-off historical-import total correction (client wants these
+    // Sales Orders' totals to match their source books exactly, not rounded)
+    // — see the 2026-09-09 chat log / CLAUDE.md note. Every normal save
+    // (including future edits of these same SOs) omits it and gets the
+    // regular rounding behavior.
+    private async recompute(
+        poId: string,
+        companyId: string,
+        exactTotal = false
+    ): Promise<void> {
         const header = await this.poRepository.findOneById(poId);
         if (!header) return;
 
@@ -1094,8 +1108,12 @@ export class PurchaseOrderService {
             product_rebates_total +
             line_margin_total +
             freight_total;
-        const grand_total = Math.round(grand_doc_raw);
-        const round_off = round2(grand_total - grand_doc_raw);
+        const grand_total = exactTotal
+            ? round2(grand_doc_raw)
+            : Math.round(grand_doc_raw);
+        const round_off = exactTotal
+            ? 0
+            : round2(grand_total - grand_doc_raw);
 
         header.subtotal = String(round2(subtotal));
         header.cgst_total = '0';
