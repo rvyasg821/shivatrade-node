@@ -80,7 +80,7 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     qty: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false, default: 0 })
     unit_price: string;
 
     /** Multi-currency: the currency `unit_price` (the vendor cost) is in — the

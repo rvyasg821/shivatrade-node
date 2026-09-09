@@ -25,7 +25,7 @@ export class RfqVendorPriceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     vendor_id: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false, default: 0 })
     unit_price: string;
 
     /** Per-vendor, per-line discount %. Net = unit_price × (1 − discount_pct/100). */

@@ -69,7 +69,7 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
     tax_pct: string;
 
     /** Snapshot from PO line — never recomputed. */
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false })
     unit_price: string;
 
     /** Quantity this POV covers from the PO line. */
