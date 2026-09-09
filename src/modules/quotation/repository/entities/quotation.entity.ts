@@ -88,7 +88,7 @@ export class QuotationEntity extends DatabaseObjectIdEntityBase {
     vendor_currency_code?: string;
 
     /** FX rate at the time of quote (snapshot - does not auto-update). */
-    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
+    @Column({ type: 'numeric', precision: 24, scale: 12, nullable: true })
     exchange_rate?: string;
 
     /** Shipment freight for a CNF quote, in the DOCUMENT currency (same basis

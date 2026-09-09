@@ -35,8 +35,8 @@ export class InvoicePaymentEntity extends DatabaseObjectIdEntityBase {
      *  amount ÷ exchange_rate − amount ÷ invoice.exchange_rate (INR). */
     @Column({
         type: 'numeric',
-        precision: 18,
-        scale: 6,
+        precision: 24,
+        scale: 12,
         nullable: false,
         default: 1,
     })

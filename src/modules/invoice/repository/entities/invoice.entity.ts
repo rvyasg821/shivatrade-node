@@ -229,7 +229,7 @@ export class InvoiceEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 10, nullable: true })
     currency_symbol?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 6, nullable: false, default: 1 })
+    @Column({ type: 'numeric', precision: 24, scale: 12, nullable: false, default: 1 })
     exchange_rate: string;
 
     /** Optional customs/GST-only exchange rate — when set, the Commercial

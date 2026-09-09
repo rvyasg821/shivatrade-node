@@ -862,6 +862,24 @@ export class PurchaseOrderImportExportService {
                     ) || '',
                 advance_notes: so.advance_notes || '',
                 status: so.status || '',
+                // Display-only trailing columns — not part of HEADER_HEADERS,
+                // so re-import ignores them (parsed rows only read known
+                // field names). total_value is the SO's own stored
+                // grand_total (native currency, already includes freight/tax/
+                // round-off); total_value_inr converts it using the documented
+                // "doc_value / exchange_rate" rule (§4 — exchange_rate here is
+                // foreign-per-₹1, not the human-typed ₹-per-1 shown above).
+                total_value: so.grand_total || '',
+                total_value_inr:
+                    Number(so.exchange_rate) > 0
+                        ? String(
+                              Math.round(
+                                  (Number(so.grand_total) /
+                                      Number(so.exchange_rate)) *
+                                      100
+                              ) / 100
+                          )
+                        : '',
             });
             const lines = (await this.poLineRepository.findAll({
                 purchase_order_id: so._id.toString(),
@@ -885,6 +903,10 @@ export class PurchaseOrderImportExportService {
                     net_weight_kg: ln.net_weight_kg ?? '',
                     gross_weight_kg: ln.gross_weight_kg ?? '',
                     package_count: ln.package_count ?? '',
+                    // Display-only trailing column (see header note above) —
+                    // the line's own stored total (qty × unit_price, net of
+                    // any discount), not recomputed here.
+                    line_total: ln.line_total ?? '',
                 };
                 const rebByCode = new Map<string, any>();
                 for (const r of ln.product_rebates_snapshot || [])

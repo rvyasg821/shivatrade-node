@@ -121,8 +121,8 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
      *  Defaults to 1 (domestic / same-currency SO). */
     @Column({
         type: 'numeric',
-        precision: 18,
-        scale: 6,
+        precision: 24,
+        scale: 12,
         nullable: false,
         default: 1,
     })
@@ -186,8 +186,8 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
 
     @Column({
         type: 'numeric',
-        precision: 18,
-        scale: 6,
+        precision: 24,
+        scale: 12,
         nullable: false,
         default: 1,
     })
