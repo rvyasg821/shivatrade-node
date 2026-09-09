@@ -347,7 +347,7 @@ export class QuotationService {
             header.currency_code
         );
 
-        await this.recompute(header._id.toString(), companyId);
+        await this.recompute(header._id.toString(), companyId, !!ctx?.exactTotal);
 
         // Auto-advance the source RFQ to "completed" — a quotation has been
         // generated from it. Best-effort; never block quotation creation on it,
@@ -436,7 +436,13 @@ export class QuotationService {
             row.status !== ENUM_QUOTATION_STATUS.DRAFT && !willBeDraft;
         const isStatusOnlyChange = (() => {
             if (!isLocked) return true;
-            const allowedKeys = new Set(['status', 'internal_notes']);
+            // 'exactTotal' is a transient recompute instruction, not a
+            // commercial term — see QuotationUpdateRequestDto.exactTotal.
+            const allowedKeys = new Set([
+                'status',
+                'internal_notes',
+                'exactTotal',
+            ]);
             return Object.keys(data || {}).every((k) =>
                 allowedKeys.has(k) || (data as any)[k] === undefined
             );
@@ -467,7 +473,7 @@ export class QuotationService {
         const wasSent = row.status === ENUM_QUOTATION_STATUS.SENT;
 
         // Apply scalar updates (skip nested arrays - replaced separately).
-        const { lines, ...scalar } = data as any;
+        const { lines, exactTotal, ...scalar } = data as any;
         Object.assign(row, scalar);
         await this.quotationRepository.save(row);
 
@@ -482,7 +488,7 @@ export class QuotationService {
             );
         }
 
-        await this.recompute(row._id.toString(), companyId);
+        await this.recompute(row._id.toString(), companyId, !!exactTotal);
 
         const refreshed = await this.quotationRepository.findOneById(
             row._id.toString()
@@ -757,9 +763,15 @@ export class QuotationService {
      * used by reports/dashboard (INR = grand_total ÷ exchange_rate). A domestic
      * (INR) line has cost_exchange_rate = 1, so nothing changes for it.
      */
+    // `exactTotal` skips the whole-currency-unit rounding for this ONE
+    // recompute call — never persisted, no entity column. Same mechanism as
+    // PurchaseOrderService.recompute's param of the same name — used for the
+    // historical-import exact-total requirement (see 2026-09-09 chat log /
+    // CLAUDE.md note).
     private async recompute(
         quotationId: string,
-        companyId: string
+        companyId: string,
+        exactTotal = false
     ): Promise<void> {
         const header = await this.quotationRepository.findOneById(quotationId);
         if (!header) return;
@@ -871,8 +883,12 @@ export class QuotationService {
             product_rebates_total +
             margin_amount +
             freight_total;
-        const grand_total = Math.round(grand_doc_raw);
-        const round_off = round2(grand_total - grand_doc_raw);
+        const grand_total = exactTotal
+            ? round2(grand_doc_raw)
+            : Math.round(grand_doc_raw);
+        const round_off = exactTotal
+            ? 0
+            : round2(grand_total - grand_doc_raw);
 
         header.subtotal = String(round2(subtotal));
         // Header expense/rebate columns retained on the entity (DB) but no

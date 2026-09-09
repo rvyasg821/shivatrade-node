@@ -65,8 +65,17 @@ export function computeInvoiceGrandTotal(opts: {
     freight: number;
     insurance: number;
     other: number;
+    /** Skip the whole-currency-unit rounding — same `exactTotal` mechanism as
+     *  PurchaseOrderService/QuotationService.recompute(), for the
+     *  historical-import exact-total requirement (2026-09-09). */
+    exactTotal?: boolean;
 }): { grand_total: number; round_off: number } {
     const rawGrand = opts.fobValue + opts.freight + opts.insurance + opts.other;
+    if (opts.exactTotal) {
+        const grand_total =
+            Math.round((rawGrand + Number.EPSILON) * 100) / 100;
+        return { grand_total, round_off: 0 };
+    }
     const grand_total = Math.round(rawGrand);
     const round_off =
         Math.round((grand_total - rawGrand + Number.EPSILON) * 100) / 100;

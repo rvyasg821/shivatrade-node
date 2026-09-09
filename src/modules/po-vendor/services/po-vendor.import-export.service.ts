@@ -269,7 +269,15 @@ export class PoVendorImportExportService {
                 lineErrByVoucher.get(vkey).push(m);
             };
             const productCode = get(raw, 'product_code');
-            if (!productCode) continue;
+            if (!productCode) {
+                // Previously silently dropped — a blank code vanished the
+                // whole line with no error, surfacing only as a misleading
+                // top-level "no line items found" on the voucher. Always
+                // flag it instead (same fix as SO/Quotation's shared
+                // parseLineItemsSheet()).
+                pushErr(`LineItems row ${rowNum}: product_code is required`);
+                continue;
+            }
             const product = productByCode.get(productCode.toLowerCase());
             if (!product) {
                 pushErr(
