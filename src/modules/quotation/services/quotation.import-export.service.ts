@@ -81,7 +81,9 @@ export interface QuotationImportDoc {
     rowNum: number;
     header: QuotationHeader;
     lines: ResolvedDocLine[];
-    status: 'valid_new' | 'skip' | 'error';
+    status: 'valid_new' | 'valid_update' | 'skip' | 'error';
+    // Existing Quotation's _id — set only when status === 'valid_update'.
+    existingId?: string;
     errors: string[];
     warnings: string[];
 }
@@ -256,9 +258,13 @@ export class QuotationImportExportService {
             company_id: companyId,
             soft_delete: false,
         } as any)) as any[];
-        const existingVouchers = new Set<string>(
-            existingQuotes.map((q) => (q.voucher_no || '').trim().toLowerCase())
-        );
+        const existingQuoteByVoucher = new Map<string, any>();
+        for (const q of existingQuotes)
+            if (q.voucher_no)
+                existingQuoteByVoucher.set(
+                    (q.voucher_no || '').trim().toLowerCase(),
+                    q
+                );
 
         // ── Parse the LineItems sheet once (grouped by voucher_no) ──
         const parsedLines = parseLineItemsSheet(lineRows as any, {
@@ -419,11 +425,12 @@ export class QuotationImportExportService {
                     'No line items found for this voucher_no in the "LineItems" sheet'
                 );
 
-            const alreadyExists =
-                !!voucher_no && existingVouchers.has(vkey);
+            const existingRow = voucher_no
+                ? existingQuoteByVoucher.get(vkey)
+                : undefined;
             let docStatus: QuotationImportDoc['status'];
             if (errors.length) docStatus = 'error';
-            else if (alreadyExists) docStatus = 'skip';
+            else if (existingRow) docStatus = 'valid_update';
             else docStatus = 'valid_new';
 
             docs.push({
@@ -454,6 +461,7 @@ export class QuotationImportExportService {
                 },
                 lines,
                 status: docStatus,
+                existingId: existingRow?._id?.toString(),
                 errors,
                 warnings,
             });
@@ -468,7 +476,8 @@ export class QuotationImportExportService {
         const summary = {
             total: docs.length,
             valid_new: docs.filter((d) => d.status === 'valid_new').length,
-            valid_update: 0,
+            valid_update: docs.filter((d) => d.status === 'valid_update')
+                .length,
             skipped: docs.filter((d) => d.status === 'skip').length,
             errors: docs.filter((d) => d.status === 'error').length,
             warnings: docs.reduce((n, d) => n + d.warnings.length, 0),
@@ -483,10 +492,12 @@ export class QuotationImportExportService {
         userId: string
     ): Promise<{
         created: number;
+        updated: number;
         skipped: number;
         errors: { row: number; message: string }[];
     }> {
         let created = 0;
+        let updated = 0;
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
@@ -497,8 +508,83 @@ export class QuotationImportExportService {
                 skipped++;
                 continue;
             }
-            if (doc.status !== 'valid_new') continue;
             const h = doc.header;
+            const linesPayload = doc.lines.map((l) => ({
+                product_id: l.product_id,
+                vendor_id: l.vendor_id,
+                qty: l.qty,
+                unit: l.unit,
+                unit_price: l.unit_price,
+                discount_pct: l.discount_pct,
+                tax_pct: l.tax_pct,
+                margin_pct: l.margin_pct,
+                part_no: l.part_no,
+                hs_code: l.hs_code,
+                description: l.description,
+                customer_reference: l.customer_reference,
+                net_weight_kg: l.net_weight_kg,
+                gross_weight_kg: l.gross_weight_kg,
+                package_count: l.package_count,
+                product_rebates_snapshot: l.product_rebates_snapshot,
+                product_expenses_snapshot: l.product_expenses_snapshot,
+            }));
+
+            // Full re-import update: every header field + every line item
+            // replaced from the sheet, matching the Sales Order pattern
+            // (2026-09-09). Lines match to existing lines by product_id
+            // (replaceLines()'s own matching) — safe because
+            // voucher+product_code is a verified-unique pair in this data.
+            if (doc.status === 'valid_update') {
+                try {
+                    if (!doc.existingId)
+                        throw new Error('Missing existing Quotation id');
+                    let row = await this.quotationService.findOneById(
+                        doc.existingId,
+                        companyId
+                    );
+                    await this.quotationService.update(row, {
+                        status: ENUM_QUOTATION_STATUS.DRAFT,
+                        customer_id: h.customer_id,
+                        lead_id: h.lead_id,
+                        customer_address_id: h.customer_address_id,
+                        consignee_same_as_buyer: h.consignee_same_as_buyer,
+                        consignee_snapshot: h.consignee_snapshot,
+                        consignee_id: h.consignee_id,
+                        quotation_date: h.quotation_date,
+                        valid_until: h.valid_until,
+                        reference_no: h.reference_no,
+                        currency_code: h.currency_code,
+                        exchange_rate: h.exchange_rate,
+                        freight_total: h.freight_total,
+                        payment_terms: h.payment_terms,
+                        delivery_terms: h.delivery_terms,
+                        delivery_location: h.delivery_location,
+                        notes_to_client: h.notes_to_client,
+                        internal_notes: h.internal_notes,
+                        lines: linesPayload,
+                    } as any);
+                    row = await this.quotationService.findOneById(
+                        doc.existingId,
+                        companyId
+                    );
+                    await this.quotationService.update(row, {
+                        status: h.status,
+                        exactTotal: true,
+                    } as any);
+                    updated++;
+                } catch (err: any) {
+                    this.logger.error(
+                        `Quotation update ${doc.voucher_no} failed: ${err?.message}`
+                    );
+                    errors.push({
+                        row: doc.rowNum,
+                        message: err?.message || 'Update failed',
+                    });
+                }
+                continue;
+            }
+
+            if (doc.status !== 'valid_new') continue;
             try {
                 await this.quotationService.create(
                     companyId,
@@ -521,33 +607,14 @@ export class QuotationImportExportService {
                         notes_to_client: h.notes_to_client,
                         internal_notes: h.internal_notes,
                         status: h.status,
-                        lines: doc.lines.map((l) => ({
-                            product_id: l.product_id,
-                            vendor_id: l.vendor_id,
-                            qty: l.qty,
-                            unit: l.unit,
-                            unit_price: l.unit_price,
-                            discount_pct: l.discount_pct,
-                            tax_pct: l.tax_pct,
-                            margin_pct: l.margin_pct,
-                            part_no: l.part_no,
-                            hs_code: l.hs_code,
-                            description: l.description,
-                            customer_reference: l.customer_reference,
-                            net_weight_kg: l.net_weight_kg,
-                            gross_weight_kg: l.gross_weight_kg,
-                            package_count: l.package_count,
-                            product_rebates_snapshot:
-                                l.product_rebates_snapshot,
-                            product_expenses_snapshot:
-                                l.product_expenses_snapshot,
-                        })),
+                        lines: linesPayload,
                     } as any,
                     userId,
                     {
                         voucher_no: doc.voucher_no,
                         status: h.status,
                         silent: true,
+                        exactTotal: true,
                     }
                 );
                 created++;
@@ -562,17 +629,17 @@ export class QuotationImportExportService {
             }
         }
 
-        if (created) {
+        if (created || updated) {
             this.auditLogService.recordSummary({
                 entity_name: 'QuotationEntity',
-                entity_label: `Quotation import — ${created} quotation(s)`,
-                summary: { created, skipped, failed: errors.length },
+                entity_label: `Quotation import — ${created + updated} quotation(s)`,
+                summary: { created, updated, skipped, failed: errors.length },
                 company_id: companyId,
                 user_id: userId,
             });
         }
 
-        return { created, skipped, errors };
+        return { created, updated, skipped, errors };
     }
 
     /** Export quotations to the same two-sheet shape (round-trips the import). */
@@ -656,6 +723,23 @@ export class QuotationImportExportService {
                 notes_to_client: q.notes_to_client || '',
                 internal_notes: q.internal_notes || '',
                 status: q.status || '',
+                // Display-only trailing columns — not part of HEADER_HEADERS,
+                // so re-import ignores them. total_value is the quotation's
+                // own stored grand_total (native currency); total_value_inr
+                // converts it via "doc_value / exchange_rate" (§4 —
+                // exchange_rate here is foreign-per-₹1, not the human-typed
+                // ₹-per-1 shown above).
+                total_value: q.grand_total || '',
+                total_value_inr:
+                    Number(q.exchange_rate) > 0
+                        ? String(
+                              Math.round(
+                                  (Number(q.grand_total) /
+                                      Number(q.exchange_rate)) *
+                                      100
+                              ) / 100
+                          )
+                        : '',
             });
             const lines = (await this.quotationLineRepository.findAll({
                 quotation_id: q._id.toString(),
@@ -692,6 +776,12 @@ export class QuotationImportExportService {
                         c.kind === 'rebate'
                             ? rebByCode.get(c.code) ?? ''
                             : expByCode.get(c.code) ?? '';
+                // Display-only trailing column, placed AFTER the rebate/
+                // expense code columns so the reading order matches the
+                // calculation order — the line's own stored FINAL net total
+                // (taxable + expenses − rebates + margin), not recomputed
+                // here.
+                row.line_total = ln.line_total ?? '';
                 lineData.push(row);
             }
         }

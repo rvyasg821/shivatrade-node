@@ -526,7 +526,7 @@ export class InvoiceService {
             source.byPoLineId,
             data.currency_code
         );
-        await this.recompute(header._id.toString());
+        await this.recompute(header._id.toString(), !!importCtx?.exactTotal);
 
         // Post the upfront advance (carried from the SO) as a real receipt right
         // away, so it shows in the customer ledger/register on a draft.
@@ -549,23 +549,29 @@ export class InvoiceService {
     async update(
         row: InvoiceDoc,
         data: InvoiceUpdateRequestDto,
-        userId?: string
+        userId?: string,
+        importCtx?: ImportContext
     ): Promise<{
         invoice: InvoiceDoc;
         rateOverrides: Array<{ claimed: number; applied: number }>;
     }> {
+        const silent = !!importCtx?.silent;
         let rateOverrides: Array<{ claimed: number; applied: number }> = [];
         if (row.status === ENUM_INVOICE_STATUS.CANCELLED) {
             throw new BadRequestException('Cancelled invoice cannot be updated.');
         }
 
         // FY closure: block editing an invoice already in a closed period, and
-        // block moving one onto a closed date.
+        // block moving one onto a closed date. Bulk import (silent) is a
+        // historical data-migration path and is exempt — mirrors create()'s
+        // identical exemption.
         const cid = row.company_id.toString();
-        await this.companySettings.assertPostingDateOpen(cid, row.invoice_date, 'invoice');
-        const newInvDate = (data as any).invoice_date || row.invoice_date;
-        if (newInvDate !== row.invoice_date) {
-            await this.companySettings.assertPostingDateOpen(cid, newInvDate, 'invoice');
+        if (!silent) {
+            await this.companySettings.assertPostingDateOpen(cid, row.invoice_date, 'invoice');
+            const newInvDate = (data as any).invoice_date || row.invoice_date;
+            if (newInvDate !== row.invoice_date) {
+                await this.companySettings.assertPostingDateOpen(cid, newInvDate, 'invoice');
+            }
         }
 
         if (row.status === ENUM_INVOICE_STATUS.DRAFT) {
@@ -582,6 +588,10 @@ export class InvoiceService {
             // block, alongside the tolerance recompute.
             const wantsOverride = !!header.override;
             delete header.override;
+            // Transient recompute instruction, not a real column — see
+            // InvoiceUpdateRequestDto.exactTotal.
+            const exactTotal = !!header.exactTotal;
+            delete header.exactTotal;
             Object.assign(row, header);
 
             // Refresh company_address_snapshot whenever company_address_id
@@ -602,7 +612,12 @@ export class InvoiceService {
             await this.invoiceRepository.save(row);
 
             if (Array.isArray(lines)) {
-                await this.assertQtyGuardForLines(lines, row._id.toString());
+                // In import mode a back-filled/re-imported invoice may carry
+                // no SO line (purchase_order_line_id = null) — mirrors
+                // create()'s identical exemption (decision 5).
+                if (!silent) {
+                    await this.assertQtyGuardForLines(lines, row._id.toString());
+                }
                 const source = await this.loadSourcePoContext(lines);
                 this.assertSingleSourceInvariant(
                     source.pos,
@@ -709,7 +724,7 @@ export class InvoiceService {
                 );
                 await this.invoiceRepository.save(row);
             }
-            await this.recompute(row._id.toString());
+            await this.recompute(row._id.toString(), exactTotal);
 
             // Re-sync the advance receipt with the (possibly edited) advance.
             const updatedRow = await this.invoiceRepository.findOneById(
@@ -1510,80 +1525,14 @@ export class InvoiceService {
     }
 
     /**
-     * Import-driven update: when a historical-import Excel is re-uploaded
-     * for a voucher_no that already exists (e.g. a corrected file with the
-     * exact per-line GST%/IGST% from the source books, replacing an
-     * earlier approximation), InvoiceImportExportService.importInvoices()
-     * calls this for each 'valid_update' row instead of creating a
-     * duplicate or silently skipping. Updates ONLY tax_pct/igst_rate_pct
-     * per line, matched by product_id — never qty/price/status. Re-runs
-     * `recompute()` and re-freezes the IGST-refund snapshot the same way
-     * `backfillSourceCurrency` does, so the PDF box stays in sync.
-     * Idempotent; a line whose rates already match is untouched.
-     */
-    async updateLineTaxRates(
-        invoiceId: string,
-        rates: { product_id: string; tax_pct?: string; igst_rate_pct?: string }[]
-    ): Promise<number> {
-        const inv: any = await this.invoiceRepository.findOneById(invoiceId);
-        if (!inv) return 0;
-        const lines = await this.invoiceLineRepository.findByInvoiceId(
-            invoiceId
-        );
-        const byProduct = new Map<string, any[]>();
-        for (const l of lines as any[]) {
-            const pid = l.product_id?.toString();
-            if (!pid) continue;
-            if (!byProduct.has(pid)) byProduct.set(pid, []);
-            byProduct.get(pid).push(l);
-        }
-        let linesFixed = 0;
-        for (const r of rates) {
-            const candidates = byProduct.get(r.product_id);
-            const l = candidates?.shift();
-            if (!l) continue;
-            let lineChanged = false;
-            if (
-                r.tax_pct !== undefined &&
-                String(num(l.tax_pct)) !== String(num(r.tax_pct))
-            ) {
-                l.tax_pct = r.tax_pct;
-                lineChanged = true;
-            }
-            if (
-                r.igst_rate_pct !== undefined &&
-                String(num(l.igst_rate_pct)) !== String(num(r.igst_rate_pct))
-            ) {
-                l.igst_rate_pct = r.igst_rate_pct;
-                lineChanged = true;
-            }
-            if (lineChanged) {
-                await this.invoiceLineRepository.save(l);
-                linesFixed++;
-            }
-        }
-        if (linesFixed === 0) return 0;
-        await this.recompute(invoiceId);
-        if (inv.gst_route === ENUM_INVOICE_GST_ROUTE.IGST_PAID) {
-            const freshLines = await this.invoiceLineRepository.findByInvoiceId(
-                invoiceId
-            );
-            const { buckets, totalRefund } = this.buildIgstRefundBuckets(
-                freshLines as any,
-                inv
-            );
-            inv.igst_refund_buckets = buckets;
-            inv.igst_refund_amount = String(round2(totalRefund));
-            await this.invoiceRepository.save(inv);
-        }
-        return linesFixed;
-    }
-
-    /**
      * Recompute all derived monetary fields from the current line set + header
      * inputs. Idempotent - safe to call after any mutation. Writes back to DB.
      */
-    async recompute(invoiceId: string): Promise<void> {
+    // `exactTotal` skips the whole-currency-unit rounding for this ONE
+    // recompute call — never persisted. Same mechanism as
+    // PurchaseOrderService/QuotationService.recompute's param of the same
+    // name — for the historical-import exact-total requirement (2026-09-09).
+    async recompute(invoiceId: string, exactTotal = false): Promise<void> {
         const row = await this.invoiceRepository.findOneById(invoiceId);
         if (!row) return;
         const lines = await this.invoiceLineRepository.findByInvoiceId(invoiceId);
@@ -1658,6 +1607,7 @@ export class InvoiceService {
             freight,
             insurance,
             other,
+            exactTotal,
         });
         // INR equivalent of the document-currency grand total.
         const grand_total_inr = er > 0 ? round2(grand_total / er) : grand_total;

@@ -169,6 +169,9 @@ export interface InvoiceImportDoc {
     banks: any[];
     target_status: ENUM_INVOICE_STATUS;
     docStatus: 'valid_new' | 'valid_update' | 'skip' | 'error';
+    // Existing invoice's _id/status — set only when docStatus === 'valid_update'.
+    existingId?: string;
+    existingStatus?: string;
     errors: string[];
     warnings: string[];
 }
@@ -333,9 +336,13 @@ export class InvoiceImportExportService {
             company_id: companyId,
             soft_delete: false,
         } as any)) as any[];
-        const existingVouchers = new Set<string>(
-            existing.map((iv) => (iv.voucher_no || '').trim().toLowerCase())
-        );
+        const existingInvoiceByVoucher = new Map<string, any>();
+        for (const iv of existing)
+            if (iv.voucher_no)
+                existingInvoiceByVoucher.set(
+                    (iv.voucher_no || '').trim().toLowerCase(),
+                    iv
+                );
 
         // Bank rows grouped by voucher.
         const banksByVoucher = new Map<string, any[]>();
@@ -370,7 +377,18 @@ export class InvoiceImportExportService {
             const vkey = vno.toLowerCase();
             const rowNum = i + 2;
             const productCode = cell(raw, 'product_code');
-            if (!productCode) continue;
+            if (!productCode) {
+                // Previously silently dropped — a blank code vanished the
+                // whole line with no error, surfacing only as a misleading
+                // top-level "no line items found" on the voucher. Always
+                // flag it instead (same fix as SO/Quotation's shared
+                // parseLineItemsSheet()).
+                pushLineErr(
+                    vkey,
+                    `LineItems row ${rowNum}: product_code is required`
+                );
+                continue;
+            }
             const product = productByCode.get(productCode.toLowerCase());
             if (!product) {
                 pushLineErr(
@@ -627,17 +645,30 @@ export class InvoiceImportExportService {
                 source_currency_code: l.source_currency_code || currency_code,
             }));
 
-            // A re-import of an already-existing voucher_no is treated as a
-            // TAX-RATE UPDATE (e.g. a corrected file with the exact
-            // per-line GST%/IGST% from the source books) rather than
-            // skipped outright — see InvoiceService.updateLineTaxRates.
-            // Only tax_pct/igst_rate_pct are ever touched this way;
-            // qty/price/status stay whatever they already are on the live
-            // record.
-            const alreadyExists = !!voucher_no && existingVouchers.has(vkey);
+            // A re-import of an already-existing voucher_no is a FULL
+            // UPDATE (2026-09-09, replaces the old tax-rate-only behaviour)
+            // — but ONLY while the invoice is still DRAFT. An ISSUED+
+            // invoice is a real tax document with financial fields/lines
+            // deliberately frozen (INVOICE_EDITABLE_AT_ISSUED) — re-import
+            // does not attempt to unlock it; that row is skipped instead
+            // (see importInvoices()).
+            const existingRow = voucher_no
+                ? existingInvoiceByVoucher.get(vkey)
+                : undefined;
+            const existingLocked =
+                !!existingRow &&
+                existingRow.status !== ENUM_INVOICE_STATUS.DRAFT;
             let docStatus: InvoiceImportDoc['docStatus'];
             if (errors.length) docStatus = 'error';
-            else if (alreadyExists) docStatus = 'valid_update';
+            else if (existingLocked) {
+                // Visible in the PREVIEW step, not just after confirm — an
+                // ISSUED+ invoice's financial fields/lines are frozen, so
+                // this row can never actually update; flag it up front.
+                docStatus = 'skip';
+                warnings.push(
+                    `Invoice ${voucher_no} is ${existingRow.status} — only DRAFT invoices can be updated by re-import; this row will be skipped.`
+                );
+            } else if (existingRow) docStatus = 'valid_update';
             else docStatus = 'valid_new';
 
             const consigneeResolved = resolveConsignee(
@@ -726,6 +757,8 @@ export class InvoiceImportExportService {
                 banks: banksByVoucher.get(vkey) || [],
                 target_status,
                 docStatus,
+                existingId: existingRow?._id?.toString(),
+                existingStatus: existingRow?.status,
                 errors,
                 warnings,
             });
@@ -783,31 +816,44 @@ export class InvoiceImportExportService {
                 continue;
             }
             if (doc.docStatus === 'valid_update') {
+                // Full re-import update (2026-09-09, replaces the old
+                // tax-rate-only behaviour) — only reaches here when DRAFT;
+                // an ISSUED+ existing invoice is caught earlier in
+                // parseAndValidate() (docStatus='skip' + a preview warning)
+                // since there's no "revert to draft" for Invoice, unlike
+                // SO/Quotation, to unlock a frozen financial document.
                 try {
-                    const existing: any = await this.invoiceRepository.findOne(
+                    if (!doc.existingId)
+                        throw new Error('Missing existing Invoice id');
+                    const row = await this.invoiceService.findOneById(
+                        doc.existingId,
+                        companyId
+                    );
+                    const hasFilePol =
+                        !!doc.header.port_of_loading_snapshot;
+                    await this.invoiceService.update(
+                        row,
                         {
-                            company_id: companyId,
-                            voucher_no: doc.voucher_no,
-                            soft_delete: false,
-                        } as any
+                            ...doc.header,
+                            port_of_loading_id: hasFilePol
+                                ? undefined
+                                : defaultPolId,
+                            port_of_loading_snapshot: hasFilePol
+                                ? doc.header.port_of_loading_snapshot
+                                : defaultPolSnap,
+                            lines: doc.lines.map((l) => {
+                                const { _productId, ...line } = l;
+                                return line;
+                            }),
+                            exactTotal: true,
+                        } as any,
+                        userId,
+                        { silent: true }
                     );
-                    if (!existing) {
-                        skipped++;
-                        continue;
-                    }
-                    const fixed = await this.invoiceService.updateLineTaxRates(
-                        existing._id.toString(),
-                        doc.lines.map((l: any) => ({
-                            product_id: l._productId || l.product_id,
-                            tax_pct: l.tax_pct,
-                            igst_rate_pct: l.igst_rate_pct,
-                        }))
-                    );
-                    if (fixed > 0) updated++;
-                    else skipped++;
+                    updated++;
                 } catch (err: any) {
                     this.logger.error(
-                        `Invoice tax-rate update ${doc.voucher_no} failed: ${err?.message}`
+                        `Invoice update ${doc.voucher_no} failed: ${err?.message}`
                     );
                     errors.push({
                         row: doc.rowNum,
@@ -834,7 +880,7 @@ export class InvoiceImportExportService {
                     companyId,
                     payload as any,
                     userId,
-                    { voucher_no: doc.voucher_no, silent: true }
+                    { voucher_no: doc.voucher_no, silent: true, exactTotal: true }
                 );
 
                 // Land the real status. create() always makes a DRAFT; issue()
@@ -1003,6 +1049,23 @@ export class InvoiceImportExportService {
                 terms: iv.terms || '',
                 status: iv.status || '',
             });
+            // Display-only trailing columns — not part of HEADER_HEADERS, so
+            // re-import ignores them. total_value is the invoice's own
+            // stored grand_total (document currency); total_value_inr
+            // converts it via "doc_value / exchange_rate" (§4 —
+            // exchange_rate here is foreign-per-₹1, not the human-typed
+            // ₹-per-1 shown above).
+            h.total_value = iv.grand_total || '';
+            h.total_value_inr =
+                Number(iv.exchange_rate) > 0
+                    ? String(
+                          Math.round(
+                              (Number(iv.grand_total) /
+                                  Number(iv.exchange_rate)) *
+                                  100
+                          ) / 100
+                      )
+                    : '';
             headerData.push(h);
 
             const lines = (await this.invoiceLineRepository.findByInvoiceId(
@@ -1043,6 +1106,11 @@ export class InvoiceImportExportService {
                         c.kind === 'rebate'
                             ? rebByCode.get(c.code) ?? ''
                             : expByCode.get(c.code) ?? '';
+                // Display-only trailing column, placed AFTER the rebate/
+                // expense code columns so the reading order matches the
+                // calculation order — the line's own stored FINAL net total,
+                // not recomputed here.
+                row.line_total = ln.line_total ?? '';
                 lineData.push(row);
             }
             for (const b of iv.bank_snapshots || []) {

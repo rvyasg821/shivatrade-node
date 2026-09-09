@@ -124,7 +124,7 @@ export class QuotationAdminController {
             return {
                 statusCode: 200,
                 message: 'No valid rows to import',
-                data: { summary, created: 0, skipped: 0, errors: [] },
+                data: { summary, created: 0, updated: 0, skipped: 0, errors: [] },
             };
         }
         const result = await this.importExportService.importQuotations(
@@ -134,7 +134,7 @@ export class QuotationAdminController {
         );
         return {
             statusCode: 200,
-            message: `Import complete: ${result.created} created, ${result.skipped} skipped`,
+            message: `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`,
             data: { summary, ...result },
         };
     }
