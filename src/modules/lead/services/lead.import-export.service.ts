@@ -6,6 +6,8 @@ import { LeadLineRepository } from '../repository/repositories/lead-line.reposit
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { CustomerRepository } from '@modules/customer/repository/repositories/customer.repository';
 import { ENUM_LEAD_STATUS, ENUM_LEAD_SOURCE } from '../enums/lead.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 // Lead document import — TWO sheets:
 //   1. "Leads"             → one row per lead (all header fields).
@@ -176,7 +178,9 @@ export class LeadImportExportService {
         private readonly leadRepository: LeadRepository,
         private readonly leadLineRepository: LeadLineRepository,
         private readonly productRepository: ProductRepository,
-        private readonly customerRepository: CustomerRepository
+        private readonly customerRepository: CustomerRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     generateSampleExcel(): Buffer {
@@ -546,6 +550,8 @@ export class LeadImportExportService {
             description: l.description,
         });
 
+        this.requestContext.suppressAudit();
+
         for (const doc of docs) {
             if (doc.status === 'skip') {
                 skipped++;
@@ -673,6 +679,17 @@ export class LeadImportExportService {
                 });
             }
         }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'LeadEntity',
+                entity_label: `Lead import — ${created + updated} lead(s)`,
+                summary: { created, updated, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, updated, skipped, errors };
     }
 

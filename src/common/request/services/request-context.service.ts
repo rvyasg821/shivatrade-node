@@ -9,6 +9,10 @@ export interface IRequestContextStore {
     requestId?: string;
     /** The live IRequestApp. Read lazily; `user` is not set yet at store time. */
     request?: any;
+    /** Set by a bulk-import loop via `suppressAudit()` to stop AuditSubscriber
+     *  writing one row per record — the importer writes a single summary row
+     *  instead (see AuditLogService.recordSummary()). */
+    skipAudit?: boolean;
 }
 
 /** The flattened view a consumer actually wants. */
@@ -58,5 +62,19 @@ export class RequestContextService {
             userId: user?.user || undefined,
             companyId: user?.companyId || undefined,
         };
+    }
+
+    /** Flip on for the rest of this request — AuditSubscriber stops writing a
+     *  row per entity save. Call at the top of a bulk-import loop, then write
+     *  one summary row via AuditLogService.recordSummary() when it's done. A
+     *  no-op outside a request (nothing to flip). */
+    suppressAudit(): void {
+        const store = RequestContextService.storage.getStore();
+        if (store) store.skipAudit = true;
+    }
+
+    /** Read by AuditSubscriber; `false` outside a request or when unset. */
+    isAuditSuppressed(): boolean {
+        return !!RequestContextService.storage.getStore()?.skipAudit;
     }
 }

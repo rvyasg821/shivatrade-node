@@ -6,6 +6,8 @@ import { LocationService } from '@modules/location/services/location.service';
 import { RoleService } from '@modules/role/services/role.service';
 import { ENUM_ATTENDANCE_STATUS } from '../enums/attendance.enum';
 import { DateTime } from 'luxon';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 const CSV_HEADERS = [
     'employee_code', 'date', 'clock_in', 'clock_out', 'status', 'break_minutes', 'notes',
@@ -37,6 +39,8 @@ export class AttendanceImportExportService {
         private readonly userService: UserService,
         private readonly locationService: LocationService,
         private readonly roleService: RoleService,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService,
     ) {}
 
     generateSampleCsv(): Buffer {
@@ -274,6 +278,8 @@ export class AttendanceImportExportService {
             return undefined;
         };
 
+        this.requestContext.suppressAudit();
+
         for (const row of rows) {
             if (row.status === 'error' || !row.data.user_id) continue;
 
@@ -308,6 +314,15 @@ export class AttendanceImportExportService {
                 this.logger.error(`Attendance import row ${row.rowNum} failed: ${err.message}`);
                 errors.push({ row: row.rowNum, message: err.message });
             }
+        }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'AttendanceRecordEntity',
+                entity_label: `Attendance import — ${created + updated} record(s)`,
+                summary: { created, updated, failed: errors.length },
+                company_id: companyId,
+            });
         }
 
         return { created, updated, errors };

@@ -15,6 +15,8 @@ import { CurrencyRepository } from '@modules/currency/repository/repositories/cu
 import { VendorCategoryMasterRepository } from '@modules/vendor-category/repository/repositories/vendor-category.repository';
 import { CategoryRepository } from '@modules/category/repository/repositories/category.repository';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import {
     ENUM_VENDOR_ADDRESS_TYPE,
     ENUM_VENDOR_STATUS,
@@ -209,7 +211,9 @@ export class VendorImportExportService {
         private readonly currencyRepository: CurrencyRepository,
         private readonly categoryRepository: VendorCategoryMasterRepository,
         private readonly productCategoryRepository: CategoryRepository,
-        private readonly companySettingsService: CompanySettingsService
+        private readonly companySettingsService: CompanySettingsService,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     // ── Sample ──────────────────────────────────────────────────────────
@@ -1028,6 +1032,8 @@ export class VendorImportExportService {
                 .filter(Boolean) as string[]
         );
 
+        this.requestContext.suppressAudit();
+
         for (const v of preview.vendors) {
             if (v.status === 'error') continue;
             const nameKey = String(v.data.company_name || '').toLowerCase();
@@ -1101,6 +1107,16 @@ export class VendorImportExportService {
                 );
                 errors.push({ row: 0, message: err.message });
             }
+        }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'VendorEntity',
+                entity_label: `Vendor import — ${created + updated} vendor(s)`,
+                summary: { created, updated, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
         }
 
         return { created, updated, errors };

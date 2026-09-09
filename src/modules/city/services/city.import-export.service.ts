@@ -19,6 +19,8 @@ import { StateDoc } from '@modules/state/repository/entities/state.entity';
 import { ENUM_STATE_STATUS } from '@modules/state/enums/state.enum';
 import { CountryRepository } from '@modules/country/repository/repositories/country.repository';
 import { CountryDoc } from '@modules/country/repository/entities/country.entity';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * City Excel import/export — the reason this feature exists.
@@ -79,7 +81,9 @@ export class CityImportExportService {
         private readonly cityService: CityService,
         private readonly cityRepository: CityRepository,
         private readonly stateRepository: StateRepository,
-        private readonly countryRepository: CountryRepository
+        private readonly countryRepository: CountryRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -347,7 +351,13 @@ export class CityImportExportService {
                         status: row.data.status,
                     } as any),
             },
-            this.logger
+            this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'CityEntity',
+                label: 'City import',
+            }
         );
     }
 }

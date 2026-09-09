@@ -11,6 +11,7 @@ import { CompanySettingsModule } from '@modules/company-settings/company-setting
 import { UomModule } from '@modules/uom/uom.module';
 import { HsnPropagationModule } from '@modules/hsn-propagation/hsn-propagation.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -25,6 +26,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         // Cascade a product's HSN onto every document line that uses it.
         HsnPropagationModule,
         DependencyCheckModule,
+        TrackingModule,
     ],
     providers: [ProductService, ProductImportExportService],
     exports: [

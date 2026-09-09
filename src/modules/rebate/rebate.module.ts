@@ -3,9 +3,10 @@ import { RebateRepositoryModule } from './repository/rebate.repository.module';
 import { RebateService } from './services/rebate.service';
 import { RebateImportExportService } from './services/rebate.import-export.service';
 import { RebateAdminController } from './controllers/rebate.admin.controller';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
-    imports: [RebateRepositoryModule],
+    imports: [RebateRepositoryModule, TrackingModule],
     providers: [RebateService, RebateImportExportService],
     exports: [RebateRepositoryModule, RebateService, RebateImportExportService],
     controllers: [RebateAdminController],

@@ -12,6 +12,8 @@ import { QuotationLineRepository } from '@modules/quotation/repository/repositor
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { CompanyBankAccountRepository } from '@modules/company/repository/repositories/company-bank-account.repository';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import { ENUM_PURCHASE_ORDER_STATUS } from '../enums/purchase-order.enum';
 import {
     parseDateCell,
@@ -128,7 +130,9 @@ export class PurchaseOrderImportExportService {
         private readonly quotationLineRepository: QuotationLineRepository,
         private readonly rebateRepository: RebateRepository,
         private readonly expenseRepository: ExpenseRepository,
-        private readonly companyBankAccountRepository: CompanyBankAccountRepository
+        private readonly companyBankAccountRepository: CompanyBankAccountRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     async generateSampleExcel(companyId: string): Promise<Buffer> {
@@ -643,6 +647,13 @@ export class PurchaseOrderImportExportService {
         let skipped = 0;
         const errors: { row: number; message: string }[] = [];
 
+        // ONE audit row for the whole import, not one per SO — see
+        // AuditLogService.recordSummary() / PriceListImportExportService's
+        // identical use for the same reason (a 186-row import would otherwise
+        // write 186 near-identical "created/updated Sales Order" rows and
+        // bury every other change in the activity feed).
+        this.requestContext.suppressAudit();
+
         for (const doc of docs) {
             if (doc.status === 'skip') {
                 skipped++;
@@ -754,6 +765,17 @@ export class PurchaseOrderImportExportService {
                 });
             }
         }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'PurchaseOrderEntity',
+                entity_label: `Sales Order import — ${created + updated} order(s)`,
+                summary: { created, updated, skipped, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
+        }
+
         return { created, updated, skipped, errors };
     }
 

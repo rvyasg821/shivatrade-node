@@ -8,6 +8,8 @@ import { CurrencyRepository } from '@modules/currency/repository/repositories/cu
 import { RebateRepository } from '@modules/rebate/repository/repositories/rebate.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 import {
     ENUM_PRODUCT_STATUS,
 } from '../enums/product.enum';
@@ -148,6 +150,8 @@ export class ProductImportExportService {
         private readonly rebateRepository: RebateRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly companySettingsService: CompanySettingsService,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService,
     ) {}
 
     /**
@@ -630,6 +634,8 @@ export class ProductImportExportService {
         let updated = 0;
         const errors: { row: number; message: string }[] = [];
 
+        this.requestContext.suppressAudit();
+
         const CHUNK = 500;
         const chunk = <T>(arr: T[]): T[][] => {
             const out: T[][] = [];
@@ -747,6 +753,16 @@ export class ProductImportExportService {
                     }
                 }),
             );
+        }
+
+        if (created || updated) {
+            this.auditLogService.recordSummary({
+                entity_name: 'ProductEntity',
+                entity_label: `Product import — ${created + updated} product(s)`,
+                summary: { created, updated, failed: errors.length },
+                company_id: companyId,
+                user_id: userId,
+            });
         }
 
         return { created, updated, errors };

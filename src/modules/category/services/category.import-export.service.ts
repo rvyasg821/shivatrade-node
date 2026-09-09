@@ -13,6 +13,8 @@ import {
 import { CategoryService } from './category.service';
 import { CategoryRepository } from '../repository/repositories/category.repository';
 import { ENUM_CATEGORY_STATUS } from '../enums/category.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 const EXCEL_HEADERS = ['name', 'description', 'status'];
 const SHEET_NAME = 'Categories';
@@ -46,6 +48,8 @@ export class CategoryImportExportService {
         private readonly fileService: FileService,
         private readonly categoryService: CategoryService,
         private readonly categoryRepository: CategoryRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService,
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -206,6 +210,14 @@ export class CategoryImportExportService {
                     ),
             },
             this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'CategoryEntity',
+                label: 'Category import',
+                companyId,
+                userId,
+            },
         );
     }
 }

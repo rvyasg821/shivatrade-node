@@ -7,6 +7,7 @@ import { FileModule } from '@common/file/file.module';
 import { StateAdminController } from './controllers/state.admin.controller';
 import { CountryModule } from '@modules/country/country.module';
 import { CityRepositoryModule } from '@modules/city/repository/city.repository.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 /**
  * `CityRepositoryModule` is imported for the delete guard only — the controller
@@ -19,6 +20,7 @@ import { CityRepositoryModule } from '@modules/city/repository/city.repository.m
         CountryModule,
         CityRepositoryModule,
         FileModule.forRoot(),
+        TrackingModule,
     ],
     providers: [StateService, StateSeedService, StateImportExportService],
     // StateSeedService is exported so CitySeedService can drive the

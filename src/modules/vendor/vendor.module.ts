@@ -11,6 +11,7 @@ import { RoleModule } from '@modules/role/role.module';
 import { AuthModule } from '@modules/auth/auth.module';
 import { CompanySettingsModule } from '@modules/company-settings/company-settings.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
+import { TrackingModule } from '@modules/tracking/tracking.module';
 
 @Module({
     imports: [
@@ -23,6 +24,7 @@ import { DependencyCheckModule } from '@modules/dependency-check/dependency-chec
         RoleModule,
         AuthModule,
         CompanySettingsModule,
+        TrackingModule,
     ],
     providers: [VendorService, VendorImportExportService],
     exports: [VendorRepositoryModule, VendorService, VendorImportExportService],

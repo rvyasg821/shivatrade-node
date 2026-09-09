@@ -14,6 +14,8 @@ import { CountryService } from './country.service';
 import { CountryRepository } from '../repository/repositories/country.repository';
 import { CountryDoc } from '../repository/entities/country.entity';
 import { ENUM_COUNTRY_STATUS } from '../enums/country.enum';
+import { AuditLogService } from '@modules/tracking/services/audit-log.service';
+import { RequestContextService } from '@common/request/services/request-context.service';
 
 /**
  * Country Excel import/export.
@@ -73,7 +75,9 @@ export class CountryImportExportService {
     constructor(
         private readonly fileService: FileService,
         private readonly countryService: CountryService,
-        private readonly countryRepository: CountryRepository
+        private readonly countryRepository: CountryRepository,
+        private readonly auditLogService: AuditLogService,
+        private readonly requestContext: RequestContextService
     ) {}
 
     /** Sample Excel file with headers + example rows. */
@@ -263,7 +267,13 @@ export class CountryImportExportService {
                         status: row.data.status,
                     } as any),
             },
-            this.logger
+            this.logger,
+            {
+                auditLogService: this.auditLogService,
+                requestContext: this.requestContext,
+                entityName: 'CountryEntity',
+                label: 'Country import',
+            }
         );
     }
 }
