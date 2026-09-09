@@ -44,7 +44,7 @@ export class LeadLineEntity extends DatabaseObjectIdEntityBase {
 
     /** Indicative price — auto-filled from the cheapest current price-list
      *  vendor, stored NATIVE in that vendor's currency (multi-currency). */
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false, default: 0 })
     unit_price: string;
 
     /** The native currency of `unit_price` (the vendor/source currency). Mirrors

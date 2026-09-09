@@ -60,7 +60,7 @@ export class PurchaseOrderLineEntity extends DatabaseObjectIdEntityBase {
 
     /** The VENDOR cost, in `source_currency_code`; pre-filled from
      *  `vendorPriceList.findCurrentPrice(companyId, vendorId, productId)`. */
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false })
     unit_price: string;
 
     /** Multi-currency: the currency `unit_price` (the vendor cost) is in — the

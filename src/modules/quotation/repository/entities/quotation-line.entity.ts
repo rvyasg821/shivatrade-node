@@ -52,7 +52,7 @@ export class QuotationLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 30, nullable: true })
     unit?: string;
 
-    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false })
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false })
     unit_price: string;
 
     /** Multi-currency: the currency `unit_price` (the vendor cost) is in — the
