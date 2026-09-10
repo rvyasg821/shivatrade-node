@@ -12,9 +12,6 @@ import { UomModule } from '@modules/uom/uom.module';
 import { HsnPropagationModule } from '@modules/hsn-propagation/hsn-propagation.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
 import { TrackingModule } from '@modules/tracking/tracking.module';
-// TEMPORARY (2026-09-10): only for ProductService.purgeAllByCompanyId(), the
-// one-off master-data reload helper. Remove with that method.
-import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
 
 @Module({
     imports: [
@@ -30,8 +27,6 @@ import { PriceListRepositoryModule } from '@modules/price-list/repository/price-
         HsnPropagationModule,
         DependencyCheckModule,
         TrackingModule,
-        // TEMPORARY — see the import comment above.
-        PriceListRepositoryModule,
     ],
     providers: [ProductService, ProductImportExportService],
     exports: [
