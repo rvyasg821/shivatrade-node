@@ -37,6 +37,7 @@ import { VendorContactRepository } from '@modules/vendor/repository/repositories
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { ExpenseRepository } from '@modules/expense/repository/repositories/expense.repository';
 import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
+import { PriceListService } from '@modules/price-list/services/price-list.service';
 import { CompanyService } from '@modules/company/services/company.service';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { ToleranceGuardService } from '@modules/tolerance-guard/services/tolerance-guard.service';
@@ -84,6 +85,7 @@ export class PoVendorService {
         private readonly productRepository: ProductRepository,
         private readonly expenseRepository: ExpenseRepository,
         private readonly priceListRepository: PriceListRepository,
+        private readonly priceListService: PriceListService,
         private readonly companyService: CompanyService,
         private readonly companyAddressRepository: CompanyAddressRepository,
         private readonly companyBankAccountRepository: CompanyBankAccountRepository,
@@ -109,47 +111,6 @@ export class PoVendorService {
             [povId, companyId]
         );
         return Array.isArray(rows) && rows.length > 0;
-    }
-
-    /**
-     * Import-driven update: when a historical-import Excel is re-uploaded
-     * for a voucher_no that already exists (e.g. a corrected file with the
-     * exact per-line GST% from the source books, replacing an earlier
-     * approximation), PoVendorImportExportService.importVpos() calls this
-     * for each 'valid_update' row instead of creating a duplicate or
-     * silently skipping. Updates ONLY tax_pct per line, matched by
-     * product_id — never qty/rate/status, which stay skip-protected.
-     * `order_value`/`gst_inr` are computed live from `line.tax_pct` on
-     * every read, so no recompute/freeze step is needed here (unlike
-     * Invoice). Idempotent; a line whose rate already matches is untouched.
-     */
-    async updateLineTaxRates(
-        povId: string,
-        rates: { product_id: string; tax_pct?: string }[]
-    ): Promise<number> {
-        const lines = await this.povLineRepository.findAll({
-            po_vendor_id: povId,
-        } as any);
-        const byProduct = new Map<string, any[]>();
-        for (const l of lines as any[]) {
-            const pid = l.product_id?.toString();
-            if (!pid) continue;
-            if (!byProduct.has(pid)) byProduct.set(pid, []);
-            byProduct.get(pid).push(l);
-        }
-        let linesFixed = 0;
-        for (const r of rates) {
-            if (r.tax_pct === undefined) continue;
-            const candidates = byProduct.get(r.product_id);
-            const l = candidates?.shift();
-            if (!l) continue;
-            if (String(num(l.tax_pct)) !== String(num(r.tax_pct))) {
-                l.tax_pct = r.tax_pct;
-                await this.povLineRepository.save(l);
-                linesFixed++;
-            }
-        }
-        return linesFixed;
     }
 
     /**
@@ -255,6 +216,52 @@ export class PoVendorService {
     }
 
     // ─── Vendor expense snapshot builder ────────────────────────────────
+
+    /**
+     * Import-only: mirrors the live app's "auto-add missing (vendor,
+     * product) to the price list at the entered rate, effective today" flow
+     * — the frontend's `confirmAndCreateMissingPrices` helper (silent mode)
+     * for the Costing Worksheet / standalone POV create form. The bulk VPO
+     * import never had an equivalent at all (gap found 2026-09-10) — it just
+     * relaxed the price-list guard and moved on, silently leaving the price
+     * list incomplete after a historical backfill. Non-fatal: logs and
+     * continues on any failure rather than blocking the import over a
+     * price-list write. Public — also called directly from
+     * `PoVendorImportExportService` (the update/re-import paths, which
+     * build lines themselves rather than going through `createStandalone`).
+     */
+    async autoAddMissingPriceListEntry(
+        companyId: string,
+        vendorId: string,
+        productId: string,
+        unitPrice: string | number,
+        createdBy: string
+    ): Promise<void> {
+        const price = num(unitPrice);
+        if (price <= 0) return;
+        try {
+            const existing = await this.priceListRepository.findCurrentPrice(
+                companyId,
+                vendorId,
+                productId
+            );
+            if (existing) return;
+            await this.priceListService.create(
+                companyId,
+                {
+                    vendor_id: vendorId,
+                    product_id: productId,
+                    unit_price: String(price),
+                    effective_date: new Date().toISOString().slice(0, 10),
+                } as any,
+                createdBy
+            );
+        } catch (e: any) {
+            this.logger.warn(
+                `Import: could not auto-add price-list entry (vendor ${vendorId}, product ${productId}): ${e?.message}`
+            );
+        }
+    }
 
     /**
      * Resolve the POV's currency + its INR conversion rate.
@@ -980,6 +987,20 @@ export class PoVendorService {
                         `Product ${p?.code || p?.name || ln.product_id} is not in the selected vendor's price list.`
                     );
                 }
+            } else {
+                // Import mode doesn't just relax the guard — it mirrors the
+                // live form's own "auto-add missing (vendor, product) to the
+                // price list at the entered rate" behaviour
+                // (`confirmAndCreateMissingPrices`, frontend silent mode),
+                // which the bulk import never did at all until now (gap
+                // found 2026-09-10).
+                await this.autoAddMissingPriceListEntry(
+                    companyId,
+                    vendorId,
+                    ln.product_id,
+                    ln.unit_price,
+                    createdBy
+                );
             }
         }
 
@@ -1014,13 +1035,27 @@ export class PoVendorService {
                     : undefined,
             }
         );
-        // Multi-currency: honour the request's currency/rate (defaults to the
-        // company home currency). Amounts stay stored in INR; exchange_rate
-        // (foreign-per-₹1) drives the view/PDF like a Quotation.
+        // Multi-currency: an explicit request currency (operator override,
+        // or the live form pre-filling the vendor's own currency) still
+        // wins; otherwise fall back to the VENDOR's own currency — same
+        // "you buy from the vendor at their rate" rule `createFromPo()`
+        // already applies — before finally falling back to home. Without
+        // this fallback (bug, fixed 2026-09-10), a caller that omits
+        // currency_code entirely — e.g. the bulk import, which has no
+        // sheet column for it and never passed one — silently forced every
+        // POV into the home currency regardless of the vendor's real one.
+        const vendorRow: any = await this.vendorRepository
+            .findOneById(vendorId)
+            .catch(() => null);
+        const vendorCurrency =
+            vendorRow?.currency_code && String(vendorRow.currency_code).trim()
+                ? String(vendorRow.currency_code).trim()
+                : undefined;
         const { currency_code, exchange_rate } = await this.resolvePovCurrency(
             companyId,
             (data as any).currency_code,
-            (data as any).exchange_rate
+            (data as any).exchange_rate,
+            vendorCurrency
         );
 
         let preSubtotal = 0;
@@ -1099,6 +1134,23 @@ export class PoVendorService {
             const prod = productById.get(ln.product_id);
             const ordered = num(ln.ordered_qty);
             const unitPrice = num(ln.unit_price);
+            // Historical-import-only: the sheet may state the ACTUAL
+            // dispatched qty separately from ordered_qty (an under- or
+            // over-shipment vs what was ordered — both real, both already
+            // supported by the live Dispatch action). Only honoured in
+            // import mode landing dispatched/closed; a live/normal create
+            // always starts DRAFT and this field never applies. Falls back
+            // to the existing "full ordered qty" default when the sheet
+            // doesn't specify one.
+            const explicitDispatched = (ln as any).dispatched_qty;
+            const dispatchedQty =
+                importDispatchedInFull &&
+                explicitDispatched != null &&
+                explicitDispatched !== ''
+                    ? String(Math.max(0, num(explicitDispatched)))
+                    : importDispatchedInFull
+                    ? String(ordered)
+                    : '0';
             await this.povLineRepository.create({
                 company_id: companyId,
                 po_vendor_id: header._id.toString(),
@@ -1112,7 +1164,7 @@ export class PoVendorService {
                 unit_price: String(ln.unit_price),
                 ordered_qty: String(ordered),
                 discount_pct: String(num((ln as any).discount_pct)),
-                dispatched_qty: importDispatchedInFull ? String(ordered) : '0',
+                dispatched_qty: dispatchedQty,
                 received_qty: '0',
                 line_total: String(
                     round2(

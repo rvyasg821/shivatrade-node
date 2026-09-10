@@ -62,7 +62,8 @@ export class DebitNoteEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 6, nullable: true })
     exchange_rate?: string;
 
-    /** Σ of line totals (returned_qty × unit_price), in the POV currency. */
+    /** Σ of line totals (returned_qty × unit_price × (1 − discount%)), in
+     *  the POV currency. */
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     total_amount: string;
 

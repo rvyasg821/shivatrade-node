@@ -5,7 +5,11 @@ import { DEBIT_NOTE_LINE_COLLECTION_NAME } from '../../constants/grn.entity.cons
 /**
  * Debit Note line — one returned item, seeded from a GRN line that had
  * rejected_qty > 0. `returned_qty` defaults to the GRN's rejected_qty (but is
- * editable, capped at rejected_qty). `line_total = returned_qty × unit_price`.
+ * editable, capped at rejected_qty). `unit_price`/`discount_pct` both default
+ * to the source POV line's own values (the vendor's already-agreed rate and
+ * discount — a return should credit at that same net price, not the raw
+ * pre-discount rate). `line_total = returned_qty × unit_price × (1 −
+ * discount_pct/100)`.
  */
 @Entity(DEBIT_NOTE_LINE_COLLECTION_NAME)
 export class DebitNoteLineEntity extends DatabaseObjectIdEntityBase {
@@ -50,6 +54,16 @@ export class DebitNoteLineEntity extends DatabaseObjectIdEntityBase {
 
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     unit_price: string;
+
+    /** Snapshot of the source POV line's discount_pct — see class comment. */
+    @Column({
+        type: 'numeric',
+        precision: 5,
+        scale: 2,
+        nullable: true,
+        default: 0,
+    })
+    discount_pct?: string;
 
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     line_total: string;
