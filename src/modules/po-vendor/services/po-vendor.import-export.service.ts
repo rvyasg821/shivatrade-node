@@ -79,6 +79,12 @@ const HEADER_HEADERS = [
     'invoice_number',
     'creation_date',
     'vendor_address_label',
+    // Historical FX: a bulk import of past VPOs must freeze the rate the
+    // voucher was actually booked at. Blank keeps the existing behaviour
+    // (vendor's currency at the CURRENT master rate), which silently
+    // rewrites every historical import to today's rate.
+    'currency_code',
+    'exchange_rate',
 ];
 const LINE_HEADERS = [
     'voucher_no',
@@ -290,6 +296,10 @@ export interface VpoImportDoc {
     internal_notes?: string;
     invoice_number?: string;
     creation_date?: string;
+    /** Explicit historical FX — blank falls back to the vendor's currency at
+     *  the current master rate (see HEADER_HEADERS). */
+    currency_code?: string;
+    exchange_rate?: string;
     advance?: { payment_date?: string; amount: string; notes?: string };
     status: ENUM_PO_VENDOR_STATUS;
     lines: VpoLine[];
@@ -355,6 +365,8 @@ export class PoVendorImportExportService {
             invoice_number: '',
             creation_date: '',
             vendor_address_label: '',
+            currency_code: 'USD',
+            exchange_rate: '95.18',
         };
         const line: Record<string, any> = {
             voucher_no: 'STIPL/VPO/0001/2026-27',
@@ -950,6 +962,28 @@ export class PoVendorImportExportService {
                 );
             }
 
+            // Historical currency + FX rate (both optional). The POV header
+            // rate is INR-per-1-unit (native x rate = INR), the OPPOSITE of
+            // the sales-doc convention — see CLAUDE.md section 4.
+            const currency_code =
+                get(raw, 'currency_code').toUpperCase() || undefined;
+            const exchangeRateRaw = get(raw, 'exchange_rate');
+            let exchange_rate: string | undefined;
+            if (exchangeRateRaw) {
+                const n = Number(exchangeRateRaw);
+                if (!Number.isFinite(n) || n <= 0) {
+                    errors.push(
+                        `exchange_rate "${exchangeRateRaw}" must be a number greater than 0`
+                    );
+                } else if (!currency_code) {
+                    errors.push(
+                        'exchange_rate needs currency_code to be set as well'
+                    );
+                } else {
+                    exchange_rate = String(n);
+                }
+            }
+
             // advance (optional)
             let advance:
                 | { payment_date?: string; amount: string; notes?: string }
@@ -1041,6 +1075,8 @@ export class PoVendorImportExportService {
                 internal_notes: get(raw, 'internal_notes') || undefined,
                 invoice_number: get(raw, 'invoice_number') || undefined,
                 creation_date,
+                currency_code,
+                exchange_rate,
                 advance,
                 status,
                 lines,
@@ -1198,6 +1234,10 @@ export class PoVendorImportExportService {
                         vendor_address_id: doc.vendor_address_id,
                         invoice_number: doc.invoice_number,
                         creation_date: doc.creation_date,
+                        // Explicit historical FX wins over the vendor-currency
+                        // fallback inside resolvePovCurrency().
+                        currency_code: doc.currency_code,
+                        exchange_rate: doc.exchange_rate,
                         dispatch_date: doc.dispatch_date,
                         delivery_address_id: doc.delivery_address_id,
                         delivery_address: doc.delivery_address,
@@ -1824,6 +1864,8 @@ export class PoVendorImportExportService {
             internal_notes: doc.internal_notes,
             invoice_number: doc.invoice_number,
             creation_date: doc.creation_date,
+            ...(doc.currency_code ? { currency_code: doc.currency_code } : {}),
+            ...(doc.exchange_rate ? { exchange_rate: doc.exchange_rate } : {}),
             expenses: doc.charges.map((c) => ({
                 expense_id: c.expense_id,
                 type: c.type,
@@ -2052,6 +2094,13 @@ export class PoVendorImportExportService {
                 vendor_address_label:
                     vendorAddressLabelById.get(p.vendor_address_id?.toString()) ||
                     '',
+                currency_code: p.currency_code || '',
+                // Blank for an INR-native POV so a round-trip re-import does
+                // not pin a meaningless rate of 1 onto every home-currency row.
+                exchange_rate:
+                    num(p.exchange_rate) && num(p.exchange_rate) !== 1
+                        ? String(p.exchange_rate)
+                        : '',
             });
             const povExchangeRate = num(p.exchange_rate) || 1;
             // Blank for an INR-native POV (exchange_rate === 1 by
