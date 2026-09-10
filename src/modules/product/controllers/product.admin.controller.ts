@@ -473,6 +473,29 @@ export class ProductAdminController {
         return { data };
     }
 
+    /**
+     * TEMPORARY (2026-09-10) — one-off product-master reload for the client.
+     * HARD-deletes every product of the caller's company plus its price-list /
+     * rebate / expense rows. Irreversible; requires an explicit confirm phrase
+     * in the body so it can never fire by accident. DELETE THIS ROUTE once the
+     * reload is done.
+     */
+    @Response('product.delete')
+    @AuthJwtAccessProtected()
+    @Post('/purge-all')
+    async purgeAll(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Body() body: { confirm?: string }
+    ): Promise<IResponse<Record<string, number>>> {
+        if (body?.confirm !== 'PURGE-ALL-PRODUCTS') {
+            throw new BadRequestException(
+                'Refusing to purge: body must contain {"confirm":"PURGE-ALL-PRODUCTS"}'
+            );
+        }
+        const data = await this.productService.purgeAllByCompanyId(companyId);
+        return { data };
+    }
+
     @Response('product.checkCode')
     @AuthJwtAccessProtected()
     @Post('/check-code')

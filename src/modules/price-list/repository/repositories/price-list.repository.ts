@@ -89,4 +89,12 @@ export class PriceListRepository extends DatabaseObjectIdRepositoryBase<PriceLis
             .where('product_id = :id', { id: productId })
             .execute();
     }
+
+    /** Hard-delete every row for a company — used by the product purge. */
+    async deleteAllByCompanyId(companyId: string): Promise<number> {
+        const result = await this._repository.delete({
+            company_id: companyId,
+        } as any);
+        return result.affected || 0;
+    }
 }
