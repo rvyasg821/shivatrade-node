@@ -28,8 +28,6 @@ import { ExpenseRepository } from '@modules/expense/repository/repositories/expe
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
 import { UomService } from '@modules/uom/services/uom.service';
 import { DependencyCheckService } from '@modules/dependency-check/dependency-check.service';
-// TEMPORARY (2026-09-10) — only for purgeAllByCompanyId(). Remove with it.
-import { PriceListRepository } from '@modules/price-list/repository/repositories/price-list.repository';
 import {
     IDatabaseCreateOptions,
     IDatabaseFindAllOptions,
@@ -51,9 +49,7 @@ export class ProductService {
         private readonly productExpenseRepository: ProductExpenseRepository,
         private readonly companySettingsService: CompanySettingsService,
         private readonly uomService: UomService,
-        private readonly dependencyCheckService: DependencyCheckService,
-        // TEMPORARY (2026-09-10) — only for purgeAllByCompanyId().
-        private readonly priceListRepository: PriceListRepository
+        private readonly dependencyCheckService: DependencyCheckService
     ) {}
 
     /**
@@ -308,47 +304,6 @@ export class ProductService {
 
     async deleteAllByCompanyId(companyId: string): Promise<number> {
         return this.productRepository.deleteAllByCompanyId(companyId);
-    }
-
-    /**
-     * TEMPORARY (2026-09-10) — one-off helper for the client's product master
-     * reload: HARD-deletes (real SQL DELETE, not soft_delete) every product of
-     * a company plus everything hanging off it.
-     *
-     * Deliberately UNGUARDED: `softDelete()`'s `assertProductNotInUse()` check
-     * would skip almost every row, which is the exact opposite of what a full
-     * master reload needs. There are no FK constraints on `product_id`
-     * anywhere (every referencing entity uses a bare `uuid` column, no
-     * `@ManyToOne`), so nothing cascades and nothing errors — which is also
-     * why the child tables below must be cleared explicitly or they orphan.
-     *
-     * It does NOT touch document lines (SO / POV / GRN / invoice). Those keep
-     * pointing at dead product_ids until they are themselves re-imported.
-     *
-     * DELETE THIS METHOD, its route, and the PriceListRepository injection
-     * once the reload is done.
-     */
-    async purgeAllByCompanyId(companyId: string): Promise<{
-        price_list: number;
-        product_rebate: number;
-        product_expense: number;
-        product: number;
-    }> {
-        const price_list =
-            await this.priceListRepository.deleteAllByCompanyId(companyId);
-        const product_rebate =
-            await this.productRebateRepository.deleteAllByCompanyId(companyId);
-        const product_expense =
-            await this.productExpenseRepository.deleteAllByCompanyId(companyId);
-        const product =
-            await this.productRepository.deleteAllByCompanyId(companyId);
-
-        this.logger.warn(
-            `PURGE company=${companyId} — products=${product}, ` +
-                `price_list=${price_list}, rebates=${product_rebate}, ` +
-                `expenses=${product_expense}`
-        );
-        return { price_list, product_rebate, product_expense, product };
     }
 
     // ─────────────────────────────────────────────────────────────────────

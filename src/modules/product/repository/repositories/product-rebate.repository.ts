@@ -30,12 +30,4 @@ export class ProductRebateRepository extends DatabaseObjectIdRepositoryBase<Prod
     async deleteByProductId(productId: string): Promise<void> {
         await this._repository.delete({ product_id: productId } as any);
     }
-
-    /** Hard-delete every row for a company — used by the product purge. */
-    async deleteAllByCompanyId(companyId: string): Promise<number> {
-        const result = await this._repository.delete({
-            company_id: companyId,
-        } as any);
-        return result.affected || 0;
-    }
 }
