@@ -58,11 +58,19 @@ export class PoVendorLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'varchar', length: 30, nullable: true })
     unit?: string;
 
-    /** Snapshot of tax rate — POV does not do tax math; this is for reporting. */
+    /** Snapshot of tax rate — POV does not do tax math; this is for reporting.
+     *
+     *  4dp, not 2dp: a bulk import of historical VPOs has to reproduce the
+     *  tax the client's books actually recorded. Where one voucher line is a
+     *  bundle of differently-taxed goods, the only rate that reproduces it is
+     *  a blended one (13.7546%, 6.2275%, 4.5132% in the Apr-Sep FY26-27 set),
+     *  and rounding those to 2dp shifts the voucher's tax by a few hundred
+     *  rupees. Ordinary rates (5 / 12 / 18 / 28, and the 0.1% merchant-export
+     *  concessional rate) are unaffected. */
     @Column({
         type: 'numeric',
-        precision: 5,
-        scale: 2,
+        precision: 7,
+        scale: 4,
         nullable: false,
         default: 0,
     })
