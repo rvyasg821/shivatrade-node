@@ -24,8 +24,15 @@ export class PriceListEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'uuid', nullable: false })
     currency_id: string;
 
-    /** Unit price in `currency_id`. Stored as numeric for precision. */
-    @Column({ type: 'numeric', precision: 18, scale: 2, nullable: false })
+    /** Unit price in `currency_id`. Stored as numeric for precision.
+     *
+     *  8dp, not 2dp: this client buys printed tickets/labels by the tens of
+     *  millions at sub-rupee rates, where a rate rounded to 2dp loses real
+     *  money (₹0.027 → ₹0.03 is ₹1.5 lakh across a 50M-unit order). Same
+     *  reason the line-item `unit_price` on SO / Quotation / Invoice / POV /
+     *  RFQ was widened to `numeric(18,8)`; this column was missed in that
+     *  pass and is brought in line here. */
+    @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false })
     unit_price: string;
 
     /** Minimum order quantity. */
