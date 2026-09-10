@@ -18,7 +18,7 @@ import { VoucherModule } from '@common/voucher/voucher.module';
 import { TrackingEventRepositoryModule } from '@modules/tracking-event/repository/tracking-event.repository.module';
 import { ExpenseRepositoryModule } from '@modules/expense/repository/expense.repository.module';
 import { InvoiceRepositoryModule } from '@modules/invoice/repository/invoice.repository.module';
-import { PriceListRepositoryModule } from '@modules/price-list/repository/price-list.repository.module';
+import { PriceListModule } from '@modules/price-list/price-list.module';
 // Company logo for the shared PDF letterhead lives on company-settings.
 import { CompanySettingsRepositoryModule } from '@modules/company-settings/repository/company-settings.repository.module';
 import { DependencyCheckModule } from '@modules/dependency-check/dependency-check.module';
@@ -50,14 +50,17 @@ import { TrackingModule } from '@modules/tracking/tracking.module';
         TrackingEventRepositoryModule,
         ExpenseRepositoryModule,
         InvoiceRepositoryModule,
-        PriceListRepositoryModule,
+        PriceListModule,
         CompanySettingsRepositoryModule,
         InventoryModule,
         // Linked Adjustment Notes move balance_payable — repository only, so
         // there is no cycle with AdjustmentNoteModule (which imports this one).
         AdjustmentNoteRepositoryModule,
         // GrnModule imports PoVendorRepositoryModule only (not this module),
-        // so importing it here is not circular.
+        // so importing it here is not circular. Historical-import mode used
+        // to also auto-create+confirm a GRN here — removed 2026-09-10, GRN/
+        // Debit Note existence is now 100% driven by their own import sheets
+        // (see PoVendorImportExportService's GRNs/DebitNotes sheet handling).
         GrnModule,
         TrackingModule,
     ],

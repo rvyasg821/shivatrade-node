@@ -32,6 +32,7 @@ import { CompanyRepository } from '@modules/company/repository/repositories/comp
 import { CompanyAddressRepository } from '@modules/company/repository/repositories/company-address.repository';
 import { CompanySettingsRepository } from '@modules/company-settings/repository/repositories/company-settings.repository';
 import { CompanySettingsService } from '@modules/company-settings/services/company-settings.service';
+import { ImportContext } from '@common/import/import-context.interface';
 import { VoucherService } from '@common/voucher/services/voucher.service';
 import { ENUM_VOUCHER_DOC_TYPE } from '@common/voucher/enums/voucher-doc-type.enum';
 import { PdfService } from '@common/pdf/pdf.service';
@@ -158,7 +159,8 @@ export class DebitNoteService {
         companyId: string,
         grnId: string,
         dto: DebitNoteCreateFromGrnDto,
-        createdBy: string
+        createdBy: string,
+        ctx?: ImportContext
     ): Promise<DebitNoteDoc> {
         const grn: any = await this.grnRepository.findOne({
             _id: grnId,
@@ -266,7 +268,17 @@ export class DebitNoteService {
                     ? round4(num(ov.unit_price))
                     : round4(num(povLine?.unit_price));
             if (unitPrice < 0) unitPrice = 0;
-            const lineTotal = round4(returned * unitPrice);
+            // Always the source POV line's own discount — never an
+            // independent override (the vendor's already-agreed discount
+            // applies to a return the same way it applied to the original
+            // sale; a return isn't a separate negotiation).
+            const discountPct = Math.min(
+                100,
+                Math.max(0, round4(num(povLine?.discount_pct)))
+            );
+            const lineTotal = round4(
+                returned * unitPrice * (1 - discountPct / 100)
+            );
             total = round4(total + lineTotal);
             const prod = productById.get(gl.product_id?.toString());
             seq += 1;
@@ -282,6 +294,7 @@ export class DebitNoteService {
                 rejected_qty: String(rejected),
                 returned_qty: String(returned),
                 unit_price: String(unitPrice),
+                discount_pct: String(discountPct),
                 line_total: String(lineTotal),
                 remarks: ov?.remarks || null,
                 seq,
@@ -294,11 +307,13 @@ export class DebitNoteService {
             dto.dn_date ||
             grn.grn_date ||
             new Date().toISOString().slice(0, 10);
-        await this.companySettings.assertPostingDateOpen(
-            companyId,
-            dnDate,
-            'debit note'
-        );
+        if (!ctx?.silent) {
+            await this.companySettings.assertPostingDateOpen(
+                companyId,
+                dnDate,
+                'debit note'
+            );
+        }
 
         const dn = await this.debitNoteRepository.create({
             company_id: companyId,
@@ -395,9 +410,19 @@ export class DebitNoteService {
                         'Unit price cannot be negative.'
                     );
                 }
+                // discount_pct is never an input here — always whatever was
+                // snapshotted from the source POV line at create time (see
+                // createFromGrn's own comment on why it's never an
+                // independent override).
+                const discountPct = Math.min(
+                    100,
+                    Math.max(0, round4(num(row.discount_pct)))
+                );
                 row.returned_qty = String(returned);
                 row.unit_price = String(unitPrice);
-                row.line_total = String(round4(returned * unitPrice));
+                row.line_total = String(
+                    round4(returned * unitPrice * (1 - discountPct / 100))
+                );
                 if (item.remarks !== undefined) row.remarks = item.remarks;
                 await this.debitNoteLineRepository.save(row);
             }
@@ -554,6 +579,7 @@ export class DebitNoteService {
                 rejected_qty: l.rejected_qty,
                 returned_qty: l.returned_qty,
                 unit_price: l.unit_price,
+                discount_pct: l.discount_pct,
                 line_total: l.line_total,
                 remarks: l.remarks,
                 seq: l.seq,
@@ -785,6 +811,7 @@ export class DebitNoteService {
             'HSN',
             'Return Qty',
             'Unit Price',
+            'Disc %',
             `Amount (${code})`,
             'Remarks',
         ];
@@ -799,6 +826,7 @@ export class DebitNoteService {
             textCell(l.hsn_code || '-', 'c'),
             textCell(`${num(l.returned_qty).toFixed(2)} ${l.unit || ''}`.trim(), 'r'),
             moneyCell(num(l.unit_price)),
+            textCell(num(l.discount_pct) > 0 ? `${num(l.discount_pct)}%` : '-', 'r'),
             moneyCell(num(l.line_total), { bold: true }),
             textCell(l.remarks || '', 'l'),
         ]);
@@ -820,7 +848,7 @@ export class DebitNoteService {
                 kind: 'table',
                 head,
                 rows,
-                align: ['c', 'l', 'c', 'c', 'r', 'r', 'r', 'l'],
+                align: ['c', 'l', 'c', 'c', 'r', 'r', 'r', 'r', 'l'],
             },
             {
                 kind: 'totals',
@@ -834,7 +862,7 @@ export class DebitNoteService {
         const buffer = buildDocWorkbook({
             sheetName: 'Debit Note',
             sections,
-            columnWidths: [5, 30, 12, 10, 14, 14, 16, 18],
+            columnWidths: [5, 30, 12, 10, 14, 14, 10, 16, 18],
         });
         return {
             buffer,
@@ -905,6 +933,7 @@ export class DebitNoteService {
                 <td>${this.esc(l.hsn_code || '-')}</td>
                 <td style="text-align:right">${money(l.returned_qty)} ${this.esc(l.unit || '')}</td>
                 <td style="text-align:right">${moneyCcy(l.unit_price)}</td>
+                <td style="text-align:right">${num(l.discount_pct) > 0 ? `${money(l.discount_pct)}%` : '-'}</td>
                 <td style="text-align:right">${moneyCcy(l.line_total)}</td>
                 <td>${this.esc(l.remarks || '')}</td>
             </tr>`
@@ -938,11 +967,11 @@ export class DebitNoteService {
           <table>
             <thead><tr>
               <th>#</th><th>Item</th><th>Part No</th><th>HSN</th>
-              <th>Return Qty</th><th>Unit Price</th><th>Amount</th><th>Remarks</th>
+              <th>Return Qty</th><th>Unit Price</th><th>Disc</th><th>Amount</th><th>Remarks</th>
             </tr></thead>
             <tbody>${rows}</tbody>
             <tfoot><tr>
-              <td colspan="6" style="text-align:right">Total${cur}</td>
+              <td colspan="7" style="text-align:right">Total${cur}</td>
               <td style="text-align:right">${moneyCcy(dn.total_amount)}</td>
               <td></td>
             </tr></tfoot>

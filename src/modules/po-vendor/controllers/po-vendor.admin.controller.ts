@@ -135,9 +135,15 @@ export class PoVendorAdminController {
             companyId,
             userId
         );
+        const grnPart = result.grnCreated || result.grnUpdated || result.grnSkipped
+            ? ` — GRNs: ${result.grnCreated} created, ${result.grnUpdated} updated, ${result.grnSkipped} skipped`
+            : '';
+        const dnPart = result.dnCreated || result.dnUpdated || result.dnSkipped
+            ? ` — Debit Notes: ${result.dnCreated} created, ${result.dnUpdated} updated, ${result.dnSkipped} skipped`
+            : '';
         return {
             statusCode: 200,
-            message: `Import complete: ${result.created} created, ${result.updated} tax-rate updated, ${result.skipped} skipped`,
+            message: `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped${grnPart}${dnPart}`,
             data: { summary, ...result },
         };
     }

@@ -14,6 +14,7 @@ export class DebitNoteLineResponseDto {
     @ApiProperty({ required: false }) rejected_qty?: string;
     @ApiProperty({ required: false }) returned_qty?: string;
     @ApiProperty({ required: false }) unit_price?: string;
+    @ApiProperty({ required: false }) discount_pct?: string;
     @ApiProperty({ required: false }) line_total?: string;
     @ApiProperty({ required: false }) remarks?: string;
     @ApiProperty() seq: number;
