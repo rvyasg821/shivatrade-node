@@ -31,6 +31,7 @@ import { QuotationRepository } from '@modules/quotation/repository/repositories/
 import { PfiRepository } from '@modules/pfi/repository/repositories/pfi.repository';
 import { PurchaseOrderRepository } from '@modules/purchase-order/repository/repositories/purchase-order.repository';
 import { PoVendorRepository } from '@modules/po-vendor/repository/repositories/po-vendor.repository';
+import { PoVendorLineRepository } from '@modules/po-vendor/repository/repositories/po-vendor-line.repository';
 import { PoVendorTrackingEventRepository } from '@modules/tracking-event/repository/repositories/po-vendor-tracking-event.repository';
 import { VendorRepository } from '@modules/vendor/repository/repositories/vendor.repository';
 import { DateTime } from 'luxon';
@@ -55,6 +56,7 @@ export class DashboardCompanyController {
         private readonly pfiRepository: PfiRepository,
         private readonly poRepository: PurchaseOrderRepository,
         private readonly povRepository: PoVendorRepository,
+        private readonly povLineRepository: PoVendorLineRepository,
         private readonly trackingEventRepository: PoVendorTrackingEventRepository,
         private readonly vendorRepository: VendorRepository,
         private readonly dashboardExportService: DashboardExportService,
@@ -462,11 +464,32 @@ export class DashboardCompanyController {
                     0
                 );
 
-                // Top vendors by POV count within the period.
-                const fromMs = new Date(fromIso).getTime();
-                const periodPovs = (povs as any[]).filter(
-                    v => v.createdAt && new Date(v.createdAt).getTime() >= fromMs
-                );
+                // Top vendors by POV count within the period. Dated by the POV's
+                // own business date (dispatch, else creation) — `createdAt` is the
+                // row insert time, so a bulk historical import put every POV in
+                // the current month.
+                const fromDate = DateTime.fromISO(fromIso).setZone(companyTz).toISODate();
+                const periodPovs = (povs as any[]).filter((v) => {
+                    const d = String(v.dispatch_date || v.creation_date || '').slice(0, 10);
+                    return d && d >= fromDate;
+                });
+                // POV carries no header total — value = Σ line qty × unit price
+                // net of line discount, converted to ₹ at the POV's own rate
+                // (exchange_rate = INR per 1 unit of the POV currency).
+                const periodLines = periodPovs.length
+                    ? ((await this.povLineRepository.findAll({
+                          po_vendor_id: { $in: periodPovs.map((v) => v._id.toString()) },
+                      } as any)) as any[])
+                    : [];
+                const valueByPov = new Map<string, number>();
+                for (const l of periodLines) {
+                    const k = l.po_vendor_id?.toString();
+                    const net =
+                        num(l.ordered_qty) *
+                        num(l.unit_price) *
+                        (1 - num(l.discount_pct) / 100);
+                    valueByPov.set(k, (valueByPov.get(k) || 0) + net);
+                }
                 const vendorAgg = new Map<
                     string,
                     { count: number; total: number }
@@ -476,14 +499,9 @@ export class DashboardCompanyController {
                     if (!vid) continue;
                     const cur = vendorAgg.get(vid) || { count: 0, total: 0 };
                     cur.count += 1;
-                    // POV doesn't carry grand_total directly; use line sum if present.
-                    const lineSum = Array.isArray(v.lines)
-                        ? v.lines.reduce(
-                              (s: number, l: any) => s + num(l.line_total),
-                              0
-                          )
-                        : 0;
-                    cur.total += lineSum;
+                    cur.total +=
+                        (valueByPov.get(v._id.toString()) || 0) *
+                        (num(v.exchange_rate) || 1);
                     vendorAgg.set(vid, cur);
                 }
                 const vendorMap = new Map(
