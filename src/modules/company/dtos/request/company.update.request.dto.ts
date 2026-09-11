@@ -2,6 +2,7 @@ import { faker } from '@faker-js/faker';
 import { ApiProperty } from '@nestjs/swagger';
 import {
     IsString,
+    IsNotEmpty,
     MaxLength,
     MinLength,
     IsOptional,
@@ -47,9 +48,11 @@ export class CompanyAddressRequestDto {
 export class CompanyBankAccountRequestDto {
     @IsString() @IsOptional() _id?: string;
 
-    @IsString() @MaxLength(200) bank_name: string;
+    // @IsNotEmpty: @IsString alone accepts "", which would save a bank account
+    // with no bank name / account number.
+    @IsString() @IsNotEmpty() @MaxLength(200) bank_name: string;
     @IsString() @IsOptional() @MaxLength(200) account_holder_name?: string;
-    @IsString() @MaxLength(50) account_number: string;
+    @IsString() @IsNotEmpty() @MaxLength(50) account_number: string;
 
     @IsString() @IsOptional() @MaxLength(11) ifsc?: string;
     @IsString() @IsOptional() @MaxLength(11) swift_code?: string;
