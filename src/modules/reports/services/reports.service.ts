@@ -4396,6 +4396,7 @@ export class ReportsService {
                  -- report needs a single basis to aggregate across products.
                  SELECT gl.product_id,
                         SUM(gl.accepted_qty::numeric * povl.unit_price::numeric
+                            * (1 - COALESCE(povl.discount_pct, 0) / 100)
                             * COALESCE(NULLIF(pov.exchange_rate::numeric, 0), 1)) AS cost_sum,
                         SUM(gl.accepted_qty::numeric)                            AS qty_sum
                  FROM grn_lines gl
@@ -4984,6 +4985,7 @@ export class ReportsService {
                  -- valued in mixed currencies. Aged-stock value needs one basis.
                  SELECT gl.product_id,
                         SUM(gl.accepted_qty::numeric * povl.unit_price::numeric
+                            * (1 - COALESCE(povl.discount_pct, 0) / 100)
                             * COALESCE(NULLIF(pov.exchange_rate::numeric, 0), 1)) AS cost_sum,
                         SUM(gl.accepted_qty::numeric)                            AS qty_sum
                  FROM grn_lines gl
@@ -5011,7 +5013,14 @@ export class ReportsService {
                   `SELECT product_id,
                           SUM(CASE WHEN movement_date < ($2::date + INTERVAL '1 day')
                                    THEN qty::numeric ELSE 0 END) AS closing,
+                          -- Outflow = real issues only. A 'grn' negative row is a
+                          -- reversal from a GRN edited/cancelled after confirm;
+                          -- the receipt cohorts below already use the GRN's
+                          -- CURRENT accepted qty, so counting the reversal too
+                          -- would consume those cohorts and leave the stock
+                          -- "undated". Same exclusion as inventory FIFO_CTES.
                           SUM(CASE WHEN qty::numeric < 0
+                                    AND source_type <> 'grn'
                                     AND movement_date < ($2::date + INTERVAL '1 day')
                                    THEN -qty::numeric ELSE 0 END) AS out_qty
                    FROM stock_movements
@@ -5270,6 +5279,7 @@ export class ReportsService {
                     COALESCE(v.company_name, '—')      AS vendor_name,
                     gl.accepted_qty::float8            AS qty,
                     (povl.unit_price::float8
+                        * (1 - COALESCE(povl.discount_pct, 0)::float8 / 100)
                         * COALESCE(NULLIF(pov.exchange_rate::float8, 0), 1))
                                                        AS rate_inr
              FROM grn_lines gl

@@ -203,7 +203,7 @@ export class InventoryService {
     // first, so the newest (surviving) layers determine the on-hand split.
     //
     // Layers = POV lines with received_qty (each tagged with its POV currency +
-    // native unit price, dated by the POV arrival date) — the same row source
+    // native unit price net of line discount, dated by the POV arrival date) — the same row source
     // the register used before multi-currency, so received stock always shows.
     // Outward = real OUT ledger rows (sales invoices / manual, GRN reversals
     // excluded), consumed oldest-first. Opening & closing are the FIFO remainder
@@ -221,7 +221,10 @@ export class InventoryService {
                    pv.vendor_id                           AS vendor_id,
                    COALESCE(pv.currency_code, 'INR')      AS ccy,
                    COALESCE(pvl.received_qty, 0)::numeric AS in_qty,
-                   COALESCE(pvl.unit_price, 0)::numeric   AS unit_price,
+                   -- Net of the POV line discount — the price actually paid,
+                   -- same basis as the GRN taxable value and the vendor ledger.
+                   (COALESCE(pvl.unit_price, 0)
+                       * (1 - COALESCE(pvl.discount_pct, 0) / 100))::numeric AS unit_price,
                    COALESCE(pv.exchange_rate, 1)::numeric AS exchange_rate,
                    COALESCE(pv.actual_arrival_date, pv."updatedAt")::timestamptz AS mv_at,
                    pvl._id                                AS mv_id
