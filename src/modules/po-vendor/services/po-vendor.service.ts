@@ -3384,9 +3384,20 @@ export class PoVendorService {
                 gstInr += (num(l.line_total) * (1 + chargesPct) * taxPct) / 100;
             }
         }
-        // POV is in home currency (exchange_rate = 1); round to a whole unit to
-        // match the PDF grand total.
-        return Math.round(linesInr + chargesInr + gstInr);
+        return this.roundOrderValue(
+            linesInr + chargesInr + gstInr,
+            row.currency_code
+        );
+    }
+
+    /**
+     * A POV's order value as compared against its payments. INR rounds to the
+     * whole rupee (Tally's round-off — payments are booked to the rupee). A
+     * foreign-currency POV keeps its cents: rounding it too made a USD PO paid
+     * in full ($75,073.55) read as partially paid against $75,074.
+     */
+    private roundOrderValue(raw: number, currencyCode?: string | null): number {
+        return (currencyCode || 'INR') === 'INR' ? Math.round(raw) : round2(raw);
     }
 
     async listPayments(poVendorId: string): Promise<PoVendorPaymentDoc[]> {
@@ -3798,8 +3809,9 @@ export class PoVendorService {
                       0
                   )
                 : 0;
-            const orderValue = Math.round(
-                linesInr + chargesInr + gstInr + chargeGstInr
+            const orderValue = this.roundOrderValue(
+                linesInr + chargesInr + gstInr + chargeGstInr,
+                (r as any).currency_code
             );
             const amountPaid = round2(num(r.amount_paid));
             // Linked Adjustment Notes settle the POV alongside cash.
