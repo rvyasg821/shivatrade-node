@@ -26,6 +26,18 @@ export class PoVendorPaymentRepository extends DatabaseObjectIdRepositoryBase<Po
         } as any);
     }
 
+    /**
+     * Payments that count: not deleted AND not voided. `findActiveByPoVendorId`
+     * still returns voided rows (the POV payment history shows them, marked
+     * voided) — use this one wherever a voided payment must not appear.
+     */
+    async findNonVoidedByPoVendorId(
+        poVendorId: string
+    ): Promise<PoVendorPaymentDoc[]> {
+        const pays = await this.findActiveByPoVendorId(poVendorId);
+        return pays.filter((p: any) => !p.voided_at);
+    }
+
     /** Sum of non-voided, non-deleted payments — drives status + balance. */
     async sumActiveByPoVendorId(poVendorId: string): Promise<number> {
         const row = await this._repository

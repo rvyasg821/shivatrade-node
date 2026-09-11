@@ -2342,7 +2342,9 @@ export class PoVendorImportExportService {
         const payCache = new Map<string, Set<string>>();
         const existingKeys = async (povId: string): Promise<Set<string>> => {
             if (payCache.has(povId)) return payCache.get(povId);
-            const pays = (await this.povPaymentRepository.findActiveByPoVendorId(
+            // Voided payments don't count — a re-import of a payment that was
+            // voided must be recorded again, not skipped as a duplicate.
+            const pays = (await this.povPaymentRepository.findNonVoidedByPoVendorId(
                 povId
             )) as any[];
             const set = new Set<string>(
@@ -2497,7 +2499,9 @@ export class PoVendorImportExportService {
 
         const aoa: any[][] = [[...PAYMENT_HEADERS]];
         for (const pov of vpos) {
-            const pays = (await this.povPaymentRepository.findActiveByPoVendorId(
+            // Voided payments are left out: this sheet is the re-importable
+            // record of what was actually paid.
+            const pays = (await this.povPaymentRepository.findNonVoidedByPoVendorId(
                 pov._id.toString()
             )) as any[];
             for (const p of pays) {
