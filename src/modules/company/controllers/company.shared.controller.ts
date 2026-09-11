@@ -152,6 +152,13 @@ export class CompanySharedController {
             }
         }
 
+        // Validate addresses + bank accounts BEFORE any write — a rejected
+        // list must not leave the company header already updated.
+        await this.companyService.assertRelationsValid(
+            addresses,
+            bank_accounts
+        );
+
         try {
             const updated = await this.companyService.update(
                 company,
