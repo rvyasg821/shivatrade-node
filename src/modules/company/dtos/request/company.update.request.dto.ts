@@ -19,6 +19,12 @@ import {
 } from 'class-validator';
 import { IsCustomEmail } from '@common/request/validations/request.custom-email.validation';
 import { Transform, Type } from 'class-transformer';
+
+// A cleared form field arrives as "" and means "clear it". Mapping it to
+// `undefined` (as these fields used to) made CompanyService.update() skip the
+// field, so the old value silently stayed saved. `null` clears the column.
+const emptyToNull = ({ value }: { value: any }) =>
+    value === '' ? null : typeof value === 'string' ? value.trim() : value;
 import {
     ENUM_COMPANY_ADDRESS_TYPE,
     ENUM_COMPANY_BANK_ACCOUNT_TYPE,
@@ -177,7 +183,7 @@ export class CompanyUpdateRequestDto {
     @ValidateIf((o) => o.website !== "" && o.website !== null && o.website !== undefined)
     @IsOptional()
     @IsUrl({}, { message: 'Website must be a valid URL' })
-    @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
+    @Transform(emptyToNull)
     website?: string;
 
     @ApiProperty({
@@ -189,7 +195,7 @@ export class CompanyUpdateRequestDto {
     @IsOptional()
     @IsString()
     @MaxLength(50)
-    @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
+    @Transform(emptyToNull)
     license_number?: string;
 
     @ApiProperty({
@@ -201,7 +207,7 @@ export class CompanyUpdateRequestDto {
     @IsOptional()
     @IsString()
     @MaxLength(50)
-    @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
+    @Transform(emptyToNull)
     tax_number?: string;
 
     @ApiProperty({
@@ -216,7 +222,7 @@ export class CompanyUpdateRequestDto {
         message: 'pan must match the format AAAAA0000A (10 chars)',
     })
     @Transform(({ value }) =>
-        value === '' ? undefined : value?.trim().toUpperCase()
+        value === '' ? null : value?.trim().toUpperCase()
     )
     pan?: string;
 
@@ -317,19 +323,19 @@ export class CompanyUpdateRequestDto {
     @IsOptional()
     @IsString()
     @MaxLength(50)
-    @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
+    @Transform(emptyToNull)
     company_code?: string;
 
     @IsOptional()
     @IsString()
     @MaxLength(50)
-    @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
+    @Transform(emptyToNull)
     paye_reference?: string;
 
     @IsOptional()
     @IsString()
     @MaxLength(100)
-    @Transform(({ value }) => (value === "" ? undefined : value?.trim()))
+    @Transform(emptyToNull)
     pension_provider?: string;
 
     @IsOptional()
@@ -344,16 +350,16 @@ export class CompanyUpdateRequestDto {
     status?: ENUM_COMPANY_STATUS;
 
     // ── India export compliance ──
-    @IsOptional() @IsString() @MaxLength(20) iec?: string;
-    @IsOptional() @IsString() @MaxLength(50) lut_no?: string;
-    @IsOptional() @IsDateString() lut_date?: string;
-    @IsOptional() @IsString() @MaxLength(21) cin?: string;
+    @IsOptional() @IsString() @MaxLength(20) @Transform(emptyToNull) iec?: string;
+    @IsOptional() @IsString() @MaxLength(50) @Transform(emptyToNull) lut_no?: string;
+    @IsOptional() @IsDateString() @Transform(emptyToNull) lut_date?: string;
+    @IsOptional() @IsString() @MaxLength(21) @Transform(emptyToNull) cin?: string;
 
     // ── PFI / export-document defaults ──
-    @IsOptional() @IsString() @MaxLength(150) default_port_of_loading?: string;
-    @IsOptional() @IsUUID() default_port_of_loading_id?: string;
+    @IsOptional() @IsString() @MaxLength(150) @Transform(emptyToNull) default_port_of_loading?: string;
+    @IsOptional() @IsUUID() @Transform(emptyToNull) default_port_of_loading_id?: string;
     @IsOptional() default_port_of_loading_snapshot?: any;
-    @IsOptional() @IsString() @MaxLength(4000) default_declaration_text?: string;
+    @IsOptional() @IsString() @MaxLength(4000) @Transform(emptyToNull) default_declaration_text?: string;
 
     // ── PO defaults ──
     // `default_po_delivery_address` retired — see refactor plan.

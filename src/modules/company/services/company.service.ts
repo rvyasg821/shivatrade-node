@@ -303,28 +303,83 @@ export class CompanyService {
         }
     }
 
+    /**
+     * Validate BOTH relation lists before anything is written, so a rejected
+     * save can no longer leave the company header (or its addresses) half
+     * updated. Call before CompanyService.update() in every save path.
+     */
+    async assertRelationsValid(
+        addresses: CompanyAddressRequestDto[] | undefined,
+        bankAccounts: CompanyBankAccountRequestDto[] | undefined
+    ): Promise<void> {
+        this.assertAddressesValid(addresses);
+        await this.assertBankAccountsValid(bankAccounts);
+    }
+
+    /**
+     * Rows are matched by `_id` and updated IN PLACE; only rows the caller
+     * dropped are soft-deleted and only rows without a known `_id` are
+     * created. Every save used to soft-delete and re-insert every row, so
+     * each bank account got a new id and documents holding the old id (SO
+     * advance bank, invoice receipt, vendor payment) lost their selection.
+     */
+    private async syncCompanyRows<R extends { _id?: string }>(
+        repo: {
+            findByCompanyId(companyId: string): Promise<any[]>;
+            create(data: any): Promise<any>;
+            update(find: Record<string, any>, data: any): Promise<any>;
+        },
+        companyId: string,
+        rows: R[],
+        toColumns: (row: R) => Record<string, any>
+    ): Promise<void> {
+        const existing = await repo.findByCompanyId(companyId);
+        const existingIds = new Set(existing.map((e) => String(e._id)));
+        const kept = new Set<string>();
+        for (const row of rows) {
+            const id = row._id ? String(row._id) : '';
+            if (id && existingIds.has(id)) {
+                await repo.update(
+                    { _id: id, company_id: companyId, soft_delete: false },
+                    toColumns(row)
+                );
+                kept.add(id);
+            } else {
+                await repo.create({ company_id: companyId, ...toColumns(row) });
+            }
+        }
+        for (const e of existing) {
+            if (!kept.has(String(e._id))) {
+                await repo.update({ _id: String(e._id) }, { soft_delete: true });
+            }
+        }
+    }
+
     async replaceAddresses(
         companyId: string,
         addresses: CompanyAddressRequestDto[] | undefined
     ): Promise<void> {
         this.assertAddressesValid(addresses);
-        await this.addressRepository.softDeleteByCompanyId(companyId);
-        if (!addresses || addresses.length === 0) return;
-        for (const a of addresses) {
-            await this.addressRepository.create({
-                company_id: companyId,
+        // `?? null` so a value cleared on an existing row is cleared in the
+        // DB too (an undefined property is ignored by save()).
+        await this.syncCompanyRows(
+            this.addressRepository,
+            companyId,
+            addresses || [],
+            (a) => ({
                 type: a.type || ENUM_COMPANY_ADDRESS_TYPE.CORPORATE,
-                label: a.label,
-                address_line1: a.address_line1,
-                address_line2: a.address_line2,
-                city: a.city,
-                state: a.state,
-                country: a.country,
-                postcode: a.postcode,
-                gstin: a.gstin,
+                label: a.label ?? null,
+                address_line1: a.address_line1 ?? null,
+                address_line2: a.address_line2 ?? null,
+                city: a.city ?? null,
+                state: a.state ?? null,
+                country: a.country ?? null,
+                postcode: a.postcode ?? null,
+                gstin: a.gstin ?? null,
                 is_default: !!a.is_default,
-            } as any);
-        }
+            })
+        );
+        if (!addresses || addresses.length === 0) return;
 
         // Sync the registered address back to the company's legacy scalar
         // address columns so PDF templates / payroll / other modules that
@@ -390,27 +445,27 @@ export class CompanyService {
         accounts: CompanyBankAccountRequestDto[] | undefined
     ): Promise<void> {
         await this.assertBankAccountsValid(accounts);
-        await this.bankAccountRepository.softDeleteByCompanyId(companyId);
-        if (!accounts || accounts.length === 0) return;
-        for (const a of accounts) {
-            await this.bankAccountRepository.create({
-                company_id: companyId,
+        await this.syncCompanyRows(
+            this.bankAccountRepository,
+            companyId,
+            accounts || [],
+            (a) => ({
                 bank_name: a.bank_name,
-                account_holder_name: a.account_holder_name,
+                account_holder_name: a.account_holder_name ?? null,
                 account_number: a.account_number,
-                ifsc: a.ifsc,
-                swift_code: a.swift_code,
-                iban: a.iban,
-                ad_code: a.ad_code,
+                ifsc: a.ifsc ?? null,
+                swift_code: a.swift_code ?? null,
+                iban: a.iban ?? null,
+                ad_code: a.ad_code ?? null,
                 currency_id: a.currency_id,
-                branch_name: a.branch_name,
-                branch_address: a.branch_address,
+                branch_name: a.branch_name ?? null,
+                branch_address: a.branch_address ?? null,
                 account_type: a.account_type,
                 is_default: !!a.is_default,
-                notes: a.notes,
+                notes: a.notes ?? null,
                 is_active: a.is_active !== undefined ? a.is_active : true,
-            } as any);
-        }
+            })
+        );
     }
 
     async findAddressesByCompanyId(companyId: string): Promise<CompanyAddressDoc[]> {

@@ -434,6 +434,13 @@ export class CompanyAdminController {
                 });
             }
 
+            // Validate addresses + bank accounts BEFORE any write — a rejected
+            // list must not leave the company header already updated.
+            await this.companyService.assertRelationsValid(
+                body.addresses,
+                body.bank_accounts
+            );
+
             // Update the company with all provided fields
             const updated = await this.companyService.update(company, body);
 
@@ -791,6 +798,13 @@ export class CompanyAdminController {
                 });
             }
         }
+
+        // Validate addresses + bank accounts BEFORE any write — a rejected
+        // list must not leave the company header already updated.
+        await this.companyService.assertRelationsValid(
+            addresses,
+            bank_accounts
+        );
 
         try {
             let updated: CompanyDoc;
