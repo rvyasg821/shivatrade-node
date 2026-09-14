@@ -12,8 +12,11 @@ import {
     HttpCode,
     HttpStatus,
     UploadedFile,
+    UseGuards,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import { ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import {
@@ -261,6 +264,8 @@ export class InvoiceAdminController {
     ]);
 
     @Response('invoice.create')
+    @Permission('invoices', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async create(
@@ -441,6 +446,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.update')
+    @Permission('invoices', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:invoiceId')
     async update(
@@ -485,6 +492,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.issue')
+    @Permission('invoices', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/issue/:invoiceId')
     async issue(
@@ -499,6 +508,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.cancel')
+    @Permission('invoices', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/cancel/:invoiceId')
     async cancel(
@@ -514,6 +525,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.delete')
+    @Permission('invoices', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:invoiceId')
     async softDelete(
@@ -525,6 +538,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.delete')
+    @Permission('invoices', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(
@@ -555,6 +570,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.payment.create')
+    @Permission('invoices', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/payments/:invoiceId')
     async recordPayment(
@@ -571,6 +588,8 @@ export class InvoiceAdminController {
     }
 
     @Response('invoice.payment.void')
+    @Permission('invoices', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/payments/:invoiceId/void/:paymentId')
     async voidPayment(

@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { RoleModule } from '@modules/role/role.module';
 import { LeadRepositoryModule } from './repository/lead.repository.module';
 import { LeadService } from './services/lead.service';
 import { LeadImportExportService } from './services/lead.import-export.service';
@@ -20,6 +21,7 @@ import { TrackingModule } from '@modules/tracking/tracking.module';
 @Module({
     imports: [
         LeadRepositoryModule,
+        forwardRef(() => RoleModule),
         CustomerModule,
         UserRepositoryModule,
         ProductModule,

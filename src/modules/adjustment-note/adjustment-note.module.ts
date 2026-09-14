@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { RoleModule } from '@modules/role/role.module';
 import { CompanyModule } from '@modules/company/company.module';
 import { CustomerRepositoryModule } from '@modules/customer/repository/customer.repository.module';
 import { VendorRepositoryModule } from '@modules/vendor/repository/vendor.repository.module';
@@ -17,6 +18,7 @@ import { AdjustmentNoteAdminController } from './controllers/adjustment-note.adm
 @Module({
     imports: [
         AdjustmentNoteRepositoryModule,
+        forwardRef(() => RoleModule),
         CustomerRepositoryModule,
         VendorRepositoryModule,
         CompanyModule,

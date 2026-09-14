@@ -10,6 +10,7 @@ import {
     HttpStatus,
     HttpCode,
     BadRequestException,
+    NotFoundException,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
@@ -37,6 +38,26 @@ export class LocationAdminController {
         private readonly locationValidationService: LocationValidationService,
         private readonly locationRepository: LocationRepository
     ) {}
+
+    /**
+     * SECURITY: `locationService.findOneById()` below resolves a location
+     * purely by `_id`, with no company scoping — without this check, any
+     * authenticated user of ANY company could view/edit/soft-delete another
+     * company's location record just by supplying its UUID (cross-tenant
+     * IDOR — found in the 2026-09-14 security review). A falsy caller
+     * `companyId` means Super Admin (see `list()` above), which is exempt.
+     */
+    private assertLocationOwnedByCaller(
+        location: any,
+        callerCompanyId?: string
+    ): void {
+        if (
+            callerCompanyId &&
+            String(location?.company_id) !== String(callerCompanyId)
+        ) {
+            throw new NotFoundException('Location not found');
+        }
+    }
 
     /**
      * Create a new location
@@ -125,9 +146,11 @@ export class LocationAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:locationId')
     async get(
-        @Param('locationId') locationId: string
+        @Param('locationId') locationId: string,
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<IResponse<LocationGetResponseDto>> {
         const location = await this.locationService.findOneById(locationId);
+        this.assertLocationOwnedByCaller(location, companyId);
 
         return {
             data: this.locationService.mapGet(location),
@@ -142,9 +165,11 @@ export class LocationAdminController {
     @Put('/update/:locationId')
     async update(
         @Param('locationId') locationId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: LocationUpdateRequestDto
     ): Promise<IResponse<LocationGetResponseDto>> {
         const location = await this.locationService.findOneById(locationId);
+        this.assertLocationOwnedByCaller(location, companyId);
         const updated = await this.locationService.update(location, body);
 
         return {
@@ -159,9 +184,11 @@ export class LocationAdminController {
     @AuthJwtAccessProtected()
     @Delete('/delete/:locationId')
     async delete(
-        @Param('locationId') locationId: string
+        @Param('locationId') locationId: string,
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<void> {
         const location = await this.locationService.findOneById(locationId);
+        this.assertLocationOwnedByCaller(location, companyId);
         await this.locationService.softDelete(location);
     }
 

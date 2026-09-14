@@ -9,9 +9,12 @@ import {
     Query,
     Res,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -47,6 +50,8 @@ export class DebitNoteAdminController {
     ) {}
 
     @Response('debitNote.create')
+    @Permission('debit-notes', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/from-grn/:grnId')
     async createFromGrn(
@@ -141,6 +146,8 @@ export class DebitNoteAdminController {
     }
 
     @Response('debitNote.update')
+    @Permission('debit-notes', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
@@ -154,6 +161,8 @@ export class DebitNoteAdminController {
     }
 
     @Response('debitNote.delete')
+    @Permission('debit-notes', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async remove(
@@ -165,6 +174,8 @@ export class DebitNoteAdminController {
     }
 
     @Response('debitNote.delete')
+    @Permission('debit-notes', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(

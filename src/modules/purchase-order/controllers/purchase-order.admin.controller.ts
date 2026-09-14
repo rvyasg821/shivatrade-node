@@ -10,11 +10,14 @@ import {
     Res,
     UploadedFile,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiQuery, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import { IFile } from '@common/file/interfaces/file.interface';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -167,6 +170,8 @@ export class PurchaseOrderAdminController {
     }
 
     @Response('purchaseOrder.create')
+    @Permission('purchase-orders', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async create(
@@ -293,6 +298,8 @@ export class PurchaseOrderAdminController {
     }
 
     @Response('purchaseOrder.update')
+    @Permission('purchase-orders', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
@@ -323,6 +330,8 @@ export class PurchaseOrderAdminController {
     }
 
     @Response('purchaseOrder.delete')
+    @Permission('purchase-orders', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async delete(
@@ -335,6 +344,8 @@ export class PurchaseOrderAdminController {
     }
 
     @Response('purchaseOrder.delete')
+    @Permission('purchase-orders', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(
@@ -378,6 +389,8 @@ export class PurchaseOrderAdminController {
     }
 
     @Response('purchaseOrder.createFromPfi')
+    @Permission('purchase-orders', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/from-pfi/:pfiId')
     async createFromPfi(
@@ -417,6 +430,8 @@ export class PurchaseOrderAdminController {
     }
 
     @Response('purchaseOrder.createFromQuotation')
+    @Permission('purchase-orders', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/from-quotation/:quotationId')
     async createFromQuotation(

@@ -12,11 +12,14 @@ import {
     NotFoundException,
     UploadedFile,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiQuery, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import { IFile } from '@common/file/interfaces/file.interface';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -184,6 +187,8 @@ export class PoVendorAdminController {
 
     @ApiConsumes('multipart/form-data')
     @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/payments/import')
     async importPayments(
@@ -243,6 +248,8 @@ export class PoVendorAdminController {
     }
 
     @Response('poVendor.recover')
+    @Permission('po-vendors', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/recover/:poId')
     async recover(
@@ -266,6 +273,8 @@ export class PoVendorAdminController {
     // ─── Create from PO ─────────────────────────────────────────────────
 
     @Response('poVendor.createFromPo')
+    @Permission('po-vendors', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/from-po/:poId')
     async createFromPo(
@@ -286,6 +295,8 @@ export class PoVendorAdminController {
     // ─── Create standalone (no source Sales Order) ──────────────────────
 
     @Response('poVendor.createStandalone')
+    @Permission('po-vendors', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async createStandalone(
@@ -561,6 +572,8 @@ export class PoVendorAdminController {
     // ─── Update (status-locked field edits + status transitions) ────────
 
     @Response('poVendor.update')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
@@ -577,6 +590,8 @@ export class PoVendorAdminController {
     // ─── Action: Dispatch ───────────────────────────────────────────────
 
     @Response('poVendor.dispatch')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/dispatch')
     async dispatch(
@@ -592,6 +607,8 @@ export class PoVendorAdminController {
 
     // Edit an already-dispatched POV's transport + per-line dispatched qty.
     @Response('poVendor.dispatch')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/:id/dispatch')
     async editDispatch(
@@ -608,6 +625,8 @@ export class PoVendorAdminController {
     // ─── Action: Cancel ─────────────────────────────────────────────────
 
     @Response('poVendor.cancel')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/cancel')
     async cancel(
@@ -628,6 +647,8 @@ export class PoVendorAdminController {
     // NEW POV so the caller can navigate straight to it.
 
     @Response('poVendor.balance')
+    @Permission('po-vendors', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/balance')
     async createBalance(
@@ -643,6 +664,8 @@ export class PoVendorAdminController {
     // ─── Revert to draft (cancelled only) ───────────────────────────────
 
     @Response('poVendor.revertDraft')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/revert-draft')
     async revertDraft(
@@ -658,6 +681,8 @@ export class PoVendorAdminController {
     // ─── Vendor payments ────────────────────────────────────────────────
 
     @Response('poVendor.payment.create')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/payments/:id')
     async recordPayment(
@@ -673,6 +698,8 @@ export class PoVendorAdminController {
     }
 
     @Response('poVendor.payment.void')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/payments/:id/void/:paymentId')
     async voidPayment(
@@ -749,6 +776,8 @@ export class PoVendorAdminController {
     // ─── Soft delete (draft only) ───────────────────────────────────────
 
     @Response('poVendor.delete')
+    @Permission('po-vendors', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async delete(
@@ -762,6 +791,8 @@ export class PoVendorAdminController {
 
     /** Bulk delete (draft-only; server guard skips non-drafts / in-use rows). */
     @Response('poVendor.delete')
+    @Permission('po-vendors', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(

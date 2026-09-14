@@ -53,6 +53,27 @@ export class DocumentAdminController {
         private readonly userRepository: UserRepository
     ) {}
 
+    /**
+     * SECURITY: `documentService.findOneById()` below resolves a document
+     * purely by `_id`, with no company scoping. The existing role checks
+     * (ROLE_EMPLOYEE / ROLE_LOCATION_ADMIN) only fire for THOSE two roles —
+     * every other role (Company Admin included) hit no check at all, so any
+     * authenticated user of ANY company could read/edit/delete another
+     * company's uploaded document just by supplying its UUID (cross-tenant
+     * IDOR — found in the 2026-09-14 security review).
+     */
+    private assertDocumentOwnedByCaller(
+        doc: any,
+        callerCompanyId?: string
+    ): void {
+        if (
+            !callerCompanyId ||
+            String(doc?.company_id) !== String(callerCompanyId)
+        ) {
+            throw new ForbiddenException('Access denied');
+        }
+    }
+
     // ============ CATEGORY ENDPOINTS ============
 
     @AuthJwtAccessProtected()
@@ -338,6 +359,7 @@ export class DocumentAdminController {
         @Param('documentId') documentId: string
     ) {
         const doc = await this.documentService.findOneById(documentId);
+        this.assertDocumentOwnedByCaller(doc, companyId);
 
         // Role-based access check
         if (roleName === ROLE_EMPLOYEE && doc.user_id !== userId) {
@@ -361,10 +383,12 @@ export class DocumentAdminController {
         @AuthJwtPayload('user') userId: string,
         @AuthJwtPayload('roleName') roleName: string,
         @AuthJwtPayload('locationId') jwtLocationId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('documentId') documentId: string,
         @Body() body: DocumentUpdateRequestDto
     ) {
         const doc = await this.documentService.findOneById(documentId);
+        this.assertDocumentOwnedByCaller(doc, companyId);
 
         // Role-based access check
         if (roleName === ROLE_EMPLOYEE && doc.user_id !== userId) {
@@ -405,9 +429,11 @@ export class DocumentAdminController {
         @AuthJwtPayload('user') userId: string,
         @AuthJwtPayload('roleName') roleName: string,
         @AuthJwtPayload('locationId') jwtLocationId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Param('documentId') documentId: string
     ) {
         const doc = await this.documentService.findOneById(documentId);
+        this.assertDocumentOwnedByCaller(doc, companyId);
 
         if (roleName === ROLE_EMPLOYEE) {
             // Employees can only delete their own pending/rejected documents

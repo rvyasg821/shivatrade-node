@@ -1,4 +1,5 @@
 import * as XLSXStyle from 'xlsx-js-style';
+import { sanitizeExcelCellValue } from '@common/file/utils/excel-sanitize.util';
 
 /**
  * Shared styled-workbook builder for per-document Excel exports.
@@ -140,7 +141,13 @@ export function buildDocWorkbook(input: BuildDocWorkbookInput): Buffer {
 
     const pushRow = (row: (string | number | null)[] = []): number => {
         const r = aoa.length;
-        const padded = row.slice(0, width);
+        // CSV/Excel formula-injection guard (OWASP) — see
+        // excel-sanitize.util.ts for the full rationale. This is the single
+        // funnel every section type (title/kv/party/band/table/note) pushes
+        // through, so it's the one place to sanitize per CLAUDE.md §1.8 DRY
+        // rule.
+        const sanitized = row.map((v) => sanitizeExcelCellValue(v));
+        const padded = sanitized.slice(0, width);
         while (padded.length < width) padded.push(null);
         aoa.push(padded);
         return r;

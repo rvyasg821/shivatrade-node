@@ -1,7 +1,7 @@
 import {
     Controller, Get, Post, Put, Delete,
     Body, Param, Query, HttpStatus, HttpCode, UseGuards,
-    UploadedFile, Res, BadRequestException,
+    UploadedFile, Res, BadRequestException, NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiConsumes } from '@nestjs/swagger';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
@@ -40,6 +40,25 @@ export class AttendanceAdminController {
         private readonly importExportService: AttendanceImportExportService,
         private readonly clockService: AttendanceClockService,
     ) {}
+
+    /**
+     * SECURITY: `attendanceService.findOneById()` resolves a record purely
+     * by `_id`, with no company scoping — without this check, any
+     * authenticated user of ANY company could view/edit/delete another
+     * company's attendance record just by supplying its UUID (cross-tenant
+     * IDOR — found in the 2026-09-14 security review).
+     */
+    private assertAttendanceOwnedByCaller(
+        record: any,
+        callerCompanyId?: string
+    ): void {
+        if (
+            !callerCompanyId ||
+            String(record?.company_id) !== String(callerCompanyId)
+        ) {
+            throw new NotFoundException('Attendance record not found');
+        }
+    }
 
     // ============ IMPORT / EXPORT ============
 
@@ -262,8 +281,12 @@ export class AttendanceAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Get('/get/:id')
-    async getRecord(@Param('id') id: string) {
+    async getRecord(
+        @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
         const item = await this.attendanceService.findOneById(id);
+        this.assertAttendanceOwnedByCaller(item, companyId);
         const breaks = await this.attendanceService.getBreaks(id);
         return { statusCode: 200, message: 'Success', data: { ...this.attendanceService.mapGet(item), breaks } };
     }
@@ -329,9 +352,11 @@ export class AttendanceAdminController {
     @Put('/update/:id')
     async updateRecord(
         @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: any,
     ) {
         const existing = await this.attendanceService.findOneById(id);
+        this.assertAttendanceOwnedByCaller(existing, companyId);
         const recordDate = existing?.date || DateTime.now().toISODate();
 
         // Resolve timezone from location
@@ -372,7 +397,12 @@ export class AttendanceAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Delete('/delete/:id')
-    async deleteRecord(@Param('id') id: string) {
+    async deleteRecord(
+        @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
+        const existing = await this.attendanceService.findOneById(id);
+        this.assertAttendanceOwnedByCaller(existing, companyId);
         await this.attendanceService.softDelete(id);
         return { statusCode: 200, message: 'Record deleted' };
     }

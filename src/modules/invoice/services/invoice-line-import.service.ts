@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { utils, write } from 'xlsx';
+import { sanitizeExcelAoa } from '@common/file/utils/excel-sanitize.util';
 
 import { InvoiceRepository } from '../repository/repositories/invoice.repository';
 import { InvoiceLineRepository } from '../repository/repositories/invoice-line.repository';
@@ -277,7 +278,9 @@ export class InvoiceLineImportService {
         });
 
         const wb = utils.book_new();
-        const ws = utils.aoa_to_sheet([headerRow, ...dataAoa]);
+        const ws = utils.aoa_to_sheet(
+            sanitizeExcelAoa([headerRow, ...dataAoa])
+        );
         utils.book_append_sheet(wb, ws, 'lineitems');
 
         const buffer = write(wb, {

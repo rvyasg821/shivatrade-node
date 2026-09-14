@@ -10,9 +10,12 @@ import {
     Res,
     UploadedFile,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { Response as ExpressResponse } from 'express';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
 import { Response, ResponsePaging } from '@common/response/decorators/response.decorator';
 import { IResponse, IResponsePaging } from '@common/response/interfaces/response.interface';
@@ -82,6 +85,8 @@ export class CustomerAdminController {
     // 25 MB — large customer uploads with long address text can exceed the old
     // 5 MB cap, esp. as CSV. Matches the product import cap.
     @FileUploadSingle({ field: 'file', fileSize: 25 * 1024 * 1024 })
+    @Permission('customers', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/import')
     @ApiOperation({
@@ -132,6 +137,8 @@ export class CustomerAdminController {
     }
 
     @Response('customer.create')
+    @Permission('customers', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async create(
@@ -298,6 +305,8 @@ export class CustomerAdminController {
     }
 
     @Response('customer.update')
+    @Permission('customers', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:customerId')
     async update(
@@ -312,6 +321,8 @@ export class CustomerAdminController {
     }
 
     @Response('customer.delete')
+    @Permission('customers', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:customerId')
     async delete(
@@ -324,6 +335,8 @@ export class CustomerAdminController {
     }
 
     @Response('customer.delete')
+    @Permission('customers', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(

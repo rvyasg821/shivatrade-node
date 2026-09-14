@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { RoleModule } from '@modules/role/role.module';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { PurchaseOrderRepositoryModule } from './repository/purchase-order.repository.module';
 import { PurchaseOrderService } from './services/purchase-order.service';
@@ -28,6 +29,7 @@ import { TrackingModule } from '@modules/tracking/tracking.module';
 @Module({
     imports: [
         CreatorScopeModule,
+        forwardRef(() => RoleModule),
         PurchaseOrderRepositoryModule,
         DependencyCheckModule,
         VendorModule,

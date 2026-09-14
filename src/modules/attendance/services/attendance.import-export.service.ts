@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { utils, read } from 'xlsx';
+import { sanitizeExcelRowObjects } from '@common/file/utils/excel-sanitize.util';
 import { AttendanceService } from './attendance.service';
 import { UserService } from '@modules/user/services/user.service';
 import { LocationService } from '@modules/location/services/location.service';
@@ -122,7 +123,9 @@ export class AttendanceImportExportService {
             'total_hours', 'regular_hours', 'overtime_hours',
             'status', 'is_late', 'is_early_leave', 'location', 'notes',
         ];
-        const ws = utils.json_to_sheet(rows, { header: exportHeaders });
+        const ws = utils.json_to_sheet(sanitizeExcelRowObjects(rows), {
+            header: exportHeaders,
+        });
         const csv = utils.sheet_to_csv(ws);
         return Buffer.from(csv, 'utf8');
     }

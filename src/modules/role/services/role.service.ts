@@ -674,7 +674,21 @@ export class RoleService implements IRoleService {
         action: string
     ): boolean {
         const modulePermissions = permissions[module];
-        if (!modulePermissions) return false;
+        // SECURITY MIGRATION SAFETY NET (2026-09-14): a module key entirely
+        // ABSENT from a role's stored permissions means that role predates
+        // this module being permission-gated at all (e.g. `grn`/`debit-notes`
+        // — first gated today, never in any seed/role template) — grandfather
+        // it in as allowed so wiring a NEW @Permission()+PermissionGuard onto
+        // a controller can never retroactively lock existing roles out of
+        // something they already used freely. This is distinct from a module
+        // key that IS present but explicitly `false` (a real, deliberate
+        // deny, e.g. the "Sales" role has po-vendors:false on purpose) —
+        // that still denies below exactly as before. Every module already
+        // covered by a seed/role template (invoices, purchase-orders,
+        // po-vendors, quotations, leads, rfq, vendors, customers,
+        // adjustment-notes, price-list, …) is unaffected by this change,
+        // since those roles already carry a real (present) value either way.
+        if (!modulePermissions) return true;
 
         // Check if can_all is enabled for this module (overrides all other permissions)
         if (modulePermissions.can_all === true) return true;

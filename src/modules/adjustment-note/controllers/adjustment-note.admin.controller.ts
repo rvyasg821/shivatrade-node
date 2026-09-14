@@ -1,5 +1,15 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+    Body,
+    Controller,
+    Get,
+    Param,
+    Post,
+    Query,
+    UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -96,6 +106,8 @@ export class AdjustmentNoteAdminController {
     }
 
     @Response('adjustmentNote.create')
+    @Permission('adjustment-notes', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post()
     async create(
@@ -110,6 +122,8 @@ export class AdjustmentNoteAdminController {
     /** Post several adjustment notes for one party in one action — each line
      *  becomes its own note (own voucher), sharing the batch header. */
     @Response('adjustmentNote.create')
+    @Permission('adjustment-notes', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/batch')
     async createBatch(
@@ -122,6 +136,8 @@ export class AdjustmentNoteAdminController {
     }
 
     @Response('adjustmentNote.void')
+    @Permission('adjustment-notes', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/void')
     async void(

@@ -10,6 +10,7 @@ import {
     HttpStatus,
     HttpCode,
     BadRequestException,
+    NotFoundException,
     Logger,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
@@ -73,6 +74,24 @@ export class EmployeeAdminController {
         private readonly sessionService: SessionService,
         private readonly subscriptionService: SubscriptionService,
     ) {}
+
+    /**
+     * SECURITY: `userService.findOneById()` below resolves an employee purely
+     * by `_id`, with no company scoping — without this check, any
+     * authenticated user of ANY company could view/edit/delete an employee
+     * (including setting a new password on update) belonging to a DIFFERENT
+     * company just by supplying that employee's UUID (cross-tenant IDOR —
+     * found in the 2026-09-14 security review). Mirrors the same fix applied
+     * to the User module.
+     */
+    private assertEmployeeOwnedByCaller(
+        employee: any,
+        callerCompanyId?: string
+    ): void {
+        if (!employee || employee.companyId !== callerCompanyId) {
+            throw new NotFoundException('Employee not found');
+        }
+    }
 
     // ============ IMPORT / EXPORT ============
 
@@ -635,11 +654,13 @@ export class EmployeeAdminController {
     @Get('/get/:employeeId')
     @ApiOperation({ summary: 'Get employee by ID' })
     async get(
-        @Param('employeeId') employeeId: string
+        @Param('employeeId') employeeId: string,
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<IResponse<any>> {
         const user = await this.userService.findOneById(employeeId, {
             join: true,
         });
+        this.assertEmployeeOwnedByCaller(user, companyId);
 
         const userObj: any = { ...user };
 
@@ -718,9 +739,11 @@ export class EmployeeAdminController {
     @ApiOperation({ summary: 'Update employee' })
     async update(
         @Param('employeeId') employeeId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: EmployeeUpdateRequestDto
     ): Promise<IResponse<any>> {
         const user = await this.userService.findOneById(employeeId);
+        this.assertEmployeeOwnedByCaller(user, companyId);
 
         // Convert gender - User enum doesn't have OTHER, make it undefined
         let userGender = body.gender;
@@ -965,9 +988,11 @@ export class EmployeeAdminController {
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Soft delete employee' })
     async delete(
-        @Param('employeeId') employeeId: string
+        @Param('employeeId') employeeId: string,
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<void> {
         const user = await this.userService.findOneById(employeeId);
+        this.assertEmployeeOwnedByCaller(user, companyId);
 
         // Append deletion suffix to email and employee_code to free unique constraints
         const suffix = `_deleted_${Date.now()}`;
@@ -989,7 +1014,8 @@ export class EmployeeAdminController {
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Bulk soft delete employees' })
     async deleteMany(
-        @Body() body: { ids: string[] }
+        @Body() body: { ids: string[] },
+        @AuthJwtPayload('companyId') companyId: string
     ): Promise<IResponse<{ deleted: string[]; skipped: any[] }>> {
         const ids = body?.ids;
         if (!Array.isArray(ids) || ids.length === 0) {
@@ -1000,6 +1026,7 @@ export class EmployeeAdminController {
         for (const id of ids) {
             try {
                 const user = await this.userService.findOneById(id);
+                this.assertEmployeeOwnedByCaller(user, companyId);
                 const suffix = `_deleted_${Date.now()}`;
                 if (user.email) user.email = `${user.email}${suffix}`;
                 if ((user as any).employee_code)
