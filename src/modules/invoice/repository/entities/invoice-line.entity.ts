@@ -80,6 +80,14 @@ export class InvoiceLineEntity extends DatabaseObjectIdEntityBase {
     @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
     qty: string;
 
+    /** Portion of `qty` fulfilled by a drop-ship vendor PO (never leaves our
+     *  warehouse — the vendor shipped it straight to the customer). Frozen
+     *  at issue() time (allocated against dispatched drop-ship POV lines for
+     *  the same SO line), reset to 0 on cancel. `0 ≤ drop_ship_qty ≤ qty`.
+     *  See DROP_SHIP_ORDERS_PLAN §5.4. */
+    @Column({ type: 'numeric', precision: 18, scale: 4, nullable: false, default: 0 })
+    drop_ship_qty: string;
+
     @Column({ type: 'numeric', precision: 18, scale: 8, nullable: false, default: 0 })
     unit_price: string;
 

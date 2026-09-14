@@ -76,6 +76,9 @@ const round2 = (n: number): number =>
 // real rate change. Compare at the columns' own numeric(18,6) precision.
 const round6 = (n: number): number =>
     !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 1000000) / 1000000;
+// Quantity precision — matches po_vendor_line.ordered_qty's numeric(18,4).
+const round4 = (n: number): number =>
+    !isFinite(n) ? 0 : Math.round((n + Number.EPSILON) * 10000) / 10000;
 // Trim a value to fit a varchar(n) column so an over-long reference/voucher
 // snapshot degrades to a truncated string instead of a 500 (Postgres rejects
 // an over-length insert with "value too long for type character varying").
@@ -879,6 +882,7 @@ export class InvoiceService {
             product_code: string;
             uom: string;
             required: string;
+            drop_ship: string;
             available: string;
             short: boolean;
         }>;
@@ -888,21 +892,29 @@ export class InvoiceService {
         const lines = await this.invoiceLineRepository.findByInvoiceId(
             row._id.toString()
         );
-        // Aggregate required qty per product (lines may repeat a product);
-        // keep a display uom per product for the dialog.
-        const needByProduct = new Map<string, number>();
+        // Aggregate qty per product (lines may repeat a product); keep a
+        // display uom per product for the dialog.
+        const qtyByProduct = new Map<string, number>();
         const uomByProduct = new Map<string, string>();
         for (const l of lines as any[]) {
             if (!l.product_id) continue;
             const pid = l.product_id.toString();
-            needByProduct.set(pid, (needByProduct.get(pid) || 0) + num(l.qty));
+            qtyByProduct.set(pid, (qtyByProduct.get(pid) || 0) + num(l.qty));
             if (!uomByProduct.has(pid))
                 uomByProduct.set(pid, l.uqc_code || l.unit || '');
         }
-        if (needByProduct.size === 0)
+        if (qtyByProduct.size === 0)
             return { lines: [], has_shortage: false };
 
-        const productIds = [...needByProduct.keys()];
+        // Drop-ship split — preview only, not saved. `excludeInvoiceId` so a
+        // re-preview on this same draft doesn't double-subtract whatever
+        // drop_ship_qty it already froze on a prior save.
+        const { perProduct: dropShipByProduct } = await this.allocateDropShip(
+            lines as any[],
+            row._id.toString()
+        );
+
+        const productIds = [...qtyByProduct.keys()];
         const have = await this.stockLedger.onHandMap(
             row.company_id.toString(),
             productIds,
@@ -919,7 +931,8 @@ export class InvoiceService {
         );
 
         const out = productIds.map((pid) => {
-            const required = round2(needByProduct.get(pid) || 0);
+            const dropShip = round2(dropShipByProduct.get(pid) || 0);
+            const required = round2((qtyByProduct.get(pid) || 0) - dropShip);
             const available = round2(have.get(pid) || 0);
             const meta = metaById.get(pid) || { name: '', code: '' };
             return {
@@ -928,6 +941,7 @@ export class InvoiceService {
                 product_code: meta.code,
                 uom: uomByProduct.get(pid) || '',
                 required: String(required),
+                drop_ship: String(dropShip),
                 available: String(available),
                 short: available < required - 1e-6,
             };
@@ -1078,17 +1092,38 @@ export class InvoiceService {
             row.igst_refund_amount = '0';
         }
 
+        // ── Drop-ship allocation (§5.4) — freeze each line's drop-ship share
+        // now, whether or not the gate below actually runs (import mode still
+        // freezes it, so a historically imported drop-ship invoice never
+        // posts a phantom sale_out). A POV not yet loaded leaves the pool at
+        // 0 for that line, which is just today's behaviour (stock-gated).
+        const { perLine: dropShipByLine } = await this.allocateDropShip(
+            lines as any[],
+            row._id.toString()
+        );
+        for (const l of lines as any[]) {
+            const ds = dropShipByLine.get(l._id.toString()) || 0;
+            if (num(l.drop_ship_qty) !== ds) {
+                l.drop_ship_qty = String(ds);
+                await this.invoiceLineRepository.save(l);
+            }
+        }
+
         // ── Pre-issue stock check (Goods Out) ──────────────────────────────
         // Block the issue if any product is short. On-hand is a single pool
         // per product (location = null → SUM across all GRN-in), since invoices
-        // carry no location in single-tenant.
+        // carry no location in single-tenant. Drop-ship qty is netted out —
+        // the vendor ships it directly, so it never needs to be in our stock.
         const stockCompanyId = row.company_id.toString();
         const needByProduct = new Map<string, number>();
         for (const l of lines as any[]) {
             if (!l.product_id) continue;
+            const ds = dropShipByLine.get(l._id.toString()) || 0;
+            const need = Math.max(0, num(l.qty) - ds);
+            if (need <= 0) continue;
             needByProduct.set(
                 l.product_id,
-                (needByProduct.get(l.product_id) || 0) + num(l.qty)
+                (needByProduct.get(l.product_id) || 0) + need
             );
         }
         // Import mode: a historical invoice must not be gated by (or move)
@@ -1142,7 +1177,10 @@ export class InvoiceService {
         // yet); only that gate, not this posting, needs the silent bypass.
         try {
             for (const l of lines as any[]) {
-                const q = num(l.qty);
+                const ds = dropShipByLine.get(l._id.toString()) || 0;
+                // Drop-ship share never entered our warehouse — nothing to
+                // deduct for it (§5.4).
+                const q = num(l.qty) - ds;
                 if (!l.product_id || q <= 0) continue;
                 await this.stockLedger.post(stockCompanyId, {
                     product_id: l.product_id,
@@ -1202,6 +1240,24 @@ export class InvoiceService {
         } catch (e: any) {
             this.logger.error(
                 `[Invoice ${row._id}] stock restore failed: ${e?.message}`
+            );
+        }
+
+        // Release any drop-ship qty this invoice had claimed (§5.5) so a
+        // replacement invoice can draw on the same SO line's drop-ship pool.
+        try {
+            const lines = await this.invoiceLineRepository.findByInvoiceId(
+                row._id.toString()
+            );
+            for (const l of lines as any[]) {
+                if (num(l.drop_ship_qty) > 0) {
+                    l.drop_ship_qty = '0';
+                    await this.invoiceLineRepository.save(l);
+                }
+            }
+        } catch (e: any) {
+            this.logger.error(
+                `[Invoice ${row._id}] drop-ship release failed: ${e?.message}`
             );
         }
 
@@ -1693,6 +1749,136 @@ export class InvoiceService {
             );
         }
         return dispatched;
+    }
+
+    /**
+     * Drop-ship qty still available per SO (PO) line
+     * (DROP_SHIP_ORDERS_PLAN §5.4) =
+     *   Σ ordered_qty of that SO line's POV lines, on non-cancelled
+     *     DISPATCHED/CLOSED, is_drop_ship POVs
+     *   − Σ drop_ship_qty already frozen on OTHER active (issued/
+     *     partially_paid/paid) invoice lines for the same SO line.
+     * `excludeInvoiceId` lets a re-issue (or issuePreview on a draft that
+     * already has a drop_ship_qty from a prior save) not double-subtract its
+     * own lines. Mirrors dispatchedByPoLineId() above but scoped to
+     * drop-ship POVs only, and nets out what's already claimed.
+     */
+    private async dropShipAvailableByPoLineId(
+        poLineIds: string[],
+        excludeInvoiceId?: string
+    ): Promise<Map<string, number>> {
+        const available = new Map<string, number>();
+        if (!poLineIds.length) return available;
+
+        const povLinesAll = (await this.povLineRepository.findAll({
+            purchase_order_line_id: { $in: poLineIds },
+        } as any)) as any[];
+        const povIds = Array.from(
+            new Set(
+                povLinesAll
+                    .map((pl: any) => pl.po_vendor_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const povs = povIds.length
+            ? ((await this.povRepository.findAll({
+                  _id: { $in: povIds },
+                  soft_delete: false,
+              } as any)) as any[])
+            : [];
+        const dropShipPovIds = new Set(
+            povs
+                .filter(
+                    (p: any) =>
+                        !!p.is_drop_ship &&
+                        (p.status === ENUM_PO_VENDOR_STATUS.DISPATCHED ||
+                            p.status === ENUM_PO_VENDOR_STATUS.CLOSED)
+                )
+                .map((p: any) => p._id.toString())
+        );
+        const pool = new Map<string, number>();
+        for (const pl of povLinesAll) {
+            if (!dropShipPovIds.has(pl.po_vendor_id?.toString())) continue;
+            const k = pl.purchase_order_line_id?.toString();
+            if (!k) continue;
+            pool.set(k, (pool.get(k) || 0) + num(pl.ordered_qty));
+        }
+        if (!pool.size) return available;
+
+        const claimedRows = await this.dataSource.query(
+            `SELECT il.purchase_order_line_id AS pol_id,
+                    COALESCE(SUM(il.drop_ship_qty), 0)::float8 AS claimed
+             FROM invoice_lines il
+             JOIN invoices i ON i._id = il.invoice_id
+             WHERE i.soft_delete = false
+               AND i.status <> 'cancelled'
+               AND il.purchase_order_line_id = ANY($1::uuid[])
+               ${excludeInvoiceId ? 'AND i._id <> $2::uuid' : ''}
+             GROUP BY il.purchase_order_line_id`,
+            excludeInvoiceId
+                ? [Array.from(pool.keys()), excludeInvoiceId]
+                : [Array.from(pool.keys())]
+        );
+        const claimedByLine = new Map<string, number>(
+            (claimedRows as any[]).map((r) => [r.pol_id, num(r.claimed)])
+        );
+        for (const [k, total] of pool.entries()) {
+            available.set(
+                k,
+                Math.max(0, round4(total - (claimedByLine.get(k) || 0)))
+            );
+        }
+        return available;
+    }
+
+    /**
+     * Allocates each invoice line's drop-ship share against the SO line's
+     * available drop-ship pool (§5.4), in line `seq` order so the split is
+     * deterministic for a fixed pool. Shared by issue() (freezes the result)
+     * and issuePreview() (shows it without saving) — DRY per CLAUDE.md §1.8.
+     * `excludeInvoiceId` matters only for issue() re-runs / preview on a
+     * draft that already holds a frozen drop_ship_qty from a prior save.
+     */
+    private async allocateDropShip(
+        lines: any[],
+        excludeInvoiceId?: string
+    ): Promise<{
+        perLine: Map<string, number>;
+        perProduct: Map<string, number>;
+    }> {
+        const perLine = new Map<string, number>();
+        const perProduct = new Map<string, number>();
+        const poLineIds = Array.from(
+            new Set(
+                lines
+                    .map((l: any) => l.purchase_order_line_id?.toString())
+                    .filter((v): v is string => !!v)
+            )
+        );
+        const pool = await this.dropShipAvailableByPoLineId(
+            poLineIds,
+            excludeInvoiceId
+        );
+        const ordered = [...lines].sort(
+            (a: any, b: any) => num(a.seq) - num(b.seq)
+        );
+        for (const l of ordered) {
+            const key = l._id ? l._id.toString() : `${l.product_id}`;
+            const polId = l.purchase_order_line_id?.toString();
+            if (!polId) {
+                perLine.set(key, 0);
+                continue;
+            }
+            const avail = Math.max(0, pool.get(polId) || 0);
+            const ds = round4(Math.min(num(l.qty), avail));
+            perLine.set(key, ds);
+            pool.set(polId, round4(avail - ds));
+            if (ds > 0 && l.product_id) {
+                const pid = l.product_id.toString();
+                perProduct.set(pid, (perProduct.get(pid) || 0) + ds);
+            }
+        }
+        return { perLine, perProduct };
     }
 
     private async assertQtyGuardForLines(

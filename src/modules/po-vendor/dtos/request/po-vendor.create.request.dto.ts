@@ -117,6 +117,13 @@ export class PoVendorCreateRequestDto {
     @MaxLength(120)
     invoice_number?: string;
 
+    /** Drop-ship: the vendor ships straight to the source SO's customer.
+     *  Only meaningful here since createFromPo() always has a PO-line link
+     *  per line (DROP_SHIP_ORDERS_PLAN §5.1). Defaults to false. */
+    @IsBoolean()
+    @IsOptional()
+    is_drop_ship?: boolean;
+
     /** Business creation date. Defaults to today (server-side) when omitted. */
     @IsDateString()
     @IsOptional()

@@ -4,10 +4,7 @@ import { InjectDatabaseConnection } from '@common/database/decorators/database.d
 
 import { StockMovementRepository } from '../repository/repositories/stock-movement.repository';
 import { StockMovementEntity } from '../repository/entities/stock-movement.entity';
-import {
-    ENUM_STOCK_MOVEMENT_TYPE,
-    ORIGINAL_MOVEMENT_TYPES,
-} from '../enums/stock-movement.enum';
+import { ENUM_STOCK_MOVEMENT_TYPE } from '../enums/stock-movement.enum';
 
 const num = (v: any): number => {
     const n = Number(v);
@@ -75,6 +72,19 @@ export class StockLedgerService {
      * so the net effect of source becomes zero. Idempotency is the caller's
      * job (cancel runs once per doc).
      */
+    /**
+     * Reverses whatever is currently OUTSTANDING for this source, not "every
+     * original movement again" — idempotent by construction. A prior call
+     * (or two calls close together, e.g. a GRN toggled draft→confirmed and
+     * back) must not double-reverse: the second call would otherwise re-post
+     * a negative for an original row that a first call already cancelled out,
+     * driving stock further negative than the source ever contributed.
+     *
+     * Nets EVERY existing movement for this source (originals AND any prior
+     * reversal) per (product, location, source_line_id) and posts a single
+     * correcting entry for whatever remains non-zero. Calling this again with
+     * nothing new posted since is a no-op.
+     */
     async reverse(
         companyId: string,
         sourceType: 'grn' | 'invoice',
@@ -88,21 +98,39 @@ export class StockLedgerService {
             sourceType,
             sourceId
         );
-        const originals = movements.filter((mv) =>
-            ORIGINAL_MOVEMENT_TYPES.includes(
-                mv.movement_type as ENUM_STOCK_MOVEMENT_TYPE
-            )
-        );
-        for (const mv of originals) {
-            await this.post(companyId, {
+        const groups = new Map<
+            string,
+            {
+                product_id: string;
+                location_id: string | null;
+                source_line_id?: string;
+                source_voucher_no?: string;
+                net: number;
+            }
+        >();
+        for (const mv of movements) {
+            const key = `${mv.product_id}|${mv.location_id ?? ''}|${mv.source_line_id ?? ''}`;
+            const g = groups.get(key) || {
                 product_id: mv.product_id,
                 location_id: mv.location_id ?? null,
-                qty: -num(mv.qty),
+                source_line_id: mv.source_line_id,
+                source_voucher_no: mv.source_voucher_no,
+                net: 0,
+            };
+            g.net += num(mv.qty);
+            groups.set(key, g);
+        }
+        for (const g of groups.values()) {
+            if (Math.abs(g.net) < 1e-9) continue; // already fully reversed
+            await this.post(companyId, {
+                product_id: g.product_id,
+                location_id: g.location_id,
+                qty: -g.net,
                 movement_type: reversalType,
                 source_type: sourceType,
                 source_id: sourceId,
-                source_line_id: mv.source_line_id,
-                source_voucher_no: mv.source_voucher_no,
+                source_line_id: g.source_line_id,
+                source_voucher_no: g.source_voucher_no,
                 notes: reason,
                 created_by: userId,
                 movement_date: movementDate,

@@ -169,6 +169,14 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     })
     status: ENUM_PO_VENDOR_STATUS;
 
+    /** Drop-ship: the vendor ships straight to the Sales Order's customer.
+     *  Its GRN still books the vendor bill/GST but posts no stock, and the
+     *  invoice qty it covers skips the stock gate (DROP_SHIP_ORDERS_PLAN).
+     *  Locked once a non-cancelled GRN exists. */
+    @Index()
+    @Column({ type: 'boolean', nullable: false, default: false })
+    is_drop_ship: boolean;
+
     /** Vendor-side charges snapshotted from expense master at POV
      *  creation (per PFI→POV flow) or appended later on the POV
      *  detail page. Each row carries enough info to render the

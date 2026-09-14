@@ -384,11 +384,15 @@ export class PoVendorAdminController {
         @Query('date_from') dateFrom?: string,
         @Query('date_to') dateTo?: string,
         @Query('search') searchRaw?: string,
-        @Query('created_by') createdBy?: string
+        @Query('created_by') createdBy?: string,
+        @Query('is_drop_ship') isDropShipRaw?: string
     ): Promise<IResponsePaging<PoVendorGetResponseDto>> {
         const find: any = { company_id: companyId, soft_delete: false };
         if (vendorId) find.vendor_id = vendorId;
         if (status) find.status = status;
+        // Type filter: All (omitted) / Warehouse (false) / Drop-Ship (true).
+        if (isDropShipRaw === 'true') find.is_drop_ship = true;
+        else if (isDropShipRaw === 'false') find.is_drop_ship = false;
         if (dateFrom && dateTo) {
             find.dispatch_date = { $gte: dateFrom, $lte: dateTo };
         } else if (dateFrom) {

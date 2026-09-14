@@ -262,6 +262,13 @@ export class PoVendorUpdateRequestDto {
     @MaxLength(120)
     invoice_number?: string;
 
+    /** Drop-ship toggle. Allowed only in draft/dispatched (see the
+     *  draftEditable/dispatchedEditable allowlists) and blocked once a
+     *  non-cancelled GRN exists — PoVendorService.assertDropShipChangeAllowed. */
+    @IsBoolean()
+    @IsOptional()
+    is_drop_ship?: boolean;
+
     /** Business creation date — editable on the edit form. */
     @IsDateString()
     @IsOptional()
