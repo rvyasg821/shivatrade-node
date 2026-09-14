@@ -22,6 +22,10 @@ export class InvoiceLineResponseDto {
     unit?: string;
     uqc_code?: string;
     qty?: string;
+    /** Portion of `qty` fulfilled by a drop-ship vendor PO — never left our
+     *  warehouse. Frozen at issue() time (0 on a draft). See
+     *  DROP_SHIP_ORDERS_PLAN §5.4. */
+    drop_ship_qty?: string;
     unit_price?: string;
     /** Vendor (source) currency this line's unit_price was priced in — carried
      *  from the source SO/Quotation line. Paired with cost_exchange_rate for

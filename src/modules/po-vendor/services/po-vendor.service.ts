@@ -760,6 +760,7 @@ export class PoVendorService {
             delivery_address_id,
             notes: data.notes || null,
             internal_notes: data.internal_notes || null,
+            is_drop_ship: !!(data as any).is_drop_ship,
             // The POV's own vendor-side terms — never inherited from the PO,
             // whose terms belong to the customer.
             dispatched_through: (data as any).dispatched_through || null,
@@ -882,6 +883,16 @@ export class PoVendorService {
         const silent = !!ctx?.silent;
         const vendorId = data.vendor_id;
         if (!vendorId) throw new BadRequestException('vendor_id is required.');
+
+        // Drop-ship needs a PO-line link per line so an invoice line can find
+        // its drop-ship pool (DROP_SHIP_ORDERS_PLAN §5.1) — a standalone POV
+        // has none. Live-app only; a historical import is exempt (its lines
+        // are always standalone by construction, see the VPO import notes).
+        if (!silent && (data as any).is_drop_ship) {
+            throw new BadRequestException(
+                'A drop-ship PO must be generated from a Sales Order (Generate POV), not created standalone.'
+            );
+        }
 
         // FY closure: block posting a vendor PO dated in a closed period. The
         // header's accounting date is dispatch_date (optional); only checked
@@ -1107,6 +1118,9 @@ export class PoVendorService {
             delivery_address_id,
             notes: data.notes || null,
             internal_notes: data.internal_notes || null,
+            // Only import mode can reach here truthy — rejected above for a
+            // live create.
+            is_drop_ship: !!(data as any).is_drop_ship,
             dispatched_through: data.dispatched_through || null,
             payment_terms: data.payment_terms || null,
             delivery_terms: data.delivery_terms || null,
@@ -1349,6 +1363,9 @@ export class PoVendorService {
             delivery_address_id: source.delivery_address_id || null,
             notes: source.notes || null,
             internal_notes: source.internal_notes || null,
+            // A balance PO is the same shipment relationship continued — carry
+            // the drop-ship flag forward (§5.1: balance POVs copy the source).
+            is_drop_ship: !!(source as any).is_drop_ship,
             dispatched_through: source.dispatched_through || null,
             payment_terms: source.payment_terms || null,
             delivery_terms: source.delivery_terms || null,
@@ -1784,6 +1801,9 @@ export class PoVendorService {
                     delivery_terms?: string;
                 }
             >;
+            /** Per-vendor Drop-Ship flag — that vendor's spawned POV is
+             *  created with is_drop_ship=true. Key = vendor_id. */
+            vendor_drop_ship?: Record<string, boolean>;
             /** Per-vendor display currency + rate. Key = vendor_id. */
             vendor_currencies?: Record<
                 string,
@@ -2053,6 +2073,10 @@ export class PoVendorService {
                     data.vendor_currencies?.[vendorId]?.currency_code,
                 exchange_rate:
                     data.vendor_currencies?.[vendorId]?.exchange_rate,
+                // Drop-Ship — this vendor group's lines all carry a
+                // purchase_order_line_id (from the source SO), satisfying the
+                // §5.1 standalone-POV guard.
+                is_drop_ship: !!data.vendor_drop_ship?.[vendorId],
             };
             const row = await this.createFromPo(
                 companyId,
@@ -2233,6 +2257,9 @@ export class PoVendorService {
             // rides alongside whichever field it's accompanying (line_edits),
             // so it's allowed at every status line_edits itself is allowed.
             'override',
+            // Drop-ship toggle — draft, and still dispatched (below) until a
+            // GRN exists; see assertDropShipChangeAllowed().
+            'is_drop_ship',
         ]);
         const dispatchedEditable = new Set([
             // Vendors revise their rates after the PO has gone out, so a
@@ -2253,6 +2280,7 @@ export class PoVendorService {
             'linked_sales_order_ids',
             'status',
             'override',
+            'is_drop_ship',
         ]);
         const terminalEditable = new Set([
             'internal_notes',
@@ -2287,6 +2315,18 @@ export class PoVendorService {
         // ── Status transition (if any) ──────────────────────────────────
         if (data.status && data.status !== fromStatus) {
             this.assertStatusTransitionAllowed(fromStatus, data.status);
+        }
+
+        // ── Drop-Ship toggle guard (§5.1) — locked once a GRN exists ─────
+        if (
+            (data as any).is_drop_ship !== undefined &&
+            !!(data as any).is_drop_ship !== !!row.is_drop_ship
+        ) {
+            if (await this.hasGrn(companyId, row._id.toString())) {
+                throw new BadRequestException(
+                    "Drop-Ship can't be changed after a GRN exists — cancel the GRN first."
+                );
+            }
         }
 
         // ── Re-snapshot delivery address if a new id was picked (draft) ──
@@ -2340,6 +2380,7 @@ export class PoVendorService {
             payment_terms: (row as any).payment_terms,
             delivery_terms: (row as any).delivery_terms,
             currency_code: row.currency_code,
+            is_drop_ship: !!row.is_drop_ship,
             linkedIds: JSON.stringify(
                 (((row as any).linked_sales_orders || []) as any[])
                     .map(s => s.id)
@@ -2746,6 +2787,10 @@ export class PoVendorService {
                 summaryBits.push('notes');
             if (norm(row.internal_notes) !== norm(beforeEdit.internal_notes))
                 summaryBits.push('internal notes');
+            if (!!row.is_drop_ship !== beforeEdit.is_drop_ship)
+                summaryBits.push(
+                    row.is_drop_ship ? 'marked Drop-Ship' : 'Drop-Ship removed'
+                );
             if (Array.isArray(expenses)) summaryBits.push('vendor charges');
             if (linesChanged) summaryBits.push('lines');
             const linkedAfter = JSON.stringify(
@@ -3708,6 +3753,21 @@ export class PoVendorService {
             paymentsByPov.get(k).push(p);
         }
 
+        // Batch GRN-existence check (one query for the whole page) so the FE
+        // can disable the Drop-Ship checkbox once a GRN exists — mirrors
+        // hasGrn() but avoids an N+1 query per row.
+        const povIdsWithGrn = new Set<string>();
+        if (povIds.length) {
+            const grnRows = await this.dataSource.query(
+                `SELECT DISTINCT po_vendor_id FROM ${GRN_COLLECTION_NAME}
+                 WHERE po_vendor_id = ANY($1) AND soft_delete = false
+                   AND status <> 'cancelled'`,
+                [povIds]
+            );
+            for (const gr of grnRows as any[])
+                povIdsWithGrn.add(gr.po_vendor_id?.toString());
+        }
+
         const out: PoVendorGetResponseDto[] = [];
         for (const r of rows as any[]) {
             const vendor: any = r.vendor_id
@@ -3893,6 +3953,8 @@ export class PoVendorService {
                 exchange_rate: String(r.exchange_rate ?? '1'),
 
                 status: r.status,
+                is_drop_ship: !!r.is_drop_ship,
+                drop_ship_locked: povIdsWithGrn.has(r._id.toString()),
 
                 created_by: r.created_by?.toString(),
                 createdAt: r.createdAt,

@@ -50,6 +50,10 @@ export class GrnGetResponseDto {
     @ApiProperty({ required: false }) vendor_name?: string;
     @ApiProperty({ required: false }) vendor_code?: string;
     @ApiProperty({ required: false }) grn_date?: string;
+    /** From the source POV — this GRN is the delivery confirmation for a
+     *  drop-ship order: it books the vendor bill/GST but adds no stock
+     *  (DROP_SHIP_ORDERS_PLAN §5.2). */
+    @ApiProperty({ required: false }) is_drop_ship?: boolean;
     /** Vendor currency of the source POV — the line price column is in it. */
     @ApiProperty({ required: false }) currency_code?: string;
     @ApiProperty({ required: false }) notes?: string;

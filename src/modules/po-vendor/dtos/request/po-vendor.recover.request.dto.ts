@@ -281,4 +281,14 @@ export class PoVendorRecoverRequestDto {
     @IsObject()
     @IsOptional()
     vendor_terms?: Record<string, PoVendorRecoverTermsDto>;
+
+    /** Per-vendor Drop-Ship flag — this vendor ships straight to the SO's
+     *  customer, so their spawned POV is created with is_drop_ship=true
+     *  (DROP_SHIP_ORDERS_PLAN §5.1). Key = vendor_id (UUID), value = true
+     *  to mark that vendor's group as drop-ship; a vendor omitted here (or
+     *  set false) spawns a normal warehouse POV. */
+    @ApiProperty({ required: false, type: Object })
+    @IsObject()
+    @IsOptional()
+    vendor_drop_ship?: Record<string, boolean>;
 }

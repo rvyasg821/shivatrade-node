@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
     ArrayMinSize,
     IsArray,
+    IsBoolean,
     IsDateString,
     IsInt,
     IsNotEmpty,
@@ -111,6 +112,17 @@ export class PoVendorStandaloneCreateRequestDto {
     @IsOptional()
     @MaxLength(120)
     invoice_number?: string;
+
+    /** Rejected with 400 when true — a standalone POV has no per-line
+     *  PO-line link, so there is no invoice line for a drop-ship qty to
+     *  attach to. Drop-ship POVs must be generated from a Sales Order
+     *  (see PoVendorService.createFromPo / DROP_SHIP_ORDERS_PLAN §5.1).
+     *  Field exists so the API returns a clear error instead of silently
+     *  stripping the flag (class-validator whitelist would otherwise drop
+     *  an unknown key without telling the caller). */
+    @IsBoolean()
+    @IsOptional()
+    is_drop_ship?: boolean;
 
     /** Business creation date. Defaults to today (server-side) when omitted. */
     @IsDateString()

@@ -4408,10 +4408,16 @@ export class ReportsService {
                  JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
                  JOIN po_vendors pov ON pov._id = povl.po_vendor_id
                  WHERE gl.accepted_qty::numeric > 0
+                   -- Drop-ship never entered our warehouse — excluded from this
+                   -- physical stock-turnover ratio (DROP_SHIP_ORDERS_PLAN §5.6).
+                   AND COALESCE(pov.is_drop_ship, false) = false
                  GROUP BY gl.product_id
              ) cost ON cost.product_id = p._id
              LEFT JOIN (
-                 SELECT il.product_id, SUM(il.qty::numeric) AS qty_sold
+                 -- Sold qty nets out the drop-ship share of each invoice line —
+                 -- that portion never left our stock, so it isn't a "turn".
+                 SELECT il.product_id,
+                        SUM(il.qty::numeric - COALESCE(il.drop_ship_qty::numeric, 0)) AS qty_sold
                  FROM invoice_lines il
                  JOIN invoices i
                    ON i._id = il.invoice_id
@@ -4682,11 +4688,13 @@ export class ReportsService {
         );
 
         // Sales up to `to` (pre-range sales still deplete cohorts correctly).
+        // Nets out each line's drop-ship share — that qty never sat in our
+        // stock, so it never "held" any days (DROP_SHIP_ORDERS_PLAN §5.6).
         const salesRaw: any[] = metaById.size
             ? await this.dataSource.query(
                   `SELECT il.product_id AS product_id,
                           i.invoice_date AS d,
-                          SUM(il.qty::numeric) AS qty
+                          SUM(il.qty::numeric - COALESCE(il.drop_ship_qty::numeric, 0)) AS qty
                    FROM invoice_lines il
                    JOIN invoices i
                      ON i._id = il.invoice_id
@@ -4699,7 +4707,8 @@ export class ReportsService {
               )
             : [];
 
-        // Receipts up to `to`.
+        // Receipts up to `to`. Drop-ship GRNs never receipted anything into
+        // OUR warehouse — excluded (DROP_SHIP_ORDERS_PLAN §5.6).
         const recvRaw: any[] = metaById.size
             ? await this.dataSource.query(
                   `SELECT gl.product_id AS product_id,
@@ -4711,8 +4720,11 @@ export class ReportsService {
                     AND g.company_id = $1
                     AND g.soft_delete = false
                     AND g.status = 'confirmed'
+                   JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+                   JOIN po_vendors pov ON pov._id = povl.po_vendor_id
                    WHERE gl.accepted_qty::numeric > 0
                      AND g.grn_date <= $2
+                     AND COALESCE(pov.is_drop_ship, false) = false
                    GROUP BY gl.product_id, g.grn_date`,
                   [companyId, to]
               )
@@ -4997,6 +5009,9 @@ export class ReportsService {
                  JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
                  JOIN po_vendors pov ON pov._id = povl.po_vendor_id
                  WHERE gl.accepted_qty::numeric > 0
+                   -- Drop-ship never entered our warehouse — never ages here
+                   -- (DROP_SHIP_ORDERS_PLAN §5.6).
+                   AND COALESCE(pov.is_drop_ship, false) = false
                  GROUP BY gl.product_id
              ) cost ON cost.product_id = p._id
              WHERE p.company_id = $1 AND p.soft_delete = false
@@ -5036,7 +5051,8 @@ export class ReportsService {
             ])
         );
 
-        // Receipt cohorts up to the snapshot, per product + grn_date.
+        // Receipt cohorts up to the snapshot, per product + grn_date. Drop-ship
+        // GRNs excluded — nothing physically arrived (DROP_SHIP_ORDERS_PLAN §5.6).
         const recvRaw: any[] = metaById.size
             ? await this.dataSource.query(
                   `SELECT gl.product_id AS product_id,
@@ -5048,8 +5064,11 @@ export class ReportsService {
                     AND g.company_id = $1
                     AND g.soft_delete = false
                     AND g.status = 'confirmed'
+                   JOIN po_vendor_lines povl ON povl._id = gl.po_vendor_line_id
+                   JOIN po_vendors pov ON pov._id = povl.po_vendor_id
                    WHERE gl.accepted_qty::numeric > 0
                      AND g.grn_date <= $2
+                     AND COALESCE(pov.is_drop_ship, false) = false
                    GROUP BY gl.product_id, g.grn_date`,
                   [companyId, asOf]
               )
@@ -5294,6 +5313,9 @@ export class ReportsService {
              WHERE gl.product_id = $2
                AND gl.accepted_qty::numeric > 0
                AND g.grn_date <= $3
+               -- Drop-ship never entered our warehouse — not a purchase INTO
+               -- stock (DROP_SHIP_ORDERS_PLAN §5.6).
+               AND COALESCE(pov.is_drop_ship, false) = false
              ORDER BY g.grn_date ASC, g.voucher_no ASC`,
             [companyId, productId, cutoff]
         );
@@ -5322,9 +5344,17 @@ export class ReportsService {
                     COALESCE(c.company_name,
                              i.customer_snapshot->>'company_name', '—')
                                                           AS customer_name,
-                    il.qty::float8                        AS qty,
-                    (il.taxable_amount::float8
+                    -- Nets out the drop-ship share — that qty never left our
+                    -- stock, so it can't be part of what depleted it here.
+                    (il.qty::float8 - COALESCE(il.drop_ship_qty::float8, 0))
+                                                          AS qty,
+                    -- taxable_amount is for the WHOLE line; scale it down by
+                    -- the same fraction so a partly-drop-ship line's value
+                    -- stays proportional to its stock-depleting qty.
+                    ((il.taxable_amount::float8
                         / COALESCE(NULLIF(i.exchange_rate::float8, 0), 1))
+                        * (il.qty::float8 - COALESCE(il.drop_ship_qty::float8, 0))
+                        / NULLIF(il.qty::float8, 0))
                                                           AS value_inr
              FROM invoice_lines il
              JOIN invoices i
@@ -5335,6 +5365,7 @@ export class ReportsService {
              LEFT JOIN customers c ON c._id = i.customer_id
              WHERE il.product_id = $2
                AND i.invoice_date <= $3
+               AND (il.qty::numeric - COALESCE(il.drop_ship_qty::numeric, 0)) > 0
              ORDER BY i.invoice_date ASC, i.voucher_no ASC`,
             [companyId, productId, cutoff]
         );

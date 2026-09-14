@@ -85,6 +85,11 @@ const HEADER_HEADERS = [
     // rewrites every historical import to today's rate.
     'currency_code',
     'exchange_rate',
+    // Drop-ship (yes/no, blank = no) — vendor ships straight to the
+    // customer; its GRN books the vendor bill/GST only, no stock (see
+    // DROP_SHIP_ORDERS_PLAN). Only meaningful with a linked SO — the
+    // standalone-POV guard (createStandalone) is exempt in import mode.
+    'is_drop_ship',
 ];
 const LINE_HEADERS = [
     'voucher_no',
@@ -300,6 +305,12 @@ export interface VpoImportDoc {
      *  the current master rate (see HEADER_HEADERS). */
     currency_code?: string;
     exchange_rate?: string;
+    /** Drop-ship. `undefined` when the column was left blank (re-import of
+     *  an existing row leaves the flag untouched rather than resetting it
+     *  to false); true/false when the operator explicitly wrote yes/no.
+     *  Requires a linked SO — validated at header-parse time
+     *  (DROP_SHIP_ORDERS_PLAN §7.7). */
+    is_drop_ship?: boolean;
     advance?: { payment_date?: string; amount: string; notes?: string };
     status: ENUM_PO_VENDOR_STATUS;
     lines: VpoLine[];
@@ -984,6 +995,34 @@ export class PoVendorImportExportService {
                 }
             }
 
+            // Drop-ship. Blank leaves the flag untouched on a re-import
+            // (never silently resets an existing POV back to warehouse);
+            // 'yes'/'no' sets it explicitly on a new row. Requires a linked
+            // SO — the standalone-POV guard createStandalone() enforces is
+            // exempt in import mode, but a drop-ship row with no SO link
+            // still makes no sense (no invoice line can find its pool), so
+            // it's caught here as a clear import-time error instead.
+            const dropShipRaw = get(raw, 'is_drop_ship').trim().toLowerCase();
+            let is_drop_ship: boolean | undefined;
+            if (dropShipRaw) {
+                if (['yes', 'y', 'true', '1'].includes(dropShipRaw)) {
+                    is_drop_ship = true;
+                } else if (['no', 'n', 'false', '0'].includes(dropShipRaw)) {
+                    is_drop_ship = false;
+                } else {
+                    errors.push(`is_drop_ship "${dropShipRaw}" must be 'yes' or 'no'`);
+                }
+            }
+            if (
+                is_drop_ship &&
+                !purchase_order_id &&
+                !(linked_purchase_order_ids || []).length
+            ) {
+                errors.push(
+                    'is_drop_ship requires so_voucher_no or linked_so_voucher_nos to be set'
+                );
+            }
+
             // advance (optional)
             let advance:
                 | { payment_date?: string; amount: string; notes?: string }
@@ -1077,6 +1116,7 @@ export class PoVendorImportExportService {
                 creation_date,
                 currency_code,
                 exchange_rate,
+                is_drop_ship,
                 advance,
                 status,
                 lines,
@@ -1247,6 +1287,7 @@ export class PoVendorImportExportService {
                         notes: doc.notes,
                         internal_notes: doc.internal_notes,
                         linked_sales_order_ids: doc.linked_purchase_order_ids,
+                        is_drop_ship: doc.is_drop_ship,
                         lines: doc.lines.map((l) => ({
                             product_id: l.product_id,
                             ordered_qty: l.ordered_qty,
@@ -1866,6 +1907,11 @@ export class PoVendorImportExportService {
             creation_date: doc.creation_date,
             ...(doc.currency_code ? { currency_code: doc.currency_code } : {}),
             ...(doc.exchange_rate ? { exchange_rate: doc.exchange_rate } : {}),
+            // Blank column on the sheet leaves the existing flag untouched
+            // (see VpoImportDoc.is_drop_ship doc comment).
+            ...(doc.is_drop_ship !== undefined
+                ? { is_drop_ship: doc.is_drop_ship }
+                : {}),
             expenses: doc.charges.map((c) => ({
                 expense_id: c.expense_id,
                 type: c.type,

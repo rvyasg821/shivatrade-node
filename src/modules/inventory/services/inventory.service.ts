@@ -234,6 +234,11 @@ export class InventoryService {
             WHERE pv.company_id = $1 AND pv.soft_delete = false
               AND pv.status <> 'cancelled'
               AND COALESCE(pvl.received_qty, 0) > 0
+              -- Drop-ship: the vendor shipped straight to the customer, so
+              -- received_qty on the POV line is real (it drives the vendor
+              -- bill/GST) but nothing ever entered OUR warehouse — must not
+              -- become a physical stock layer here (DROP_SHIP_ORDERS_PLAN 5.6).
+              AND COALESCE(pv.is_drop_ship, false) = false
               {{LAYER_FILTERS}}
         ),
         outmv AS (
@@ -539,6 +544,7 @@ export class InventoryService {
                 WHERE pv.company_id = $1
                   AND pv.soft_delete = false
                   AND pv.status <> 'cancelled'
+                  AND COALESCE(pv.is_drop_ship, false) = false
                   AND g.status = 'confirmed'
                   AND g.soft_delete = false
                   AND g.po_vendor_invoice_number IS NOT NULL
@@ -703,6 +709,10 @@ export class InventoryService {
             'g.company_id = $1',
             "g.status = 'confirmed'",
             'g.soft_delete = false',
+            // Drop-ship GRNs book the vendor bill/GST only — no goods ever
+            // entered our warehouse, so they don't belong on a physical
+            // receipts sheet (DROP_SHIP_ORDERS_PLAN §5.6).
+            'COALESCE(pv.is_drop_ship, false) = false',
         ];
 
         if (filters.date_from) {

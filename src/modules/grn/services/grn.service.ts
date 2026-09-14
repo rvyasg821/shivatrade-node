@@ -544,6 +544,13 @@ export class GrnService {
         const leftConfirmed =
             prevStatus === ENUM_GRN_STATUS.CONFIRMED && !isConfirmed;
         try {
+            const povRow: any = povId
+                ? await this.povRepository.findOneById(povId)
+                : null;
+            // Drop-ship: this GRN still books the vendor bill/GST (unchanged
+            // above/below) but the goods never entered OUR warehouse — post
+            // no grn_in. See DROP_SHIP_ORDERS_PLAN §5.2.
+            const isDropShip = !!povRow?.is_drop_ship;
             if (isConfirmed && (newlyConfirmed || linesChanged)) {
                 await this.stockLedger.reverse(
                     companyId,
@@ -554,26 +561,26 @@ export class GrnService {
                     userId,
                     grn.grn_date
                 );
-                const locationId = povId
-                    ? (await this.povRepository.findOneById(povId) as any)
-                          ?.delivery_address_id || null
-                    : null;
-                const ledgerLines = await this.grnLineRepository.findByGrnId(grnId);
-                for (const l of ledgerLines as any[]) {
-                    const acceptedQty = round4(num(l.accepted_qty));
-                    if (acceptedQty > 0) {
-                        await this.stockLedger.post(companyId, {
-                            product_id: l.product_id,
-                            location_id: locationId,
-                            qty: acceptedQty,
-                            movement_type: ENUM_STOCK_MOVEMENT_TYPE.GRN_IN,
-                            source_type: 'grn',
-                            source_id: grnId,
-                            source_line_id: l._id.toString(),
-                            source_voucher_no: grn.voucher_no,
-                            created_by: userId,
-                            movement_date: grn.grn_date,
-                        });
+                if (!isDropShip) {
+                    const locationId = povRow?.delivery_address_id || null;
+                    const ledgerLines =
+                        await this.grnLineRepository.findByGrnId(grnId);
+                    for (const l of ledgerLines as any[]) {
+                        const acceptedQty = round4(num(l.accepted_qty));
+                        if (acceptedQty > 0) {
+                            await this.stockLedger.post(companyId, {
+                                product_id: l.product_id,
+                                location_id: locationId,
+                                qty: acceptedQty,
+                                movement_type: ENUM_STOCK_MOVEMENT_TYPE.GRN_IN,
+                                source_type: 'grn',
+                                source_id: grnId,
+                                source_line_id: l._id.toString(),
+                                source_voucher_no: grn.voucher_no,
+                                created_by: userId,
+                                movement_date: grn.grn_date,
+                            });
+                        }
                     }
                 }
             } else if (leftConfirmed) {
@@ -1189,6 +1196,7 @@ export class GrnService {
         dto.vendor_code = (vendor as any)?.vendor_code;
         // Vendor currency of the source POV — the price column is shown in it.
         dto.currency_code = (pov as any)?.currency_code || 'INR';
+        dto.is_drop_ship = !!(pov as any)?.is_drop_ship;
         dto.lines = lines.map((l) => {
             const prod = l.product_id
                 ? productById.get(l.product_id.toString())
