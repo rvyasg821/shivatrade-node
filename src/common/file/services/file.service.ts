@@ -5,13 +5,19 @@ import { ENUM_HELPER_FILE_EXCEL_TYPE } from '@common/helper/enums/helper.enum';
 import { utils, write, read } from 'xlsx';
 import { promises as fs } from 'fs';
 import path, { join } from 'path';
+import {
+    sanitizeExcelAoa,
+    sanitizeExcelRowObjects,
+} from '@common/file/utils/excel-sanitize.util';
 
 @Injectable()
 export class FileService implements IFileService {
     writeCsv<T = Record<string, string | number | Date>>(
         rows: IFileRows<T>
     ): Buffer {
-        const worksheet = utils.json_to_sheet(rows.data);
+        const worksheet = utils.json_to_sheet(
+            sanitizeExcelRowObjects(rows.data)
+        );
         const csv = utils.sheet_to_csv(worksheet, { FS: ';' });
 
         // create buffer
@@ -23,7 +29,7 @@ export class FileService implements IFileService {
     writeCsvFromArray<T = Record<string, string | number | Date>>(
         rows: T[][]
     ): Buffer {
-        const worksheet = utils.aoa_to_sheet(rows);
+        const worksheet = utils.aoa_to_sheet(sanitizeExcelAoa(rows));
         const csv = utils.sheet_to_csv(worksheet, { FS: ';' });
 
         // create buffer
@@ -40,7 +46,9 @@ export class FileService implements IFileService {
 
         for (const [index, row] of rows.entries()) {
             // worksheet
-            const worksheet = utils.json_to_sheet(row.data);
+            const worksheet = utils.json_to_sheet(
+                sanitizeExcelRowObjects(row.data)
+            );
             utils.book_append_sheet(
                 workbook,
                 worksheet,
@@ -64,7 +72,7 @@ export class FileService implements IFileService {
         const workbook = utils.book_new();
 
         // worksheet
-        const worksheet = utils.aoa_to_sheet(rows);
+        const worksheet = utils.aoa_to_sheet(sanitizeExcelAoa(rows));
         utils.book_append_sheet(workbook, worksheet, `Sheet1`);
 
         // create buffer
@@ -83,7 +91,7 @@ export class FileService implements IFileService {
         const workbook = utils.book_new();
 
         for (const [index, sheet] of sheets.entries()) {
-            const worksheet = utils.aoa_to_sheet(sheet.rows);
+            const worksheet = utils.aoa_to_sheet(sanitizeExcelAoa(sheet.rows));
             utils.book_append_sheet(
                 workbook,
                 worksheet,

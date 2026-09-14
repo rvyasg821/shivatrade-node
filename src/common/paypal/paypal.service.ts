@@ -223,7 +223,6 @@ export class PayPalService {
 
         try {
             const response = await this.http.post(url, data, { headers });
-            console.log('getCardPaymentToken response:', response?.data, data);
 
             if (response?.data && response.data?.id) {
                 return response.data;

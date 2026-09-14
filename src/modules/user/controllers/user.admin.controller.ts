@@ -112,6 +112,35 @@ export class UserAdminController {
         private readonly companySettingsService: CompanySettingsService
     ) {}
 
+    /**
+     * SECURITY: `UserParsePipe` (used by get/update/updateStatus/delete below)
+     * resolves a user purely by `_id` — it has no request context, so it
+     * cannot scope the lookup by company itself. Without this check, any
+     * authenticated user of ANY company could view/edit/deactivate/delete a
+     * user belonging to a DIFFERENT company just by supplying that user's
+     * UUID (cross-tenant IDOR — found in the 2026-09-14 security review).
+     * Mirrors the `find.companyId` split already used in `list()` above:
+     * Super Admin manages only company-less (system-level) users; everyone
+     * else may only touch a user in their own company.
+     */
+    private assertUserOwnedByCaller(
+        target: UserDoc,
+        callerRoleName: string,
+        callerCompanyId?: string
+    ): void {
+        const targetCompanyId = (target as any).companyId || null;
+        const ok =
+            callerRoleName === ENUM_SYSTEM_ROLE.SUPER_ADMIN
+                ? targetCompanyId === null
+                : !!callerCompanyId && targetCompanyId === callerCompanyId;
+        if (!ok) {
+            throw new NotFoundException({
+                statusCode: ENUM_USER_STATUS_CODE_ERROR.NOT_FOUND,
+                message: 'user.error.notFound',
+            });
+        }
+    }
+
     @UserAdminListDoc()
     @ResponsePaging('user.list')
     @UserProtected()
@@ -193,14 +222,12 @@ export class UserAdminController {
         if (roleName === ENUM_SYSTEM_ROLE.SUPER_ADMIN) {
             // Super Admin only sees users without a company (system-level users)
             find.companyId = null;
-            console.log('🔍 Super Admin user filter:', JSON.stringify(find));
         } else if (
             roleName === ENUM_SYSTEM_ROLE.COMPANY_ADMIN &&
             currentUserCompanyId
         ) {
             // Company Admin only sees users from their company
             find.companyId = currentUserCompanyId;
-            console.log('🔍 Company Admin user filter:', JSON.stringify(find));
         } else if (
             roleName === ENUM_SYSTEM_ROLE.LOCATION_ADMIN &&
             currentUserCompanyId
@@ -228,7 +255,6 @@ export class UserAdminController {
             } else if (validLocations.length > 1) {
                 find.location_id = { $in: validLocations };
             }
-            console.log('🔍 Location Admin user filter:', JSON.stringify(find));
         }
 
         const users: IUserEntity[] =
@@ -386,8 +412,11 @@ export class UserAdminController {
     @AuthJwtAccessProtected()
     @Get('/get/:user')
     async get(
-        @Param('user', RequestRequiredPipe, UserParsePipe) user: UserDoc
+        @Param('user', RequestRequiredPipe, UserParsePipe) user: UserDoc,
+        @AuthJwtPayload('roleName') callerRoleName: string,
+        @AuthJwtPayload('companyId') callerCompanyId: string
     ): Promise<IResponse<UserProfileResponseDto>> {
+        this.assertUserOwnedByCaller(user, callerRoleName, callerCompanyId);
         const userWithRole: IUserDoc = await this.userService.join(user);
         const mapped: UserProfileResponseDto =
             this.userService.mapProfile(userWithRole);
@@ -858,6 +887,8 @@ export class UserAdminController {
             country,
         }: UserUpdateRequestDto
     ): Promise<IResponse<any>> {
+        this.assertUserOwnedByCaller(user, roleName, currentUserCompanyId);
+
         // Validate hierarchy - user can only update users at or below their level
         if (
             !this.userService.validateUserHierarchy(
@@ -1043,8 +1074,11 @@ export class UserAdminController {
     async updateStatus(
         @Param('user', RequestRequiredPipe, UserParsePipe, UserNotSelfPipe)
         user: UserDoc,
+        @AuthJwtPayload('roleName') callerRoleName: string,
+        @AuthJwtPayload('companyId') callerCompanyId: string,
         @Body() { status }: UserUpdateStatusRequestDto
     ): Promise<IResponse<void>> {
+        this.assertUserOwnedByCaller(user, callerRoleName, callerCompanyId);
         if (user.status === ENUM_USER_STATUS.BLOCKED) {
             throw new BadRequestException({
                 statusCode: ENUM_USER_STATUS_CODE_ERROR.STATUS_INVALID,
@@ -1096,8 +1130,11 @@ export class UserAdminController {
     @Delete('/delete/:userId')
     async delete(
         @AuthJwtPayload('user', UserParsePipe) user: UserDoc,
+        @AuthJwtPayload('roleName') callerRoleName: string,
+        @AuthJwtPayload('companyId') callerCompanyId: string,
         @Param('userId', RequestRequiredPipe, UserParsePipe) userId: UserDoc
     ): Promise<void> {
+        this.assertUserOwnedByCaller(userId, callerRoleName, callerCompanyId);
         try {
             await this.userService.softDelete(userId, {
                 actionBy: String(user._id),

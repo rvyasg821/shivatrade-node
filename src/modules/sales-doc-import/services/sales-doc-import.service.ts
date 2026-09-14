@@ -3,6 +3,7 @@ import { utils, write } from 'xlsx';
 // SheetJS community + basic cell styles (fills/fonts/borders). Used ONLY by the
 // coloured costing "Export Report"; the round-trip exports stay on plain `xlsx`.
 import * as XLSXStyle from 'xlsx-js-style';
+import { sanitizeExcelAoa } from '@common/file/utils/excel-sanitize.util';
 
 import { ProductRepository } from '@modules/product/repository/repositories/product.repository';
 import { ProductRebateRepository } from '@modules/product/repository/repositories/product-rebate.repository';
@@ -1292,7 +1293,7 @@ export class SalesDocImportService {
         const workbook = utils.book_new();
         utils.book_append_sheet(
             workbook,
-            utils.aoa_to_sheet([headerRow, ...dataAoa]),
+            utils.aoa_to_sheet(sanitizeExcelAoa([headerRow, ...dataAoa])),
             'LineItems',
         );
 
@@ -1348,7 +1349,7 @@ export class SalesDocImportService {
             }
             utils.book_append_sheet(
                 workbook,
-                utils.aoa_to_sheet(rows),
+                utils.aoa_to_sheet(sanitizeExcelAoa(rows)),
                 'Totals',
             );
         }
@@ -1720,7 +1721,7 @@ export class SalesDocImportService {
         noteRow[0] = `Grand Total (${srcCur}) = Total FOB (Value + Expenses) + Margin − Rebates`;
 
         const aoa: any[][] = [banner, [], h1, h2, ...dataAoa, totalRow, [], noteRow];
-        const ws = XLSXStyle.utils.aoa_to_sheet(aoa);
+        const ws = XLSXStyle.utils.aoa_to_sheet(sanitizeExcelAoa(aoa));
 
         // ── Merges: single-column headers span both header rows; each band
         //    spans its sub-columns on the top row; the banner/total/note labels
@@ -2113,7 +2114,9 @@ export class SalesDocImportService {
         const workbook = utils.book_new();
 
         // Sheet 1: LineItems — single header row + data
-        const linesSheet = utils.aoa_to_sheet([headerRow, ...dataAoa]);
+        const linesSheet = utils.aoa_to_sheet(
+            sanitizeExcelAoa([headerRow, ...dataAoa])
+        );
         utils.book_append_sheet(workbook, linesSheet, 'LineItems');
 
         // Sheet 2: Totals (export-mode only; not for the simple Lead sheet)
@@ -2153,7 +2156,7 @@ export class SalesDocImportService {
                 ['GST', totals.gst_amt],
                 ['Grand Total', totals.line_total],
             ];
-            const totalsSheet = utils.aoa_to_sheet(totalsRows);
+            const totalsSheet = utils.aoa_to_sheet(sanitizeExcelAoa(totalsRows));
             utils.book_append_sheet(workbook, totalsSheet, 'Totals');
         }
 
@@ -2237,7 +2240,7 @@ export class SalesDocImportService {
                 }
                 utils.book_append_sheet(
                     workbook,
-                    utils.aoa_to_sheet(refRows),
+                    utils.aoa_to_sheet(sanitizeExcelAoa(refRows)),
                     '_ProductsRef',
                 );
             }

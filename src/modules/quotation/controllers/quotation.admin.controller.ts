@@ -10,11 +10,14 @@ import {
     Res,
     UploadedFile,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import { IFile } from '@common/file/interfaces/file.interface';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -140,6 +143,8 @@ export class QuotationAdminController {
     }
 
     @Response('quotation.create')
+    @Permission('quotations', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async create(
@@ -253,6 +258,8 @@ export class QuotationAdminController {
     }
 
     @Response('quotation.update')
+    @Permission('quotations', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
@@ -266,6 +273,8 @@ export class QuotationAdminController {
     }
 
     @Response('quotation.delete')
+    @Permission('quotations', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async delete(
@@ -278,6 +287,8 @@ export class QuotationAdminController {
     }
 
     @Response('quotation.delete')
+    @Permission('quotations', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(

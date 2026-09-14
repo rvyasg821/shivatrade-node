@@ -10,11 +10,14 @@ import {
     Res,
     UploadedFile,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { Response as ExpressResponse } from 'express';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import { IFile } from '@common/file/interfaces/file.interface';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -131,6 +134,8 @@ export class LeadAdminController {
     }
 
     @Response('lead.create')
+    @Permission('leads', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async create(
@@ -249,6 +254,8 @@ export class LeadAdminController {
     }
 
     @Response('lead.update')
+    @Permission('leads', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:leadId')
     async update(
@@ -264,6 +271,8 @@ export class LeadAdminController {
     }
 
     @Response('lead.delete')
+    @Permission('leads', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:leadId')
     async delete(
@@ -276,6 +285,8 @@ export class LeadAdminController {
     }
 
     @Response('lead.delete')
+    @Permission('leads', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(
@@ -292,6 +303,8 @@ export class LeadAdminController {
     }
 
     @Response('lead.convert')
+    @Permission('leads', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/convert/:leadId')
     async convert(

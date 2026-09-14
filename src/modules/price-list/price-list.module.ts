@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { RoleModule } from '@modules/role/role.module';
 import { PriceListRepositoryModule } from './repository/price-list.repository.module';
 import { PriceListService } from './services/price-list.service';
 import { PriceListImportExportService } from './services/price-list.import-export.service';
@@ -11,6 +12,7 @@ import { TrackingModule } from '@modules/tracking/tracking.module';
 @Module({
     imports: [
         PriceListRepositoryModule,
+        forwardRef(() => RoleModule),
         VendorModule,
         ProductModule,
         CurrencyModule,

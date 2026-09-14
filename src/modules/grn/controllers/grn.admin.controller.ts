@@ -9,9 +9,12 @@ import {
     Query,
     Res,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags } from '@nestjs/swagger';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -49,6 +52,8 @@ export class GrnAdminController {
     ) {}
 
     @Response('grn.create')
+    @Permission('grn', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/from-pov/:povId')
     async createFromPov(
@@ -159,6 +164,8 @@ export class GrnAdminController {
     }
 
     @Response('grn.update')
+    @Permission('grn', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
@@ -172,6 +179,8 @@ export class GrnAdminController {
     }
 
     @Response('grn.update')
+    @Permission('grn', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/invoice-number/:id')
     async updateInvoiceNumber(
@@ -188,6 +197,8 @@ export class GrnAdminController {
     }
 
     @Response('grn.delete')
+    @Permission('grn', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async remove(
@@ -200,6 +211,8 @@ export class GrnAdminController {
     }
 
     @Response('grn.delete')
+    @Permission('grn', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(

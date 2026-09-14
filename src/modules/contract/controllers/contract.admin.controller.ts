@@ -68,6 +68,27 @@ export class ContractAdminController {
         private readonly configService: ConfigService,
     ) {}
 
+    /**
+     * SECURITY: `contractService.findOneById()` / `getContractWithValues()`
+     * resolve an employee contract purely by `_id`, with no company scoping
+     * — without this check, any authenticated user of ANY company could
+     * view/edit/delete another company's employee contract (salary, terms)
+     * just by supplying its UUID (cross-tenant IDOR — found in the
+     * 2026-09-14 security review). Returns the same `{statusCode: 404, ...}`
+     * shape this controller already uses for "not found", not a thrown
+     * exception, to match its local convention.
+     */
+    private isContractOwnedByCaller(
+        contract: any,
+        callerCompanyId?: string
+    ): boolean {
+        return (
+            !!contract &&
+            !!callerCompanyId &&
+            String(contract.company_id) === String(callerCompanyId)
+        );
+    }
+
     // ============ TEMPLATE ENDPOINTS ============
 
     @AuthJwtAccessProtected()
@@ -341,8 +362,14 @@ export class ContractAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Get('/get/:id')
-    async getContract(@Param('id') id: string) {
+    async getContract(
+        @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
         const { contract, fieldValues } = await this.contractService.getContractWithValues(id);
+        if (!this.isContractOwnedByCaller(contract, companyId)) {
+            return { statusCode: 404, message: 'Contract not found' };
+        }
         return {
             statusCode: 200,
             message: 'Success',
@@ -355,8 +382,13 @@ export class ContractAdminController {
     @Put('/update/:id')
     async updateContract(
         @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: any
     ) {
+        const existing = await this.contractService.findOneById(id);
+        if (!this.isContractOwnedByCaller(existing, companyId)) {
+            return { statusCode: 404, message: 'Contract not found' };
+        }
         const item = await this.contractService.update(id, body);
         return { statusCode: 200, message: 'Contract updated', data: this.contractService.mapGet(item) };
     }
@@ -366,8 +398,13 @@ export class ContractAdminController {
     @Put('/field-values/:id')
     async updateFieldValues(
         @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: ContractFieldValuesUpdateRequestDto
     ) {
+        const existing = await this.contractService.findOneById(id);
+        if (!this.isContractOwnedByCaller(existing, companyId)) {
+            return { statusCode: 404, message: 'Contract not found' };
+        }
         await this.contractService.updateFieldValues(id, body.updates);
         return { statusCode: 200, message: 'Field values updated' };
     }
@@ -375,7 +412,14 @@ export class ContractAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Delete('/delete/:id')
-    async deleteContract(@Param('id') id: string) {
+    async deleteContract(
+        @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
+        const existing = await this.contractService.findOneById(id);
+        if (!this.isContractOwnedByCaller(existing, companyId)) {
+            return { statusCode: 404, message: 'Contract not found' };
+        }
         await this.contractService.softDelete(id);
         return { statusCode: 200, message: 'Contract deleted' };
     }
@@ -387,10 +431,11 @@ export class ContractAdminController {
     @Put('/change-status/:id')
     async changeContractStatus(
         @Param('id') id: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: { status: string },
     ) {
         const contract = await this.contractService.findOneById(id);
-        if (!contract) {
+        if (!this.isContractOwnedByCaller(contract, companyId)) {
             return { statusCode: 404, message: 'Contract not found' };
         }
 
@@ -419,10 +464,11 @@ export class ContractAdminController {
     async updateContractHtml(
         @Param('id') id: string,
         @AuthJwtPayload('user') adminId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body('rendered_html') renderedHtml: string,
     ) {
         const contract = await this.contractService.findOneById(id);
-        if (!contract) {
+        if (!this.isContractOwnedByCaller(contract, companyId)) {
             return { statusCode: 404, message: 'Contract not found' };
         }
 

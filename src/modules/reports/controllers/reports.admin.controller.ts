@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, Res } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import {
@@ -751,6 +751,7 @@ export class ReportsAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Query() query: Record<string, string>
     ): Promise<IResponse<any>> {
+        if (!query.so_id) throw new BadRequestException('so_id is required.');
         const data = await this.reportsService.salesOrderStatusBreakdown(
             companyId,
             query.so_id,
@@ -770,6 +771,7 @@ export class ReportsAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Query() query: Record<string, string>
     ): Promise<IResponse<any>> {
+        if (!query.so_id) throw new BadRequestException('so_id is required.');
         const data = await this.reportsService.salesOrderStatusLineBreakdown(
             companyId,
             query.so_id,
@@ -857,6 +859,8 @@ export class ReportsAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Query() query: Record<string, string>
     ): Promise<IResponse<any>> {
+        if (!query.pov_id)
+            throw new BadRequestException('pov_id is required.');
         const data = await this.reportsService.purchaseOrderStatusBreakdown(
             companyId,
             query.pov_id,
@@ -876,6 +880,8 @@ export class ReportsAdminController {
         @AuthJwtPayload('companyId') companyId: string,
         @Query() query: Record<string, string>
     ): Promise<IResponse<any>> {
+        if (!query.pov_id)
+            throw new BadRequestException('pov_id is required.');
         const data = await this.reportsService.purchaseOrderStatusLineBreakdown(
             companyId,
             query.pov_id,

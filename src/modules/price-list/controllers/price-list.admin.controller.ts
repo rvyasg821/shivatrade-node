@@ -10,9 +10,12 @@ import {
     UploadedFile,
     Res,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { Response as ExpressResponse } from 'express';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -99,6 +102,8 @@ export class PriceListAdminController {
 
     @ApiConsumes('multipart/form-data')
     @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @Permission('price-list', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/import')
     @ApiOperation({
@@ -151,6 +156,8 @@ export class PriceListAdminController {
     }
 
     @Response('priceList.create')
+    @Permission('price-list', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/create')
     async create(
@@ -163,6 +170,8 @@ export class PriceListAdminController {
     }
 
     @Response('priceList.create')
+    @Permission('price-list', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/bulk')
     async bulkCreate(
@@ -545,6 +554,8 @@ export class PriceListAdminController {
     }
 
     @Response('priceList.update')
+    @Permission('price-list', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:priceListId')
     async update(
@@ -558,6 +569,8 @@ export class PriceListAdminController {
     }
 
     @Response('priceList.delete')
+    @Permission('price-list', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:priceListId')
     async delete(
@@ -569,6 +582,8 @@ export class PriceListAdminController {
     }
 
     @Response('priceList.delete')
+    @Permission('price-list', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(

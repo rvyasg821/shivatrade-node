@@ -10,6 +10,7 @@ import {
     HttpStatus,
     HttpCode,
     UseGuards,
+    NotFoundException,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthJwtAccessProtected, AuthJwtPayload } from '@modules/auth/decorators/auth.jwt.decorator';
@@ -44,6 +45,23 @@ export class HolidayCalendarAdminController {
         private readonly holidayCalendarRepository: HolidayCalendarRepository,
         private readonly holidayRepository: HolidayRepository,
     ) {}
+
+    /**
+     * SECURITY: `holidayCalendarService.findOneById()` / `holidayService
+     * .findOneById()` resolve purely by `_id`, with no company scoping —
+     * without this check, any authenticated user of ANY company could
+     * view/edit/delete another company's holiday calendar (or a single
+     * holiday within it) just by supplying its UUID (cross-tenant IDOR —
+     * found in the 2026-09-14 security review).
+     */
+    private assertOwnedByCaller(row: any, callerCompanyId?: string): void {
+        if (
+            !callerCompanyId ||
+            String(row?.company_id) !== String(callerCompanyId)
+        ) {
+            throw new NotFoundException('Not found');
+        }
+    }
 
     // ============ CALENDAR CRUD ============
 
@@ -114,8 +132,12 @@ export class HolidayCalendarAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Get('/get/:calendarId')
-    async get(@Param('calendarId') calendarId: string) {
+    async get(
+        @Param('calendarId') calendarId: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
         const calendar = await this.holidayCalendarService.findOneById(calendarId);
+        this.assertOwnedByCaller(calendar, companyId);
         const holidays = await this.holidayService.findByCalendar(calendarId);
         const dto = this.holidayCalendarService.mapGet(calendar);
         dto.holidays = this.holidayService.mapList(holidays);
@@ -127,9 +149,11 @@ export class HolidayCalendarAdminController {
     @Put('/update/:calendarId')
     async update(
         @Param('calendarId') calendarId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: HolidayCalendarUpdateRequestDto,
     ) {
         const calendar = await this.holidayCalendarService.findOneById(calendarId);
+        this.assertOwnedByCaller(calendar, companyId);
         const updated = await this.holidayCalendarService.update(calendar, body);
         return { statusCode: 200, message: 'Calendar updated', data: this.holidayCalendarService.mapGet(updated) };
     }
@@ -137,8 +161,12 @@ export class HolidayCalendarAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Delete('/delete/:calendarId')
-    async delete(@Param('calendarId') calendarId: string) {
+    async delete(
+        @Param('calendarId') calendarId: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
         const calendar = await this.holidayCalendarService.findOneById(calendarId);
+        this.assertOwnedByCaller(calendar, companyId);
         await this.holidayService.softDeleteByCalendar(calendarId);
         await this.holidayCalendarService.softDelete(calendar);
         return { statusCode: 200, message: 'Calendar deleted' };
@@ -159,6 +187,7 @@ export class HolidayCalendarAdminController {
         let calendar: any;
         if (body.calendar_id) {
             calendar = await this.holidayCalendarService.findOneById(body.calendar_id);
+            this.assertOwnedByCaller(calendar, companyId);
         } else {
             calendar = await this.holidayCalendarService.create(
                 companyId,
@@ -198,7 +227,8 @@ export class HolidayCalendarAdminController {
         @AuthJwtPayload('user') userId: string,
         @Body() body: HolidayCreateRequestDto,
     ) {
-        await this.holidayCalendarService.findOneById(body.calendar_id);
+        const calendar = await this.holidayCalendarService.findOneById(body.calendar_id);
+        this.assertOwnedByCaller(calendar, companyId);
         const holiday = await this.holidayService.create(companyId, body.calendar_id, body, userId);
         return { statusCode: 200, message: 'Holiday created', data: this.holidayService.mapGet(holiday) };
     }
@@ -208,9 +238,11 @@ export class HolidayCalendarAdminController {
     @Put('/holiday/update/:holidayId')
     async updateHoliday(
         @Param('holidayId') holidayId: string,
+        @AuthJwtPayload('companyId') companyId: string,
         @Body() body: HolidayUpdateRequestDto,
     ) {
         const holiday = await this.holidayService.findOneById(holidayId);
+        this.assertOwnedByCaller(holiday, companyId);
         const updated = await this.holidayService.update(holiday, body);
         return { statusCode: 200, message: 'Holiday updated', data: this.holidayService.mapGet(updated) };
     }
@@ -218,8 +250,12 @@ export class HolidayCalendarAdminController {
     @AuthJwtAccessProtected()
     @HttpCode(HttpStatus.OK)
     @Delete('/holiday/delete/:holidayId')
-    async deleteHoliday(@Param('holidayId') holidayId: string) {
+    async deleteHoliday(
+        @Param('holidayId') holidayId: string,
+        @AuthJwtPayload('companyId') companyId: string
+    ) {
         const holiday = await this.holidayService.findOneById(holidayId);
+        this.assertOwnedByCaller(holiday, companyId);
         await this.holidayService.softDelete(holiday);
         return { statusCode: 200, message: 'Holiday deleted' };
     }

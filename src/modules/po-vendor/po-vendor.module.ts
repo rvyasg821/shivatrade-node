@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { RoleModule } from '@modules/role/role.module';
 import { CreatorScopeModule } from '@modules/creator-scope/creator-scope.module';
 import { PoVendorRepositoryModule } from './repository/po-vendor.repository.module';
 import { PoVendorService } from './services/po-vendor.service';
@@ -37,6 +38,7 @@ import { TrackingModule } from '@modules/tracking/tracking.module';
 @Module({
     imports: [
         CreatorScopeModule,
+        forwardRef(() => RoleModule),
         PoVendorRepositoryModule,
         DependencyCheckModule,
         PurchaseOrderRepositoryModule,

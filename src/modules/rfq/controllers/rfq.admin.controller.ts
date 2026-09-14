@@ -10,11 +10,14 @@ import {
     Res,
     UploadedFile,
     BadRequestException,
+    UseGuards,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { ApiTags, ApiConsumes } from '@nestjs/swagger';
 import { FileUploadSingle } from '@common/file/decorators/file.decorator';
 import { IFile } from '@common/file/interfaces/file.interface';
+import { Permission } from '@modules/role/decorators/permission.decorator';
+import { PermissionGuard } from '@modules/role/guards/permission.guard';
 import {
     AuthJwtAccessProtected,
     AuthJwtPayload,
@@ -121,6 +124,8 @@ export class RfqAdminController {
     // grid + per-row errors; also upserts the price list.
     @ApiConsumes('multipart/form-data')
     @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @Permission('rfq', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/import-vendor-prices')
     async importVendorPrices(
@@ -145,6 +150,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.create')
+    @Permission('rfq', 'can_add')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/from-lead/:leadId')
     async createFromLead(
@@ -244,6 +251,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.update')
+    @Permission('rfq', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Put('/update/:id')
     async update(
@@ -256,6 +265,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.delete')
+    @Permission('rfq', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/delete/:id')
     async remove(
@@ -267,6 +278,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.delete')
+    @Permission('rfq', 'can_delete')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/delete-many')
     async deleteMany(
@@ -282,6 +295,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.vendors')
+    @Permission('rfq', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/vendors')
     async addVendors(
@@ -294,6 +309,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.vendors')
+    @Permission('rfq', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Delete('/:id/vendors/:vendorId')
     async removeVendor(
@@ -306,6 +323,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.prices')
+    @Permission('rfq', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/prices')
     async setPrices(
@@ -318,6 +337,8 @@ export class RfqAdminController {
     }
 
     @Response('rfq.select')
+    @Permission('rfq', 'can_update')
+    @UseGuards(PermissionGuard)
     @AuthJwtAccessProtected()
     @Post('/:id/select')
     async selectPrice(
