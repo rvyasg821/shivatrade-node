@@ -1482,10 +1482,12 @@ export class LedgerService {
             total_dr_inr: number;
             total_cr_inr: number;
             balance_inr: number;
-        }
+        },
+        partyCode?: string
     ): (string | number)[][] {
+        const label = partyCode ? `${partyName || ''} (${partyCode})` : (partyName || '');
         return [
-            [`${partyName || ''} — Ledger (${currency})`],
+            [`${label} — Ledger (${currency})`],
             [
                 'Date',
                 'Particulars',
@@ -1531,7 +1533,8 @@ export class LedgerService {
             ledger.party_name,
             ledger.currency_code,
             ledger.rows,
-            ledger
+            ledger,
+            ledger.party_code
         );
         return this.fileService.writeExcelFromArray(aoa as any);
     }
@@ -1566,6 +1569,7 @@ export class LedgerService {
     ): Promise<Buffer> {
         const header = [
             partyLabel,
+            'Code',
             'Currency',
             'Opening',
             'Debit',
@@ -1578,6 +1582,7 @@ export class LedgerService {
         ];
         const body = result.rows.map((r) => [
             r.party_name,
+            r.party_code || '',
             r.currency_code,
             r.opening,
             r.debit,
@@ -1590,6 +1595,7 @@ export class LedgerService {
         ]);
         const totalRow = [
             'TOTAL (INR)',
+            '',
             '',
             '',
             '',
@@ -1620,18 +1626,22 @@ export class LedgerService {
             const txnRows = (r.rows || []).filter((row) => row.type !== 'opening');
             if (!txnRows.length) continue; // no activity this period — skip
             const sheetRows = r.rows || [];
-            const aoa = this.ledgerRowsToAoa(r.party_name, r.currency_code, sheetRows, {
-                total_dr: r.debit,
-                total_cr: r.credit,
-                balance: r.closing,
-                total_dr_inr: r.debit_inr,
-                total_cr_inr: r.credit_inr,
-                balance_inr: r.closing_inr,
-            });
+            const aoa = this.ledgerRowsToAoa(
+                r.party_name,
+                r.currency_code,
+                sheetRows,
+                {
+                    total_dr: r.debit,
+                    total_cr: r.credit,
+                    balance: r.closing,
+                    total_dr_inr: r.debit_inr,
+                    total_cr_inr: r.credit_inr,
+                    balance_inr: r.closing_inr,
+                },
+                r.party_code
+            );
             const sheetName = this.safeSheetName(
-                partyLabel === 'Vendor' && r.party_code
-                    ? r.party_code
-                    : r.party_name,
+                r.party_code ? r.party_code : r.party_name,
                 used
             );
             sheets.push({ sheetName, rows: aoa });
