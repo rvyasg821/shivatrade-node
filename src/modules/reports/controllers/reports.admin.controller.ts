@@ -27,6 +27,7 @@ import { DocStatusResponseDto } from '../dtos/response/doc-status.response.dto';
 import { StockTurnoverResponseDto } from '../dtos/response/stock-turnover.response.dto';
 import { InventoryHoldingDaysResponseDto } from '../dtos/response/inventory-holding-days.response.dto';
 import { InventoryAgingResponseDto } from '../dtos/response/inventory-aging.response.dto';
+import { LedgerSummaryResponseDto } from '@modules/ledger/dtos/response/ledger-summary.response.dto';
 
 /**
  * Read-only aggregation reports, company-scoped by the caller's JWT `companyId`
@@ -1147,6 +1148,100 @@ export class ReportsAdminController {
         res.setHeader(
             'Content-Disposition',
             `attachment; filename="inventory-aging_${stamp(query.as_of)}.xlsx"`
+        );
+        res.end(buffer);
+    }
+
+    // ── Customer / Vendor Ledger Summary ──────────────────────────────
+    // One row per party — Opening/Debit/Credit/Closing for the selected
+    // period. Detail drill-down reuses the existing per-party Ledger page
+    // (admin/ledger/customer/:id, admin/ledger/vendor/:id) — no new detail
+    // endpoint needed.
+
+    @Response('reports.customerLedgerSummary')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @Get('/customer-ledger-summary')
+    async customerLedgerSummary(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string
+    ): Promise<IResponse<LedgerSummaryResponseDto>> {
+        const data = await this.reportsService.customerLedgerSummary(
+            companyId,
+            dateFrom,
+            dateTo
+        );
+        return { data };
+    }
+
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @Get('/customer-ledger-summary/export')
+    async customerLedgerSummaryExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('date_from') dateFrom: string,
+        @Query('date_to') dateTo: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.customerLedgerSummaryExcel(
+            companyId,
+            dateFrom,
+            dateTo
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="customer-ledger-summary.xlsx"'
+        );
+        res.end(buffer);
+    }
+
+    @Response('reports.vendorLedgerSummary')
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @Get('/vendor-ledger-summary')
+    async vendorLedgerSummary(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('date_from') dateFrom?: string,
+        @Query('date_to') dateTo?: string
+    ): Promise<IResponse<LedgerSummaryResponseDto>> {
+        const data = await this.reportsService.vendorLedgerSummary(
+            companyId,
+            dateFrom,
+            dateTo
+        );
+        return { data };
+    }
+
+    @AuthJwtAccessProtected()
+    @ApiQuery({ name: 'date_from', required: false })
+    @ApiQuery({ name: 'date_to', required: false })
+    @Get('/vendor-ledger-summary/export')
+    async vendorLedgerSummaryExport(
+        @AuthJwtPayload('companyId') companyId: string,
+        @Query('date_from') dateFrom: string,
+        @Query('date_to') dateTo: string,
+        @Res() res: ExpressResponse
+    ): Promise<void> {
+        const buffer = await this.reportsService.vendorLedgerSummaryExcel(
+            companyId,
+            dateFrom,
+            dateTo
+        );
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            'attachment; filename="vendor-ledger-summary.xlsx"'
         );
         res.end(buffer);
     }
