@@ -1450,16 +1450,6 @@ export class InvoiceService {
         await this.invoiceRepository.save(row);
     }
 
-    /**
-     * Re-derive balance + status after an Adjustment Note linked to this
-     * invoice is created or voided. Called by AdjustmentNoteService.
-     */
-    async recomputeAfterAdjustment(invoiceId: string): Promise<void> {
-        const row = await this.invoiceRepository.findOneById(invoiceId);
-        if (!row || row.soft_delete) return;
-        await this.applyPaymentDerived(row);
-    }
-
     // ─── Find ───────────────────────────────────────────────────────────
 
     async findOneById(invoiceId: string, companyId: string): Promise<InvoiceDoc> {
