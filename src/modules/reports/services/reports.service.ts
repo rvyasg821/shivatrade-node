@@ -1092,6 +1092,7 @@ export class ReportsService {
             grn_id: string;
             po_vendor_id?: string;
             voucher_no: string;
+            invoice_number?: string;
             vendor_id?: string;
             date: string;
             taxable_inr: number;
@@ -1156,6 +1157,7 @@ export class ReportsService {
             grn_id: string;
             po_vendor_id?: string;
             voucher_no: string;
+            invoice_number?: string;
             vendor_id?: string;
             date: string;
             taxable_inr: number;
@@ -1177,6 +1179,7 @@ export class ReportsService {
                 grn_id: g._id.toString(),
                 po_vendor_id: povId,
                 voucher_no: g.voucher_no,
+                invoice_number: g.po_vendor_invoice_number || '',
                 vendor_id: g.vendor_id?.toString(),
                 date: String(g.grn_date || '').slice(0, 10),
                 taxable_inr: r2(v.taxable),
@@ -1588,6 +1591,7 @@ export class ReportsService {
                     grn_id: g.grn_id,
                     po_vendor_id: g.po_vendor_id || '',
                     voucher_no: g.voucher_no,
+                    invoice_number: g.invoice_number || '',
                     vendor_name: vendor?.company_name || '—',
                     vendor_state: addr?.state || null,
                     status: 'confirmed',
@@ -1765,6 +1769,7 @@ export class ReportsService {
             'Month',
             'Date',
             'GRN',
+            'Invoice No',
             'Vendor',
             'Vendor State',
             'Status',
@@ -1781,6 +1786,7 @@ export class ReportsService {
                 monthLabel(String(p.date || '').slice(0, 7)),
                 isoToDdmmyyyy(String(p.date || '')),
                 p.voucher_no,
+                p.invoice_number || '',
                 p.vendor_name,
                 p.vendor_state || '—',
                 p.status,

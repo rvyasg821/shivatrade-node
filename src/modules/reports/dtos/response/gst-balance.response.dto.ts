@@ -79,6 +79,9 @@ export class GstBalancePurchaseSourceDto {
     @ApiProperty({ type: String }) po_vendor_id: string;
     /** The GRN's own voucher (e.g. STIPL/GRN0003/2026-27). */
     @ApiProperty({ type: String }) voucher_no: string;
+    /** Vendor's own bill/invoice number, snapshotted onto the GRN. */
+    @ApiProperty({ type: String, required: false })
+    invoice_number?: string;
     @ApiProperty({ type: String }) vendor_name: string;
     /** Vendor's state — what decides IGST vs CGST/SGST. */
     @ApiProperty({ type: String, nullable: true }) vendor_state: string | null;
