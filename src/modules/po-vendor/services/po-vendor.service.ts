@@ -3657,16 +3657,6 @@ export class PoVendorService {
         return ENUM_PO_VENDOR_PAYMENT_STATUS.PARTIALLY_PAID;
     }
 
-    /**
-     * Re-derive payable + status after an Adjustment Note linked to this POV is
-     * created or voided. Called by AdjustmentNoteService.
-     */
-    async recomputeAfterAdjustment(poVendorId: string): Promise<void> {
-        const row = await this.povRepository.findOneById(poVendorId);
-        if (!row || row.soft_delete) return;
-        await this.applyPaymentDerived(row);
-    }
-
     // ─── Hydration / mappers ────────────────────────────────────────────
 
     async mapList(rows: PoVendorDoc[]): Promise<PoVendorGetResponseDto[]> {
