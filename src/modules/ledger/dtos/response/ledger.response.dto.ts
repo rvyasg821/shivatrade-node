@@ -40,6 +40,8 @@ export class LedgerResponseDto {
     @ApiProperty({ type: String }) party_type: string;
     @ApiProperty({ type: String }) party_id: string;
     @ApiProperty({ required: false, type: String }) party_name?: string;
+    /** Vendor's own code (e.g. VND-0866) — customers have no equivalent code. */
+    @ApiProperty({ required: false, type: String }) party_code?: string;
     @ApiProperty({ type: String }) currency_code: string;
     @ApiProperty({ type: [LedgerRowDto] }) rows: LedgerRowDto[];
     @ApiProperty({ type: Number }) total_dr: number;

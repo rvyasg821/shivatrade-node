@@ -78,6 +78,7 @@ import {
     InventoryAgingResponseDto,
     InventoryAgingRowDto,
 } from '../dtos/response/inventory-aging.response.dto';
+import { LedgerService } from '@modules/ledger/services/ledger.service';
 
 export interface IProductProfitabilityQuery {
     date_from?: string;
@@ -335,8 +336,64 @@ export class ReportsService {
         // Purchase Turnover — GRN (goods actually received), not the PO/POV.
         private readonly grnRepository: GrnRepository,
         private readonly grnLineRepository: GrnLineRepository,
-        private readonly povLineRepository: PoVendorLineRepository
+        private readonly povLineRepository: PoVendorLineRepository,
+        // Customer/Vendor Ledger Summary — the DR/CR business rules already
+        // live in LedgerService (shared with the per-party Ledger page); this
+        // report only adds the all-parties view on top.
+        private readonly ledgerService: LedgerService
     ) {}
+
+    async customerLedgerSummary(
+        companyId: string,
+        dateFrom?: string,
+        dateTo?: string
+    ) {
+        return this.ledgerService.customerLedgerSummary(
+            companyId,
+            dateFrom,
+            dateTo
+        );
+    }
+
+    async customerLedgerSummaryExcel(
+        companyId: string,
+        dateFrom?: string,
+        dateTo?: string
+    ): Promise<Buffer> {
+        const result = await this.ledgerService.customerLedgerSummary(
+            companyId,
+            dateFrom,
+            dateTo,
+            /* withRows */ true
+        );
+        return this.ledgerService.ledgerSummaryExcel(result, 'Customer');
+    }
+
+    async vendorLedgerSummary(
+        companyId: string,
+        dateFrom?: string,
+        dateTo?: string
+    ) {
+        return this.ledgerService.vendorLedgerSummary(
+            companyId,
+            dateFrom,
+            dateTo
+        );
+    }
+
+    async vendorLedgerSummaryExcel(
+        companyId: string,
+        dateFrom?: string,
+        dateTo?: string
+    ): Promise<Buffer> {
+        const result = await this.ledgerService.vendorLedgerSummary(
+            companyId,
+            dateFrom,
+            dateTo,
+            /* withRows */ true
+        );
+        return this.ledgerService.ledgerSummaryExcel(result, 'Vendor');
+    }
 
     /**
      * Same data as `productProfitability`, rendered to an .xlsx Buffer.

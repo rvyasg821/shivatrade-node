@@ -16,6 +16,10 @@ import { VendorRepository } from '@modules/vendor/repository/repositories/vendor
 import { AdjustmentNoteRepository } from '@modules/adjustment-note/repository/repositories/adjustment-note.repository';
 import { ENUM_ADJUSTMENT_DIRECTION } from '@modules/adjustment-note/enums/adjustment-note.enum';
 import { LedgerResponseDto, LedgerRowDto } from '../dtos/response/ledger.response.dto';
+import {
+    LedgerSummaryResponseDto,
+    LedgerSummaryRowDto,
+} from '../dtos/response/ledger-summary.response.dto';
 
 const num = (v: any): number => {
     const n = Number(v);
@@ -30,6 +34,10 @@ const toIso = (d: any): string => {
     const dt = new Date(d);
     if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
     return String(d).slice(0, 10);
+};
+const isoToDdmmyyyy = (iso: string): string => {
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return y && m && d ? `${d}-${m}-${y}` : String(iso);
 };
 
 // Statuses that count as a BILLED document (drive `total_billed` / outstanding).
@@ -751,7 +759,311 @@ export class LedgerService {
             /* debitPositive */ true,
             opening
         );
-        return { ...ledger, summary };
+        return { ...ledger, party_code: vendor.vendor_code, summary };
+    }
+
+    /**
+     * Opening / Debit / Credit / Closing for a full chronological row list
+     * (as `assemble()` returns with no from/to filter), sliced to a period.
+     * Shared by both the customer and vendor summary reports — `assemble()`'s
+     * running `balance`/`balance_inr` already does the hard part (rate
+     * handling, sort order, opening-row seeding); this just picks the right
+     * snapshot out of it. "Opening" = the running balance immediately before
+     * `from` (migration opening + everything earlier) — a TRUE carried-
+     * forward balance, unlike the per-party Ledger page's own "Opening
+     * Balance" card, which only ever shows the static migration figure.
+     */
+    private sliceLedgerRows(
+        rows: LedgerRowDto[],
+        from?: string,
+        to?: string
+    ): {
+        opening: number;
+        debit: number;
+        credit: number;
+        closing: number;
+        opening_inr: number;
+        debit_inr: number;
+        credit_inr: number;
+        closing_inr: number;
+        /** An opening-balance row (if any) + every in-range transaction row —
+         *  the same thing an on-screen statement filtered to [from, to]
+         *  would show. Only populated when the caller needs it (the Excel
+         *  export's per-party detail sheets); the plain summary table
+         *  doesn't need per-row data. */
+        windowRows: LedgerRowDto[];
+    } {
+        let opening = 0;
+        let openingInr = 0;
+        let closing = 0;
+        let closingInr = 0;
+        let debit = 0;
+        let credit = 0;
+        let debitInr = 0;
+        let creditInr = 0;
+        const windowRows: LedgerRowDto[] = [];
+        let openingRow: LedgerRowDto | null = null;
+        if (rows.length && rows[0].type === 'opening') {
+            opening = rows[0].balance;
+            openingInr = rows[0].balance_inr;
+            closing = opening;
+            closingInr = openingInr;
+            openingRow = rows[0];
+        }
+        for (const r of rows) {
+            if (r.type === 'opening') continue;
+            if (from && r.date < from) {
+                opening = r.balance;
+                openingInr = r.balance_inr;
+                closing = r.balance;
+                closingInr = r.balance_inr;
+                // The carried-forward opening now reflects this later row —
+                // synthesize a fresh "Opening Balance" line for the window.
+                openingRow = {
+                    date: from,
+                    type: 'opening',
+                    particulars: 'Opening Balance',
+                    voucher_no: null,
+                    dr: 0,
+                    cr: 0,
+                    balance: r.balance,
+                    dr_inr: 0,
+                    cr_inr: 0,
+                    balance_inr: r.balance_inr,
+                };
+                continue;
+            }
+            if (to && r.date > to) continue;
+            debit = round2(debit + num(r.dr));
+            credit = round2(credit + num(r.cr));
+            debitInr = round2(debitInr + num(r.dr_inr));
+            creditInr = round2(creditInr + num(r.cr_inr));
+            closing = r.balance;
+            closingInr = r.balance_inr;
+            windowRows.push(r);
+        }
+        if (openingRow) windowRows.unshift(openingRow);
+        return {
+            opening: round2(opening),
+            debit,
+            credit,
+            closing: round2(closing),
+            opening_inr: round2(openingInr),
+            debit_inr: debitInr,
+            credit_inr: creditInr,
+            closing_inr: round2(closingInr),
+            windowRows,
+        };
+    }
+
+    private ledgerSummaryPeriodLabel(from?: string, to?: string): string {
+        if (!from && !to) return 'All time';
+        return `${from ? isoToDdmmyyyy(from) : '…'} → ${
+            to ? isoToDdmmyyyy(to) : '…'
+        }`;
+    }
+
+    /**
+     * Opening/Debit/Credit/Closing for EVERY customer, one row each (client
+     * ask, 2026-09-15). Only 12 customers exist, so reusing the full-history
+     * `customerLedger()` per party is cheap and guarantees the drill-down
+     * (which calls that same method) can never disagree with this summary.
+     */
+    async customerLedgerSummary(
+        companyId: string,
+        from?: string,
+        to?: string,
+        withRows = false
+    ): Promise<LedgerSummaryResponseDto> {
+        const customers: any[] = await this.customerRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        const rows: LedgerSummaryRowDto[] = [];
+        const totals = { opening_inr: 0, debit_inr: 0, credit_inr: 0, closing_inr: 0 };
+        for (const c of customers) {
+            const full = await this.customerLedger(companyId, c._id.toString());
+            const { windowRows, ...s } = this.sliceLedgerRows(full.rows, from, to);
+            rows.push({
+                party_id: c._id.toString(),
+                party_name: c.company_name,
+                currency_code: full.currency_code,
+                ...s,
+                ...(withRows ? { rows: windowRows } : {}),
+            });
+            totals.opening_inr = round2(totals.opening_inr + s.opening_inr);
+            totals.debit_inr = round2(totals.debit_inr + s.debit_inr);
+            totals.credit_inr = round2(totals.credit_inr + s.credit_inr);
+            totals.closing_inr = round2(totals.closing_inr + s.closing_inr);
+        }
+        rows.sort((a, b) => a.party_name.localeCompare(b.party_name));
+        return {
+            period_label: this.ledgerSummaryPeriodLabel(from, to),
+            rows,
+            totals,
+        };
+    }
+
+    /**
+     * Opening/Debit/Credit/Closing for EVERY vendor, one row each. 902
+     * vendors makes looping `vendorLedger()` per party too slow for a
+     * synchronous report request (each call does several DB round-trips —
+     * see the GRN bulk-confirm timeout note in CLAUDE.md), so this fetches
+     * every underlying source ONCE, company-wide (`povService.mapList` over
+     * all POVs, `vendorGrnCredits(companyId)` with no vendorId, all vendor
+     * adjustment notes), buckets rows by vendor, then reuses the same
+     * `assemble()` the per-party method uses — so the math stays identical,
+     * only the fetch pattern is bulk instead of N+1.
+     */
+    async vendorLedgerSummary(
+        companyId: string,
+        from?: string,
+        to?: string,
+        withRows = false
+    ): Promise<LedgerSummaryResponseDto> {
+        const vendors: any[] = await this.vendorRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        if (!vendors.length) {
+            return {
+                period_label: this.ledgerSummaryPeriodLabel(from, to),
+                rows: [],
+                totals: { opening_inr: 0, debit_inr: 0, credit_inr: 0, closing_inr: 0 },
+            };
+        }
+
+        const rowsByVendor = new Map<string, RawRow[]>();
+        const pushRow = (vendorId: string, row: RawRow) => {
+            if (!rowsByVendor.has(vendorId)) rowsByVendor.set(vendorId, []);
+            rowsByVendor.get(vendorId)!.push(row);
+        };
+
+        // Payments — one bulk fetch of every dispatch/closed(+draft) POV,
+        // company-wide, then `povService.mapList` once (same pattern already
+        // proven at this scale by `purchaseTurnover`).
+        const povRows: any[] = await this.povRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            status: { $in: LEDGER_POV_STATUSES_TXN },
+        } as any);
+        const povs = povRows.length
+            ? ((await this.povService.mapList(povRows as any)) as any[])
+            : [];
+        for (const pov of povs) {
+            const vendorId = pov.vendor_id?.toString();
+            if (!vendorId) continue;
+            const rate = num(pov.exchange_rate) || 1;
+            for (const pay of pov.payments || []) {
+                if (pay.voided_at) continue;
+                const amt = num(pay.amount);
+                pushRow(vendorId, {
+                    date: pay.payment_date,
+                    type: 'payment',
+                    particulars: `Payment${
+                        pov.voucher_no ? ` of ${pov.voucher_no}` : ''
+                    }`,
+                    voucher_no: pay.payment_voucher_no,
+                    dr: amt,
+                    cr: 0,
+                    dr_inr: round2(amt * rate),
+                    cr_inr: 0,
+                    created_at: pay.createdAt,
+                });
+            }
+        }
+
+        // Adjustment notes — every vendor-party note, company-wide.
+        const notes: any[] = await this.adjustmentRepository.findAll({
+            company_id: companyId,
+            soft_delete: false,
+            party_type: 'vendor',
+        } as any);
+        for (const n of notes) {
+            if (n.voided_at) continue;
+            const vendorId = n.party_id?.toString();
+            if (!vendorId) continue;
+            const isDebit = n.direction === ENUM_ADJUSTMENT_DIRECTION.DEBIT;
+            const eff = round2(num(n.amount) + num(n.gst_amount));
+            pushRow(vendorId, {
+                date: n.note_date,
+                type: 'adjustment',
+                particulars: n.document_voucher_no
+                    ? `Adjustment against ${n.document_voucher_no}`
+                    : 'Adjustment',
+                voucher_no: n.voucher_no,
+                dr: isDebit ? eff : 0,
+                cr: isDebit ? 0 : eff,
+                dr_inr: isDebit ? eff : 0,
+                cr_inr: isDebit ? 0 : eff,
+                created_at: n.createdAt,
+            });
+        }
+
+        // GRN goods received → CREDIT, company-wide.
+        const grnCredits = await this.vendorGrnCredits(companyId);
+        for (const g of grnCredits) {
+            if (g.value <= 0 || !g.vendor_id) continue;
+            pushRow(g.vendor_id, {
+                date: g.date,
+                type: 'grn',
+                particulars: `Goods received${
+                    g.voucher_no ? ` (${g.voucher_no})` : ''
+                }`,
+                voucher_no: g.voucher_no,
+                dr: 0,
+                cr: g.value,
+                dr_inr: 0,
+                cr_inr: round2(g.value * (g.exchange_rate || 1)),
+                created_at: g.created_at,
+            });
+        }
+
+        const rows: LedgerSummaryRowDto[] = [];
+        const totals = { opening_inr: 0, debit_inr: 0, credit_inr: 0, closing_inr: 0 };
+        for (const vendor of vendors) {
+            const vendorId = vendor._id.toString();
+            const raw = rowsByVendor.get(vendorId) || [];
+            const openingAmt = num(vendor.opening_balance);
+            const opening =
+                openingAmt > 0
+                    ? {
+                          amount: openingAmt,
+                          type: vendor.opening_balance_type || 'credit',
+                          date: vendor.opening_balance_date,
+                      }
+                    : undefined;
+            const full = this.assemble(
+                'vendor',
+                vendorId,
+                vendor.company_name,
+                vendor.currency_code || 'INR',
+                raw,
+                undefined,
+                undefined,
+                /* debitPositive */ true,
+                opening
+            );
+            const { windowRows, ...s } = this.sliceLedgerRows(full.rows, from, to);
+            rows.push({
+                party_id: vendorId,
+                party_name: vendor.company_name,
+                currency_code: vendor.currency_code || 'INR',
+                party_code: vendor.vendor_code,
+                ...s,
+                ...(withRows ? { rows: windowRows } : {}),
+            });
+            totals.opening_inr = round2(totals.opening_inr + s.opening_inr);
+            totals.debit_inr = round2(totals.debit_inr + s.debit_inr);
+            totals.credit_inr = round2(totals.credit_inr + s.credit_inr);
+            totals.closing_inr = round2(totals.closing_inr + s.closing_inr);
+        }
+        rows.sort((a, b) => a.party_name.localeCompare(b.party_name));
+        return {
+            period_label: this.ledgerSummaryPeriodLabel(from, to),
+            rows,
+            totals,
+        };
     }
 
     // ── Combined register (Adjustment Notes listing page) ──
@@ -1154,10 +1466,26 @@ export class LedgerService {
     }
 
     // ── Excel export ──
-    async ledgerExcel(ledger: LedgerResponseDto): Promise<Buffer> {
-        const sym = ledger.currency_code;
-        const aoa: (string | number)[][] = [
-            [`${ledger.party_name || ''} — Ledger (${sym})`],
+    /**
+     * The Date/Particulars/.../Balance (INR) sheet body shared by the
+     * single-party export and each per-party sheet of the bulk Ledger
+     * Summary export — same shape either way, so both stay in agreement.
+     */
+    private ledgerRowsToAoa(
+        partyName: string | undefined,
+        currency: string,
+        rows: LedgerRowDto[],
+        totals: {
+            total_dr: number;
+            total_cr: number;
+            balance: number;
+            total_dr_inr: number;
+            total_cr_inr: number;
+            balance_inr: number;
+        }
+    ): (string | number)[][] {
+        return [
+            [`${partyName || ''} — Ledger (${currency})`],
             [
                 'Date',
                 'Particulars',
@@ -1169,7 +1497,7 @@ export class LedgerService {
                 'Credit (INR)',
                 'Balance (INR)',
             ],
-            ...ledger.rows.map((r) => [
+            ...rows.map((r) => [
                 // DD-MM-YYYY to match the on-screen statement.
                 r.date ? r.date.split('-').reverse().join('-') : '',
                 r.particulars,
@@ -1188,14 +1516,126 @@ export class LedgerService {
                 '',
                 'Total',
                 '',
-                ledger.total_dr,
-                ledger.total_cr,
-                ledger.balance,
-                ledger.total_dr_inr,
-                ledger.total_cr_inr,
-                ledger.balance_inr,
+                totals.total_dr,
+                totals.total_cr,
+                totals.balance,
+                totals.total_dr_inr,
+                totals.total_cr_inr,
+                totals.balance_inr,
             ],
         ];
+    }
+
+    async ledgerExcel(ledger: LedgerResponseDto): Promise<Buffer> {
+        const aoa = this.ledgerRowsToAoa(
+            ledger.party_name,
+            ledger.currency_code,
+            ledger.rows,
+            ledger
+        );
         return this.fileService.writeExcelFromArray(aoa as any);
+    }
+
+    /** Sheet names must be ≤31 chars and can't contain \/*?:[] — vendor codes
+     *  are already short and unique, so they need no truncation; a
+     *  code-less customer name gets truncated + de-duped on collision. */
+    private safeSheetName(raw: string, used: Set<string>): string {
+        let name = String(raw || 'Sheet')
+            .replace(/[\\/*?:[\]]/g, ' ')
+            .trim()
+            .slice(0, 31) || 'Sheet';
+        let n = 1;
+        while (used.has(name)) {
+            const suffix = ` (${++n})`;
+            name = `${raw.slice(0, 31 - suffix.length)}${suffix}`;
+        }
+        used.add(name);
+        return name;
+    }
+
+    /**
+     * The Ledger Summary report as an .xlsx Buffer — a Summary sheet (one
+     * row per party) PLUS one detail sheet per party that had at least one
+     * real transaction in the period (client ask, 2026-09-15) — a party with
+     * zero movement (opening = closing, nothing happened) gets no sheet, so
+     * the file doesn't balloon to 900+ near-empty tabs.
+     */
+    async ledgerSummaryExcel(
+        result: LedgerSummaryResponseDto,
+        partyLabel: 'Customer' | 'Vendor'
+    ): Promise<Buffer> {
+        const header = [
+            partyLabel,
+            'Currency',
+            'Opening',
+            'Debit',
+            'Credit',
+            'Closing',
+            'Opening (INR)',
+            'Debit (INR)',
+            'Credit (INR)',
+            'Closing (INR)',
+        ];
+        const body = result.rows.map((r) => [
+            r.party_name,
+            r.currency_code,
+            r.opening,
+            r.debit,
+            r.credit,
+            r.closing,
+            r.opening_inr,
+            r.debit_inr,
+            r.credit_inr,
+            r.closing_inr,
+        ]);
+        const totalRow = [
+            'TOTAL (INR)',
+            '',
+            '',
+            '',
+            '',
+            '',
+            result.totals.opening_inr,
+            result.totals.debit_inr,
+            result.totals.credit_inr,
+            result.totals.closing_inr,
+        ];
+        const summarySheet: (string | number)[][] = [
+            [`${partyLabel} Ledger Summary — ${result.period_label}`],
+            [
+                'Opening = balance carried forward from everything dated before the period start. Native columns are never summed across currencies — only the INR columns (and the TOTAL row) are. Each party with at least one transaction in this period has its own detail sheet, named after it below.',
+            ],
+            [],
+            header,
+            ...body,
+            [],
+            totalRow,
+        ];
+
+        const used = new Set<string>(['Summary']);
+        const sheets: { sheetName: string; rows: (string | number)[][] }[] = [
+            { sheetName: 'Summary', rows: summarySheet },
+        ];
+        for (const r of result.rows) {
+            const txnRows = (r.rows || []).filter((row) => row.type !== 'opening');
+            if (!txnRows.length) continue; // no activity this period — skip
+            const sheetRows = r.rows || [];
+            const aoa = this.ledgerRowsToAoa(r.party_name, r.currency_code, sheetRows, {
+                total_dr: r.debit,
+                total_cr: r.credit,
+                balance: r.closing,
+                total_dr_inr: r.debit_inr,
+                total_cr_inr: r.credit_inr,
+                balance_inr: r.closing_inr,
+            });
+            const sheetName = this.safeSheetName(
+                partyLabel === 'Vendor' && r.party_code
+                    ? r.party_code
+                    : r.party_name,
+                used
+            );
+            sheets.push({ sheetName, rows: aoa });
+        }
+        return this.fileService.writeExcelSheetsFromArray(sheets as any);
     }
 }
