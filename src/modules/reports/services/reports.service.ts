@@ -2663,7 +2663,7 @@ export class ReportsService {
             `SELECT i._id                                          AS invoice_id,
                     i.voucher_no                                   AS invoice_no,
                     i.invoice_type                                 AS invoice_type,
-                    i.invoice_date                                 AS invoice_date,
+                    TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
                     COALESCE(i.currency_code, 'INR')               AS inv_currency,
                     COALESCE(i.currency_symbol, '')                AS inv_symbol,
                     COALESCE(i.exchange_rate, '1')::float8         AS inv_fx,
@@ -2966,17 +2966,17 @@ export class ReportsService {
             `SELECT i._id                                   AS invoice_id,
                     i.voucher_no                            AS invoice_no,
                     i.invoice_type                          AS invoice_type,
-                    i.invoice_date                          AS invoice_date,
+                    TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
                     cust.company_name                       AS customer_name,
                     so._id                                  AS so_id,
                     so.voucher_no                           AS so_no,
-                    so.po_date                              AS so_date,
+                    TO_CHAR(so.po_date, 'YYYY-MM-DD') AS so_date,
                     q._id                                   AS quotation_id,
                     q.voucher_no                            AS quotation_no,
-                    q.quotation_date                        AS quotation_date,
+                    TO_CHAR(q.quotation_date, 'YYYY-MM-DD') AS quotation_date,
                     ld._id                                  AS lead_id,
                     ld.voucher_no                           AS lead_no,
-                    ld."createdAt"::date                    AS lead_date
+                    TO_CHAR(ld."createdAt"::date, 'YYYY-MM-DD') AS lead_date
              FROM invoices i
              LEFT JOIN purchase_orders so
                  ON so._id = i.purchase_order_id AND so.soft_delete = false
@@ -3196,7 +3196,7 @@ export class ReportsService {
              )
              SELECT so._id                                          AS so_id,
                     so.voucher_no                                   AS so_no,
-                    so.po_date                                      AS so_date,
+                    TO_CHAR(so.po_date, 'YYYY-MM-DD') AS so_date,
                     cust.company_name                               AS customer_name,
                     COALESCE(so.currency_code, 'INR')               AS currency_code,
                     COALESCE(
@@ -3207,7 +3207,7 @@ export class ReportsService {
                     COALESCE(so.exchange_rate, '1')::float8         AS so_fx,
                     COALESCE(so.grand_total, 0)::float8             AS so_value,
                     COALESCE(so.advance_amount, 0)::float8          AS advance,
-                    so.advance_date                                 AS advance_date,
+                    TO_CHAR(so.advance_date, 'YYYY-MM-DD') AS advance_date,
                     COALESCE(ibs.invoiced_inr, 0)::float8           AS invoiced_inr,
                     COALESCE(ibs.invoice_count, 0)::int             AS invoice_count,
                     COALESCE(ibs.invoices, '[]'::jsonb)             AS invoices
@@ -3405,13 +3405,13 @@ export class ReportsService {
         const raw: any[] = await this.dataSource.query(
             `SELECT ip._id                                          AS payment_id,
                     ip.receipt_voucher_no                          AS receipt_no,
-                    ip.payment_date                                AS payment_date,
+                    TO_CHAR(ip.payment_date, 'YYYY-MM-DD') AS payment_date,
                     ip.method                                      AS method,
                     COALESCE(ip.amount, 0)::float8                 AS amount,
                     COALESCE(ip.exchange_rate, '1')::float8        AS receipt_rate,
                     i._id                                          AS invoice_id,
                     i.voucher_no                                   AS invoice_no,
-                    i.invoice_date                                 AS invoice_date,
+                    TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
                     i.invoice_type                                 AS invoice_type,
                     COALESCE(i.currency_code, 'INR')               AS currency_code,
                     COALESCE(i.currency_symbol, '')                AS currency_symbol,
@@ -3769,7 +3769,11 @@ export class ReportsService {
         const raw: any[] = await this.dataSource.query(
             `SELECT po._id                                   AS doc_id,
                     po.voucher_no                            AS doc_no,
-                    po.po_date                               AS doc_date,
+                    -- po_date is a DATE column; the raw pg driver returns a
+                    -- DATE as a JS Date, whose .toString() is "Mon Sep 07
+                    -- 2026 00:00:00 GMT+0530 (...)" — TO_CHAR keeps it a
+                    -- plain 'YYYY-MM-DD' string like every other report.
+                    TO_CHAR(po.po_date, 'YYYY-MM-DD')        AS doc_date,
                     po.customer_id                           AS party_id,
                     c.company_name                           AS party_name,
                     COALESCE(po.currency_code, 'INR')        AS currency_code,
@@ -3847,7 +3851,7 @@ export class ReportsService {
             `SELECT i._id                                    AS cover_id,
                     i.voucher_no                             AS cover_no,
                     i.invoice_type                           AS cover_type,
-                    i.invoice_date                           AS cover_date,
+                    TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS cover_date,
                     COALESCE(i.currency_code, 'INR')         AS currency_code,
                     COALESCE(i.currency_symbol, '')          AS currency_symbol,
                     COALESCE(i.exchange_rate, '1')::float8    AS inv_fx,
@@ -4089,7 +4093,11 @@ export class ReportsService {
         const raw: any[] = await this.dataSource.query(
             `SELECT po._id                                          AS doc_id,
                     po.voucher_no                                   AS doc_no,
-                    COALESCE(po.dispatch_date, po."createdAt"::date) AS doc_date,
+                    -- Same DATE-as-JS-Date pitfall as the SO Status query
+                    -- above — TO_CHAR the SELECTed alias only; the raw
+                    -- expression stays untouched in WHERE/ORDER BY below
+                    -- (those compare real dates, not strings).
+                    TO_CHAR(COALESCE(po.dispatch_date, po."createdAt"::date), 'YYYY-MM-DD') AS doc_date,
                     po.vendor_id                                    AS party_id,
                     v.company_name                                  AS party_name,
                     COALESCE(po.currency_code, 'INR')               AS currency_code,
@@ -4191,7 +4199,7 @@ export class ReportsService {
             `SELECT g._id                                    AS cover_id,
                     g.voucher_no                             AS cover_no,
                     g.status                                 AS cover_type,
-                    g.grn_date                               AS cover_date,
+                    TO_CHAR(g.grn_date, 'YYYY-MM-DD') AS cover_date,
                     COALESCE(po.currency_code, 'INR')        AS currency_code,
                     COALESCE(po.currency_code, 'INR')        AS currency_symbol,
                     COALESCE(pr.name, '—')                    AS product_name,
