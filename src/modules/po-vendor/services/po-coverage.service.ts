@@ -73,6 +73,9 @@ export class PoCoverageService {
                   po_vendor_id: { $in: activePovIds },
               } as any)
             : [];
+        const povCurrencyById = new Map<string, string>(
+            activePovs.map((p) => [p._id.toString(), p.currency_code || 'INR'])
+        );
 
         // ── Bucket POV lines by purchase_order_line_id ─────────────────
         // `consumed` is the qty this PO line is still "owed" to non-cancelled
@@ -141,7 +144,10 @@ export class PoCoverageService {
                 poLineIdByProduct.has(pid) ? null : pol._id.toString()
             );
         }
-        const costByPoLine = new Map<string, { qty: number; value: number }>();
+        const costByPoLine = new Map<
+            string,
+            { qty: number; value: number; currency: string | null }
+        >();
         for (const pl of povLines as any[]) {
             let k = pl.purchase_order_line_id?.toString();
             if (!k) {
@@ -149,15 +155,38 @@ export class PoCoverageService {
                 k = pid ? poLineIdByProduct.get(pid) || undefined : undefined;
             }
             if (!k) continue;
-            const cur = costByPoLine.get(k) || { qty: 0, value: 0 };
-            cur.qty += num(pl.ordered_qty);
-            // Use line_total (qty × unit_price × (1 − discount_pct/100)), NOT
-            // qty × unit_price alone — the latter ignores any discount
-            // negotiated on the POV, so the weighted-average vendor rate (and
-            // the cost-variance badge derived from it) overstated cost by the
-            // discount amount, even showing an increase when the discounted
-            // price was actually a decrease vs the SO's costed rate.
-            cur.value += num(pl.line_total);
+            const cur = costByPoLine.get(k) || {
+                qty: 0,
+                value: 0,
+                currency: null,
+            };
+            // A PO line can be split across POVs from different vendors over
+            // its lifecycle (e.g. a recovery POV raised against a NEW vendor
+            // after the first was cancelled) — those can be in different
+            // currencies. Averaging native `line_total` across currencies
+            // would silently add unlike units (same bug class as the ledger
+            // fix). The first POV line seen for this PO line sets the
+            // reference currency; anything else contributes qty (still a
+            // real physical quantity) but NOT value, so `vendor_unit_price`/
+            // `cost_variance` skip the mismatched money rather than corrupt it.
+            const rowCurrency =
+                povCurrencyById.get(pl.po_vendor_id?.toString()) || 'INR';
+            if (!cur.currency) cur.currency = rowCurrency;
+            if (rowCurrency === cur.currency) {
+                // qty AND value both skip a mismatched row together — the
+                // weighted average (value ÷ qty) must stay a same-currency
+                // rate, so a mismatched line's qty can't be folded in either
+                // (that would just understate the rate instead of mixing
+                // currencies). Use line_total (qty × unit_price × (1 −
+                // discount_pct/100)), NOT qty × unit_price alone — the latter
+                // ignores any discount negotiated on the POV, so the
+                // weighted-average vendor rate (and the cost-variance badge
+                // derived from it) overstated cost by the discount amount,
+                // even showing an increase when the discounted price was
+                // actually a decrease vs the SO's costed rate.
+                cur.qty += num(pl.ordered_qty);
+                cur.value += num(pl.line_total);
+            }
             costByPoLine.set(k, cur);
         }
 
