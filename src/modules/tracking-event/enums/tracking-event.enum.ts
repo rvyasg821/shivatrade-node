@@ -34,6 +34,9 @@ export enum ENUM_TRACKING_EVENT_TYPE {
     // Debit Note (vendor return) lifecycle, surfaced on the parent POV timeline.
     DEBIT_NOTE_ISSUED = 'debit_note_issued',
     DEBIT_NOTE_CANCELLED = 'debit_note_cancelled',
+    // Pre-Close (PRE_CLOSE_MODULE_PLAN.md).
+    POV_PRE_CLOSED = 'pov_pre_closed',
+    POV_PRE_CLOSE_REVERTED = 'pov_pre_close_reverted',
 }
 
 /** Subset that are emitted by the system, not picked by users. */
@@ -49,6 +52,8 @@ export const SYSTEM_TRACKING_EVENT_TYPES: string[] = [
     ENUM_TRACKING_EVENT_TYPE.GRN_CANCELLED,
     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_ISSUED,
     ENUM_TRACKING_EVENT_TYPE.DEBIT_NOTE_CANCELLED,
+    ENUM_TRACKING_EVENT_TYPE.POV_PRE_CLOSED,
+    ENUM_TRACKING_EVENT_TYPE.POV_PRE_CLOSE_REVERTED,
 ];
 
 export const TRACKING_EVENT_TYPE_VALUES: string[] = Object.values(

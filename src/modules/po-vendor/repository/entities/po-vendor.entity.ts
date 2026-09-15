@@ -169,6 +169,17 @@ export class PoVendorEntity extends DatabaseObjectIdEntityBase {
     })
     status: ENUM_PO_VENDOR_STATUS;
 
+    // ── Pre-Close (PRE_CLOSE_MODULE_PLAN.md) ──
+    /** Real-world completion date, may be backdated — not createdAt/updatedAt. */
+    @Column({ type: 'date', nullable: true })
+    pre_closed_date?: string;
+
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    pre_closed_reason?: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    pre_closed_by?: string;
+
     /** Drop-ship: the vendor ships straight to the Sales Order's customer.
      *  Its GRN still books the vendor bill/GST but posts no stock, and the
      *  invoice qty it covers skips the stock gate (DROP_SHIP_ORDERS_PLAN).

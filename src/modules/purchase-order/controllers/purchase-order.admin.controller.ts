@@ -40,6 +40,7 @@ import { PoPdfService } from '../services/po-pdf.service';
 import { PurchaseOrderRepository } from '../repository/repositories/purchase-order.repository';
 import { PurchaseOrderCreateRequestDto } from '../dtos/request/purchase-order.create.request.dto';
 import { PurchaseOrderUpdateRequestDto } from '../dtos/request/purchase-order.update.request.dto';
+import { PurchaseOrderPreCloseRequestDto } from '../dtos/request/purchase-order.pre-close.request.dto';
 import { PurchaseOrderAutoSplitRequestDto } from '../dtos/request/purchase-order.auto-split.request.dto';
 import { PurchaseOrderGetResponseDto } from '../dtos/response/purchase-order.get.response.dto';
 import { PurchaseOrderStatsResponseDto } from '../dtos/response/purchase-order.stats.response.dto';
@@ -166,6 +167,36 @@ export class PurchaseOrderAdminController {
             statusCode: 200,
             message: `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`,
             data: { summary, ...result },
+        };
+    }
+
+    // ─── Bulk Pre-Close (PRE_CLOSE_MODULE_PLAN.md §5.4) — API only, no
+    // dedicated import/export UI; upload a sheet with voucher_no,
+    // pre_close_date, reason and each row hits the same preClose() the
+    // single-document button uses. ──────────────────────────────────────
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @Permission('purchase-orders', 'can_update')
+    @UseGuards(PermissionGuard)
+    @AuthJwtAccessProtected()
+    @Post('/pre-close/import')
+    @ApiOperation({ summary: 'Bulk Pre-Close Sales Orders from Excel (voucher_no, pre_close_date, reason)' })
+    async importPreClose(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const result = await this.importExportService.importPreClose(
+            companyId,
+            file.buffer,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `${result.applied} Sales Order(s) pre-closed, ${result.skipped.length} skipped.`,
+            data: result,
         };
     }
 
@@ -327,6 +358,39 @@ export class PurchaseOrderAdminController {
             data.rate_override_warning = `Exchange rate ${claimedDisplay} is too far from the current market rate — kept at ${appliedDisplay}. Update the Currency Master if this is a genuine rate change.`;
         }
         return { data };
+    }
+
+    // ─── Pre-Close (PRE_CLOSE_MODULE_PLAN.md) ───────────────────────────
+
+    @Response('purchaseOrder.preClose')
+    @Permission('purchase-orders', 'can_update')
+    @UseGuards(PermissionGuard)
+    @AuthJwtAccessProtected()
+    @Post('/:id/pre-close')
+    async preClose(
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Body() body: PurchaseOrderPreCloseRequestDto
+    ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
+        const row = await this.poService.findOneById(id, companyId);
+        const updated = await this.poService.preClose(row, body, userId);
+        return { data: await this.poService.mapGet(updated) };
+    }
+
+    @Response('purchaseOrder.revertPreClose')
+    @Permission('purchase-orders', 'can_update')
+    @UseGuards(PermissionGuard)
+    @AuthJwtAccessProtected()
+    @Post('/:id/revert-pre-close')
+    async revertPreClose(
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<PurchaseOrderGetResponseDto>> {
+        const row = await this.poService.findOneById(id, companyId);
+        const updated = await this.poService.revertPreClose(row, userId);
+        return { data: await this.poService.mapGet(updated) };
     }
 
     @Response('purchaseOrder.delete')

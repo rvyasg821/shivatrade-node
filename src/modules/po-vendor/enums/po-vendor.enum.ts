@@ -13,6 +13,14 @@ export enum ENUM_PO_VENDOR_STATUS {
     DRAFT = 'draft',
     DISPATCHED = 'dispatched',
     CLOSED = 'closed',
+    /**
+     * Manually closed at less than the ordered qty — the vendor confirmed no
+     * more is coming (not a transit loss — that's the existing Recovery-POV
+     * flow). Never rewrites `po_vendor_line.ordered_qty`/`dispatched_qty`;
+     * see PRE_CLOSE_MODULE_PLAN.md. Only reachable from DISPATCHED; reverts
+     * back to DISPATCHED only (never draft — GRN history must survive).
+     */
+    PRE_CLOSED = 'pre_closed',
     CANCELLED = 'cancelled',
 }
 
