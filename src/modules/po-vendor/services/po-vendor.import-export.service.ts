@@ -2568,4 +2568,102 @@ export class PoVendorImportExportService {
         }
         return this.fileService.writeExcelFromArray(aoa);
     }
+
+    // ─── Bulk Pre-Close (PRE_CLOSE_MODULE_PLAN.md §5.4) ────────────────────
+    /**
+     * One sheet: voucher_no, pre_close_date, reason. Each row calls the SAME
+     * `PoVendorService.preClose()` the single-document button uses — no
+     * separate bulk-only code path, so a bulk-imported pre-close is
+     * indistinguishable from a manually clicked one. A bad row is reported
+     * and skipped; it never aborts the rest of the batch. API-only — no
+     * dedicated import/export UI for this one.
+     */
+    async importPreClose(
+        companyId: string,
+        fileBuffer: Buffer,
+        userId: string
+    ): Promise<{
+        total: number;
+        applied: number;
+        skipped: Array<{ row: number; voucher_no: string; reason: string }>;
+    }> {
+        let sheets;
+        try {
+            sheets = this.fileService.readExcel(fileBuffer);
+        } catch {
+            throw new BadRequestException(
+                'Unable to read the file. Please upload a valid Excel file.'
+            );
+        }
+        const rows =
+            pickSheet(sheets as any, ['PreClose', 'Pre-Close', 'Vendor POs'], 0) ||
+            [];
+        if (!rows.length) {
+            throw new BadRequestException(
+                'No rows found. Expected columns: voucher_no, pre_close_date, reason.'
+            );
+        }
+
+        const skipped: Array<{
+            row: number;
+            voucher_no: string;
+            reason: string;
+        }> = [];
+        let applied = 0;
+        for (let i = 0; i < rows.length; i++) {
+            const r: any = rows[i];
+            const rowNum = i + 2; // header is row 1
+            const voucherNo = String(
+                r.voucher_no ?? r.Voucher_No ?? r['Voucher No'] ?? ''
+            ).trim();
+            if (!voucherNo) {
+                skipped.push({
+                    row: rowNum,
+                    voucher_no: '',
+                    reason: 'voucher_no is required',
+                });
+                continue;
+            }
+            const existing: any = await this.povRepository.findOne({
+                company_id: companyId,
+                voucher_no: voucherNo,
+                soft_delete: false,
+            } as any);
+            if (!existing) {
+                skipped.push({
+                    row: rowNum,
+                    voucher_no: voucherNo,
+                    reason: 'POV not found',
+                });
+                continue;
+            }
+            if (existing.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED) {
+                skipped.push({
+                    row: rowNum,
+                    voucher_no: voucherNo,
+                    reason: `Only a dispatched POV can be pre-closed (current: ${existing.status})`,
+                });
+                continue;
+            }
+            const date =
+                parseDateCell(r.pre_close_date ?? r.date ?? r.Date) ||
+                undefined;
+            const reason = r.reason ?? r.Reason ?? undefined;
+            try {
+                await this.povService.preClose(
+                    existing,
+                    { date, reason },
+                    userId
+                );
+                applied++;
+            } catch (e: any) {
+                skipped.push({
+                    row: rowNum,
+                    voucher_no: voucherNo,
+                    reason: e?.message || 'Failed to pre-close',
+                });
+            }
+        }
+        return { total: rows.length, applied, skipped };
+    }
 }

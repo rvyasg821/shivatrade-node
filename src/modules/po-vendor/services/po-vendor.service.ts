@@ -516,7 +516,14 @@ export class PoVendorService {
             ],
             [ENUM_PO_VENDOR_STATUS.DISPATCHED]: [
                 ENUM_PO_VENDOR_STATUS.CLOSED,
+                ENUM_PO_VENDOR_STATUS.PRE_CLOSED,
                 ENUM_PO_VENDOR_STATUS.CANCELLED,
+            ],
+            // Pre-Close never touches ordered_qty/dispatched_qty
+            // (PRE_CLOSE_MODULE_PLAN.md §1) — revert goes back to
+            // DISPATCHED only, never draft (GRN history must survive).
+            [ENUM_PO_VENDOR_STATUS.PRE_CLOSED]: [
+                ENUM_PO_VENDOR_STATUS.DISPATCHED,
             ],
             [ENUM_PO_VENDOR_STATUS.CLOSED]: [],
             [ENUM_PO_VENDOR_STATUS.CANCELLED]: [],
@@ -3386,6 +3393,81 @@ export class PoVendorService {
         return this.povRepository.findOneById(row._id.toString());
     }
 
+    // ─── Pre-Close (PRE_CLOSE_MODULE_PLAN.md) ────────────────────────────
+
+    /**
+     * Mark a DISPATCHED POV permanently done at less than the ordered qty —
+     * the vendor confirmed no more is coming. Never touches
+     * `ordered_qty`/`dispatched_qty` on the lines (the audit record of what
+     * was actually asked for stays intact); only the header status + the
+     * three pre-close fields change. `applyPaymentDerived()` (called by the
+     * caller via mapGet's live recompute, and directly here) then bases the
+     * payable on what was actually received instead of what was ordered.
+     */
+    async preClose(
+        row: PoVendorDoc,
+        data: { date?: string; reason?: string },
+        userId?: string
+    ): Promise<PoVendorDoc> {
+        if (row.status !== ENUM_PO_VENDOR_STATUS.DISPATCHED) {
+            throw new BadRequestException(
+                `Only a dispatched POV can be pre-closed (current: ${row.status}).`
+            );
+        }
+        row.status = ENUM_PO_VENDOR_STATUS.PRE_CLOSED;
+        (row as any).pre_closed_date =
+            data.date || new Date().toISOString().slice(0, 10);
+        (row as any).pre_closed_reason = data.reason || null;
+        (row as any).pre_closed_by = userId || null;
+        await this.povRepository.save(row);
+        await this.applyPaymentDerived(row);
+        this.logger.log(`POV pre-closed: ${row._id}`);
+        if (userId) {
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_PRE_CLOSED,
+                userId,
+                data.reason ? `Pre-closed: ${data.reason}` : 'Pre-closed'
+            );
+        }
+        return this.povRepository.findOneById(row._id.toString());
+    }
+
+    /**
+     * Revert a PRE_CLOSED POV back to DISPATCHED — never to draft, since GRN
+     * history (if any) must survive untouched. Clears the three pre-close
+     * fields and re-derives the payable back to the standard ordered_qty
+     * basis.
+     */
+    async revertPreClose(
+        row: PoVendorDoc,
+        userId?: string
+    ): Promise<PoVendorDoc> {
+        if (row.status !== ENUM_PO_VENDOR_STATUS.PRE_CLOSED) {
+            throw new BadRequestException(
+                `Only a pre-closed POV can be reverted (current: ${row.status}).`
+            );
+        }
+        row.status = ENUM_PO_VENDOR_STATUS.DISPATCHED;
+        (row as any).pre_closed_date = null;
+        (row as any).pre_closed_reason = null;
+        (row as any).pre_closed_by = null;
+        await this.povRepository.save(row);
+        await this.applyPaymentDerived(row);
+        this.logger.log(`POV pre-close reverted: ${row._id}`);
+        if (userId) {
+            await this.emitSystemEvent(
+                row.company_id.toString(),
+                row._id.toString(),
+                ENUM_TRACKING_EVENT_TYPE.POV_PRE_CLOSE_REVERTED,
+                userId,
+                'Pre-close reverted'
+            );
+        }
+        return this.povRepository.findOneById(row._id.toString());
+    }
+
     // ─── Vendor payments ────────────────────────────────────────────────
 
     /**
@@ -3399,7 +3481,26 @@ export class PoVendorService {
         const lines = (await this.povLineRepository.findAll({
             po_vendor_id: row._id.toString(),
         } as any)) as any[];
-        const linesInr = lines.reduce((s, l) => s + num(l.line_total), 0);
+        // Pre-Close (PRE_CLOSE_MODULE_PLAN.md §6): never charge for units that
+        // will never arrive. `line_total` is always ordered_qty-based (the
+        // entity's own doc comment), so once pre-closed the payable basis
+        // switches to what was actually received (or dispatched, if no GRN
+        // was ever raised for that line) — ordered_qty itself stays untouched
+        // for the audit record.
+        const isPreClosed =
+            row.status === ENUM_PO_VENDOR_STATUS.PRE_CLOSED;
+        const linesInr = lines.reduce((s, l) => {
+            if (!isPreClosed) return s + num(l.line_total);
+            const effectiveQty =
+                num(l.received_qty) > 0
+                    ? num(l.received_qty)
+                    : num(l.dispatched_qty);
+            const lineValue =
+                effectiveQty *
+                num(l.unit_price) *
+                (1 - num(l.discount_pct) / 100);
+            return s + lineValue;
+        }, 0);
         const expensesSnapshot: any[] = Array.isArray(
             (row as any).expenses_snapshot
         )
@@ -3475,10 +3576,16 @@ export class PoVendorService {
         // to pay while a GRN qty hold or a POV price hold is still open on
         // this POV. Does NOT require a GRN to exist (preserves the 2026-08-06
         // decision above) — only blocks on an ACTUAL open mismatch.
-        await this.toleranceGuard.assertNoOpenHolds(
-            row.company_id.toString(),
-            row._id.toString()
-        );
+        // Pre-Close is itself the operator's explicit acceptance of whatever
+        // variance remains (PRE_CLOSE_MODULE_PLAN.md §6) — an open hold on a
+        // pre-closed POV would otherwise permanently block paying for what
+        // was actually received.
+        if (row.status !== ENUM_PO_VENDOR_STATUS.PRE_CLOSED) {
+            await this.toleranceGuard.assertNoOpenHolds(
+                row.company_id.toString(),
+                row._id.toString()
+            );
+        }
         // FY closure: block recording a vendor payment in a closed period.
         await this.companySettings.assertPostingDateOpen(
             row.company_id.toString(),
@@ -3943,6 +4050,9 @@ export class PoVendorService {
                 exchange_rate: String(r.exchange_rate ?? '1'),
 
                 status: r.status,
+                pre_closed_date: (r as any).pre_closed_date || undefined,
+                pre_closed_reason: (r as any).pre_closed_reason || undefined,
+                pre_closed_by: (r as any).pre_closed_by?.toString(),
                 is_drop_ship: !!r.is_drop_ship,
                 drop_ship_locked: povIdsWithGrn.has(r._id.toString()),
 

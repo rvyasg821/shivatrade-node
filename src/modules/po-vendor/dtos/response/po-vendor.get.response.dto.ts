@@ -121,6 +121,13 @@ export class PoVendorGetResponseDto {
     @ApiProperty({ enum: ENUM_PO_VENDOR_STATUS, required: true })
     status: ENUM_PO_VENDOR_STATUS;
 
+    @ApiProperty({ required: false, type: String })
+    pre_closed_date?: string;
+    @ApiProperty({ required: false, type: String })
+    pre_closed_reason?: string;
+    @ApiProperty({ required: false, type: String })
+    pre_closed_by?: string;
+
     @ApiProperty({ required: false, type: Boolean })
     is_drop_ship?: boolean;
 

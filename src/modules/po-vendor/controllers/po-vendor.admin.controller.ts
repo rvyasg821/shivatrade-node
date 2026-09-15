@@ -47,6 +47,7 @@ import { PoVendorLineExportRequestDto } from '../dtos/request/po-vendor.line-exp
 import { PoVendorUpdateRequestDto } from '../dtos/request/po-vendor.update.request.dto';
 import { PoVendorDispatchRequestDto } from '../dtos/request/po-vendor.dispatch.request.dto';
 import { PoVendorCancelRequestDto } from '../dtos/request/po-vendor.cancel.request.dto';
+import { PoVendorPreCloseRequestDto } from '../dtos/request/po-vendor.pre-close.request.dto';
 import {
     PoVendorPaymentCreateRequestDto,
     PoVendorPaymentVoidRequestDto,
@@ -148,6 +149,36 @@ export class PoVendorAdminController {
             statusCode: 200,
             message: `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped${grnPart}${dnPart}`,
             data: { summary, ...result },
+        };
+    }
+
+    // ─── Bulk Pre-Close (PRE_CLOSE_MODULE_PLAN.md §5.4) — API only, no
+    // dedicated import/export UI; upload a sheet with voucher_no,
+    // pre_close_date, reason and each row hits the same preClose() the
+    // single-document button uses. ──────────────────────────────────────
+
+    @ApiConsumes('multipart/form-data')
+    @FileUploadSingle({ field: 'file', fileSize: 5 * 1024 * 1024 })
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
+    @AuthJwtAccessProtected()
+    @Post('/pre-close/import')
+    @ApiOperation({ summary: 'Bulk Pre-Close POVs from Excel (voucher_no, pre_close_date, reason)' })
+    async importPreClose(
+        @AuthJwtPayload('companyId') companyId: string,
+        @AuthJwtPayload('user') userId: string,
+        @UploadedFile() file: IFile
+    ) {
+        if (!file) throw new BadRequestException('No file provided');
+        const result = await this.importExportService.importPreClose(
+            companyId,
+            file.buffer,
+            userId
+        );
+        return {
+            statusCode: 200,
+            message: `${result.applied} POV(s) pre-closed, ${result.skipped.length} skipped.`,
+            data: result,
         };
     }
 
@@ -675,6 +706,39 @@ export class PoVendorAdminController {
     ): Promise<IResponse<PoVendorGetResponseDto>> {
         const row = await this.povService.findOneById(id, companyId);
         const updated = await this.povService.revertToDraft(row, userId);
+        return { data: await this.povService.mapGet(updated) };
+    }
+
+    // ─── Pre-Close (PRE_CLOSE_MODULE_PLAN.md) ───────────────────────────
+
+    @Response('poVendor.preClose')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
+    @AuthJwtAccessProtected()
+    @Post('/:id/pre-close')
+    async preClose(
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string,
+        @Body() body: PoVendorPreCloseRequestDto
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.findOneById(id, companyId);
+        const updated = await this.povService.preClose(row, body, userId);
+        return { data: await this.povService.mapGet(updated) };
+    }
+
+    @Response('poVendor.revertPreClose')
+    @Permission('po-vendors', 'can_update')
+    @UseGuards(PermissionGuard)
+    @AuthJwtAccessProtected()
+    @Post('/:id/revert-pre-close')
+    async revertPreClose(
+        @AuthJwtPayload('user') userId: string,
+        @AuthJwtPayload('companyId') companyId: string,
+        @Param('id') id: string
+    ): Promise<IResponse<PoVendorGetResponseDto>> {
+        const row = await this.povService.findOneById(id, companyId);
+        const updated = await this.povService.revertPreClose(row, userId);
         return { data: await this.povService.mapGet(updated) };
     }
 

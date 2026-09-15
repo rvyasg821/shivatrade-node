@@ -21,8 +21,14 @@ export class DocStatusRowDto {
     party_name: string | null;
     /** The order document's own currency (context for the native amounts). */
     currency_code: string;
-    /** open | partial | closed — derived from covered vs ordered qty. */
-    status: 'open' | 'partial' | 'closed';
+    /**
+     * open | partial | closed — derived from covered vs ordered qty.
+     * pre_closed — a manual override (PRE_CLOSE_MODULE_PLAN.md): the
+     * document's own `status` column is `pre_closed`, taking priority over
+     * whatever the qty math alone would say. Never merged into `closed` —
+     * a pre-closed order may genuinely have covered < ordered.
+     */
+    status: 'open' | 'partial' | 'closed' | 'pre_closed';
 
     ordered_qty: number;
     covered_qty: number;
@@ -44,6 +50,7 @@ export class DocStatusTotalsDto {
     open_count: number;
     partial_count: number;
     closed_count: number;
+    pre_closed_count: number;
     ordered_value_inr: number;
     covered_value_inr: number;
     pending_value_inr: number;

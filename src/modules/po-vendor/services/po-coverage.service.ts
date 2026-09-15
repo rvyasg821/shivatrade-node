@@ -119,6 +119,20 @@ export class PoCoverageService {
                 cur.lost += num(pl.dispatched_qty) - num(pl.received_qty);
             } else if (status === ENUM_PO_VENDOR_STATUS.DISPATCHED) {
                 cur.consumed += num(pl.dispatched_qty);
+            } else if (status === ENUM_PO_VENDOR_STATUS.PRE_CLOSED) {
+                // PRE_CLOSE_MODULE_PLAN.md §6: the operator explicitly
+                // accepted this shortfall as final and is NOT seeking a new
+                // vendor for the rest — so this line's `pending` (which
+                // drives the "still needs a POV" Generate-POV suggestion)
+                // must drop to 0, not sit at ordered−delivered forever.
+                // Counting the FULL ordered_qty as consumed does that
+                // without ever rewriting ordered_qty itself (the true
+                // record of what was asked for stays intact). Deliberately
+                // does NOT add to `lost` — that field feeds the "Create
+                // Balance POV" recovery action, which is the opposite of
+                // what pre-close means (a deliberate stop, not a loss to
+                // chase down from another vendor).
+                cur.consumed += num(pl.ordered_qty);
             } else {
                 cur.consumed += num(pl.ordered_qty);
             }

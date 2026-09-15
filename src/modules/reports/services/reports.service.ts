@@ -3631,6 +3631,7 @@ export class ReportsService {
             open: 'Open',
             partial: 'Partially Closed',
             closed: 'Closed',
+            pre_closed: 'Pre-Closed',
         };
         const header = [
             cfg.docNoLabel,
@@ -3680,7 +3681,7 @@ export class ReportsService {
         const aoa: (string | number)[][] = [
             [`${cfg.title} — ${result.period_label}`],
             [
-                `Open ${result.totals.open_count} · Partially Closed ${result.totals.partial_count} · Closed ${result.totals.closed_count}. ${cfg.note}`,
+                `Open ${result.totals.open_count} · Partially Closed ${result.totals.partial_count} · Closed ${result.totals.closed_count} · Pre-Closed ${result.totals.pre_closed_count}. ${cfg.note}`,
             ],
             [],
             header,
@@ -3777,6 +3778,9 @@ export class ReportsService {
                     po.customer_id                           AS party_id,
                     c.company_name                           AS party_name,
                     COALESCE(po.currency_code, 'INR')        AS currency_code,
+                    -- Pre-Close override (PRE_CLOSE_MODULE_PLAN.md §6) — the
+                    -- document's own status takes priority over the qty math.
+                    po.status                                AS doc_status,
                     SUM(COALESCE(pol.qty, 0))::float8         AS ordered_qty,
                     (SUM(COALESCE(pol.taxable, 0)
                          + COALESCE(pol.product_expenses_amount, 0)
@@ -3824,7 +3828,7 @@ export class ReportsService {
                     OR po.voucher_no ILIKE '%' || $5 || '%'
                     OR c.company_name ILIKE '%' || $5 || '%')
              GROUP BY po._id, po.voucher_no, po.po_date, po.customer_id,
-                      c.company_name, po.currency_code
+                      c.company_name, po.currency_code, po.status
              ORDER BY po.po_date DESC, po.voucher_no`,
             [companyId, from, to, customerId, search, invType]
         );
@@ -4101,6 +4105,9 @@ export class ReportsService {
                     po.vendor_id                                    AS party_id,
                     v.company_name                                  AS party_name,
                     COALESCE(po.currency_code, 'INR')               AS currency_code,
+                    -- Pre-Close override (PRE_CLOSE_MODULE_PLAN.md §6) — the
+                    -- document's own status takes priority over the qty math.
+                    po.status                                       AS doc_status,
                     SUM(COALESCE(pol.ordered_qty, 0))::float8        AS ordered_qty,
                     (( SUM(COALESCE(pol.ordered_qty, 0)
                            * COALESCE(pol.unit_price, 0)
@@ -4169,7 +4176,7 @@ export class ReportsService {
                     OR po.voucher_no ILIKE '%' || $5 || '%'
                     OR v.company_name ILIKE '%' || $5 || '%')
              GROUP BY po._id, po.voucher_no, po.dispatch_date, po."createdAt",
-                      po.vendor_id, v.company_name, po.currency_code
+                      po.vendor_id, v.company_name, po.currency_code, po.status
              ORDER BY COALESCE(po.dispatch_date, po."createdAt"::date) DESC,
                       po.voucher_no`,
             [companyId, from, to, vendorId, search, grnScope]
@@ -5524,8 +5531,15 @@ function mapDocStatusRows(raw: any[]): DocStatusRowDto[] {
         const pendingValueInr = r2(
             Math.max(0, orderedValueInr - coveredValueInr)
         );
-        const status: 'open' | 'partial' | 'closed' =
-            coveredQty <= DOC_STATUS_EPS
+        // A pre-closed document overrides the qty math entirely — the
+        // operator explicitly accepted covered < ordered as final
+        // (PRE_CLOSE_MODULE_PLAN.md §6). `r.doc_status` is the SO/POV's own
+        // `status` column, selected alongside the qty columns for exactly
+        // this check.
+        const status: 'open' | 'partial' | 'closed' | 'pre_closed' =
+            r.doc_status === 'pre_closed'
+                ? 'pre_closed'
+                : coveredQty <= DOC_STATUS_EPS
                 ? 'open'
                 : coveredQty + DOC_STATUS_EPS >= orderedQty
                 ? 'closed'
@@ -5569,6 +5583,7 @@ function docStatusTotals(rows: DocStatusRowDto[]): DocStatusTotalsDto {
             acc.total_docs += 1;
             if (r.status === 'open') acc.open_count += 1;
             else if (r.status === 'partial') acc.partial_count += 1;
+            else if (r.status === 'pre_closed') acc.pre_closed_count += 1;
             else acc.closed_count += 1;
             acc.ordered_value_inr += r.ordered_value_inr;
             acc.covered_value_inr += r.covered_value_inr;
@@ -5580,6 +5595,7 @@ function docStatusTotals(rows: DocStatusRowDto[]): DocStatusTotalsDto {
             open_count: 0,
             partial_count: 0,
             closed_count: 0,
+            pre_closed_count: 0,
             ordered_value_inr: 0,
             covered_value_inr: 0,
             pending_value_inr: 0,

@@ -538,15 +538,23 @@ export class PurchaseOrderService {
             [ENUM_PURCHASE_ORDER_STATUS.CONFIRMED]: [
                 ENUM_PURCHASE_ORDER_STATUS.DRAFT,
                 ENUM_PURCHASE_ORDER_STATUS.IN_PROCESS,
+                ENUM_PURCHASE_ORDER_STATUS.PRE_CLOSED,
                 ENUM_PURCHASE_ORDER_STATUS.CANCELLED,
             ],
             [ENUM_PURCHASE_ORDER_STATUS.IN_PROCESS]: [
                 ENUM_PURCHASE_ORDER_STATUS.DRAFT,
                 ENUM_PURCHASE_ORDER_STATUS.COMPLETED,
+                ENUM_PURCHASE_ORDER_STATUS.PRE_CLOSED,
                 ENUM_PURCHASE_ORDER_STATUS.CANCELLED,
             ],
             [ENUM_PURCHASE_ORDER_STATUS.COMPLETED]: [
                 ENUM_PURCHASE_ORDER_STATUS.DRAFT,
+            ],
+            // Pre-Close never touches ordered_qty (PRE_CLOSE_MODULE_PLAN.md
+            // §1) — revert goes back to CONFIRMED (the order was never
+            // locked/edited, unlike a genuine draft-and-redo), not DRAFT.
+            [ENUM_PURCHASE_ORDER_STATUS.PRE_CLOSED]: [
+                ENUM_PURCHASE_ORDER_STATUS.CONFIRMED,
             ],
             [ENUM_PURCHASE_ORDER_STATUS.CANCELLED]: [
                 ENUM_PURCHASE_ORDER_STATUS.DRAFT,
@@ -558,6 +566,58 @@ export class PurchaseOrderService {
                 `Cannot transition PO from ${from} to ${to}.`
             );
         }
+    }
+
+    // ─── Pre-Close (PRE_CLOSE_MODULE_PLAN.md) ────────────────────────────
+
+    /**
+     * Mark a CONFIRMED/IN_PROCESS SO permanently done even though it wasn't
+     * fully covered — never touches `purchase_order_line.qty` (the audit
+     * record of what the customer actually ordered stays intact); only the
+     * header status + the three pre-close fields change. Independent of any
+     * linked POV's own pre-close/status — one SO line can be split across
+     * several vendors, so closing one out doesn't necessarily mean this SO is
+     * done.
+     */
+    async preClose(
+        row: PurchaseOrderDoc,
+        data: { date?: string; reason?: string },
+        userId?: string
+    ): Promise<PurchaseOrderDoc> {
+        this.assertStatusTransitionAllowed(
+            row.status,
+            ENUM_PURCHASE_ORDER_STATUS.PRE_CLOSED
+        );
+        row.status = ENUM_PURCHASE_ORDER_STATUS.PRE_CLOSED;
+        (row as any).pre_closed_date =
+            data.date || new Date().toISOString().slice(0, 10);
+        (row as any).pre_closed_reason = data.reason || null;
+        (row as any).pre_closed_by = userId || null;
+        await this.poRepository.save(row);
+        this.logger.log(`PO pre-closed: ${row._id}`);
+        return this.poRepository.findOneById(row._id.toString());
+    }
+
+    /**
+     * Revert a PRE_CLOSED SO back to CONFIRMED — the order was never
+     * locked/edited by pre-close, unlike a genuine draft-and-redo, so revert
+     * doesn't need to go all the way back to draft.
+     */
+    async revertPreClose(
+        row: PurchaseOrderDoc,
+        userId?: string
+    ): Promise<PurchaseOrderDoc> {
+        this.assertStatusTransitionAllowed(
+            row.status,
+            ENUM_PURCHASE_ORDER_STATUS.CONFIRMED
+        );
+        row.status = ENUM_PURCHASE_ORDER_STATUS.CONFIRMED;
+        (row as any).pre_closed_date = null;
+        (row as any).pre_closed_reason = null;
+        (row as any).pre_closed_by = null;
+        await this.poRepository.save(row);
+        this.logger.log(`PO pre-close reverted: ${row._id}`);
+        return this.poRepository.findOneById(row._id.toString());
     }
 
     async softDelete(row: PurchaseOrderDoc): Promise<void> {
@@ -2563,6 +2623,9 @@ export class PurchaseOrderService {
                 round_off: r.round_off,
                 grand_total: r.grand_total,
                 status: r.status,
+                pre_closed_date: (r as any).pre_closed_date || undefined,
+                pre_closed_reason: (r as any).pre_closed_reason || undefined,
+                pre_closed_by: (r as any).pre_closed_by?.toString(),
                 public_token: (r as any).public_token || undefined,
                 public_view_count: (r as any).public_view_count || 0,
                 public_last_viewed_at: (r as any).public_last_viewed_at,

@@ -117,6 +117,10 @@ export class PurchaseOrderGetResponseDto {
     @ApiProperty({ enum: ENUM_PURCHASE_ORDER_STATUS, required: true })
     status: ENUM_PURCHASE_ORDER_STATUS;
 
+    @ApiProperty({ required: false, type: String }) pre_closed_date?: string;
+    @ApiProperty({ required: false, type: String }) pre_closed_reason?: string;
+    @ApiProperty({ required: false, type: String }) pre_closed_by?: string;
+
     @ApiProperty({ required: false, type: String }) public_token?: string;
     @ApiProperty({ required: false, type: Number }) public_view_count?: number;
     @ApiProperty({ required: false, type: Date })

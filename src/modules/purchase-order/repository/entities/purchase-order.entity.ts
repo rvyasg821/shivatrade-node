@@ -281,6 +281,17 @@ export class PurchaseOrderEntity extends DatabaseObjectIdEntityBase {
     })
     status: ENUM_PURCHASE_ORDER_STATUS;
 
+    // ── Pre-Close (PRE_CLOSE_MODULE_PLAN.md) ──
+    /** Real-world completion date, may be backdated — not createdAt/updatedAt. */
+    @Column({ type: 'date', nullable: true })
+    pre_closed_date?: string;
+
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    pre_closed_reason?: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    pre_closed_by?: string;
+
     // ── Public link ──
     @Index({ unique: true })
     @Column({ type: 'varchar', length: 64, nullable: true })
