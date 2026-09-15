@@ -59,6 +59,11 @@ interface RawRow {
     voucher_no?: string;
     dr: number;
     cr: number;
+    // The currency this row's amount was actually booked in — its SOURCE
+    // document's own currency_code, not necessarily the party's declared
+    // one (see `assemble()`'s mismatch handling — a party can have one
+    // stray voucher in a different currency than the rest of their history).
+    currency_code?: string;
     // Base-currency (INR) equivalent of dr/cr, using THIS row's own rate (the
     // POV/invoice/receipt rate captured at the time it was booked) — never a
     // shared/current rate. Defaults to dr/cr themselves (rate = 1) when not
@@ -277,6 +282,7 @@ export class LedgerService {
                     cr: amt,
                     dr_inr: 0,
                     cr_inr: round2(amt * (rcptRate > 0 ? round2(1 / rcptRate) : 1)),
+                    currency_code: inv?.currency_code,
                     created_at: p.createdAt,
                 });
             }
@@ -300,6 +306,7 @@ export class LedgerService {
                 cr: a.value,
                 dr_inr: 0,
                 cr_inr: round2(a.value * (rate > 0 ? round2(1 / rate) : 1)),
+                currency_code: a.currency_code,
                 created_at: a.created_at,
             });
         }
@@ -340,6 +347,9 @@ export class LedgerService {
                 cr: isDebit ? 0 : amt,
                 dr_inr: isDebit ? round2(amt * rateInr) : 0,
                 cr_inr: isDebit ? 0 : round2(amt * rateInr),
+                // Unlinked notes have no invoice to draw a currency from — left
+                // untagged (treated as matching) rather than guessed wrong.
+                currency_code: linkedInv?.currency_code,
                 created_at: n.createdAt,
             });
         }
@@ -406,6 +416,7 @@ export class LedgerService {
                 cr: 0,
                 dr_inr: round2(amt / rate),
                 cr_inr: 0,
+                currency_code: inv.currency_code,
                 created_at: inv.createdAt,
             });
         }
@@ -609,6 +620,7 @@ export class LedgerService {
                     cr: 0,
                     dr_inr: round2(amt * rate),
                     cr_inr: 0,
+                    currency_code: pov.currency_code,
                     created_at: pay.createdAt,
                 });
             }
@@ -646,6 +658,7 @@ export class LedgerService {
                 // no conversion needed.
                 dr_inr: isDebit ? eff : 0,
                 cr_inr: isDebit ? 0 : eff,
+                currency_code: 'INR',
                 created_at: n.createdAt,
             });
         }
@@ -715,6 +728,7 @@ export class LedgerService {
                 cr: g.value,
                 dr_inr: 0,
                 cr_inr: round2(g.value * (g.exchange_rate || 1)),
+                currency_code: g.currency_code,
                 created_at: g.created_at,
             });
         }
@@ -968,6 +982,7 @@ export class LedgerService {
                     cr: 0,
                     dr_inr: round2(amt * rate),
                     cr_inr: 0,
+                    currency_code: pov.currency_code,
                     created_at: pay.createdAt,
                 });
             }
@@ -996,6 +1011,7 @@ export class LedgerService {
                 cr: isDebit ? 0 : eff,
                 dr_inr: isDebit ? eff : 0,
                 cr_inr: isDebit ? 0 : eff,
+                currency_code: 'INR',
                 created_at: n.createdAt,
             });
         }
@@ -1015,6 +1031,7 @@ export class LedgerService {
                 cr: g.value,
                 dr_inr: 0,
                 cr_inr: round2(g.value * (g.exchange_rate || 1)),
+                currency_code: g.currency_code,
                 created_at: g.created_at,
             });
         }
@@ -1428,21 +1445,39 @@ export class LedgerService {
             const cr = round2(r.cr);
             const drInr = round2(r.dr_inr ?? r.dr);
             const crInr = round2(r.cr_inr ?? r.cr);
-            totalDr = round2(totalDr + dr);
-            totalCr = round2(totalCr + cr);
+            // A row whose SOURCE document was booked in a currency other than
+            // the party's own (e.g. one stray INR-denominated POV on an
+            // otherwise-USD vendor — see CLAUDE.md §4's vendor-currency
+            // fallback gotcha) must NOT be added into the native running
+            // balance/totals — that would silently add unlike units (₹ + $)
+            // as if they were the same number. Its INR figure has a real,
+            // row-specific exchange rate captured at the time, so THAT keeps
+            // flowing into the INR balance/totals normally — INR is the one
+            // column that's always safe to sum across currencies (§4).
+            const mismatched =
+                !!r.currency_code && r.currency_code !== currency;
+            if (!mismatched) {
+                totalDr = round2(totalDr + dr);
+                totalCr = round2(totalCr + cr);
+                bal = round2(bal + (debitPositive ? dr - cr : cr - dr));
+            }
             totalDrInr = round2(totalDrInr + drInr);
             totalCrInr = round2(totalCrInr + crInr);
-            bal = round2(bal + (debitPositive ? dr - cr : cr - dr));
             balInr = round2(
                 balInr + (debitPositive ? drInr - crInr : crInr - drInr)
             );
             rows.push({
                 date: r.date,
                 type: r.type,
-                particulars: r.particulars,
+                particulars: mismatched
+                    ? `${r.particulars} — booked in ${r.currency_code}`
+                    : r.particulars,
                 voucher_no: r.voucher_no,
-                dr,
-                cr,
+                // A mismatched row's native dr/cr are NOT this party's
+                // currency — blank them out rather than show a number that
+                // reads as `currency` but isn't, and hasn't moved `balance`.
+                dr: mismatched ? 0 : dr,
+                cr: mismatched ? 0 : cr,
                 balance: bal,
                 dr_inr: drInr,
                 cr_inr: crInr,
