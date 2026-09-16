@@ -3196,6 +3196,7 @@ export class ReportsService {
              )
              SELECT so._id                                          AS so_id,
                     so.voucher_no                                   AS so_no,
+                    so.status                                       AS so_status,
                     TO_CHAR(so.po_date, 'YYYY-MM-DD') AS so_date,
                     cust.company_name                               AS customer_name,
                     COALESCE(so.currency_code, 'INR')               AS currency_code,
@@ -3247,6 +3248,15 @@ export class ReportsService {
             else if (invoicedNative < advance) status = 'partly_adjusted';
             else status = 'fully_adjusted';
 
+            // See AdvanceVsInvoiceRowDto.note — flags a finalized SO whose
+            // fulfilling invoice was never hard-linked back to it, instead
+            // of silently showing 0 invoiced with no explanation.
+            const note: string | null =
+                (r.so_status === 'completed' || r.so_status === 'pre_closed') &&
+                n(r.invoice_count) === 0
+                    ? `Linked invoice not found — SO status: ${r.so_status === 'pre_closed' ? 'pre-closed' : 'completed'}`
+                    : null;
+
             return {
                 so_id: r.so_id,
                 so_no: r.so_no,
@@ -3264,6 +3274,7 @@ export class ReportsService {
                     .filter((iv: any) => iv && iv.id)
                     .map((iv: any) => ({ id: String(iv.id), no: iv.no || '' })),
                 status,
+                note,
                 so_value_inr: r2(soValueInr),
                 advance_inr: r2(advanceInr),
                 invoiced_inr: r2(invoicedInr),
@@ -3337,6 +3348,7 @@ export class ReportsService {
             'Invoiced',
             'Balance (Inv − Adv)',
             'Invoice(s)',
+            'Note',
         ];
         const body = result.rows.map((r) => [
             r.so_no,
@@ -3349,6 +3361,7 @@ export class ReportsService {
             r.invoiced,
             r.balance,
             (r.invoices || []).map((iv) => iv.no).join(', '),
+            r.note || '',
         ]);
         const totalRow = [
             'TOTAL (INR)',
@@ -3360,6 +3373,7 @@ export class ReportsService {
             result.totals.advance_inr,
             result.totals.invoiced_inr,
             result.totals.balance_inr,
+            '',
             '',
         ];
         const aoa: (string | number)[][] = [
