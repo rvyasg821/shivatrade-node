@@ -1175,13 +1175,21 @@ export class InvoiceService {
         // stock-availability GATE above still skips in import mode (current
         // on-hand mid-batch doesn't reflect the rest of the historical import
         // yet); only that gate, not this posting, needs the silent bypass.
-        try {
-            for (const l of lines as any[]) {
-                const ds = dropShipByLine.get(l._id.toString()) || 0;
-                // Drop-ship share never entered our warehouse — nothing to
-                // deduct for it (§5.4).
-                const q = num(l.qty) - ds;
-                if (!l.product_id || q <= 0) continue;
+        //
+        // Per-LINE try/catch (not one try wrapping the whole loop) — a single
+        // line failing to post (e.g. a transient DB hiccup under a large
+        // batch import) must not silently abort every remaining line's
+        // deduction too. Each failure is logged individually so it's still
+        // visible and actionable, and the full list of any failed lines is
+        // logged once more at the end for an easy grep target.
+        const stockDeductFailures: string[] = [];
+        for (const l of lines as any[]) {
+            const ds = dropShipByLine.get(l._id.toString()) || 0;
+            // Drop-ship share never entered our warehouse — nothing to
+            // deduct for it (§5.4).
+            const q = num(l.qty) - ds;
+            if (!l.product_id || q <= 0) continue;
+            try {
                 await this.stockLedger.post(stockCompanyId, {
                     product_id: l.product_id,
                     location_id: null,
@@ -1194,10 +1202,16 @@ export class InvoiceService {
                     created_by: userId,
                     movement_date: row.invoice_date,
                 });
+            } catch (e: any) {
+                stockDeductFailures.push(l._id.toString());
+                this.logger.error(
+                    `[Invoice ${row._id}] stock deduct failed for line ${l._id}: ${e?.message}`
+                );
             }
-        } catch (e: any) {
+        }
+        if (stockDeductFailures.length) {
             this.logger.error(
-                `[Invoice ${row._id}] stock deduct failed: ${e?.message}`
+                `[Invoice ${row._id} / ${row.voucher_no}] ${stockDeductFailures.length} of ${lines.length} line(s) failed to deduct stock: ${stockDeductFailures.join(', ')}`
             );
         }
 
