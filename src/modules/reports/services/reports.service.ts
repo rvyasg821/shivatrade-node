@@ -5533,12 +5533,23 @@ function mapDocStatusRows(raw: any[]): DocStatusRowDto[] {
         );
         // A pre-closed document overrides the qty math entirely — the
         // operator explicitly accepted covered < ordered as final
-        // (PRE_CLOSE_MODULE_PLAN.md §6). `r.doc_status` is the SO/POV's own
+        // (PRE_CLOSE_MODULE_PLAN.md §6). Same for a manually-completed SO
+        // (ENUM_PURCHASE_ORDER_STATUS.COMPLETED — POV has no equivalent
+        // 'completed' status, so this only ever fires for Sales Orders):
+        // the document's own status is an authoritative human/reconciled
+        // signal that coverage math can't always see — e.g. a fulfilling
+        // invoice that was never hard-linked back to this SO (the source
+        // data simply didn't record which order it belonged to) still
+        // leaves `covered_qty` at 0 even though the order is genuinely
+        // done. Without this, the report would silently contradict the
+        // document's own status. `r.doc_status` is the SO/POV's own
         // `status` column, selected alongside the qty columns for exactly
         // this check.
         const status: 'open' | 'partial' | 'closed' | 'pre_closed' =
             r.doc_status === 'pre_closed'
                 ? 'pre_closed'
+                : r.doc_status === 'completed'
+                ? 'closed'
                 : coveredQty <= DOC_STATUS_EPS
                 ? 'open'
                 : coveredQty + DOC_STATUS_EPS >= orderedQty
