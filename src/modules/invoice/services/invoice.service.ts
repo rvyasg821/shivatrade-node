@@ -2994,6 +2994,18 @@ export class InvoiceService {
     ): Promise<any[]> {
         const po: any = await this.poRepository.findOneById(poId);
         if (!po) return [];
+        // A manually-finalized SO (completed, or pre-closed with the
+        // remainder deliberately written off) has nothing left to invoice by
+        // definition, regardless of what the qty math below would compute.
+        // That math (ordered/dispatched vs. sumQtyByPoLineId, a hard
+        // `purchase_order_line_id` link) has no awareness of the SO's own
+        // status, so without this guard a historical invoice that was
+        // recorded without ever being linked back to its SO would make an
+        // already-fulfilled/finalized order reappear here as still
+        // invoiceable — inviting a real duplicate invoice. Same trust-the-
+        // status principle as the SO Status report (reports.service.ts
+        // mapDocStatusRows()) and getCustomerInvoiceableSoGroups() above.
+        if (po.status === 'completed' || po.status === 'pre_closed') return [];
         const poLines = await this.poLineRepository.findAll({
             purchase_order_id: poId,
         } as any);
@@ -3176,11 +3188,26 @@ export class InvoiceService {
         } as any)) as any[];
         // Invoiceable SO = anything not cancelled — INCLUDING drafts. A draft SO
         // with free stock is invoiceable (sell-from-stock needs no confirmation
-        // or POV dispatch), so it must appear in this picker. Only cancelled SOs
-        // have nothing to invoice. getAddablePoLines() below still filters each
-        // SO to lines with available qty, so an empty/stockless draft never
-        // shows a line. (Was: excluded drafts, which hid stock-backed draft SOs.)
-        const active = pos.filter((p) => p.status !== 'cancelled');
+        // or POV dispatch), so it must appear in this picker. getAddablePoLines()
+        // below still filters each SO to lines with available qty, so an
+        // empty/stockless draft never shows a line. (Was: excluded drafts,
+        // which hid stock-backed draft SOs.)
+        //
+        // completed / pre_closed are ALSO excluded here — not just cancelled.
+        // getAddablePoLines()'s "still invoiceable" ceiling is purely qty math
+        // (ordered/dispatched vs. sumQtyByPoLineId, a hard `purchase_order_line_id`
+        // link) with no awareness of the SO's own status. A manually-finalized
+        // SO (completed, or pre-closed with the remainder deliberately written
+        // off) can still show a hard-link qty gap — e.g. a historical invoice
+        // that was recorded without ever being linked back to its SO — which
+        // would otherwise make an already-fulfilled/finalized order reappear
+        // here as if it still needed invoicing, inviting a real duplicate
+        // invoice. A human already closed the book on these; trust that the
+        // same way the SO Status report now does (reports.service.ts
+        // mapDocStatusRows()).
+        const active = pos.filter(
+            (p) => !['cancelled', 'completed', 'pre_closed'].includes(p.status)
+        );
         if (!active.length) return [];
 
         const quotationIds = Array.from(

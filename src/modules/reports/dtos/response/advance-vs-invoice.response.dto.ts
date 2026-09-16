@@ -37,6 +37,16 @@ export class AdvanceVsInvoiceRowDto {
     /** advance_unbilled | partly_adjusted | fully_adjusted | no_advance */
     status: string;
 
+    /**
+     * Set only when the SO's own status is completed/pre_closed but no
+     * invoice is hard-linked back to it (invoice_count = 0) — e.g. a
+     * historical invoice recorded without ever being linked to its SO.
+     * `invoiced` stays numerically honest (0) rather than guessing a figure;
+     * this flags the gap instead so the reader knows why a finalized order
+     * still shows nothing invoiced.
+     */
+    note: string | null;
+
     /** INR-normalised copies used to build the summable totals. */
     so_value_inr: number;
     advance_inr: number;
