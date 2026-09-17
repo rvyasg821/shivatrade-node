@@ -9,7 +9,17 @@ export class CountryParsePipe implements PipeTransform {
     }
 
     async transform(value: string): Promise<CountryDoc> {
-        const country: CountryDoc = await this.countryService.findOneById(value);
+        // A non-UUID value previously threw a raw, uncaught Postgres
+        // "invalid input syntax for uuid" error -> unhandled 500 instead of
+        // a clean 404 (found via a full-app test pass, live-confirmed on
+        // GET /admin/country/get/:country). Mirrors the already-correct
+        // ToolsParsePipe.
+        let country: CountryDoc | undefined;
+        try {
+            country = await this.countryService.findOneById(value);
+        } catch {
+            country = undefined;
+        }
         if (!country) {
             throw new NotFoundException({
                 statusCode: ENUM_COUNTRY_STATUS_CODE_ERROR.NOT_FOUND,

@@ -282,11 +282,18 @@ export class CountryAdminController {
         countryUpdateRequestDto: CountryUpdateRequestDto
     ): Promise<IResponse<DatabaseIdResponseDto>> {
       // We are not allowing update payload with name and country_code that already exists even if it is soft-deleted
-        const { name, country_code } = countryUpdateRequestDto; 
-        const slug = await this.countryService.slugify(name);
+        // name/country_code are now optional (partial update) — fall back to
+        // the record's own current values so the duplicate-check still runs
+        // against the EFFECTIVE final name/code, instead of crashing
+        // slugify() with undefined on a partial update (found via a
+        // full-app test pass, same fix session as CountryUpdateRequestDto).
+        const { name, country_code } = countryUpdateRequestDto;
+        const effectiveName = name ?? country.name;
+        const effectiveCountryCode = country_code ?? country.country_code;
+        const slug = await this.countryService.slugify(effectiveName);
         const exist = await this.countryService.findOne(
             {
-              $or: [{ slug }, { country_code }],
+              $or: [{ slug }, { country_code: effectiveCountryCode }],
               _id: { $ne: country._id }, // exclude current doc
             },
             { withDeleted: true } //custom option to include soft-deleted

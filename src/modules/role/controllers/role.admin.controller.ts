@@ -565,8 +565,13 @@ export class RoleAdminController {
         }
 
         // Check if new name conflicts with an existing role (if name is being changed)
-        // Uses scoped check: default names are globally reserved; custom names unique within scope
-        if (name !== roleDoc.name) {
+        // Uses scoped check: default names are globally reserved; custom names unique within scope.
+        // `name` is now optional (partial update) — `undefined !== roleDoc.name`
+        // was true for EVERY partial update that omitted it, wrongly running
+        // the conflict check against `undefined` and false-triggering a 409
+        // on a plain description-only edit (found via a full-app test pass,
+        // same fix session as RoleUpdateRequestDto).
+        if (name !== undefined && name !== roleDoc.name) {
             const nameConflict = await this.roleService.existByNameInScope(
                 name,
                 roleDoc.companyId ?? null,

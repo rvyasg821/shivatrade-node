@@ -277,6 +277,19 @@ export class RfqService {
         dto: RfqSetPricesDto
     ): Promise<void> {
         const rfq: any = await this.getOrThrow(companyId, rfqId);
+        // Validate every price up front — @IsNumberString on the DTO only
+        // checks "is this a number", not sign, so a negative unit_price
+        // previously saved successfully and would flow straight into a
+        // Quotation line if selected (found via a full-app test pass, same
+        // class of gap as QuotationService.replaceLines()).
+        for (const [i, item] of (dto.prices || []).entries()) {
+            const priceNum = Number(item.unit_price);
+            if (!Number.isFinite(priceNum) || priceNum < 0) {
+                throw new BadRequestException(
+                    `Price ${i + 1}: unit_price cannot be negative.`
+                );
+            }
+        }
         const existing = await this.rfqVendorPriceRepository.findByRfqId(rfqId);
         const byKey = new Map<string, any>();
         for (const p of existing as any[]) {

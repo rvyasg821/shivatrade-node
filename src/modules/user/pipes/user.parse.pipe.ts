@@ -4,17 +4,29 @@ import { IUserDoc } from '@modules/user/interfaces/user.interface';
 import { UserDoc } from '@modules/user/repository/entities/user.entity';
 import { UserService } from '@modules/user/services/user.service';
 
+const NOT_FOUND = {
+    statusCode: ENUM_USER_STATUS_CODE_ERROR.NOT_FOUND,
+    message: 'user.error.notFound',
+};
+
 @Injectable()
 export class UserParsePipe implements PipeTransform {
     constructor(private readonly userService: UserService) {}
 
     async transform(value: string): Promise<UserDoc> {
-        const user: UserDoc = await this.userService.findOneById(value);
+        // A non-UUID value (e.g. "me", a typo'd id) previously threw a raw,
+        // uncaught Postgres "invalid input syntax for uuid" error out of
+        // findOneById() -> unhandled 500 instead of a clean 404 (found via a
+        // full-app test pass). Wrapping mirrors the already-correct
+        // ToolsParsePipe.
+        let user: UserDoc | undefined;
+        try {
+            user = await this.userService.findOneById(value);
+        } catch {
+            throw new NotFoundException(NOT_FOUND);
+        }
         if (!user) {
-            throw new NotFoundException({
-                statusCode: ENUM_USER_STATUS_CODE_ERROR.NOT_FOUND,
-                message: 'user.error.notFound',
-            });
+            throw new NotFoundException(NOT_FOUND);
         }
 
         return user;
@@ -26,13 +38,14 @@ export class UserActiveParsePipe implements PipeTransform {
     constructor(private readonly userService: UserService) {}
 
     async transform(value: string): Promise<IUserDoc> {
-        const user =
-            await this.userService.findOneWithRoleAndCountryById(value);
+        let user: IUserDoc | undefined;
+        try {
+            user = await this.userService.findOneWithRoleAndCountryById(value);
+        } catch {
+            throw new NotFoundException(NOT_FOUND);
+        }
         if (!user) {
-            throw new NotFoundException({
-                statusCode: ENUM_USER_STATUS_CODE_ERROR.NOT_FOUND,
-                message: 'user.error.notFound',
-            });
+            throw new NotFoundException(NOT_FOUND);
         }
 
         return user;

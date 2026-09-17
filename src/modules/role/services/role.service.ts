@@ -295,9 +295,21 @@ export class RoleService implements IRoleService {
         { permissions, name, type, description, companyId }: RoleUpdateRequestDto,
         options?: IDatabaseSaveOptions
     ): Promise<RoleDoc> {
-        repository.name = name;
-        repository.description = description;
-        repository.type = type;
+        // name/description/type are now optional on RoleUpdateRequestDto
+        // (fixed alongside the DTO — it previously forced every field to be
+        // resent on any update, found via a full-app test pass). Guard each
+        // assignment the same way companyId already is below, or omitting a
+        // field on a partial update would wipe it with `undefined` instead
+        // of leaving it unchanged.
+        if (name !== undefined) {
+            repository.name = name;
+        }
+        if (description !== undefined) {
+            repository.description = description;
+        }
+        if (type !== undefined) {
+            repository.type = type;
+        }
         // CRITICAL FIX: Only update companyId if explicitly provided in the request
         // Otherwise, preserve the existing value to prevent field removal
         if (companyId !== undefined) {

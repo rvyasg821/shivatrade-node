@@ -284,6 +284,8 @@ export class InvoiceService {
     ): Promise<InvoiceDoc> {
         const silent = !!importCtx?.silent;
 
+        this.assertLinePricesValid(data.lines);
+
         // Qty guard maps each line to its Sales-Order line's ordered qty. In
         // import mode (decision 5) a back-filled invoice may carry no SO line
         // (purchase_order_line_id = null), so this guard is skipped — the
@@ -310,7 +312,11 @@ export class InvoiceService {
         // (one customer / currency / country) before writing anything. Both
         // are null-safe when lines have no purchase_order_line_id (no SO).
         const source = await this.loadSourcePoContext(data.lines);
-        this.assertSingleSourceInvariant(source.pos, data.customer_id);
+        this.assertSingleSourceInvariant(
+            source.pos,
+            data.customer_id,
+            data.currency_code
+        );
 
         // Pull defaults from Company master so the DRAFT carries snapshot
         // values from the start - operator can override before issuing.
@@ -615,6 +621,7 @@ export class InvoiceService {
             await this.invoiceRepository.save(row);
 
             if (Array.isArray(lines)) {
+                this.assertLinePricesValid(lines);
                 // In import mode a back-filled/re-imported invoice may carry
                 // no SO line (purchase_order_line_id = null) — mirrors
                 // create()'s identical exemption (decision 5).
@@ -624,7 +631,8 @@ export class InvoiceService {
                 const source = await this.loadSourcePoContext(lines);
                 this.assertSingleSourceInvariant(
                     source.pos,
-                    row.customer_id?.toString()
+                    row.customer_id?.toString(),
+                    (data as any).currency_code || row.currency_code
                 );
                 // Freight fix-up: an SO's freight_total is a per-shipment
                 // charge the operator may have already hand-adjusted on this
@@ -1217,6 +1225,21 @@ export class InvoiceService {
 
         await this.recompute(row._id.toString());
 
+        // Re-derive status from whatever's actually been paid so far (the
+        // advance just seeded above, or a pre-existing draft receipt) —
+        // status was hard-set to ISSUED above, but a SO advance can already
+        // fully or partially cover the invoice at the moment it's issued.
+        // Without this, a fully-advance-settled invoice sits mislabeled
+        // "issued" (implying nothing paid) until some unrelated later
+        // payment/void event happens to call applyPaymentDerived() and fix
+        // it — which may never happen. Found via a full-app test pass.
+        const freshRow = await this.invoiceRepository.findOneById(
+            row._id.toString()
+        );
+        if (freshRow) {
+            await this.applyPaymentDerived(freshRow);
+        }
+
         this.logger.log(`Invoice issued: ${row._id} (${row.voucher_no})`);
         return this.invoiceRepository.findOneById(row._id.toString());
     }
@@ -1467,10 +1490,20 @@ export class InvoiceService {
     // ─── Find ───────────────────────────────────────────────────────────
 
     async findOneById(invoiceId: string, companyId: string): Promise<InvoiceDoc> {
-        const row = await this.invoiceRepository.findOne({
-            _id: invoiceId,
-            company_id: companyId,
-        } as any);
+        // A non-UUID invoiceId previously threw a raw, uncaught Postgres
+        // "invalid input syntax for uuid" error -> unhandled 500 instead of
+        // a clean 404 (same class of gap fixed across User/Role/Country/
+        // Discount/Subscription/Plan/Company/Inventory this session — this
+        // one surfaced while verifying the Invoice delete-guard fix).
+        let row: InvoiceDoc | undefined;
+        try {
+            row = await this.invoiceRepository.findOne({
+                _id: invoiceId,
+                company_id: companyId,
+            } as any);
+        } catch {
+            row = undefined;
+        }
         if (!row || row.soft_delete) {
             throw new NotFoundException('Invoice not found');
         }
@@ -1478,6 +1511,19 @@ export class InvoiceService {
     }
 
     async softDelete(row: InvoiceDoc): Promise<InvoiceDoc> {
+        // Delete policy (matches every other document type — SO, Quotation,
+        // GRN, POV, Debit Note): only a DRAFT can be hard-deleted. Anything
+        // issued/paid/cancelled is a real financial event (stock deducted,
+        // receipts recorded, voucher numbers burned) and must be cancelled,
+        // never destroyed — deleting it would orphan its payments and drop
+        // its ledger rows with no trace. Found via a full-app test pass:
+        // this guard was simply missing (deleteMany's own doc comment
+        // already claimed it "loops the guarded single-delete").
+        if (row.status !== ENUM_INVOICE_STATUS.DRAFT) {
+            throw new BadRequestException(
+                `Invoice is ${row.status}. Cancel it instead of deleting.`
+            );
+        }
         row.soft_delete = true;
         return this.invoiceRepository.save(row);
     }
@@ -1883,6 +1929,24 @@ export class InvoiceService {
             }
         }
         return { perLine, perProduct };
+    }
+
+    // Always on, unlike the qty ceiling below — a negative price is never
+    // legitimate business data (not even in an import), unlike qty which can
+    // legitimately exceed today's tolerance bounds for historical reasons.
+    // @IsNumberString on the DTO only checks "is this a number", not sign, so
+    // this previously saved successfully and produced a negative-total
+    // invoice (found via a full-app test pass, same class of gap fixed on
+    // Quotation.replaceLines() and Rfq.setPrices()).
+    private assertLinePricesValid(lines: InvoiceLineDto[]): void {
+        lines.forEach((l, i) => {
+            const priceNum = Number(l.unit_price);
+            if (!Number.isFinite(priceNum) || priceNum < 0) {
+                throw new BadRequestException(
+                    `Line ${i + 1}: unit_price cannot be negative.`
+                );
+            }
+        });
     }
 
     private async assertQtyGuardForLines(
@@ -2399,7 +2463,8 @@ export class InvoiceService {
      */
     private assertSingleSourceInvariant(
         sourcePos: any[],
-        headerCustomerId?: string
+        headerCustomerId?: string,
+        docCurrencyCode?: string
     ): void {
         if (!sourcePos.length) return;
 
@@ -2424,6 +2489,22 @@ export class InvoiceService {
         if (currencies.size > 1) {
             throw new BadRequestException(
                 'All source Sales Orders must share the same currency.'
+            );
+        }
+        // The invoice's own declared currency must match its source SO(s) —
+        // previously unchecked server-side (only the FE's multi-SO picker
+        // filtered this client-side), so a direct API call (or a future FE
+        // bug) could create an invoice whose stated currency silently drifts
+        // from its real source-of-truth SO (found via a full-app test pass).
+        if (
+            docCurrencyCode &&
+            currencies.size === 1 &&
+            !currencies.has(docCurrencyCode.toUpperCase())
+        ) {
+            throw new BadRequestException(
+                `Invoice currency (${docCurrencyCode}) does not match the source Sales Order's currency (${[
+                    ...currencies,
+                ][0]}).`
             );
         }
 
