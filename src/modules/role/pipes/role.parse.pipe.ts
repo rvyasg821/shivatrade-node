@@ -8,7 +8,16 @@ export class RoleParsePipe implements PipeTransform {
     constructor(private readonly roleService: RoleService) {}
 
     async transform(value: string): Promise<RoleDoc> {
-        const role: RoleDoc = await this.roleService.findOneById(value);
+        // A non-UUID value previously threw a raw, uncaught Postgres
+        // "invalid input syntax for uuid" error -> unhandled 500 instead of
+        // a clean 404 (found via a full-app test pass). Mirrors the
+        // already-correct ToolsParsePipe.
+        let role: RoleDoc | undefined;
+        try {
+            role = await this.roleService.findOneById(value);
+        } catch {
+            role = undefined;
+        }
         if (!role) {
             throw new NotFoundException({
                 statusCode: ENUM_ROLE_STATUS_CODE_ERROR.NOT_FOUND,

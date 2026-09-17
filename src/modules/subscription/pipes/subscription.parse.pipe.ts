@@ -7,9 +7,19 @@ export class SubscriptionParsePipe implements PipeTransform {
     constructor(private readonly subscriptionService: SubscriptionService) { }
 
     async transform(value: any): Promise<SubscriptionDoc> {
-        const subscription: SubscriptionDoc = await this.subscriptionService.findOneById(value, {
-            join: true,
-        });
+        // A non-UUID value previously threw a raw, uncaught Postgres
+        // "invalid input syntax for uuid" error -> unhandled 500 instead of
+        // a clean 404 (found via a full-app test pass, same class of gap
+        // fixed on User/Role/Country/Discount/Inventory). Mirrors the
+        // already-correct ToolsParsePipe.
+        let subscription: SubscriptionDoc | undefined;
+        try {
+            subscription = await this.subscriptionService.findOneById(value, {
+                join: true,
+            });
+        } catch {
+            subscription = undefined;
+        }
 
         if (!subscription) {
             throw new NotFoundException({

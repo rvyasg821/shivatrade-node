@@ -615,6 +615,12 @@ export class QuotationService {
                     `Line ${i + 1}: qty must be greater than 0.`
                 );
             }
+            const unitPriceNum = Number(l.unit_price);
+            if (!Number.isFinite(unitPriceNum) || unitPriceNum < 0) {
+                throw new BadRequestException(
+                    `Line ${i + 1}: unit_price cannot be negative.`
+                );
+            }
             const discountNum = Number(l.discount_pct ?? 0);
             if (!Number.isFinite(discountNum) || discountNum < 0 || discountNum > 100) {
                 throw new BadRequestException(

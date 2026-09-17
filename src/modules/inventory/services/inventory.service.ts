@@ -242,13 +242,18 @@ export class InventoryService {
               {{LAYER_FILTERS}}
         ),
         outmv AS (
-            -- Outward = real issues (sales invoices, manual out). GRN rows are
-            -- EXCLUDED: a GRN reversal posts a negative 'grn' row, but layers
-            -- above already come from POV received_qty, so counting a reversal
-            -- as outward would double-reduce the stock.
+            -- Outward = real issues (sales invoices, manual out), NET of any
+            -- reversal. GRN rows are EXCLUDED: a GRN reversal posts a negative
+            -- 'grn' row, but layers above already come from POV received_qty,
+            -- so counting a reversal as outward would double-reduce the stock.
+            -- Sign is NOT filtered here (previously restricted to qty < 0) —
+            -- a cancelled invoice posts a positive sale_reversal row that
+            -- must net against its own negative sale_out row (SUM(-qty)
+            -- below), or a cancelled invoice's stock never comes back in
+            -- this report.
             SELECT sm.product_id, sm.qty::numeric AS qty, sm.movement_date::timestamptz AS mv_at
             FROM stock_movements sm
-            WHERE sm.company_id = $1 AND sm.deleted = false AND sm.qty < 0
+            WHERE sm.company_id = $1 AND sm.deleted = false
               AND sm.source_type <> 'grn'
               {{OUT_FILTERS}}
         ),
@@ -930,6 +935,16 @@ export class InventoryService {
         companyId: string,
         povLineId: string
     ): Promise<InventoryReceiptDetailResponseDto> {
+        // A non-UUID povLineId (garbage input, a typo) previously reached the
+        // raw SQL below and threw an uncaught Postgres "invalid input syntax
+        // for uuid" error -> unhandled 500 instead of the clean 404 this
+        // function already gives a syntactically-valid-but-nonexistent id
+        // (found via a full-app test pass).
+        const UUID_RE =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!UUID_RE.test(povLineId)) {
+            throw new NotFoundException('inventory.receiptNotFound');
+        }
         const rows = await this.dataSource.query(
             `SELECT
                 p.code             AS product_code,

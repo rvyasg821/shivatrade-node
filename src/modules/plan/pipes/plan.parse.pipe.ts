@@ -12,7 +12,17 @@ export class PlanParsePipe implements PipeTransform {
             throw new PlanNotFoundException();
         }
 
-        const plan: PlanDoc = await this.planService.findOneById(value);
+        // The typeof check above only rejects null/undefined/non-string —
+        // a malformed-but-string value (e.g. "me") still reached a raw,
+        // uncaught Postgres "invalid input syntax for uuid" error here
+        // (same class of gap fixed on User/Role/Country/Discount/
+        // Inventory/Subscription this session).
+        let plan: PlanDoc | undefined;
+        try {
+            plan = await this.planService.findOneById(value);
+        } catch {
+            plan = undefined;
+        }
         if (!plan) {
             throw new PlanNotFoundException(value);
         }

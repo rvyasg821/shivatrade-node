@@ -605,6 +605,18 @@ export class PoVendorService {
                     );
                 }
             }
+            // unit_price was never sign-checked on this generate-from-SO path
+            // either — an operator-mistyped negative rate silently produced a
+            // negative line_total/POV total (found via a full test pass;
+            // same class of gap as the discount_pct fix above).
+            if ((ln as any).unit_price != null && (ln as any).unit_price !== '') {
+                const price = num((ln as any).unit_price);
+                if (price < 0) {
+                    throw new BadRequestException(
+                        `Line unit_price cannot be negative (line ${ln.purchase_order_line_id}).`
+                    );
+                }
+            }
             const avail = pending.get(ln.purchase_order_line_id) || 0;
             // `allow_over_pending` is set only when the operator deliberately
             // adjusted the quantity above the SO's pending on the Generate-POV
@@ -979,6 +991,16 @@ export class PoVendorService {
                 if (discNum < 0 || discNum > 100) {
                     throw new BadRequestException(
                         `Product ${ln.product_id}: discount_pct must be between 0 and 100.`
+                    );
+                }
+            }
+            // unit_price was never sign-checked here either — same gap, same
+            // fix (found via a full-app test pass).
+            if (ln.unit_price != null && ln.unit_price !== '') {
+                const priceNum = num(ln.unit_price);
+                if (priceNum < 0) {
+                    throw new BadRequestException(
+                        `Product ${ln.product_id}: unit_price cannot be negative.`
                     );
                 }
             }

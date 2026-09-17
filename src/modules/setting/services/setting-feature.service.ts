@@ -82,8 +82,15 @@ export class SettingFeatureService implements ISettingFeatureService {
         dto: SettingFeatureUpdateRequestDto,
         options?: IDatabaseSaveOptions
     ): Promise<SettingFeatureDoc> {
-        repository.value = dto.value;
-        repository.description = dto.description;
+        // description/value are now optional on the DTO — guard each
+        // assignment so omitting one on a partial update doesn't wipe it
+        // with `undefined` (fixed alongside the DTO).
+        if (dto.value !== undefined) {
+            repository.value = dto.value;
+        }
+        if (dto.description !== undefined) {
+            repository.description = dto.description;
+        }
         return this.settingFeatureRepository.save(repository, options);
     }
 

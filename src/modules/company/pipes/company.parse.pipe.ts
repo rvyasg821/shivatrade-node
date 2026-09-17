@@ -15,7 +15,17 @@ export class CompanyParsePipe implements PipeTransform {
             });
         }
 
-        const company: CompanyDoc = await this.companyService.findOneById(value, { join: true });
+        // The typeof check above only rejects null/undefined/non-string —
+        // a malformed-but-string value still reached a raw, uncaught
+        // Postgres "invalid input syntax for uuid" error here (same class
+        // of gap fixed on User/Role/Country/Discount/Inventory/Subscription/
+        // Plan this session).
+        let company: CompanyDoc | undefined;
+        try {
+            company = await this.companyService.findOneById(value, { join: true });
+        } catch {
+            company = undefined;
+        }
 
         if (!company) {
             throw new NotFoundException({
