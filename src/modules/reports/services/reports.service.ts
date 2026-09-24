@@ -3613,7 +3613,11 @@ export class ReportsService {
         const rows = statusFilter
             ? allRows.filter((r) => r.status === statusFilter)
             : allRows;
-        const totals: DocStatusTotalsDto = docStatusTotals(rows);
+        // Summary cards are an always-true count across the WHOLE date range —
+        // they must not collapse to the filtered subset just because a status
+        // filter narrowed the table below them (was a real bug: filtering to
+        // "Closed" with 0 matches zeroed out Open/Partial too).
+        const totals: DocStatusTotalsDto = docStatusTotals(allRows);
         const start = (page - 1) * perPage;
         return {
             period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
