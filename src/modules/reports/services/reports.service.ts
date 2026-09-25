@@ -191,6 +191,12 @@ export interface ISalesOrderStatusQuery {
     invoice_type?: string;
     /** Free text over SO voucher / customer name. */
     search?: string;
+    /** A currency code to narrow the table to, or omitted/'all' for every
+     *  currency (mirrors Sales Turnover's dropdown — options come from
+     *  `available_currencies` in the response, not a fixed master list).
+     *  Every row already carries both `*_inr` and `*_native` values, so
+     *  native-vs-₹ display is a frontend-only choice — no mode param here. */
+    currency?: string;
     page?: number;
     perPage?: number;
 }
@@ -205,6 +211,8 @@ export interface IPurchaseOrderStatusQuery {
     grn_scope?: string;
     /** Free text over POV voucher / vendor name. */
     search?: string;
+    /** Same convention as ISalesOrderStatusQuery above. */
+    currency?: string;
     page?: number;
     perPage?: number;
 }
@@ -3605,25 +3613,42 @@ export class ReportsService {
         to: string,
         statusFilter: string | null,
         page: number,
-        perPage: number
+        perPage: number,
+        currencyFilter: string | null = null
     ): DocStatusResponseDto {
         const allRows: DocStatusRowDto[] = mapDocStatusRows(raw);
         const party_options: DocStatusOptionDto[] =
             docStatusPartyOptions(allRows);
+        // Dropdown options come from every currency in the WHOLE date range —
+        // never narrows itself away when a currency is already picked (same
+        // pattern as Sales Turnover's `available_currencies`).
+        const available_currencies = Array.from(
+            new Set(allRows.map((r) => r.currency_code || 'INR'))
+        ).sort();
+        // Currency filter narrows the report itself (cards + table both) —
+        // unlike the status filter below, which only narrows the table (the
+        // cards stay a whole-range count; see the note further down). Picking
+        // a currency means "show me this currency's world", cards included.
+        const currencyRows =
+            currencyFilter && currencyFilter !== 'all'
+                ? allRows.filter((r) => r.currency_code === currencyFilter)
+                : allRows;
         const rows = statusFilter
-            ? allRows.filter((r) => r.status === statusFilter)
-            : allRows;
-        // Summary cards are an always-true count across the WHOLE date range —
-        // they must not collapse to the filtered subset just because a status
-        // filter narrowed the table below them (was a real bug: filtering to
-        // "Closed" with 0 matches zeroed out Open/Partial too).
-        const totals: DocStatusTotalsDto = docStatusTotals(allRows);
+            ? currencyRows.filter((r) => r.status === statusFilter)
+            : currencyRows;
+        // Summary cards are an always-true count across the WHOLE (currency-
+        // filtered) date range — they must not collapse to the filtered
+        // subset just because a status filter narrowed the table below them
+        // (was a real bug: filtering to "Closed" with 0 matches zeroed out
+        // Open/Partial too).
+        const totals: DocStatusTotalsDto = docStatusTotals(currencyRows);
         const start = (page - 1) * perPage;
         return {
             period_label: `${isoToDdmmyyyy(from)} → ${isoToDdmmyyyy(to)}`,
             rows: rows.slice(start, start + perPage),
             totals,
             party_options,
+            available_currencies,
             pagination: { total: rows.length, perPage },
         };
     }
@@ -3660,6 +3685,9 @@ export class ReportsService {
             'Ordered Qty',
             'Covered Qty',
             'Pending Qty',
+            'Ordered Value (Native)',
+            'Covered Value (Native)',
+            'Pending Value (Native)',
             'Ordered Value (₹)',
             'Covered Value (₹)',
             'Pending Value (₹)',
@@ -3675,14 +3703,23 @@ export class ReportsService {
             r.ordered_qty,
             r.covered_qty,
             r.pending_qty,
+            r.ordered_value_native,
+            r.covered_value_native,
+            r.pending_value_native,
             r.ordered_value_inr,
             r.covered_value_inr,
             r.pending_value_inr,
             r.coverage_pct,
             r.cover_count,
         ]);
+        // Native totals only print when every exported row shares ONE
+        // currency (result.totals.native_currency_code) — summing native
+        // amounts of different currencies would be meaningless, same rule
+        // the live report's footer follows.
         const totalRow = [
-            'TOTAL (INR)',
+            result.totals.native_currency_code
+                ? `TOTAL (${result.totals.native_currency_code} + ₹)`
+                : 'TOTAL (₹)',
             '',
             '',
             '',
@@ -3690,6 +3727,9 @@ export class ReportsService {
             '',
             '',
             '',
+            result.totals.ordered_value_native ?? '',
+            result.totals.covered_value_native ?? '',
+            result.totals.pending_value_native ?? '',
             result.totals.ordered_value_inr,
             result.totals.covered_value_inr,
             result.totals.pending_value_inr,
@@ -3782,6 +3822,7 @@ export class ReportsService {
         const invType = typeRaw === 'all' ? null : typeRaw;
         const perPage = query.perPage || 25;
         const page = query.page || 1;
+        const currencyFilter = query.currency?.trim() || null;
 
         // SO selling value ÷ so_fx → INR (so_fx is doc-per-₹1). The invoiced
         // subquery already yields INR (taxable_amount ÷ invoice rate).
@@ -3796,6 +3837,7 @@ export class ReportsService {
                     po.customer_id                           AS party_id,
                     c.company_name                           AS party_name,
                     COALESCE(po.currency_code, 'INR')        AS currency_code,
+                    MAX(COALESCE(po.exchange_rate, '1')::float8) AS exchange_rate,
                     -- Pre-Close override (PRE_CLOSE_MODULE_PLAN.md §6) — the
                     -- document's own status takes priority over the qty math.
                     po.status                                AS doc_status,
@@ -3857,7 +3899,8 @@ export class ReportsService {
             to,
             statusFilter,
             page,
-            perPage
+            perPage,
+            currencyFilter
         );
     }
 
@@ -4105,6 +4148,7 @@ export class ReportsService {
                 : 'confirmed';
         const perPage = query.perPage || 25;
         const page = query.page || 1;
+        const currencyFilter = query.currency?.trim() || null;
 
         // Value model mirrors the POV payable (goods + GST + vendor charges):
         //   goods  = Σ ordered_qty × price × (1−disc)
@@ -4123,6 +4167,13 @@ export class ReportsService {
                     po.vendor_id                                    AS party_id,
                     v.company_name                                  AS party_name,
                     COALESCE(po.currency_code, 'INR')               AS currency_code,
+                    -- po_vendors.exchange_rate is ₹-per-1-unit (CLAUDE.md §4:
+                    -- "native × rate = INR") — the OPPOSITE convention from
+                    -- purchase_orders.exchange_rate (doc-per-₹1). Inverted
+                    -- here so the shared mapDocStatusRows() (which always
+                    -- does native = inr × exchange_rate) works unmodified
+                    -- for both reports.
+                    (1 / NULLIF(MAX(COALESCE(po.exchange_rate, '1')::float8), 0)) AS exchange_rate,
                     -- Pre-Close override (PRE_CLOSE_MODULE_PLAN.md §6) — the
                     -- document's own status takes priority over the qty math.
                     po.status                                       AS doc_status,
@@ -4206,7 +4257,8 @@ export class ReportsService {
             to,
             statusFilter,
             page,
-            perPage
+            perPage,
+            currencyFilter
         );
     }
 
@@ -5549,6 +5601,15 @@ function mapDocStatusRows(raw: any[]): DocStatusRowDto[] {
         const pendingValueInr = r2(
             Math.max(0, orderedValueInr - coveredValueInr)
         );
+        // Native (this row's own document currency) = ₹ value × the
+        // document's own frozen exchange rate (doc-currency-per-₹1 —
+        // CLAUDE.md §4's "doc_value = inr_value × exchange_rate" rule).
+        const exchangeRate = n(r.exchange_rate) || 1;
+        const orderedValueNative = r2(orderedValueInr * exchangeRate);
+        const coveredValueNative = r2(coveredValueInr * exchangeRate);
+        const pendingValueNative = r2(
+            Math.max(0, orderedValueNative - coveredValueNative)
+        );
         // A pre-closed document overrides the qty math entirely — the
         // operator explicitly accepted covered < ordered as final
         // (PRE_CLOSE_MODULE_PLAN.md §6). Same for a manually-completed SO
@@ -5591,6 +5652,9 @@ function mapDocStatusRows(raw: any[]): DocStatusRowDto[] {
             ordered_value_inr: orderedValueInr,
             covered_value_inr: coveredValueInr,
             pending_value_inr: pendingValueInr,
+            ordered_value_native: orderedValueNative,
+            covered_value_native: coveredValueNative,
+            pending_value_native: pendingValueNative,
             coverage_pct: coveragePct,
             cover_count: n(r.cover_count),
         };
@@ -5617,6 +5681,9 @@ function docStatusTotals(rows: DocStatusRowDto[]): DocStatusTotalsDto {
             acc.ordered_value_inr += r.ordered_value_inr;
             acc.covered_value_inr += r.covered_value_inr;
             acc.pending_value_inr += r.pending_value_inr;
+            acc.ordered_value_native += r.ordered_value_native;
+            acc.covered_value_native += r.covered_value_native;
+            acc.pending_value_native += r.pending_value_native;
             return acc;
         },
         {
@@ -5628,12 +5695,25 @@ function docStatusTotals(rows: DocStatusRowDto[]): DocStatusTotalsDto {
             ordered_value_inr: 0,
             covered_value_inr: 0,
             pending_value_inr: 0,
+            ordered_value_native: 0,
+            covered_value_native: 0,
+            pending_value_native: 0,
         }
     );
     t.ordered_value_inr = r2(t.ordered_value_inr);
     t.covered_value_inr = r2(t.covered_value_inr);
     t.pending_value_inr = r2(t.pending_value_inr);
-    return t;
+    // Native totals are only meaningful when every row shares ONE currency —
+    // summing native amounts across different currencies is meaningless.
+    const currencies = new Set(rows.map((r) => r.currency_code || 'INR'));
+    const singleCurrency = currencies.size === 1 ? [...currencies][0] : null;
+    return {
+        ...t,
+        native_currency_code: singleCurrency,
+        ordered_value_native: singleCurrency ? r2(t.ordered_value_native) : null,
+        covered_value_native: singleCurrency ? r2(t.covered_value_native) : null,
+        pending_value_native: singleCurrency ? r2(t.pending_value_native) : null,
+    };
 }
 function mapDocStatusBreakdown(raw: any[]): DocStatusBreakdownRowDto[] {
     return raw.map((r) => {

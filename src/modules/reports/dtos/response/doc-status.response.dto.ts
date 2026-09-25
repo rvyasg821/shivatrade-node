@@ -39,6 +39,15 @@ export class DocStatusRowDto {
     covered_value_inr: number;
     pending_value_inr: number;
 
+    /** Same figures in this row's OWN currency (currency_code above) —
+     *  ordered_value_inr × the document's frozen exchange rate. Only
+     *  meaningful per-row; never summed across rows of different currencies
+     *  (see DocStatusTotalsDto.*_native, which is null unless every row in
+     *  the (possibly currency-filtered) result set shares one currency). */
+    ordered_value_native: number;
+    covered_value_native: number;
+    pending_value_native: number;
+
     /** covered_qty ÷ ordered_qty × 100 (capped at 100). */
     coverage_pct: number;
     /** Distinct coverage documents (invoices / GRNs) for the drill-down count. */
@@ -54,6 +63,14 @@ export class DocStatusTotalsDto {
     ordered_value_inr: number;
     covered_value_inr: number;
     pending_value_inr: number;
+
+    /** Native-currency totals — only populated when every row in the result
+     *  set (after any currency filter) shares ONE currency; null otherwise,
+     *  since native amounts of different currencies can't be summed. */
+    native_currency_code: string | null;
+    ordered_value_native: number | null;
+    covered_value_native: number | null;
+    pending_value_native: number | null;
 }
 
 /** A filter-dropdown option — a party's id and name. */
@@ -126,5 +143,9 @@ export class DocStatusResponseDto {
     totals: DocStatusTotalsDto;
     /** Distinct parties in range — feeds the party filter dropdown. */
     party_options: DocStatusOptionDto[];
+    /** Distinct currency codes among the (unfiltered) documents in range —
+     *  feeds the currency filter dropdown, same pattern as Sales Turnover's
+     *  `available_currencies` (data-driven, not the full currency master). */
+    available_currencies: string[];
     pagination: { total: number; perPage: number };
 }
