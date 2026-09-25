@@ -722,6 +722,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'status', required: false })
     @ApiQuery({ name: 'invoice_type', required: false })
     @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'currency', required: false })
     @ApiQuery({ name: 'page', required: false })
     @ApiQuery({ name: 'perPage', required: false })
     @Get('/sales-order-status')
@@ -736,6 +737,7 @@ export class ReportsAdminController {
             status: query.status,
             invoice_type: query.invoice_type,
             search: query.search,
+            currency: query.currency,
             page: Number(query.page) || 1,
             perPage: Number(query.perPage) || 25,
         });
@@ -789,6 +791,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'status', required: false })
     @ApiQuery({ name: 'invoice_type', required: false })
     @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'currency', required: false })
     @Get('/sales-order-status/export')
     async salesOrderStatusExport(
         @AuthJwtPayload('companyId') companyId: string,
@@ -804,6 +807,7 @@ export class ReportsAdminController {
                 status: query.status,
                 invoice_type: query.invoice_type,
                 search: query.search,
+                currency: query.currency,
             }
         );
         const stamp = (s?: string) => (s || '').slice(0, 10);
@@ -830,6 +834,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'status', required: false })
     @ApiQuery({ name: 'grn_scope', required: false })
     @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'currency', required: false })
     @ApiQuery({ name: 'page', required: false })
     @ApiQuery({ name: 'perPage', required: false })
     @Get('/purchase-order-status')
@@ -844,6 +849,7 @@ export class ReportsAdminController {
             status: query.status,
             grn_scope: query.grn_scope,
             search: query.search,
+            currency: query.currency,
             page: Number(query.page) || 1,
             perPage: Number(query.perPage) || 25,
         });
@@ -899,6 +905,7 @@ export class ReportsAdminController {
     @ApiQuery({ name: 'status', required: false })
     @ApiQuery({ name: 'grn_scope', required: false })
     @ApiQuery({ name: 'search', required: false })
+    @ApiQuery({ name: 'currency', required: false })
     @Get('/purchase-order-status/export')
     async purchaseOrderStatusExport(
         @AuthJwtPayload('companyId') companyId: string,
@@ -914,6 +921,7 @@ export class ReportsAdminController {
                 status: query.status,
                 grn_scope: query.grn_scope,
                 search: query.search,
+                currency: query.currency,
             }
         );
         const stamp = (s?: string) => (s || '').slice(0, 10);
