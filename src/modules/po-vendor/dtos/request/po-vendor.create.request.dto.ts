@@ -46,11 +46,24 @@ export class PoVendorExpenseInputDto {
 /**
  * POV line — covers a single PO line by an `ordered_qty` quantity.
  * Backend validates `ordered_qty ≤ pending_qty` per PO line (POV plan §8).
+ *
+ * A line may instead carry `product_id` with NO `purchase_order_line_id` —
+ * an ad-hoc product the operator added on the Generate-POV screen that
+ * wasn't ordered on the source Sales Order at all (e.g. a top-up item, or
+ * MOQ filler). It rides in the SAME generated POV (one PO per vendor, same
+ * as every other line here) but carries no SO-line link, so it never counts
+ * toward this SO's own coverage/pending numbers — same as a standalone POV
+ * line. The service picks the branch by which of the two ids is present.
  */
 export class PoVendorLineCreateDto {
     @IsUUID()
-    @IsNotEmpty()
-    purchase_order_line_id: string;
+    @IsOptional()
+    purchase_order_line_id?: string;
+
+    /** Required when this line has no `purchase_order_line_id` (see above). */
+    @IsUUID()
+    @IsOptional()
+    product_id?: string;
 
     @IsNumberString({}, { message: 'ordered_qty must be a numeric string' })
     @IsNotEmpty()
