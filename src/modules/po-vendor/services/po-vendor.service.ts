@@ -578,18 +578,94 @@ export class PoVendorService {
 
         const pending = await this.computePendingByPoLineId(purchaseOrderId);
 
+        // ── Ad-hoc lines (no purchase_order_line_id) — an operator-added
+        // product on the Generate-POV screen that isn't on the source SO at
+        // all. Loaded once up front; validated against the vendor's price
+        // list exactly like createStandalone(), since these lines never
+        // touch a PO line at all. ──
+        const adhocLines = data.lines.filter((ln: any) => !ln.purchase_order_line_id);
+        const adhocProductIds = Array.from(
+            new Set(adhocLines.map((ln: any) => ln.product_id).filter(Boolean))
+        );
+        const adhocProducts = adhocProductIds.length
+            ? await this.productRepository.findAll({
+                  _id: { $in: adhocProductIds },
+                  company_id: companyId,
+                  soft_delete: false,
+              } as any)
+            : [];
+        const adhocProductById = new Map<string, any>();
+        for (const pr of adhocProducts as any[]) {
+            adhocProductById.set(pr._id.toString(), pr);
+        }
+        if (adhocLines.length && !!(data as any).is_drop_ship) {
+            // A drop-ship POV's every line must carry a purchase_order_line_id
+            // (§5.1) — an ad-hoc line has none, same guard createStandalone()
+            // already enforces for a fully standalone POV.
+            throw new BadRequestException(
+                'A drop-ship PO cannot include a product that was not ordered on the source Sales Order.'
+            );
+        }
+
         // ── Validate every requested line ───────────────────────────────
         for (const ln of data.lines) {
-            const poLine = poLineById.get(ln.purchase_order_line_id);
+            const lnId = (ln as any).purchase_order_line_id;
+            if (!lnId) {
+                // Ad-hoc branch.
+                if (!(ln as any).product_id) {
+                    throw new BadRequestException(
+                        'Each line requires purchase_order_line_id or product_id.'
+                    );
+                }
+                const prod = adhocProductById.get((ln as any).product_id);
+                if (!prod) {
+                    throw new BadRequestException(
+                        `Product ${(ln as any).product_id} not found.`
+                    );
+                }
+                if (num(ln.ordered_qty) <= 0) {
+                    throw new BadRequestException(
+                        `Line ordered_qty must be > 0 (product ${prod.name}).`
+                    );
+                }
+                const disc = num((ln as any).discount_pct);
+                if (disc < 0 || disc > 100) {
+                    throw new BadRequestException(
+                        `${prod.name}: discount_pct must be between 0 and 100.`
+                    );
+                }
+                if ((ln as any).unit_price != null && (ln as any).unit_price !== '' && num((ln as any).unit_price) < 0) {
+                    throw new BadRequestException(
+                        `${prod.name}: unit_price cannot be negative.`
+                    );
+                }
+                let priceRow: any = null;
+                try {
+                    priceRow = await this.priceListRepository.findCurrentPrice(
+                        companyId,
+                        (data as any).vendor_id,
+                        (ln as any).product_id
+                    );
+                } catch {
+                    priceRow = null;
+                }
+                if (!priceRow) {
+                    throw new BadRequestException(
+                        `${prod.code || prod.name} is not in the selected vendor's price list.`
+                    );
+                }
+                continue;
+            }
+            const poLine = poLineById.get(lnId);
             if (!poLine) {
                 throw new BadRequestException(
-                    `PO line ${ln.purchase_order_line_id} does not belong to PO ${po.voucher_no}.`
+                    `PO line ${lnId} does not belong to PO ${po.voucher_no}.`
                 );
             }
             const req = num(ln.ordered_qty);
             if (req <= 0) {
                 throw new BadRequestException(
-                    `Line ordered_qty must be > 0 (line ${ln.purchase_order_line_id}).`
+                    `Line ordered_qty must be > 0 (line ${lnId}).`
                 );
             }
             // discount_pct was never range-checked on this generate-from-SO
@@ -601,7 +677,7 @@ export class PoVendorService {
                 const disc = num((ln as any).discount_pct);
                 if (disc < 0 || disc > 100) {
                     throw new BadRequestException(
-                        `Line discount_pct must be between 0 and 100 (line ${ln.purchase_order_line_id}).`
+                        `Line discount_pct must be between 0 and 100 (line ${lnId}).`
                     );
                 }
             }
@@ -613,11 +689,11 @@ export class PoVendorService {
                 const price = num((ln as any).unit_price);
                 if (price < 0) {
                     throw new BadRequestException(
-                        `Line unit_price cannot be negative (line ${ln.purchase_order_line_id}).`
+                        `Line unit_price cannot be negative (line ${lnId}).`
                     );
                 }
             }
-            const avail = pending.get(ln.purchase_order_line_id) || 0;
+            const avail = pending.get(lnId) || 0;
             // `allow_over_pending` is set only when the operator deliberately
             // adjusted the quantity above the SO's pending on the Generate-POV
             // screen (over-procurement / MOQ). Every other caller leaves it
@@ -626,7 +702,7 @@ export class PoVendorService {
                 throw new BadRequestException(
                     `Cannot create POV: ordered_qty (${req}) exceeds pending (${round4(
                         avail
-                    )}) for PO line ${ln.purchase_order_line_id}.`
+                    )}) for PO line ${lnId}.`
                 );
             }
         }
@@ -747,12 +823,13 @@ export class PoVendorService {
         // against the right base.
         let preSubtotal = 0;
         for (const ln of data.lines) {
-            const poLine = poLineById.get(ln.purchase_order_line_id);
+            const lnId = (ln as any).purchase_order_line_id;
+            const poLine = lnId ? poLineById.get(lnId) : null;
             const ordered = num(ln.ordered_qty);
             const unitPriceStr =
                 (ln as any).unit_price != null && (ln as any).unit_price !== ''
                     ? String((ln as any).unit_price)
-                    : String(poLine.unit_price || '0');
+                    : String(poLine?.unit_price || '0');
             // Per-line vendor discount reduces the taxable base (GST/expenses
             // apply on the net-of-discount amount).
             const disc = num((ln as any).discount_pct);
@@ -791,12 +868,52 @@ export class PoVendorService {
             expenses_snapshot,
         } as any);
 
-        // ── Create lines (snapshot product/HSN/price/tax from PO line) ──
+        // ── Create lines (snapshot product/HSN/price/tax from PO line, or
+        // — for an ad-hoc line — from the product master directly) ──
         let seq = 0;
         for (const ln of data.lines) {
             seq += 1;
-            const poLine = poLineById.get(ln.purchase_order_line_id);
+            const lnId = (ln as any).purchase_order_line_id;
             const ordered = num(ln.ordered_qty);
+
+            if (!lnId) {
+                // Ad-hoc line — no source PO line at all.
+                const prod = adhocProductById.get((ln as any).product_id);
+                const unitPrice = num((ln as any).unit_price);
+                await this.povLineRepository.create({
+                    company_id: companyId,
+                    po_vendor_id: header._id.toString(),
+                    purchase_order_line_id: null,
+                    product_id: (ln as any).product_id,
+                    description: prod?.description || prod?.name || null,
+                    part_no: (ln as any).part_no || prod?.part_no || null,
+                    hsn_code:
+                        (ln as any).hsn_code != null &&
+                        String((ln as any).hsn_code).trim() !== ''
+                            ? String((ln as any).hsn_code).trim()
+                            : prod?.hsn_code || null,
+                    unit: (ln as any).unit || prod?.unit_of_measure || null,
+                    tax_pct: String(
+                        (ln as any).tax_pct ?? prod?.tax_pct ?? '0'
+                    ),
+                    unit_price: String(unitPrice),
+                    ordered_qty: String(ordered),
+                    discount_pct: String(num((ln as any).discount_pct)),
+                    dispatched_qty: '0',
+                    received_qty: '0',
+                    line_total: String(
+                        round2(
+                            ordered *
+                                unitPrice *
+                                (1 - num((ln as any).discount_pct) / 100)
+                        )
+                    ),
+                    seq: ln.seq != null ? Number(ln.seq) : seq,
+                } as any);
+                continue;
+            }
+
+            const poLine = poLineById.get(lnId);
             // Caller may override unit_price (e.g. PFI→PO flow passes the
             // vendor's INR price because the PO holds customer-currency
             // pricing). Fall back to the PO line snapshot otherwise.
@@ -808,7 +925,7 @@ export class PoVendorService {
             await this.povLineRepository.create({
                 company_id: companyId,
                 po_vendor_id: header._id.toString(),
-                purchase_order_line_id: ln.purchase_order_line_id,
+                purchase_order_line_id: lnId,
                 product_id: poLine.product_id?.toString(),
                 description: poLine.description || null,
                 part_no: poLine.part_no || null,
@@ -1778,7 +1895,16 @@ export class PoVendorService {
         purchaseOrderId: string,
         data: {
             assignments: Array<{
-                purchase_order_line_id: string;
+                /** Either this OR `product_id` below — never both, never
+                 *  neither. An assignment WITHOUT purchase_order_line_id is
+                 *  an ad-hoc product the operator added on the Generate-POV
+                 *  screen that was never ordered on the source Sales Order
+                 *  at all; it rides in the same per-vendor POV but carries
+                 *  no SO-line link (never counts toward this SO's own
+                 *  coverage). */
+                purchase_order_line_id?: string;
+                /** Ad-hoc line only — see purchase_order_line_id above. */
+                product_id?: string;
                 vendor_id: string;
                 tax_pct?: string;
                 hsn_code?: string;
@@ -1872,11 +1998,48 @@ export class PoVendorService {
         // reaching createFromPo(), which does honour discount_pct — the
         // override map + payload wiring below closes that gap.
         const discountOverrideByLine = new Map<string, string>();
+        // Ad-hoc assignments (no purchase_order_line_id — see the type doc
+        // above) keyed by a synthetic id so they can ride through the same
+        // `byVendor` grouping as real PO-line assignments; resolved back out
+        // when `linesPayload` is built per vendor group below.
+        const adhocByKey = new Map<
+            string,
+            { product_id: string; vendor_id: string; ordered_qty: string; unit_price?: string; discount_pct?: string; tax_pct?: string; hsn_code?: string }
+        >();
+        let adhocSeq = 0;
         for (const a of data.assignments) {
-            if (!a.purchase_order_line_id || !a.vendor_id) {
+            if (!a.vendor_id) {
                 throw new BadRequestException(
-                    'Each assignment requires purchase_order_line_id + vendor_id.'
+                    'Each assignment requires a vendor_id.'
                 );
+            }
+            if (!a.purchase_order_line_id) {
+                // Ad-hoc branch — product picked directly, not from an SO line.
+                if (!a.product_id) {
+                    throw new BadRequestException(
+                        'Each assignment requires purchase_order_line_id or product_id.'
+                    );
+                }
+                if (num(a.ordered_qty) <= 0) {
+                    throw new BadRequestException(
+                        'Ad-hoc product quantity must be > 0.'
+                    );
+                }
+                adhocSeq += 1;
+                const key = `adhoc:${adhocSeq}`;
+                adhocByKey.set(key, {
+                    product_id: a.product_id,
+                    vendor_id: a.vendor_id,
+                    ordered_qty: String(round4(num(a.ordered_qty))),
+                    unit_price: a.unit_price,
+                    discount_pct: a.discount_pct,
+                    tax_pct: a.tax_pct,
+                    hsn_code: a.hsn_code,
+                });
+                const arr = byVendor.get(a.vendor_id) || [];
+                arr.push(key);
+                byVendor.set(a.vendor_id, arr);
+                continue;
             }
             if (seenLines.has(a.purchase_order_line_id)) {
                 throw new BadRequestException(
@@ -1939,6 +2102,7 @@ export class PoVendorService {
         const pending = await this.computePendingByPoLineId(purchaseOrderId);
         const zeroLines: string[] = [];
         for (const a of data.assignments) {
+            if (!a.purchase_order_line_id) continue; // ad-hoc — no pending concept
             const p = pending.get(a.purchase_order_line_id) || 0;
             if (p <= 1e-6) {
                 zeroLines.push(a.purchase_order_line_id);
@@ -1969,7 +2133,13 @@ export class PoVendorService {
             : new Map<string, number>();
         const stockRemaining = new Map<string, number>(freeStock);
         const toProcureByLine = new Map<string, number>();
+        // Ad-hoc lines have no "pending" concept to net against stock — the
+        // operator's typed quantity is the order, verbatim.
+        for (const [key, adhoc] of adhocByKey.entries()) {
+            toProcureByLine.set(key, Math.max(0, round4(num(adhoc.ordered_qty))));
+        }
         for (const a of data.assignments) {
+            if (!a.purchase_order_line_id) continue; // ad-hoc — set above
             // Operator edited the qty on the Generate-POV screen → trust it
             // verbatim (their default already reflected any stock they wanted to
             // net off). We don't consume the free-stock pool for such lines, so
@@ -2031,6 +2201,19 @@ export class PoVendorService {
             const linesPayload = (
                 await Promise.all(
                     lineIds.map(async lid => {
+                        const adhoc = adhocByKey.get(lid);
+                        if (adhoc) {
+                            // Ad-hoc product — no PO line, no stock netting,
+                            // no over-shipment guard (nothing to be "over").
+                            return {
+                                product_id: adhoc.product_id,
+                                ordered_qty: adhoc.ordered_qty,
+                                unit_price: adhoc.unit_price,
+                                tax_pct: adhoc.tax_pct,
+                                hsn_code: adhoc.hsn_code,
+                                discount_pct: adhoc.discount_pct,
+                            };
+                        }
                         const toProcure = toProcureByLine.get(lid) || 0;
                         // Fully in stock → no POV line for it.
                         if (toProcure <= 1e-6) return null;
@@ -2481,7 +2664,7 @@ export class PoVendorService {
             await this.replaceLinesOnDraft(
                 companyId,
                 row._id.toString(),
-                row.purchase_order_id.toString(),
+                row.purchase_order_id ? row.purchase_order_id.toString() : null,
                 (row as any).vendor_id?.toString(),
                 lines
             );
@@ -2874,10 +3057,24 @@ export class PoVendorService {
     private async replaceLinesOnDraft(
         companyId: string,
         povId: string,
-        purchaseOrderId: string,
+        purchaseOrderId: string | null,
         povVendorId: string | undefined,
         lines: any[]
     ): Promise<void> {
+        // A standalone POV (no source Sales Order) has no PO lines to check
+        // against — its lines carry their own product_id instead of
+        // purchase_order_line_id, same shape as createStandalone(). Branch
+        // out before the PO-line lookups below, which assume a real PO.
+        if (!purchaseOrderId) {
+            await this.replaceLinesOnDraftStandalone(
+                companyId,
+                povId,
+                povVendorId,
+                lines
+            );
+            return;
+        }
+
         // Recompute pending excluding this POV (so editing its own qty
         // doesn't trip the guard against itself).
         const pending = await this.computePendingByPoLineId(
@@ -2892,11 +3089,60 @@ export class PoVendorService {
             poLineById.set(l._id.toString(), l);
         }
 
+        // Ad-hoc lines (no purchase_order_line_id) — a product the operator
+        // added on the Edit page that isn't on the source SO at all. Same
+        // shape/rules as the standalone branch above: product master
+        // snapshot + must be in this POV's vendor's price list.
+        const adhocLines = (lines || []).filter((ln: any) => !ln.purchase_order_line_id);
+        const adhocProductIds = Array.from(
+            new Set(adhocLines.map((ln: any) => ln.product_id).filter(Boolean))
+        );
+        const adhocProductById = new Map<string, any>();
+        if (adhocProductIds.length) {
+            const adhocProducts = await this.productRepository.findAll({
+                _id: { $in: adhocProductIds },
+                company_id: companyId,
+                soft_delete: false,
+            } as any);
+            for (const pr of adhocProducts as any[]) {
+                adhocProductById.set(pr._id.toString(), pr);
+            }
+        }
+
         for (const ln of lines || []) {
             if (!ln.purchase_order_line_id) {
-                throw new BadRequestException(
-                    'Each POV line requires purchase_order_line_id.'
-                );
+                if (!ln.product_id) {
+                    throw new BadRequestException(
+                        'Each POV line requires purchase_order_line_id or product_id.'
+                    );
+                }
+                const prod = adhocProductById.get(ln.product_id);
+                if (!prod) {
+                    throw new BadRequestException(
+                        `Product ${ln.product_id} not found.`
+                    );
+                }
+                if (num(ln.ordered_qty) <= 0) {
+                    throw new BadRequestException(
+                        `Line ordered_qty must be > 0 (${prod.name}).`
+                    );
+                }
+                let priceRow: any = null;
+                try {
+                    priceRow = await this.priceListRepository.findCurrentPrice(
+                        companyId,
+                        povVendorId,
+                        ln.product_id
+                    );
+                } catch {
+                    priceRow = null;
+                }
+                if (!priceRow) {
+                    throw new BadRequestException(
+                        `${prod.code || prod.name} is not in this vendor's price list.`
+                    );
+                }
+                continue;
             }
             const poLine = poLineById.get(ln.purchase_order_line_id);
             if (!poLine) {
@@ -2933,6 +3179,43 @@ export class PoVendorService {
         let seq = 0;
         for (const ln of lines || []) {
             seq += 1;
+
+            if (!ln.purchase_order_line_id) {
+                // Ad-hoc line — no source PO line, snapshot from the product
+                // master instead (mirrors replaceLinesOnDraftStandalone).
+                const prod = adhocProductById.get(ln.product_id);
+                const ordered = num(ln.ordered_qty);
+                const unitPrice = num(ln.unit_price);
+                await this.povLineRepository.create({
+                    company_id: companyId,
+                    po_vendor_id: povId,
+                    purchase_order_line_id: null,
+                    product_id: ln.product_id,
+                    description: prod?.description || prod?.name || null,
+                    part_no: ln.part_no || prod?.part_no || null,
+                    hsn_code:
+                        ln.hsn_code != null && String(ln.hsn_code).trim() !== ''
+                            ? String(ln.hsn_code).trim()
+                            : prod?.hsn_code || null,
+                    unit: ln.unit || prod?.unit_of_measure || null,
+                    tax_pct: String(ln.tax_pct ?? prod?.tax_pct ?? '0'),
+                    unit_price: String(unitPrice),
+                    ordered_qty: String(ordered),
+                    discount_pct: String(num((ln as any).discount_pct)),
+                    dispatched_qty: '0',
+                    received_qty: '0',
+                    line_total: String(
+                        round2(
+                            ordered *
+                                unitPrice *
+                                (1 - num((ln as any).discount_pct) / 100)
+                        )
+                    ),
+                    seq,
+                } as any);
+                continue;
+            }
+
             const poLine = poLineById.get(ln.purchase_order_line_id);
             const ordered = num(ln.ordered_qty);
             // The caller's rate wins, the SO line is the fallback — mirroring
@@ -2964,6 +3247,120 @@ export class PoVendorService {
                     ln.tax_pct != null && ln.tax_pct !== ''
                         ? String(num(ln.tax_pct))
                         : String(poLine.tax_pct || '0'),
+                unit_price: String(unitPrice),
+                ordered_qty: String(ordered),
+                discount_pct: String(num((ln as any).discount_pct)),
+                dispatched_qty: '0',
+                received_qty: '0',
+                line_total: String(
+                    round2(
+                        ordered *
+                            unitPrice *
+                            (1 - num((ln as any).discount_pct) / 100)
+                    )
+                ),
+                seq,
+            } as any);
+        }
+    }
+
+    /**
+     * Replace-on-update for a STANDALONE draft POV's lines — mirrors
+     * createStandalone()'s line-building (own product_id snapshot, no PO
+     * line to fall back to), instead of the PO-line-based path above. Lets
+     * the standalone Edit form add/remove product lines, not just tweak the
+     * qty/rate of ones already there.
+     */
+    private async replaceLinesOnDraftStandalone(
+        companyId: string,
+        povId: string,
+        povVendorId: string | undefined,
+        lines: any[]
+    ): Promise<void> {
+        if (!povVendorId) {
+            throw new BadRequestException(
+                'This POV has no vendor — cannot resolve its lines.'
+            );
+        }
+        const productIds = Array.from(
+            new Set((lines || []).map((l: any) => l.product_id).filter(Boolean))
+        );
+        const products = await this.productRepository.findAll({
+            _id: { $in: productIds },
+            company_id: companyId,
+            soft_delete: false,
+        } as any);
+        const productById = new Map<string, any>();
+        for (const p of products as any[]) productById.set(p._id.toString(), p);
+
+        for (const ln of lines || []) {
+            if (!ln.product_id) {
+                throw new BadRequestException(
+                    'Each line on a standalone POV requires product_id.'
+                );
+            }
+            if (!productById.has(ln.product_id)) {
+                throw new BadRequestException(
+                    `Product ${ln.product_id} not found.`
+                );
+            }
+            if (num(ln.ordered_qty) <= 0) {
+                throw new BadRequestException(
+                    'Each line ordered_qty must be > 0.'
+                );
+            }
+            const disc = num((ln as any).discount_pct);
+            if (disc < 0 || disc > 100) {
+                throw new BadRequestException(
+                    `Product ${ln.product_id}: discount_pct must be between 0 and 100.`
+                );
+            }
+            if (ln.unit_price != null && ln.unit_price !== '' && num(ln.unit_price) < 0) {
+                throw new BadRequestException(
+                    `Product ${ln.product_id}: unit_price cannot be negative.`
+                );
+            }
+            // Same rule as create: the product must be in this POV's
+            // vendor's price list — the vendor is fixed once the POV
+            // exists, so there is no "pick a vendor first" step here.
+            let priceRow: any = null;
+            try {
+                priceRow = await this.priceListRepository.findCurrentPrice(
+                    companyId,
+                    povVendorId,
+                    ln.product_id
+                );
+            } catch {
+                priceRow = null;
+            }
+            if (!priceRow) {
+                const p = productById.get(ln.product_id);
+                throw new BadRequestException(
+                    `Product ${p?.code || p?.name || ln.product_id} is not in this vendor's price list.`
+                );
+            }
+        }
+
+        await this.povLineRepository.deleteByPoVendorId(povId);
+        let seq = 0;
+        for (const ln of lines || []) {
+            seq += 1;
+            const prod = productById.get(ln.product_id);
+            const ordered = num(ln.ordered_qty);
+            const unitPrice = num(ln.unit_price);
+            await this.povLineRepository.create({
+                company_id: companyId,
+                po_vendor_id: povId,
+                purchase_order_line_id: null,
+                product_id: ln.product_id,
+                description: ln.description || prod?.description || prod?.name || null,
+                part_no: ln.part_no || prod?.part_no || null,
+                hsn_code:
+                    ln.hsn_code != null && String(ln.hsn_code).trim() !== ''
+                        ? String(ln.hsn_code).trim()
+                        : prod?.hsn_code || null,
+                unit: ln.unit || prod?.unit_of_measure || null,
+                tax_pct: String(ln.tax_pct ?? prod?.tax_pct ?? '0'),
                 unit_price: String(unitPrice),
                 ordered_qty: String(ordered),
                 discount_pct: String(num((ln as any).discount_pct)),

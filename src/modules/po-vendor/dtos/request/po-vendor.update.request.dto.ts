@@ -27,14 +27,38 @@ export class PoVendorLineUpdateDto {
     @IsOptional()
     _id?: string;
 
-    /** Required when adding a line (draft only). */
+    /** Required when adding a line on a POV generated from a Sales Order
+     *  (draft only). Mutually exclusive with `product_id` below. */
     @IsUUID()
     @IsOptional()
     purchase_order_line_id?: string;
 
+    /** Required when adding a line on a STANDALONE POV (no source Sales
+     *  Order) — draft only. Mutually exclusive with `purchase_order_line_id`
+     *  above; the service picks the replace path by which one is present. */
+    @IsUUID()
+    @IsOptional()
+    product_id?: string;
+
     @IsNumberString({}, { message: 'ordered_qty must be a numeric string' })
     @IsOptional()
     ordered_qty?: string;
+
+    /** Standalone-POV lines only — the linked-PO replace path prices from
+     *  the source PO line and ignores this. */
+    @IsNumberString({}, { message: 'unit_price must be a numeric string' })
+    @IsOptional()
+    unit_price?: string;
+
+    /** Standalone-POV lines only. */
+    @IsString()
+    @IsOptional()
+    hsn_code?: string;
+
+    /** Standalone-POV lines only. */
+    @IsString()
+    @IsOptional()
+    part_no?: string;
 
     /** Per-line vendor discount % (applied before GST). Default 0. */
     @IsNumberString({}, { message: 'discount_pct must be a numeric string' })
