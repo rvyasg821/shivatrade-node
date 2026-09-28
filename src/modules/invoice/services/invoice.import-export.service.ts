@@ -456,7 +456,8 @@ export class InvoiceImportExportService {
                 product_code: product.code,
                 part_no: cell(raw, 'part_no') || undefined,
                 description: cell(raw, 'description') || undefined,
-                hsn_code: cell(raw, 'hsn_code') || undefined,
+                // Blank HSN / GST% in the sheet → product master.
+                hsn_code: cell(raw, 'hsn_code') || product.hsn_code || undefined,
                 customer_reference: cell(raw, 'customer_reference') || undefined,
                 unit: cell(raw, 'uom') || product.unit_of_measure || 'NOS',
                 uqc_code: cell(raw, 'uqc_code') || undefined,
@@ -465,7 +466,9 @@ export class InvoiceImportExportService {
                 discount_pct: cell(raw, 'discount_pct') || undefined,
                 margin_pct: cell(raw, 'margin_pct') || undefined,
                 tax_pct: cell(raw, 'tax_pct') || undefined,
-                igst_rate_pct: cell(raw, 'igst_rate_pct') || undefined,
+                igst_rate_pct:
+                    cell(raw, 'igst_rate_pct') ||
+                    (product.tax_pct != null ? String(product.tax_pct) : undefined),
                 packages: cell(raw, 'packages')
                     ? Number(cell(raw, 'packages'))
                     : undefined,

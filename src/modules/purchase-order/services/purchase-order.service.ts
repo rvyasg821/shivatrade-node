@@ -816,9 +816,22 @@ export class PurchaseOrderService {
             return String(claimed);
         };
 
+        // Blank HSN / GST% on a line → product master (client rule).
+        const masterIds = Array.from(
+            new Set(resolvedLines.map((x: any) => x.product_id?.toString()).filter(Boolean))
+        );
+        const masterProducts: any[] = masterIds.length
+            ? ((await this.productRepository.findAll({
+                  _id: { $in: masterIds },
+              } as any)) as any[])
+            : [];
+        const masterById = new Map<string, any>(
+            masterProducts.map((p) => [p._id.toString(), p])
+        );
         let seq = 0;
         for (const l of resolvedLines) {
             seq += 1;
+            const master = masterById.get(l.product_id?.toString());
             const sourceCode = (
                 l.source_currency_code ||
                 (l.vendor_id && vendorCurrencyById.get(l.vendor_id)) ||
@@ -864,7 +877,7 @@ export class PurchaseOrderService {
                 description: l.description || null,
                 customer_reference: l.customer_reference || null,
                 part_no: l.part_no || null,
-                hsn_code: l.hsn_code || null,
+                hsn_code: l.hsn_code?.trim() || master?.hsn_code || null,
                 qty: l.qty || '0',
                 unit: l.unit || null,
                 unit_price: l.unit_price || '0',
@@ -872,7 +885,10 @@ export class PurchaseOrderService {
                 source_currency_code: sourceCode,
                 cost_exchange_rate: costRate,
                 discount_pct: l.discount_pct || '0',
-                tax_pct: l.tax_pct || '0',
+                tax_pct:
+                    num(l.tax_pct) > 0
+                        ? String(l.tax_pct)
+                        : String(master?.tax_pct ?? '0'),
                 // Per-line freight override; '' → null (auto qty-split).
                 freight:
                     (l as any).freight != null &&

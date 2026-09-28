@@ -582,7 +582,11 @@ export class InvoiceLineImportService {
                 errors.push('Unit price cannot be negative.');
             }
 
-            const igstRate = numOrUndef(get('igst_rate_pct'));
+            // Blank HSN / GST% in the sheet → product master (via the SO line's product).
+            const masterProd = productById.get(poLine?.product_id?.toString());
+            const igstRate =
+                numOrUndef(get('igst_rate_pct')) ??
+                numOrUndef(masterProd?.tax_pct);
             if (
                 igstRate !== undefined &&
                 (igstRate < 0 || igstRate > 28)
@@ -598,7 +602,7 @@ export class InvoiceLineImportService {
                 errors.push('Discount % must be between 0 and 100.');
             }
 
-            const hsn = get('hsn_code');
+            const hsn = get('hsn_code') || masterProd?.hsn_code || '';
             if (!hsn) {
                 errors.push('HSN code is required for each line.');
             } else if (hsn.length > 30) {

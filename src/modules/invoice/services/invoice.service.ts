@@ -2774,7 +2774,7 @@ export class InvoiceService {
                 product_code: l.product_code || prod?.code,
                 part_no: (l as any).part_no || prod?.part_no,
                 description: l.description,
-                hsn_code: l.hsn_code || prod?.hsn_code,
+                hsn_code: l.hsn_code?.trim() || prod?.hsn_code,
                 customer_reference: l.customer_reference,
                 unit: l.unit || prod?.unit_of_measure,
                 uqc_code: l.uqc_code,
@@ -2788,7 +2788,12 @@ export class InvoiceService {
                 discount_pct: l.discount_pct || '0',
                 margin_pct: marginPct || '0',
                 tax_pct: l.tax_pct || '0',
-                igst_rate_pct: l.igst_rate_pct || '0',
+                // Blank / 0 GST% → product master's rate (client rule: never
+                // leave GST empty when the product has one).
+                igst_rate_pct:
+                    num(l.igst_rate_pct) > 0
+                        ? String(l.igst_rate_pct)
+                        : String(prod?.tax_pct ?? '0'),
                 product_rebates_snapshot: rebatesSnapshot,
                 product_expenses_snapshot: expensesSnapshot,
                 // Packing List (§3b)
