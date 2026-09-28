@@ -666,10 +666,23 @@ export class QuotationService {
         // user-editable per line (edit pct/value/type, add ad-hoc rows,
         // delete). Persist exactly what the FE sends; never rebuild from the
         // product master here (that would silently drop edits + ad-hoc rows).
+        // Blank HSN / GST% on a line → product master (client rule).
+        const masterIds = Array.from(
+            new Set(lines.map((x: any) => x.product_id?.toString()).filter(Boolean))
+        );
+        const masterProducts: any[] = masterIds.length
+            ? ((await this.productRepository.findAll({
+                  _id: { $in: masterIds },
+              } as any)) as any[])
+            : [];
+        const masterById = new Map<string, any>(
+            masterProducts.map((p) => [p._id.toString(), p])
+        );
         let seq = 0;
         for (const l of lines) {
             seq += 1;
             const pid = l.product_id;
+            const master = masterById.get(pid?.toString());
             // Source currency = explicit line value, else the vendor's currency,
             // else INR. Freeze the source→document rate for recompute (D-7).
             const sourceCode = (
@@ -711,7 +724,10 @@ export class QuotationService {
                 source_currency_code: sourceCode,
                 cost_exchange_rate: String(costRate),
                 discount_pct: l.discount_pct || '0',
-                tax_pct: l.tax_pct || '0',
+                tax_pct:
+                    num(l.tax_pct) > 0
+                        ? String(l.tax_pct)
+                        : String(master?.tax_pct ?? '0'),
                 // Per-line freight override; '' → null (auto qty-split).
                 freight:
                     (l as any).freight != null &&
@@ -745,7 +761,7 @@ export class QuotationService {
                 seq,
                 // ── Export / Shipping (mirrors PFI line shape) ──
                 part_no: l.part_no || null,
-                hs_code: l.hs_code || null,
+                hs_code: l.hs_code?.trim() || master?.hsn_code || null,
                 net_weight_kg: l.net_weight_kg || '0',
                 gross_weight_kg: l.gross_weight_kg || '0',
                 package_count: Number(l.package_count || 0),

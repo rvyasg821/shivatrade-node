@@ -377,10 +377,13 @@ export function parseLineItemsSheet(
             qty,
             unit_price,
             discount_pct: cell(raw, 'discount_pct') || undefined,
-            tax_pct: cell(raw, 'tax_pct') || undefined,
+            // Blank HSN / GST% in the sheet → product master.
+            tax_pct:
+                cell(raw, 'tax_pct') ||
+                (product.tax_pct != null ? String(product.tax_pct) : undefined),
             margin_pct: cell(raw, 'margin_pct') || undefined,
             part_no: cell(raw, 'part_no') || undefined,
-            hs_code: cell(raw, 'hs_code') || undefined,
+            hs_code: cell(raw, 'hs_code') || product.hsn_code || undefined,
             unit: cell(raw, 'unit') || undefined,
             description: cell(raw, 'description') || undefined,
             customer_reference: cell(raw, 'customer_reference') || undefined,
